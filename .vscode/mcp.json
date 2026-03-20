@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "nvda": {
+      "type": "stdio",
+      "command": "C:\\Users\\adilh\\bin\\nvda-mcp-server.exe",
+      "args": [],
+      "env": {
+        "NVDA_BRIDGE_URL": "http://127.0.0.1:8765",
+        "NVDA_BRIDGE_TOKEN": "nvda-bridge-secret-change-me",
+        "LOG_LEVEL": "INFO"
+      }
+    }
+  }
+}
