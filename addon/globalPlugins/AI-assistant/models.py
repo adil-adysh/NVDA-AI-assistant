@@ -5,6 +5,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True, slots=True)
 class PageSnapshot:
     title: str
+    appTitle: str
     text: str
     truncated: bool
     headings: tuple[tuple[int | None, str], ...]

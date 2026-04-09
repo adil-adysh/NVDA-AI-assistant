@@ -254,6 +254,7 @@ class BrowserAwarePageExtractor:
         )
         return PageSnapshot(
             title=self._extractTitle(obj, context),
+            appTitle=self._extractAppTitle(context),
             text=trimmedText,
             truncated=truncated,
             headings=headings,
@@ -291,6 +292,7 @@ class BrowserAwarePageExtractor:
         headings, links, buttons, landmarks = self._extractStructuredInfo(obj)
         snapshot = PageSnapshot(
             title=self._extractTitle(obj, context),
+            appTitle=self._extractAppTitle(context),
             text=trimmedText,
             truncated=truncated,
             headings=headings,
@@ -648,6 +650,30 @@ class BrowserAwarePageExtractor:
 
             return cleaned
         return "Current page"
+
+    def _extractAppTitle(self, context: ExtractionContext) -> str:
+        for candidate in (context.foreground, context.focus):
+            if candidate is None:
+                continue
+            title = None
+            try:
+                title = getattr(candidate, "windowText", None)
+            except Exception:
+                title = None
+            if not isinstance(title, str) or not title.strip():
+                try:
+                    title = getattr(candidate, "name", None)
+                except Exception:
+                    title = None
+            if not isinstance(title, str):
+                continue
+            cleaned = title.strip()
+            if not cleaned:
+                continue
+            if cleaned.lower() in {"pane", "document", "application"}:
+                continue
+            return cleaned
+        return ""
 
     def _getFocusObjectSafe(self):
         try:
