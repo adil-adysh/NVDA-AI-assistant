@@ -1,1 +1,4 @@
-Use this file to explain what has changed in your add-on since the previous release. This will be included automatically in the release description when used with GitHub actions.
+- Refactored the global plugin into focused modules for URL detection and bookmark management.
+- Added on-demand current-page summarization through a local Ollama instance.
+- Added bounded page text extraction and asynchronous summary delivery so NVDA remains responsive.
+- Added user-facing documentation for the summary gesture and Ollama configuration.
