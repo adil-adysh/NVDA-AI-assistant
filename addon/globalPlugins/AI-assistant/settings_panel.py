@@ -1,38 +1,38 @@
 # -*- coding: utf-8 -*-
+import addonHandler
 import wx
 
 from gui import guiHelper
 from gui.settingsDialogs import SettingsPanel
 
+from . import defaults
 from .settings import (
     get_generate_presence_penalty,
     get_generate_top_k,
     get_generate_top_p,
     get_generate_temperature,
-    get_keep_alive,
     get_max_retries,
     get_model_name,
     get_num_ctx,
+    get_progress_enabled,
     get_retry_backoff_seconds,
     get_server_url,
-    get_timeout_seconds,
-    get_progress_enabled,
     get_streaming_enabled,
+    get_timeout_seconds,
     save,
     set_generate_presence_penalty,
     set_generate_top_k,
     set_generate_top_p,
     set_generate_temperature,
-    set_keep_alive,
-    set_max_retries,
     set_model_name,
     set_num_ctx,
     set_progress_enabled,
-    set_retry_backoff_seconds,
     set_server_url,
     set_streaming_enabled,
     set_timeout_seconds,
 )
+
+addonHandler.initTranslation()
 
 
 class AIAssistantSettingsPanel(SettingsPanel):
@@ -41,76 +41,61 @@ class AIAssistantSettingsPanel(SettingsPanel):
     def makeSettings(self, settingsSizer):
         sHelper = guiHelper.BoxSizerHelper(self, sizer=settingsSizer)
 
-        modelGroupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Ollama model settings"))
-        modelGroupHelper = sHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=modelGroupSizer))
+        basicGroupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Basic Settings"))
+        basicGroupHelper = sHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=basicGroupSizer))
         self.modelNameEdit = self._add_labeled_text_ctrl(
-            modelGroupHelper,
+            basicGroupHelper,
             _("Ollama model name:"),
-            get_model_name(),
+            get_model_name() or defaults.DEFAULT_OLLAMA_MODEL,
         )
         self.serverUrlEdit = self._add_labeled_text_ctrl(
-            modelGroupHelper,
+            basicGroupHelper,
             _("Ollama server URL:"),
-            get_server_url(),
+            get_server_url() or defaults.DEFAULT_OLLAMA_URL,
         )
-
-        behaviorGroupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Behavior settings"))
-        behaviorGroupHelper = sHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=behaviorGroupSizer))
-        self.streamingCheckbox = behaviorGroupHelper.addItem(
+        self.streamingCheckbox = basicGroupHelper.addItem(
             wx.CheckBox(self, label=_("Enable streaming"))
         )
-        self.progressCheckbox = behaviorGroupHelper.addItem(
+        self.progressCheckbox = basicGroupHelper.addItem(
             wx.CheckBox(self, label=_("Announce progress"))
         )
         self.streamingCheckbox.Value = get_streaming_enabled()
         self.progressCheckbox.Value = get_progress_enabled()
 
-        advancedGroupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Advanced Ollama options"))
+        advancedGroupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Advanced Settings"))
         advancedGroupHelper = sHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=advancedGroupSizer))
         self.timeoutSecondsEdit = self._add_labeled_text_ctrl(
             advancedGroupHelper,
-            _("Request timeout seconds:"),
-            str(get_timeout_seconds()),
+            _("Request timeout (seconds):"),
+            str(get_timeout_seconds() if get_timeout_seconds() is not None else defaults.DEFAULT_TIMEOUT_SECONDS),
         )
         self.numCtxEdit = self._add_labeled_text_ctrl(
             advancedGroupHelper,
-            _("Ollama context window size (num_ctx):"),
-            str(get_num_ctx()),
+            _("Context window size (may affect performance):"),
+            str(get_num_ctx() if get_num_ctx() is not None else defaults.DEFAULT_NUM_CTX),
         )
-        self.keepAliveEdit = self._add_labeled_text_ctrl(
-            advancedGroupHelper,
-            _("Ollama keep_alive:"),
-            get_keep_alive(),
-        )
-        self.maxRetriesEdit = self._add_labeled_text_ctrl(
-            advancedGroupHelper,
-            _("Ollama max retries:"),
-            str(get_max_retries()),
-        )
-        self.retryBackoffSecondsEdit = self._add_labeled_text_ctrl(
-            advancedGroupHelper,
-            _("Retry backoff seconds:"),
-            str(get_retry_backoff_seconds()),
-        )
+
+        expertGroupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Expert Settings (Experimental)"))
+        expertGroupHelper = sHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=expertGroupSizer))
         self.temperatureEdit = self._add_labeled_text_ctrl(
-            advancedGroupHelper,
-            _("Generate temperature:"),
-            str(get_generate_temperature()),
+            expertGroupHelper,
+            _("Response creativity (temperature):"),
+            str(get_generate_temperature() if get_generate_temperature() is not None else defaults.DEFAULT_GENERATE_TEMPERATURE),
         )
         self.topKEdit = self._add_labeled_text_ctrl(
-            advancedGroupHelper,
-            _("Generate top_k:"),
-            str(get_generate_top_k()),
+            expertGroupHelper,
+            _("Top-k sampling:"),
+            str(get_generate_top_k() if get_generate_top_k() is not None else defaults.DEFAULT_GENERATE_TOP_K),
         )
         self.topPEdit = self._add_labeled_text_ctrl(
-            advancedGroupHelper,
-            _("Generate top_p:"),
-            str(get_generate_top_p()),
+            expertGroupHelper,
+            _("Top-p sampling:"),
+            str(get_generate_top_p() if get_generate_top_p() is not None else defaults.DEFAULT_GENERATE_TOP_P),
         )
         self.presencePenaltyEdit = self._add_labeled_text_ctrl(
-            advancedGroupHelper,
-            _("Generate presence_penalty:"),
-            str(get_generate_presence_penalty()),
+            expertGroupHelper,
+            _("Repetition penalty:"),
+            str(get_generate_presence_penalty() if get_generate_presence_penalty() is not None else defaults.DEFAULT_GENERATE_PRESENCE_PENALTY),
         )
 
     def _add_labeled_text_ctrl(self, helper, label, initialValue):
@@ -176,27 +161,6 @@ class AIAssistantSettingsPanel(SettingsPanel):
         if numCtx is None:
             return
 
-        keepAlive = self.keepAliveEdit.Value.strip()
-        if not keepAlive:
-            self._show_error(_("Keep-alive cannot be empty."))
-            return
-
-        maxRetries = self._parse_int(
-            self.maxRetriesEdit,
-            _("Max retries must be a non-negative integer."),
-            minimum=0,
-        )
-        if maxRetries is None:
-            return
-
-        retryBackoffSeconds = self._parse_float(
-            self.retryBackoffSecondsEdit,
-            _("Retry backoff seconds must be a non-negative number."),
-            minimum=0.0,
-        )
-        if retryBackoffSeconds is None:
-            return
-
         temperature = self._parse_float(
             self.temperatureEdit,
             _("Generate temperature must be a non-negative number."),
@@ -207,7 +171,7 @@ class AIAssistantSettingsPanel(SettingsPanel):
 
         topK = self._parse_int(
             self.topKEdit,
-            _("Generate top_k must be a non-negative integer."),
+            _("Top-k sampling must be a non-negative integer."),
             minimum=0,
         )
         if topK is None:
@@ -215,7 +179,7 @@ class AIAssistantSettingsPanel(SettingsPanel):
 
         topP = self._parse_float(
             self.topPEdit,
-            _("Generate top_p must be a non-negative number."),
+            _("Top-p sampling must be a non-negative number."),
             minimum=0.0,
         )
         if topP is None:
@@ -223,7 +187,7 @@ class AIAssistantSettingsPanel(SettingsPanel):
 
         presencePenalty = self._parse_float(
             self.presencePenaltyEdit,
-            _("Generate presence_penalty must be a number."),
+            _("Repetition penalty must be a number."),
         )
         if presencePenalty is None:
             return
@@ -234,9 +198,6 @@ class AIAssistantSettingsPanel(SettingsPanel):
         set_progress_enabled(self.progressCheckbox.Value)
         set_timeout_seconds(timeoutSeconds)
         set_num_ctx(numCtx)
-        set_keep_alive(keepAlive)
-        set_max_retries(maxRetries)
-        set_retry_backoff_seconds(retryBackoffSeconds)
         set_generate_temperature(temperature)
         set_generate_top_k(topK)
         set_generate_top_p(topP)
