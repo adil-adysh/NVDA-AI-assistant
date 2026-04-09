@@ -2,7 +2,7 @@ import math
 import re
 import subprocess
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 _BYTES_PER_MB = 1024 * 1024
 _BYTES_PER_GB = 1024 * 1024 * 1024
@@ -51,6 +51,21 @@ class DownloadProgressTracker:
         self.announced_start = False
         self.finished = False
 
+    def process_event(self, event: dict[str, Any]) -> None:
+        if self.finished:
+            return
+
+        if "total" not in event or "completed" not in event:
+            return
+
+        try:
+            downloaded_bytes = int(event.get("completed", -1))
+            total_bytes = int(event.get("total", -1))
+        except (TypeError, ValueError):
+            return
+
+        self._process_download(downloaded_bytes, total_bytes)
+
     def process_line(self, line: str) -> None:
         if self.finished:
             return
@@ -64,6 +79,9 @@ class DownloadProgressTracker:
 
         downloaded_bytes = int(match.group(1))
         total_bytes = int(match.group(2))
+        self._process_download(downloaded_bytes, total_bytes)
+
+    def _process_download(self, downloaded_bytes: int, total_bytes: int) -> None:
         if total_bytes <= 0:
             return
 
@@ -79,14 +97,14 @@ class DownloadProgressTracker:
 
         if not self.announced_start:
             self._speak(
-                "Downloading model, total size " + format_size(self.total_bytes)
+                "Downloading model, total size " + format_size(total_bytes)
             )
             self.announced_start = True
             self.start_time = now
             self.last_time = now
             self.last_downloaded_bytes = downloaded_bytes
             self.last_announce_time = now
-            if downloaded_bytes >= self.total_bytes:
+            if downloaded_bytes >= total_bytes:
                 self._speak("Download complete")
                 self.last_announced_percent = 100
                 self.finished = True
