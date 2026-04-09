@@ -9,9 +9,9 @@ from typing import Any, TypedDict, cast
 from urllib import error as urllibError
 from urllib import request as urllibRequest
 
-logger = logging.getLogger(__name__)
-
 from .models import PageSnapshot, SummaryResponse
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 DEFAULT_TIMEOUT_SECONDS = 450
@@ -26,15 +26,7 @@ DEFAULT_NUM_CTX = 131072
 DEFAULT_KEEP_ALIVE = "5m"
 DEFAULT_MAX_RETRIES = 2
 DEFAULT_RETRY_BACKOFF_SECONDS = 0.75
-_PREFERRED_MODELS = (
-    "gemma4:e2b",
-    #"qwen3.5:9b",
-    #"deepseek-r1:8b",
-    #"phi4-mini:latest",
-    #"gemma4:e4b",
-    #"artifish/llama3.2-uncensored:latest",
-    #"smollm:135m",
-)
+DEFAULT_OLLAMA_MODEL = "gemma4:e2b"
 
 
 class OllamaModelEntry(TypedDict):
@@ -129,6 +121,23 @@ class OllamaClient:
             self._maxRetries,
             self._retryBackoffSeconds,
         )
+
+    def _configuredModel(self) -> str | None:
+        if self._model:
+            return str(self._model).strip() or None
+        return None
+
+    def _selectModelName(self, model: str | None = None) -> str:
+        candidate = str(model).strip() if model is not None else ""
+        if candidate:
+            return candidate
+        configured = self._configuredModel()
+        if configured is not None:
+            return configured
+        return DEFAULT_OLLAMA_MODEL
+
+    def _normalizeModelNames(self, modelNames: list[str]) -> dict[str, str]:
+        return {name.lower(): name for name in modelNames if name.strip()}
 
     def summarize(
         self,
@@ -232,28 +241,49 @@ class OllamaClient:
         response = self._requestJSON("POST", "/api/generate", payload)
         return self._validateGenerateResponse(response, "/api/generate")
 
+    def ensureModelInstalled(self, model: str | None = None, onProgress: Callable[[dict[str, Any]], None] | None = None) -> str:
+        modelName = self._selectModelName(model)
+        if not modelName:
+            raise OllamaClientError("A model name is required to ensure model installation.")
+
+        installed = self._listModels()
+        normalized = self._normalizeModelNames(installed)
+        if modelName.lower() in normalized:
+            self._model = normalized[modelName.lower()]
+            return self._model
+
+        logger.info("Ollama model %s not installed; pulling it now.", modelName)
+        self._pullModel(modelName, onProgress=onProgress)
+
+        installed = self._listModels()
+        normalized = self._normalizeModelNames(installed)
+        if modelName.lower() not in normalized:
+            raise OllamaClientError(f"Ollama model {modelName} could not be installed.")
+
+        self._model = normalized[modelName.lower()]
+        return self._model
+
+    def _pullModel(self, model: str, onProgress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
+        if not model.strip():
+            raise OllamaClientError("Model name is required for /api/pull.")
+        payload = {"model": model.strip()}
+        logger.debug("Pulling Ollama model %s", model)
+        response = self._requestPullStream("POST", "/api/pull", payload, onProgress)
+        errorMessage = str(response.get("error", "")).strip()
+        if errorMessage:
+            raise OllamaClientError(f"Ollama pull failed for {model}: {errorMessage}")
+        return response
+
     def supportedEndpoints(self) -> tuple[str, ...]:
         return self.SUPPORTED_ENDPOINTS
 
     def _resolveModel(self) -> str:
-        if self._model:
-            logger.debug("Using configured Ollama model %s", self._model)
-            return self._model
-        models = self._listModels()
-        if not models:
-            raise OllamaClientError(
-                "Ollama is running but no models are installed. Pull a model first, then try again."
-            )
+        configured = self._configuredModel()
+        if configured is not None:
+            logger.debug("Using configured Ollama model %s", configured)
+            return self.ensureModelInstalled(configured)
 
-        normalized = {name.lower(): name for name in models}
-        for candidate in _PREFERRED_MODELS:
-            selected = normalized.get(candidate.lower())
-            if selected is not None:
-                self._model = selected
-                return selected
-
-        self._model = models[0]
-        return self._model
+        return self.ensureModelInstalled()
 
     def _listModels(self) -> list[str]:
         response = self._requestJSON("GET", "/api/tags")
@@ -262,15 +292,13 @@ class OllamaClient:
         if not isinstance(models, list):
             return []
 
-        names: list[str] = []
-        for item in cast(list[Any], models):
-            if not isinstance(item, dict):
-                continue
-            entry = cast(OllamaModelEntry, item)
-            name = str(entry.get("name", ""))
-            if name.strip():
-                names.append(name.strip())
-        return names
+        return [
+            name.strip()
+            for item in cast(list[Any], models)
+            if isinstance(item, dict)
+            for name in [str(cast(OllamaModelEntry, item).get("name", ""))]
+            if name.strip()
+        ]
 
     def _buildPrompt(self, snapshot: PageSnapshot) -> str:
         truncatedNotice = "yes" if snapshot.truncated else "no"
@@ -515,6 +543,74 @@ class OllamaClient:
             time.sleep(self._retryDelaySeconds(attempt))
 
         raise OllamaClientError(lastErrorMessage or "Ollama stream request failed.")
+
+    def _requestPullStream(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any],
+        onProgress: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
+        body = json.dumps(payload).encode("utf-8")
+        headers = {
+            "Accept": "application/x-ndjson",
+            "Connection": "keep-alive",
+            "Content-Type": "application/json",
+            "User-Agent": "browser-assistant/0.1",
+        }
+        request = urllibRequest.Request(
+            url=self._baseURL + path,
+            data=body,
+            headers=headers,
+            method=method,
+        )
+        try:
+            with urllibRequest.urlopen(request, timeout=self._timeoutSeconds) as response:
+                lastParsed: dict[str, Any] = {}
+                while True:
+                    rawLine = response.readline()
+                    if not rawLine:
+                        break
+                    try:
+                        line = rawLine.decode("utf-8").strip()
+                    except UnicodeDecodeError as error:
+                        raise OllamaClientError(
+                            f"Ollama pull stream contained non-UTF-8 content for {path}: {error}"
+                        )
+                    if not line:
+                        continue
+                    parsed = self._parseJSON(line, path)
+                    errorMessage = str(parsed.get("error", "")).strip()
+                    if errorMessage:
+                        raise OllamaClientError(f"Ollama pull failed for {path}: {errorMessage}")
+                    if onProgress is not None:
+                        try:
+                            onProgress(parsed)
+                        except Exception:
+                            logger.exception("onProgress callback failed")
+                    lastParsed = parsed
+                return lastParsed
+        except urllibError.HTTPError as error:
+            details = self._readErrorBody(error)
+            raise OllamaClientError(f"Ollama request failed for {path}: HTTP {error.code}. {details}")
+        except urllibError.URLError as error:
+            reason = getattr(error, "reason", None)
+            if self._isTimeoutReason(reason):
+                raise OllamaClientError(
+                    f"Timed out waiting for response from {self._baseURL}{path} "
+                    f"after {self._timeoutSeconds:.1f}s (timeout={self._timeoutSeconds:.1f}s)."
+                )
+            raise OllamaClientError(
+                f"Unable to reach Ollama at {self._baseURL}. "
+                f"Reason: {str(reason or error).strip() or 'unknown network error'}."
+            )
+        except socket.timeout:
+            raise OllamaClientError(
+                f"Timed out waiting for response from {self._baseURL}{path} "
+                f"after {self._timeoutSeconds:.1f}s (timeout={self._timeoutSeconds:.1f}s)."
+            )
+        except OSError as error:
+            raise OllamaClientError(f"Ollama request failed: {error}")
 
     def _parseJSON(self, raw: str, path: str) -> dict[str, Any]:
         try:
