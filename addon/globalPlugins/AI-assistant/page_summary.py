@@ -1,36 +1,27 @@
 # -*- coding: utf-8 -*-
 # pyright: reportMissingImports=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
 import logging
-import threading
-import time
 from collections.abc import Callable
 from typing import Any
 
-import queueHandler
 import ui
+
+from .base_coordinator import BaseCoordinator
+from .browser_extractor import PageExtractionError
+from .models import PageSnapshot, SummaryResponse
+from .ollama_client import OllamaClient
+from .prompt_builders import build_page_summary_prompt
 
 logger = logging.getLogger(__name__)
 
-from .browser_extractor import PageExtractionError
-from .models import PageSnapshot, SummaryResponse
-from .ollama_client import OllamaClientError
-from .prompt_builders import build_page_summary_prompt
 
-
-class PageSummaryCoordinator:
-    def __init__(self, extractor: Any, client: Any):
+class PageSummaryCoordinator(BaseCoordinator):
+    def __init__(self, extractor: Any, client: OllamaClient):
         super().__init__()
         self._extractor = extractor
         self._client = client
-        self._lock = threading.Lock()
-        self._activeWorker = None
 
-    def summarizeCurrentPage(self):
-        with self._lock:
-            if self._activeWorker is not None and self._activeWorker.is_alive():
-                ui.message("Page summary already in progress")
-                return
-
+    def summarizeCurrentPage(self) -> None:
         try:
             snapshot = self._extractor.extract()
         except PageExtractionError as error:
@@ -46,63 +37,30 @@ class PageSummaryCoordinator:
             len(snapshot.landmarks),
         )
         ui.message("Summarizing current page")
-        worker = threading.Thread(
-            target=self._runInBackground,
-            args=(snapshot,),
-            name="BrowserAssistantPageSummary",
-            daemon=True,
-        )
-        with self._lock:
-            self._activeWorker = worker
-        worker.start()
+        self.start_task(snapshot)
 
-    def _runInBackground(self, snapshot: PageSnapshot):
-        lastAnnouncedChars = 0
-
-        def onPartial(partialText: str, generatedChars: int):
-            nonlocal lastAnnouncedChars
-            logger.debug("Page summary partial progress chars=%d", generatedChars)
-            if generatedChars < 80:
-                return
-            if generatedChars - lastAnnouncedChars < 180:
-                return
-            lastAnnouncedChars = generatedChars
-
-            preview = " ".join(partialText.strip().split())[-120:]
-            logger.debug("Queueing progress announcement chars=%d preview=%s", generatedChars, preview)
-            self._queueToNVDA(self._announceProgress, generatedChars, preview)
-
-        start = time.monotonic()
+    def _run_task_logic(
+        self,
+        progress_callback: Callable[[str, int], None],
+        snapshot: PageSnapshot,
+    ) -> tuple[SummaryResponse, str]:
         prompt = build_page_summary_prompt(snapshot)
-        try:
-            response: SummaryResponse = self._client.summarize(prompt, onPartial=onPartial)
-        except OllamaClientError as error:
-            logger.exception("Page summary failed with OllamaClientError")
-            self._queueToNVDA(self._announceError, str(error))
-        except Exception as error:
-            logger.exception("Page summary failed with unexpected exception")
-            self._queueToNVDA(self._announceError, f"Page summary failed: {error}")
-        else:
-            duration = time.monotonic() - start
-            logger.debug("Page summary succeeded title=%s model=%s chars=%d duration=%.2fs", snapshot.title, response.model, len(response.text), duration)
-            self._queueToNVDA(self._presentSummary, snapshot.title, response.text, response.model)
-        finally:
-            with self._lock:
-                self._activeWorker = None
+        response = self._client.summarize(prompt, onPartial=progress_callback)
+        return response, snapshot.title
 
-    def _queueToNVDA(self, callback: Callable[..., None], *args: Any):
-        queueHandler.queueFunction(queueHandler.eventQueue, callback, *args)
-
-    def _announceError(self, message: str):
-        ui.message(message)
-
-    def _announceProgress(self, generatedChars: int, preview: str):
-        if preview:
-            ui.message(f"Summary progress: {generatedChars} characters. {preview}")
-            return
-        ui.message(f"Summary progress: {generatedChars} characters generated")
-
-    def _presentSummary(self, pageTitle: str, summaryText: str, modelName: str):
+    def _present_result(self, result: tuple[SummaryResponse, str]) -> None:
+        response, page_title = result
         ui.message("Page summary ready")
-        dialogTitle = f"Page summary ({modelName}) - {pageTitle}"
-        ui.browseableMessage(summaryText, title=dialogTitle)
+        dialogTitle = f"Page summary ({response.model}) - {page_title}"
+        ui.browseableMessage(response.text, title=dialogTitle)
+
+    def _format_progress_message(self, generated_chars: int, preview: str) -> str:
+        if preview:
+            return f"Summary progress: {generated_chars} characters. {preview}"
+        return f"Summary progress: {generated_chars} characters generated"
+
+    def _get_task_name(self) -> str:
+        return "BrowserAssistantPageSummary"
+
+    def _get_busy_message(self) -> str:
+        return "Page summary already in progress"

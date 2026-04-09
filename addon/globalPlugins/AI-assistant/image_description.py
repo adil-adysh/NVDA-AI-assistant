@@ -2,15 +2,13 @@
 # pyright: reportMissingImports=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
 import api
 import logging
-import threading
-import time
 from collections.abc import Callable
 from typing import Any
 
-import queueHandler
 import ui
 
-from .ollama_client import OllamaClient, OllamaClientError
+from .base_coordinator import BaseCoordinator
+from .ollama_client import OllamaClient
 from .prompt_builders import build_image_description_prompt
 from .screenshot import capture_foreground_window_base64
 from .models import SummaryResponse
@@ -18,76 +16,42 @@ from .models import SummaryResponse
 logger = logging.getLogger(__name__)
 
 
-class ImageDescriptionCoordinator:
+class ImageDescriptionCoordinator(BaseCoordinator):
 	def __init__(self, client: OllamaClient):
 		super().__init__()
 		self._client = client
-		self._lock = threading.Lock()
-		self._activeWorker = None
 
-	def describeCurrentWindow(self):
-		with self._lock:
-			if self._activeWorker is not None and self._activeWorker.is_alive():
-				ui.message("Image description already in progress")
-				return
-
+	def describeCurrentWindow(self) -> None:
 		ui.message("Describing current window image")
-		worker = threading.Thread(
-			target=self._runInBackground,
-			name="BrowserAssistantImageDescription",
-			daemon=True,
-		)
-		with self._lock:
-			self._activeWorker = worker
-		worker.start()
+		self.start_task()
 
-	def _runInBackground(self):
-		lastAnnouncedChars = 0
+	def _run_task_logic(
+		self,
+		progress_callback: Callable[[str, int], None],
+		*args: Any,
+		**kwargs: Any,
+	) -> SummaryResponse:
+		imageBase64 = capture_foreground_window_base64()
+		prompt = self._build_image_description_prompt()
+		return self._client.describeImage(imageBase64, prompt=prompt, onPartial=progress_callback)
 
-		def onPartial(partialText: str, generatedChars: int):
-			nonlocal lastAnnouncedChars
-			logger.debug("Image description partial progress chars=%d", generatedChars)
-			if generatedChars < 80:
-				return
-			if generatedChars - lastAnnouncedChars < 180:
-				return
-			lastAnnouncedChars = generatedChars
+	def _present_result(self, result: SummaryResponse) -> None:
+		ui.message("Image description ready")
+		dialogTitle = f"Image description ({result.model})"
+		ui.browseableMessage(result.text, title=dialogTitle)
 
-			preview = " ".join(partialText.strip().split())[-120:]
-			logger.debug("Queueing image progress announcement chars=%d preview=%s", generatedChars, preview)
-			self._queueToNVDA(self._announceProgress, generatedChars, preview)
+	def _format_progress_message(self, generated_chars: int, preview: str) -> str:
+		if preview:
+			return f"Image description progress: {generated_chars} characters. {preview}"
+		return f"Image description progress: {generated_chars} characters generated"
 
-		try:
-			imageBase64 = capture_foreground_window_base64()
-		except Exception as error:
-			logger.exception("Failed to capture foreground window")
-			self._queueToNVDA(self._announceError, str(error))
-			with self._lock:
-				self._activeWorker = None
-			return
+	def _get_task_name(self) -> str:
+		return "BrowserAssistantImageDescription"
 
-		prompt = self._buildImageDescriptionPrompt()
-		start = time.monotonic()
-		try:
-			response: SummaryResponse = self._client.describeImage(imageBase64, prompt=prompt, onPartial=onPartial)
-		except OllamaClientError as error:
-			logger.exception("Image description failed with OllamaClientError")
-			self._queueToNVDA(self._announceError, str(error))
-		except Exception as error:
-			logger.exception("Image description failed with unexpected exception")
-			self._queueToNVDA(self._announceError, f"Image description failed: {error}")
-		else:
-			duration = time.monotonic() - start
-			logger.debug("Image description succeeded model=%s chars=%d duration=%.2fs", response.model, len(response.text), duration)
-			self._queueToNVDA(self._presentDescription, response.text, response.model)
-		finally:
-			with self._lock:
-				self._activeWorker = None
+	def _get_busy_message(self) -> str:
+		return "Image description already in progress"
 
-	def _queueToNVDA(self, callback: Callable[..., None], *args: Any):
-		queueHandler.queueFunction(queueHandler.eventQueue, callback, *args)
-
-	def _buildImageDescriptionPrompt(self) -> str:
+	def _build_image_description_prompt(self) -> str:
 		foreground = self._getForegroundObjectSafe()
 		app_title = None
 		window_title = None
@@ -118,22 +82,8 @@ class ImageDescriptionCoordinator:
 
 		return build_image_description_prompt(app_title=app_title, window_title=window_title)
 
-	def _getForegroundObjectSafe(self):
+	def _getForegroundObjectSafe(self) -> Any:
 		try:
 			return api.getForegroundObject()
 		except Exception:
 			return None
-
-	def _announceError(self, message: str):
-		ui.message(message)
-
-	def _announceProgress(self, generatedChars: int, preview: str):
-		if preview:
-			ui.message(f"Image description progress: {generatedChars} characters. {preview}")
-			return
-		ui.message(f"Image description progress: {generatedChars} characters generated")
-
-	def _presentDescription(self, descriptionText: str, modelName: str):
-		ui.message("Image description ready")
-		dialogTitle = f"Image description ({modelName})"
-		ui.browseableMessage(descriptionText, title=dialogTitle)
