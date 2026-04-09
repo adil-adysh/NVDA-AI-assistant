@@ -4,7 +4,9 @@ import logging
 import threading
 from typing import Any
 
+import addonHandler
 import globalPluginHandler
+import gui
 import ui
 
 from .browser_extractor import BrowserAwarePageExtractor
@@ -12,6 +14,7 @@ from .download_progress import DownloadProgressTracker
 from .image_description import ImageDescriptionCoordinator
 from .ollama_client import OllamaClient, OllamaClientError
 from .page_summary import PageSummaryCoordinator
+from .settings_panel import AIAssistantSettingsPanel
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +24,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
     def __init__(self):
         super().__init__()
+        addonHandler.initTranslation()
         logger.debug("Browser Assistant plugin initializing")
         self._client = OllamaClient()
         self._pageSummary = PageSummaryCoordinator(
@@ -29,6 +33,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         )
         self._imageDescription = ImageDescriptionCoordinator(client=self._client)
         self._startModelPreload()
+        gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(AIAssistantSettingsPanel)
         logger.debug("Browser Assistant plugin initialized")
 
     def _startModelPreload(self):
@@ -57,6 +62,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def script_summarizeCurrentPage(self, gesture: Any):
         logger.debug("Script summarizeCurrentPage invoked gesture=%s", gesture)
         self._pageSummary.summarizeCurrentPage()
+
+    def terminate(self):
+        super().terminate()
+        gui.settingsDialogs.NVDASettingsDialog.categoryClasses.remove(AIAssistantSettingsPanel)
 
     def script_describeCurrentWindow(self, gesture: Any):
         logger.debug("Script describeCurrentWindow invoked gesture=%s", gesture)

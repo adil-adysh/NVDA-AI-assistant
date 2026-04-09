@@ -22,6 +22,30 @@ def _get_ai_assistant_section() -> Any:
     return section
 
 
+def _ensure_ai_assistant_section() -> Any:
+    conf = getattr(nvda_config, "conf", None)
+    if conf is None:
+        return None
+
+    section = _get_ai_assistant_section()
+    if section is None:
+        conf["aiAssistant"] = {}
+        section = _get_ai_assistant_section()
+    return section
+
+
+def _set_value(key: str, value: Any) -> None:
+    section = _ensure_ai_assistant_section()
+    if section is None:
+        return
+
+    try:
+        section[key] = value
+    except Exception:
+        if isinstance(section, dict):
+            section[key] = value
+
+
 def _read_string(key: str, default: str) -> str:
     section = _get_ai_assistant_section()
     if section is None:
@@ -84,3 +108,25 @@ def is_streaming_enabled() -> bool:
 def is_progress_enabled() -> bool:
     """Return whether progress announcements are enabled."""
     return _read_bool("enableProgressAnnouncements", defaults.DEFAULT_ENABLE_PROGRESS_ANNOUNCEMENTS)
+
+
+def set_model_name(modelName: str) -> None:
+    _set_value("modelName", str(modelName).strip())
+
+
+def set_server_url(serverUrl: str) -> None:
+    _set_value("serverUrl", str(serverUrl).strip())
+
+
+def set_streaming_enabled(enabled: bool) -> None:
+    _set_value("enableStreaming", bool(enabled))
+
+
+def set_progress_enabled(enabled: bool) -> None:
+    _set_value("enableProgressAnnouncements", bool(enabled))
+
+
+def save() -> None:
+    conf = getattr(nvda_config, "conf", None)
+    if conf is not None and hasattr(conf, "save"):
+        conf.save()

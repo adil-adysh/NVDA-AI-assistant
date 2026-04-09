@@ -90,9 +90,8 @@ class OllamaClient:
         super().__init__()
         baseUrlValue = baseURL or get_server_url()
         self._baseURL: str = str(baseUrlValue).rstrip("/")
-        modelValue = model or get_model_name()
-        modelText = str(modelValue).strip() if modelValue is not None else ""
-        self._model: str | None = modelText or None
+        self._explicitModel: str | None = model
+        self._model: str | None = str(model).strip() if model is not None else None
         self._timeoutSeconds: float = timeoutSeconds
         self._numCtx: int = defaults.DEFAULT_NUM_CTX
         self._keepAlive: str = defaults.DEFAULT_KEEP_ALIVE
@@ -110,9 +109,9 @@ class OllamaClient:
         )
 
     def _configuredModel(self) -> str | None:
-        if self._model:
-            return str(self._model).strip() or None
-        return None
+        if self._explicitModel is not None:
+            return str(self._model).strip() if self._model is not None else None
+        return get_model_name()
 
     def _selectModelName(self, model: str | None = None) -> str:
         candidate = str(model).strip() if model is not None else ""
