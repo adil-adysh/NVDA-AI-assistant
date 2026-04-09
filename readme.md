@@ -57,6 +57,8 @@ The add-on reads the following environment variables when it starts:
 3. Open NVDA and focus a page or application window.
 4. Press `NVDA+Shift+S` to summarize the current page.
 5. NVDA will announce summary progress and show the final text in a browseable message dialog.
+6. Press `NVDA+Shift+I` to capture and describe the current foreground window image.
+7. NVDA will announce image description progress and show the final text in a browseable message dialog.
 
 ## Development
 
@@ -77,6 +79,7 @@ The add-on reads the following environment variables when it starts:
 ## Notes
 
 - The add-on currently uses the NVDA foreground object title (`windowText`) when available to identify the current application.
+- Image description uses a screenshot of the current foreground window and requires a vision-capable Ollama model.
 - If Ollama cannot be reached or the model pull fails, NVDA will report a descriptive error message.
 
 ## License
