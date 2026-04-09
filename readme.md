@@ -1,4 +1,6 @@
-# NVDA Add-on Scons Template
+# NVDA AI Assistant
+
+NVDA AI Assistant is designed to reduce cognitive load for NVDA users by leveraging artificial intelligence to make inaccessible content more accessible.
 
 IMPORTANT: as of December 1, 2025, nvdaaddons/addonTemplate repository is archived. Please use nvaccess/addonTemplate repository.
 
@@ -27,6 +29,7 @@ This template provides the following features you can use during NVDA add-on dev
 	* To let the workflow run automatically when pushing to main or master (development) branch, remove the comment for branches line in GitHub Actions (`.github/workflows/build_addon.yml`).
 	* If you have created a tag (E.G.: `git tag v1.0 && git push --tag`), then a release will be automatically created and the add-on file will be uploaded as an asset.
 	* Otherwise, with normal commits or with manual startup, you can download the artifacts from the Actions page of your repository.
+* Uses AI to reduce cognitive load and help NVDA users access content that would otherwise be difficult or inaccessible.
 * Manifest file creation using a template (manifest.ini.tpl). Build variables are replaced on this template. See below for add-on manifest specification.
 * Compilation of gettext mo files before distribution, when needed.
 	* To generate a gettext pot file, please run `scons pot`. An `addon-name.pot` file will be created with all gettext messages for your add-on. You need to check the `buildVars.i18nSources` variable to comply with your requirements.

@@ -14,23 +14,21 @@ from site_scons.site_tools.NVDATool.utils import _
 # Add-on information variables
 addon_info = AddonInfo(
 	# add-on Name/identifier, internal for NVDA
-	addon_name="browser-assistant",
+	addon_name="nvdaAIAssistant",
 	# Add-on summary/title, usually the user visible name of the add-on
 	# Translators: Summary/title for this add-on
 	# to be shown on installation and add-on information found in add-on store
-	addon_summary=_("browser assistant"),
+	addon_summary=_("NVDA AI assistant"),
 	# Add-on description
-	# Translators: Long description to be shown for this add-on on add-on information from add-on store
-	addon_description=_("""Description for the add-on.
-It can span multiple lines."""),
+	# Translators: Long description to be shown for this add-on on add-on information found in add-on store
+	addon_description=_("""NVDA AI assistant helps NVDA users by using AI to simplify complex information, summarize content, and provide contextual guidance for tasks that are otherwise hard to access."""),
 	# version
 	addon_version="0.1",
 	# Brief changelog for this version
 	# Translators: what's new content for the add-on version to be shown in the add-on store
-	addon_changelog=_("""Changelog for the add-on version.
-It can span multiple lines."""),
+	addon_changelog=_("""Initial NVDA AI assistant release."""),
 	# Author(s)
-	addon_author="name <name@domain.com>",
+	addon_author="adil shaikh <ah.shaikh97@gmail.com>",
 	# URL for the add-on documentation support
 	addon_url=None,
 	# URL for the add-on repository where the source code can be found

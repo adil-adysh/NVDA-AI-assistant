@@ -17,7 +17,7 @@ except Exception:  # pragma: no cover
 from .app_extractors import CandidateProvider, ExtractionContext, buildDefaultCandidateProviders
 from .models import PageSnapshot
 
-MAX_PAGE_TEXT_CHARS = 12000
+MAX_PAGE_TEXT_CHARS = 120000
 MIN_PAGE_TEXT_CHARS = 120
 
 _ELLIPSIS_BLOCK = "\n\n[Content trimmed before summarization]\n\n"
