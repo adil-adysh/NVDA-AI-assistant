@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
 import logging
-import os
 import socket
 import time
 from collections.abc import Callable
@@ -9,24 +8,12 @@ from typing import Any, TypedDict, cast
 from urllib import error as urllibError
 from urllib import request as urllibRequest
 
+from . import defaults
 from .models import PageSnapshot, SummaryResponse
+from .settings import get_model_name, get_server_url
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
-DEFAULT_TIMEOUT_SECONDS = 450
-MODEL_ENV_VAR = "BROWSER_ASSISTANT_OLLAMA_MODEL"
-URL_ENV_VAR = "BROWSER_ASSISTANT_OLLAMA_URL"
-TIMEOUT_ENV_VAR = "BROWSER_ASSISTANT_OLLAMA_TIMEOUT_SECONDS"
-NUM_CTX_ENV_VAR = "BROWSER_ASSISTANT_OLLAMA_NUM_CTX"
-KEEP_ALIVE_ENV_VAR = "BROWSER_ASSISTANT_OLLAMA_KEEP_ALIVE"
-MAX_RETRIES_ENV_VAR = "BROWSER_ASSISTANT_OLLAMA_MAX_RETRIES"
-RETRY_BACKOFF_ENV_VAR = "BROWSER_ASSISTANT_OLLAMA_RETRY_BACKOFF_SECONDS"
-DEFAULT_NUM_CTX = 131072
-DEFAULT_KEEP_ALIVE = "5m"
-DEFAULT_MAX_RETRIES = 2
-DEFAULT_RETRY_BACKOFF_SECONDS = 0.75
-DEFAULT_OLLAMA_MODEL = "gemma4:e2b"
 
 
 class OllamaModelEntry(TypedDict):
@@ -99,18 +86,18 @@ class OllamaClient:
         "POST /api/blobs/:digest",
     )
 
-    def __init__(self, baseURL: str | None = None, model: str | None = None, timeoutSeconds: float = DEFAULT_TIMEOUT_SECONDS):
+    def __init__(self, baseURL: str | None = None, model: str | None = None, timeoutSeconds: float = defaults.DEFAULT_TIMEOUT_SECONDS):
         super().__init__()
-        baseUrlValue = baseURL or os.environ.get(URL_ENV_VAR) or DEFAULT_OLLAMA_URL
+        baseUrlValue = baseURL or get_server_url()
         self._baseURL: str = str(baseUrlValue).rstrip("/")
-        modelValue = model or os.environ.get(MODEL_ENV_VAR)
+        modelValue = model or get_model_name()
         modelText = str(modelValue).strip() if modelValue is not None else ""
         self._model: str | None = modelText or None
-        self._timeoutSeconds: float = self._floatFromEnv(TIMEOUT_ENV_VAR, timeoutSeconds)
-        self._numCtx: int = self._intFromEnv(NUM_CTX_ENV_VAR, DEFAULT_NUM_CTX, minimum=256)
-        self._keepAlive: str = str(os.environ.get(KEEP_ALIVE_ENV_VAR, DEFAULT_KEEP_ALIVE)).strip() or DEFAULT_KEEP_ALIVE
-        self._maxRetries: int = self._intFromEnv(MAX_RETRIES_ENV_VAR, DEFAULT_MAX_RETRIES, minimum=0)
-        self._retryBackoffSeconds: float = self._floatFromEnv(RETRY_BACKOFF_ENV_VAR, DEFAULT_RETRY_BACKOFF_SECONDS)
+        self._timeoutSeconds: float = timeoutSeconds
+        self._numCtx: int = defaults.DEFAULT_NUM_CTX
+        self._keepAlive: str = defaults.DEFAULT_KEEP_ALIVE
+        self._maxRetries: int = defaults.DEFAULT_MAX_RETRIES
+        self._retryBackoffSeconds: float = defaults.DEFAULT_RETRY_BACKOFF_SECONDS
         logger.debug(
             "OllamaClient initialized baseURL=%s model=%s timeout=%.1fs num_ctx=%d keep_alive=%s max_retries=%d backoff=%.2fs",
             self._baseURL,
@@ -134,7 +121,16 @@ class OllamaClient:
         configured = self._configuredModel()
         if configured is not None:
             return configured
-        return DEFAULT_OLLAMA_MODEL
+        return defaults.DEFAULT_OLLAMA_MODEL
+
+    def _defaultGenerateOptions(self) -> dict[str, Any]:
+        return {
+            "num_ctx": self._numCtx,
+            "temperature": defaults.DEFAULT_GENERATE_TEMPERATURE,
+            "top_k": defaults.DEFAULT_GENERATE_TOP_K,
+            "top_p": defaults.DEFAULT_GENERATE_TOP_P,
+            "presence_penalty": defaults.DEFAULT_GENERATE_PRESENCE_PENALTY,
+        }
 
     def _normalizeModelNames(self, modelNames: list[str]) -> dict[str, str]:
         return {name.lower(): name for name in modelNames if name.strip()}
@@ -148,13 +144,7 @@ class OllamaClient:
         payload: dict[str, Any] = {
             "model": model,
             "prompt": prompt,
-            "options": {
-                "num_ctx": self._numCtx,
-                "temperature": 0.3,
-                "top_k": 20,
-                "top_p": 0.9,
-                "presence_penalty": 0,
-            },
+            "options": self._defaultGenerateOptions(),
             "keep_alive": self._keepAlive,
         }
 
@@ -200,13 +190,7 @@ class OllamaClient:
             "model": model,
             "prompt": prompt,
             "images": [imageBase64],
-            "options": {
-                "num_ctx": self._numCtx,
-                "temperature": 0.3,
-                "top_k": 20,
-                "top_p": 0.9,
-                "presence_penalty": 0,
-            },
+            "options": self._defaultGenerateOptions(),
             "keep_alive": self._keepAlive,
         }
 
@@ -669,30 +653,6 @@ class OllamaClient:
         if self._retryBackoffSeconds <= 0:
             return 0.0
         return self._retryBackoffSeconds * (2 ** (attempt - 1))
-
-    def _intFromEnv(self, envVar: str, defaultValue: int, minimum: int | None = None) -> int:
-        raw = os.environ.get(envVar)
-        if raw is None:
-            return defaultValue
-        try:
-            value = int(raw.strip())
-        except ValueError:
-            return defaultValue
-        if minimum is not None and value < minimum:
-            return minimum
-        return value
-
-    def _floatFromEnv(self, envVar: str, defaultValue: float) -> float:
-        raw = os.environ.get(envVar)
-        if raw is None:
-            return defaultValue
-        try:
-            value = float(raw.strip())
-        except ValueError:
-            return defaultValue
-        if value <= 0:
-            return defaultValue
-        return value
 
     def _readErrorBody(self, error: urllibError.HTTPError) -> str:
         try:

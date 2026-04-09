@@ -4,6 +4,8 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from typing import Optional
+
 import ui
 
 from .base_coordinator import BaseCoordinator
@@ -41,7 +43,7 @@ class PageSummaryCoordinator(BaseCoordinator):
 
     def _run_task_logic(
         self,
-        progress_callback: Callable[[str, int], None],
+        progress_callback: Optional[Callable[[str, int], None]],
         snapshot: PageSnapshot,
     ) -> tuple[SummaryResponse, str]:
         prompt = build_page_summary_prompt(snapshot)

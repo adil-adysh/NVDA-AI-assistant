@@ -9,6 +9,7 @@ import queueHandler
 import ui
 
 from .ollama_client import OllamaClientError
+from .settings import is_progress_enabled, is_streaming_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +52,10 @@ class BaseCoordinator:
 		self._last_announced_chars = 0
 		self._pre_run(*args, **kwargs)
 
+		progress_callback = self._handle_progress if is_streaming_enabled() else None
+
 		try:
-			result = self._run_task_logic(self._handle_progress, *args, **kwargs)
+			result = self._run_task_logic(progress_callback, *args, **kwargs)
 		except OllamaClientError as error:
 			logger.exception("Task failed with OllamaClientError")
 			self._handle_error(error)
@@ -67,6 +70,8 @@ class BaseCoordinator:
 
 	def _handle_progress(self, partial_text: str, generated_chars: int) -> None:
 		"""Shared progress handler with throttling and preview generation."""
+		if not is_progress_enabled():
+			return
 		if generated_chars < self.MIN_CHARS:
 			return
 

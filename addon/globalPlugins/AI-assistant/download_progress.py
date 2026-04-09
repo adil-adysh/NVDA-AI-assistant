@@ -4,6 +4,8 @@ import subprocess
 import time
 from typing import Any, Callable, Optional
 
+from . import defaults
+
 _BYTES_PER_MB = 1024 * 1024
 _BYTES_PER_GB = 1024 * 1024 * 1024
 _PATTERN = re.compile(r"\((\d+)/(\d+)\)")
@@ -175,7 +177,7 @@ def example_usage() -> None:
         print("SPEAK:", text)
 
     tracker = DownloadProgressTracker(speak=speak)
-    command = ["ollama", "pull", "gemma4:e2b"]
+    command = [defaults.DEFAULT_OLLAMA_CLI, "pull", defaults.DEFAULT_OLLAMA_MODEL]
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,

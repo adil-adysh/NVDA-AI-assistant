@@ -3,7 +3,7 @@
 import api
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Optional
 
 import ui
 
@@ -27,7 +27,7 @@ class ImageDescriptionCoordinator(BaseCoordinator):
 
 	def _run_task_logic(
 		self,
-		progress_callback: Callable[[str, int], None],
+		progress_callback: Optional[Callable[[str, int], None]],
 		*args: Any,
 		**kwargs: Any,
 	) -> SummaryResponse:
