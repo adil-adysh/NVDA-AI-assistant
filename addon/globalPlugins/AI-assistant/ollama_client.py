@@ -10,7 +10,19 @@ from urllib import request as urllibRequest
 
 from . import defaults
 from .models import PageSnapshot, SummaryResponse
-from .settings import get_model_name, get_server_url
+from .settings import (
+    get_generate_presence_penalty,
+    get_generate_top_k,
+    get_generate_top_p,
+    get_generate_temperature,
+    get_keep_alive,
+    get_max_retries,
+    get_model_name,
+    get_num_ctx,
+    get_retry_backoff_seconds,
+    get_server_url,
+    get_timeout_seconds,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,17 +98,17 @@ class OllamaClient:
         "POST /api/blobs/:digest",
     )
 
-    def __init__(self, baseURL: str | None = None, model: str | None = None, timeoutSeconds: float = defaults.DEFAULT_TIMEOUT_SECONDS):
+    def __init__(self, baseURL: str | None = None, model: str | None = None, timeoutSeconds: float | None = None):
         super().__init__()
         baseUrlValue = baseURL or get_server_url()
         self._baseURL: str = str(baseUrlValue).rstrip("/")
         self._explicitModel: str | None = model
         self._model: str | None = str(model).strip() if model is not None else None
-        self._timeoutSeconds: float = timeoutSeconds
-        self._numCtx: int = defaults.DEFAULT_NUM_CTX
-        self._keepAlive: str = defaults.DEFAULT_KEEP_ALIVE
-        self._maxRetries: int = defaults.DEFAULT_MAX_RETRIES
-        self._retryBackoffSeconds: float = defaults.DEFAULT_RETRY_BACKOFF_SECONDS
+        self._timeoutSeconds: float = timeoutSeconds if timeoutSeconds is not None else get_timeout_seconds()
+        self._numCtx: int = get_num_ctx()
+        self._keepAlive: str = get_keep_alive()
+        self._maxRetries: int = get_max_retries()
+        self._retryBackoffSeconds: float = get_retry_backoff_seconds()
         logger.debug(
             "OllamaClient initialized baseURL=%s model=%s timeout=%.1fs num_ctx=%d keep_alive=%s max_retries=%d backoff=%.2fs",
             self._baseURL,
@@ -124,11 +136,11 @@ class OllamaClient:
 
     def _defaultGenerateOptions(self) -> dict[str, Any]:
         return {
-            "num_ctx": self._numCtx,
-            "temperature": defaults.DEFAULT_GENERATE_TEMPERATURE,
-            "top_k": defaults.DEFAULT_GENERATE_TOP_K,
-            "top_p": defaults.DEFAULT_GENERATE_TOP_P,
-            "presence_penalty": defaults.DEFAULT_GENERATE_PRESENCE_PENALTY,
+            "num_ctx": get_num_ctx(),
+            "temperature": get_generate_temperature(),
+            "top_k": get_generate_top_k(),
+            "top_p": get_generate_top_p(),
+            "presence_penalty": get_generate_presence_penalty(),
         }
 
     def _normalizeModelNames(self, modelNames: list[str]) -> dict[str, str]:
@@ -144,7 +156,7 @@ class OllamaClient:
             "model": model,
             "prompt": prompt,
             "options": self._defaultGenerateOptions(),
-            "keep_alive": self._keepAlive,
+            "keep_alive": get_keep_alive(),
         }
 
         promptLength = len(payload["prompt"])
@@ -190,7 +202,7 @@ class OllamaClient:
             "prompt": prompt,
             "images": [imageBase64],
             "options": self._defaultGenerateOptions(),
-            "keep_alive": self._keepAlive,
+            "keep_alive": get_keep_alive(),
         }
 
         if onPartial is None:
