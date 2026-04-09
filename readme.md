@@ -28,6 +28,14 @@ An experimental NVDA add-on that uses a local Ollama model to summarize the curr
 - Default model: `gemma4:e2b`
 - Default keybind: `NVDA+Shift+S`
 
+## Download
+
+Get the latest published add-on package from the GitHub releases page:
+
+- https://github.com/adil-adysh/NVDA-AI-assistant/releases
+
+Download the newest `.nvda-addon` asset and install it in NVDA.
+
 ## Configuration
 
 The add-on reads the following environment variables when it starts:
