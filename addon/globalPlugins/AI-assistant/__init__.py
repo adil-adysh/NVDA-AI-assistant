@@ -8,6 +8,7 @@ import globalPluginHandler
 import ui
 
 from .browser_extractor import BrowserAwarePageExtractor
+from .download_progress import DownloadProgressTracker
 from .ollama_client import OllamaClient, OllamaClientError
 from .page_summary import PageSummaryCoordinator
 
@@ -31,20 +32,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def _startModelPreload(self):
         def worker():
             ui.message("Checking Ollama model availability.")
-
-            def announce_progress(event: dict[str, Any]) -> None:
-                status = str(event.get("status", "")).strip()
-                if not status:
-                    return
-                total = event.get("total")
-                completed = event.get("completed")
-                if isinstance(total, int) and isinstance(completed, int) and total > 0:
-                    ui.message(f"{status} ({completed}/{total})")
-                else:
-                    ui.message(status)
+            announcer = DownloadProgressTracker(ui.message)
 
             try:
-                model = self._client.ensureModelInstalled(onProgress=announce_progress)
+                model = self._client.ensureModelInstalled(onProgress=announcer.process_event)
             except OllamaClientError as error:
                 ui.message(str(error))
             else:
