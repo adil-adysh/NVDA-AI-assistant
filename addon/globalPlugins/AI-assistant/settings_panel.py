@@ -41,216 +41,191 @@ class AIAssistantSettingsPanel(SettingsPanel):
     def makeSettings(self, settingsSizer):
         sHelper = guiHelper.BoxSizerHelper(self, sizer=settingsSizer)
 
-        modelGroupText = _("Ollama model settings")
-        modelGroupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=modelGroupText)
+        modelGroupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Ollama model settings"))
         modelGroupHelper = sHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=modelGroupSizer))
+        self.modelNameEdit = self._add_labeled_text_ctrl(
+            modelGroupHelper,
+            _("Ollama model name:"),
+            get_model_name(),
+        )
+        self.serverUrlEdit = self._add_labeled_text_ctrl(
+            modelGroupHelper,
+            _("Ollama server URL:"),
+            get_server_url(),
+        )
 
-        modelNameLabel = wx.StaticText(self, label=_("Ollama model name:"))
-        self.modelNameEdit = wx.TextCtrl(self)
-        modelGroupHelper.addItem(modelNameLabel)
-        modelGroupHelper.addItem(self.modelNameEdit)
-
-        serverUrlLabel = wx.StaticText(self, label=_("Ollama server URL:"))
-        self.serverUrlEdit = wx.TextCtrl(self)
-        modelGroupHelper.addItem(serverUrlLabel)
-        modelGroupHelper.addItem(self.serverUrlEdit)
-
-        behaviorGroupText = _("Behavior settings")
-        behaviorGroupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=behaviorGroupText)
+        behaviorGroupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Behavior settings"))
         behaviorGroupHelper = sHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=behaviorGroupSizer))
-
         self.streamingCheckbox = behaviorGroupHelper.addItem(
             wx.CheckBox(self, label=_("Enable streaming"))
         )
-
         self.progressCheckbox = behaviorGroupHelper.addItem(
             wx.CheckBox(self, label=_("Announce progress"))
         )
+        self.streamingCheckbox.Value = get_streaming_enabled()
+        self.progressCheckbox.Value = get_progress_enabled()
 
-        advancedGroupText = _("Advanced Ollama options")
-        advancedGroupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=advancedGroupText)
+        advancedGroupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Advanced Ollama options"))
         advancedGroupHelper = sHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=advancedGroupSizer))
+        self.timeoutSecondsEdit = self._add_labeled_text_ctrl(
+            advancedGroupHelper,
+            _("Request timeout seconds:"),
+            str(get_timeout_seconds()),
+        )
+        self.numCtxEdit = self._add_labeled_text_ctrl(
+            advancedGroupHelper,
+            _("Ollama context window size (num_ctx):"),
+            str(get_num_ctx()),
+        )
+        self.keepAliveEdit = self._add_labeled_text_ctrl(
+            advancedGroupHelper,
+            _("Ollama keep_alive:"),
+            get_keep_alive(),
+        )
+        self.maxRetriesEdit = self._add_labeled_text_ctrl(
+            advancedGroupHelper,
+            _("Ollama max retries:"),
+            str(get_max_retries()),
+        )
+        self.retryBackoffSecondsEdit = self._add_labeled_text_ctrl(
+            advancedGroupHelper,
+            _("Retry backoff seconds:"),
+            str(get_retry_backoff_seconds()),
+        )
+        self.temperatureEdit = self._add_labeled_text_ctrl(
+            advancedGroupHelper,
+            _("Generate temperature:"),
+            str(get_generate_temperature()),
+        )
+        self.topKEdit = self._add_labeled_text_ctrl(
+            advancedGroupHelper,
+            _("Generate top_k:"),
+            str(get_generate_top_k()),
+        )
+        self.topPEdit = self._add_labeled_text_ctrl(
+            advancedGroupHelper,
+            _("Generate top_p:"),
+            str(get_generate_top_p()),
+        )
+        self.presencePenaltyEdit = self._add_labeled_text_ctrl(
+            advancedGroupHelper,
+            _("Generate presence_penalty:"),
+            str(get_generate_presence_penalty()),
+        )
 
-        timeoutLabel = wx.StaticText(self, label=_("Request timeout seconds:"))
-        self.timeoutSecondsEdit = wx.TextCtrl(self)
-        advancedGroupHelper.addItem(timeoutLabel)
-        advancedGroupHelper.addItem(self.timeoutSecondsEdit)
+    def _add_labeled_text_ctrl(self, helper, label, initialValue):
+        labelControl = wx.StaticText(self, label=label)
+        textControl = wx.TextCtrl(self)
+        textControl.Value = str(initialValue)
+        helper.addItem(labelControl)
+        helper.addItem(textControl)
+        return textControl
 
-        numCtxLabel = wx.StaticText(self, label=_("Ollama context window size (num_ctx):"))
-        self.numCtxEdit = wx.TextCtrl(self)
-        advancedGroupHelper.addItem(numCtxLabel)
-        advancedGroupHelper.addItem(self.numCtxEdit)
+    def _show_error(self, message: str) -> None:
+        wx.MessageBox(message, _("Error"), wx.ICON_ERROR)
 
-        keepAliveLabel = wx.StaticText(self, label=_("Ollama keep_alive:"))
-        self.keepAliveEdit = wx.TextCtrl(self)
-        advancedGroupHelper.addItem(keepAliveLabel)
-        advancedGroupHelper.addItem(self.keepAliveEdit)
+    def _parse_int(self, field: wx.TextCtrl, message: str, minimum: int | None = None) -> int | None:
+        raw = field.Value.strip()
+        try:
+            value = int(raw)
+        except ValueError:
+            self._show_error(message)
+            return None
+        if minimum is not None and value < minimum:
+            self._show_error(message)
+            return None
+        return value
 
-        maxRetriesLabel = wx.StaticText(self, label=_("Ollama max retries:"))
-        self.maxRetriesEdit = wx.TextCtrl(self)
-        advancedGroupHelper.addItem(maxRetriesLabel)
-        advancedGroupHelper.addItem(self.maxRetriesEdit)
-
-        retryBackoffLabel = wx.StaticText(self, label=_("Retry backoff seconds:"))
-        self.retryBackoffSecondsEdit = wx.TextCtrl(self)
-        advancedGroupHelper.addItem(retryBackoffLabel)
-        advancedGroupHelper.addItem(self.retryBackoffSecondsEdit)
-
-        temperatureLabel = wx.StaticText(self, label=_("Generate temperature:"))
-        self.temperatureEdit = wx.TextCtrl(self)
-        advancedGroupHelper.addItem(temperatureLabel)
-        advancedGroupHelper.addItem(self.temperatureEdit)
-
-        topKLabel = wx.StaticText(self, label=_("Generate top_k:"))
-        self.topKEdit = wx.TextCtrl(self)
-        advancedGroupHelper.addItem(topKLabel)
-        advancedGroupHelper.addItem(self.topKEdit)
-
-        topPLabel = wx.StaticText(self, label=_("Generate top_p:"))
-        self.topPEdit = wx.TextCtrl(self)
-        advancedGroupHelper.addItem(topPLabel)
-        advancedGroupHelper.addItem(self.topPEdit)
-
-        presencePenaltyLabel = wx.StaticText(self, label=_("Generate presence_penalty:"))
-        self.presencePenaltyEdit = wx.TextCtrl(self)
-        advancedGroupHelper.addItem(presencePenaltyLabel)
-        advancedGroupHelper.addItem(self.presencePenaltyEdit)
-
-        self.modelNameEdit.Value = get_model_name()
-        self.serverUrlEdit.Value = get_server_url()
-        self.streamingCheckbox.Value = is_streaming_enabled()
-        self.progressCheckbox.Value = is_progress_enabled()
-        self.timeoutSecondsEdit.Value = str(get_timeout_seconds())
-        self.numCtxEdit.Value = str(get_num_ctx())
-        self.keepAliveEdit.Value = get_keep_alive()
-        self.maxRetriesEdit.Value = str(get_max_retries())
-        self.retryBackoffSecondsEdit.Value = str(get_retry_backoff_seconds())
-        self.temperatureEdit.Value = str(get_generate_temperature())
-        self.topKEdit.Value = str(get_generate_top_k())
-        self.topPEdit.Value = str(get_generate_top_p())
-        self.presencePenaltyEdit.Value = str(get_generate_presence_penalty())
+    def _parse_float(self, field: wx.TextCtrl, message: str, minimum: float | None = None) -> float | None:
+        raw = field.Value.strip()
+        try:
+            value = float(raw)
+        except ValueError:
+            self._show_error(message)
+            return None
+        if minimum is not None and value < minimum:
+            self._show_error(message)
+            return None
+        return value
 
     def onSave(self):
         modelName = self.modelNameEdit.Value.strip()
         serverUrl = self.serverUrlEdit.Value.strip()
 
         if not modelName:
-            wx.MessageBox(
-                _("Model name cannot be empty"),
-                _("Error"),
-                wx.ICON_ERROR,
-            )
+            self._show_error(_("Model name cannot be empty"))
             return
 
         if not serverUrl:
-            wx.MessageBox(
-                _("Server URL cannot be empty"),
-                _("Error"),
-                wx.ICON_ERROR,
-            )
+            self._show_error(_("Server URL cannot be empty"))
             return
 
-        try:
-            timeoutSeconds = float(self.timeoutSecondsEdit.Value.strip())
-            if timeoutSeconds <= 0:
-                raise ValueError
-        except ValueError:
-            wx.MessageBox(
-                _("Timeout seconds must be a positive number."),
-                _("Error"),
-                wx.ICON_ERROR,
-            )
+        timeoutSeconds = self._parse_float(
+            self.timeoutSecondsEdit,
+            _("Timeout seconds must be a positive number."),
+            minimum=0.000001,
+        )
+        if timeoutSeconds is None:
             return
 
-        try:
-            numCtx = int(self.numCtxEdit.Value.strip())
-            if numCtx < 256:
-                raise ValueError
-        except ValueError:
-            wx.MessageBox(
-                _("num_ctx must be an integer of at least 256."),
-                _("Error"),
-                wx.ICON_ERROR,
-            )
+        numCtx = self._parse_int(
+            self.numCtxEdit,
+            _("num_ctx must be an integer of at least 256."),
+            minimum=256,
+        )
+        if numCtx is None:
             return
 
         keepAlive = self.keepAliveEdit.Value.strip()
         if not keepAlive:
-            wx.MessageBox(
-                _("Keep-alive cannot be empty."),
-                _("Error"),
-                wx.ICON_ERROR,
-            )
+            self._show_error(_("Keep-alive cannot be empty."))
             return
 
-        try:
-            maxRetries = int(self.maxRetriesEdit.Value.strip())
-            if maxRetries < 0:
-                raise ValueError
-        except ValueError:
-            wx.MessageBox(
-                _("Max retries must be a non-negative integer."),
-                _("Error"),
-                wx.ICON_ERROR,
-            )
+        maxRetries = self._parse_int(
+            self.maxRetriesEdit,
+            _("Max retries must be a non-negative integer."),
+            minimum=0,
+        )
+        if maxRetries is None:
             return
 
-        try:
-            retryBackoffSeconds = float(self.retryBackoffSecondsEdit.Value.strip())
-            if retryBackoffSeconds < 0:
-                raise ValueError
-        except ValueError:
-            wx.MessageBox(
-                _("Retry backoff seconds must be a non-negative number."),
-                _("Error"),
-                wx.ICON_ERROR,
-            )
+        retryBackoffSeconds = self._parse_float(
+            self.retryBackoffSecondsEdit,
+            _("Retry backoff seconds must be a non-negative number."),
+            minimum=0.0,
+        )
+        if retryBackoffSeconds is None:
             return
 
-        try:
-            temperature = float(self.temperatureEdit.Value.strip())
-            if temperature < 0:
-                raise ValueError
-        except ValueError:
-            wx.MessageBox(
-                _("Generate temperature must be a non-negative number."),
-                _("Error"),
-                wx.ICON_ERROR,
-            )
+        temperature = self._parse_float(
+            self.temperatureEdit,
+            _("Generate temperature must be a non-negative number."),
+            minimum=0.0,
+        )
+        if temperature is None:
             return
 
-        try:
-            topK = int(self.topKEdit.Value.strip())
-            if topK < 0:
-                raise ValueError
-        except ValueError:
-            wx.MessageBox(
-                _("Generate top_k must be a non-negative integer."),
-                _("Error"),
-                wx.ICON_ERROR,
-            )
+        topK = self._parse_int(
+            self.topKEdit,
+            _("Generate top_k must be a non-negative integer."),
+            minimum=0,
+        )
+        if topK is None:
             return
 
-        try:
-            topP = float(self.topPEdit.Value.strip())
-            if topP < 0:
-                raise ValueError
-        except ValueError:
-            wx.MessageBox(
-                _("Generate top_p must be a non-negative number."),
-                _("Error"),
-                wx.ICON_ERROR,
-            )
+        topP = self._parse_float(
+            self.topPEdit,
+            _("Generate top_p must be a non-negative number."),
+            minimum=0.0,
+        )
+        if topP is None:
             return
 
-        try:
-            presencePenalty = float(self.presencePenaltyEdit.Value.strip())
-        except ValueError:
-            wx.MessageBox(
-                _("Generate presence_penalty must be a number."),
-                _("Error"),
-                wx.ICON_ERROR,
-            )
+        presencePenalty = self._parse_float(
+            self.presencePenaltyEdit,
+            _("Generate presence_penalty must be a number."),
+        )
+        if presencePenalty is None:
             return
 
         set_model_name(modelName)
