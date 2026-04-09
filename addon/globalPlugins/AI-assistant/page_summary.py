@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 from .browser_extractor import PageExtractionError
 from .models import PageSnapshot, SummaryResponse
 from .ollama_client import OllamaClientError
+from .prompt_builders import build_page_summary_prompt
 
 
 class PageSummaryCoordinator:
@@ -72,8 +73,9 @@ class PageSummaryCoordinator:
             self._queueToNVDA(self._announceProgress, generatedChars, preview)
 
         start = time.monotonic()
+        prompt = build_page_summary_prompt(snapshot)
         try:
-            response: SummaryResponse = self._client.summarize(snapshot, onPartial=onPartial)
+            response: SummaryResponse = self._client.summarize(prompt, onPartial=onPartial)
         except OllamaClientError as error:
             logger.exception("Page summary failed with OllamaClientError")
             self._queueToNVDA(self._announceError, str(error))

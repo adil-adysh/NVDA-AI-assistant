@@ -141,13 +141,13 @@ class OllamaClient:
 
     def summarize(
         self,
-        snapshot: PageSnapshot,
+        prompt: str,
         onPartial: Callable[[str, int], None] | None = None,
     ) -> SummaryResponse:
         model = self._resolveModel()
         payload: dict[str, Any] = {
             "model": model,
-            "prompt": self._buildPrompt(snapshot),
+            "prompt": prompt,
             "options": {
                 "num_ctx": self._numCtx,
                 "temperature": 0.3,
@@ -192,12 +192,13 @@ class OllamaClient:
     def describeImage(
         self,
         imageBase64: str,
+        prompt: str,
         onPartial: Callable[[str, int], None] | None = None,
     ) -> SummaryResponse:
         model = self._resolveModel()
         payload: dict[str, Any] = {
             "model": model,
-            "prompt": self._buildImagePrompt(),
+            "prompt": prompt,
             "images": [imageBase64],
             "options": {
                 "num_ctx": self._numCtx,
@@ -346,84 +347,6 @@ class OllamaClient:
             for name in [str(cast(OllamaModelEntry, item).get("name", ""))]
             if name.strip()
         ]
-
-    def _buildPrompt(self, snapshot: PageSnapshot) -> str:
-        truncatedNotice = "yes" if snapshot.truncated else "no"
-        headings = self._formatHeadings(snapshot.headings)
-        links = self._formatList(snapshot.links)
-        buttons = self._formatList(snapshot.buttons)
-        landmarks = self._formatList(snapshot.landmarks)
-        return (
-            "Role: NVDA accessibility assistant.\n"
-            "\n"
-            "Goal: Give a quick, useful understanding of the page and what the user can do.\n"
-            "\n"
-            "Rules:\n"
-            "* Use ONLY given content. Do NOT guess.\n"
-            "* If content is trimmed, say: \"Content may be incomplete.\"\n"
-            "* Be concise and practical.\n"
-            "* Do not repeat information.\n"
-            "\n"
-            "Process:\n"
-            "1. Look at headings, landmarks, links, buttons.\n"
-            "2. Then use page text to confirm meaning.\n"
-            "\n"
-            "Output EXACTLY:\n"
-            "\n"
-            "Overview:\n"
-            "(1–2 sentences about page purpose)\n\n"
-            "Key points:\n"
-            "\n"
-            "* (3 to 5 short points that matter to the user)\n\n"
-            "Page structure summary:\n"
-            "(Short description of layout/navigation)\n\n"
-            "Actions (optional):\n"
-            "\n"
-            "* (Up to 3 useful next steps)\n\n"
-            "Context:\n"
-            f"App: {snapshot.appTitle or 'Unknown'}\n"
-            f"Title: {snapshot.title}\n"
-            f"Trimmed: {truncatedNotice}\n\n"
-            "Counts:\n"
-            f"Headings: {len(snapshot.headings)}\n"
-            f"Links: {len(snapshot.links)}\n"
-            f"Buttons: {len(snapshot.buttons)}\n"
-            f"Landmarks: {len(snapshot.landmarks)}\n\n"
-            "Headings:\n"
-            f"{headings}\n\n"
-            "Landmarks:\n"
-            f"{landmarks}\n\n"
-            "Links:\n"
-            f"{links}\n\n"
-            "Buttons:\n"
-            f"{buttons}\n\n"
-            "Content:\n"
-            f"{snapshot.text}"
-        )
-
-    def _buildImagePrompt(self) -> str:
-        return (
-            "Role: NVDA accessibility assistant.\n"
-            "\n"
-            "Goal: Describe the visible window screenshot for someone using a screen reader.\n"
-            "\n"
-            "Rules:\n"
-            "* Use ONLY the visible image contents. Do NOT guess or invent missing details.\n"
-            "* Mention important visible text, buttons, controls, and structure.\n"
-            "* Be concise and practical.\n"
-            "* Do not repeat information.\n"
-            "\n"
-            "Output EXACTLY:\n"
-            "\n"
-            "Overview:\n"
-            "(1–2 sentences summarizing the visible window)\n\n"
-            "Key points:\n"
-            "\n"
-            "* (3 to 5 short points that matter to the user)\n\n"
-            "Actions (optional):\n"
-            "\n"
-            "* (Up to 3 useful next steps)\n\n"
-        )
 
     def _formatHeadings(self, headings: tuple[tuple[int | None, str], ...]) -> str:
         if not headings:
