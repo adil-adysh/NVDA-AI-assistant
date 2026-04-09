@@ -9,6 +9,7 @@ import ui
 
 from .browser_extractor import BrowserAwarePageExtractor
 from .download_progress import DownloadProgressTracker
+from .image_description import ImageDescriptionCoordinator
 from .ollama_client import OllamaClient, OllamaClientError
 from .page_summary import PageSummaryCoordinator
 
@@ -26,6 +27,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             extractor=BrowserAwarePageExtractor(),
             client=self._client,
         )
+        self._imageDescription = ImageDescriptionCoordinator(client=self._client)
         self._startModelPreload()
         logger.debug("Browser Assistant plugin initialized")
 
@@ -56,6 +58,11 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         logger.debug("Script summarizeCurrentPage invoked gesture=%s", gesture)
         self._pageSummary.summarizeCurrentPage()
 
+    def script_describeCurrentWindow(self, gesture: Any):
+        logger.debug("Script describeCurrentWindow invoked gesture=%s", gesture)
+        self._imageDescription.describeCurrentWindow()
+
     __gestures = {
         "kb:NVDA+Shift+S": "summarizeCurrentPage",
+        "kb:NVDA+Shift+I": "describeCurrentWindow",
     }

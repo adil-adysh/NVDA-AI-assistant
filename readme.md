@@ -7,6 +7,7 @@ An experimental NVDA add-on that uses a local Ollama model to summarize the curr
 - Summarizes the current page content using a local Ollama LLM.
 - Uses NVDA accessibility state to collect page headings, links, buttons, landmarks, and visible content.
 - Includes application context by reading the foreground object title from NVDA.
+- Captures the current foreground window as an image and describes it with Ollama.
 - Announces model installation progress and summary progress through NVDA messages.
 
 ## Key features
@@ -26,7 +27,8 @@ An experimental NVDA add-on that uses a local Ollama model to summarize the curr
 
 - Ollama server URL: `http://127.0.0.1:11434`
 - Default model: `gemma4:e2b`
-- Default keybind: `NVDA+Shift+S`
+- Summary keybind: `NVDA+Shift+S`
+- Image describe keybind: `NVDA+Shift+I`
 
 ## Download
 

@@ -189,6 +189,53 @@ class OllamaClient:
             )
         return SummaryResponse(text=summaryText, model=model)
 
+    def describeImage(
+        self,
+        imageBase64: str,
+        onPartial: Callable[[str, int], None] | None = None,
+    ) -> SummaryResponse:
+        model = self._resolveModel()
+        payload: dict[str, Any] = {
+            "model": model,
+            "prompt": self._buildImagePrompt(),
+            "images": [imageBase64],
+            "options": {
+                "num_ctx": self._numCtx,
+                "temperature": 0.3,
+                "top_k": 20,
+                "top_p": 0.9,
+                "presence_penalty": 0,
+            },
+            "keep_alive": self._keepAlive,
+        }
+
+        if onPartial is None:
+            payload["stream"] = False
+            logger.debug("Starting non-stream image generate request for model=%s", model)
+            response = self._requestJSON("POST", "/api/generate", payload)
+            typedResponse = self._validateGenerateResponse(response, "/api/generate")
+            descriptionText = str(typedResponse.get("response", "")).strip()
+            finalResponse = typedResponse
+        else:
+            logger.debug("Starting stream image generate request for model=%s", model)
+            descriptionText, finalResponse = self._requestGenerateStream(payload, onPartial)
+            logger.debug("Final generated description length=%d", len(descriptionText))
+
+        if not descriptionText:
+            logger.debug(
+                "Empty image description detected prompt_length=%d final_response=%s",
+                len(payload["prompt"]),
+                {
+                    "done": finalResponse.get("done"),
+                    "done_reason": finalResponse.get("done_reason"),
+                    "response_len": len(str(finalResponse.get("response", ""))),
+                },
+            )
+            raise OllamaClientError(
+                f"Empty image description. Prompt size={len(payload['prompt'])}. final_response={{'done': {finalResponse.get('done')}, 'done_reason': {finalResponse.get('done_reason')}}}"
+            )
+        return SummaryResponse(text=descriptionText, model=model)
+
     def listLocalModels(self) -> list[str]:
         logger.debug("Listing local Ollama models")
         return self._listModels()
@@ -352,6 +399,30 @@ class OllamaClient:
             f"{buttons}\n\n"
             "Content:\n"
             f"{snapshot.text}"
+        )
+
+    def _buildImagePrompt(self) -> str:
+        return (
+            "Role: NVDA accessibility assistant.\n"
+            "\n"
+            "Goal: Describe the visible window screenshot for someone using a screen reader.\n"
+            "\n"
+            "Rules:\n"
+            "* Use ONLY the visible image contents. Do NOT guess or invent missing details.\n"
+            "* Mention important visible text, buttons, controls, and structure.\n"
+            "* Be concise and practical.\n"
+            "* Do not repeat information.\n"
+            "\n"
+            "Output EXACTLY:\n"
+            "\n"
+            "Overview:\n"
+            "(1–2 sentences summarizing the visible window)\n\n"
+            "Key points:\n"
+            "\n"
+            "* (3 to 5 short points that matter to the user)\n\n"
+            "Actions (optional):\n"
+            "\n"
+            "* (Up to 3 useful next steps)\n\n"
         )
 
     def _formatHeadings(self, headings: tuple[tuple[int | None, str], ...]) -> str:
