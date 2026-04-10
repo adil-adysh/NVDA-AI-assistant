@@ -1,13 +1,13 @@
 # NVDA AI Assistant
 
-An experimental NVDA add-on that uses a local Ollama model to summarize the current page and surface accessible context for NVDA users.
+An experimental NVDA add-on that uses a local Ollama model or Google Gemini to summarize the current page and surface accessible context for NVDA users.
 
 ## What it does
 
-- Summarizes the current page content using a local Ollama LLM.
+- Summarizes the current page content using a local Ollama LLM or Gemini.
 - Uses NVDA accessibility state to collect page headings, links, buttons, landmarks, and visible content.
 - Includes application context by reading the foreground object title from NVDA.
-- Captures the current foreground window as an image and describes it with Ollama.
+- Captures the current foreground window as an image and describes it with the selected provider.
 - Announces model installation progress and summary progress through NVDA messages.
 
 ## Key features
@@ -25,8 +25,10 @@ An experimental NVDA add-on that uses a local Ollama model to summarize the curr
 
 ## Default behavior
 
+- Active provider: `Ollama`
 - Ollama server URL: `http://127.0.0.1:11434`
-- Default model: `gemma4:e2b`
+- Default Ollama model: `gemma4:e2b`
+- Default Gemini model: `gemini-flash-latest`
 - Summary keybind: `NVDA+Shift+S`
 - Image describe keybind: `NVDA+Shift+I`
 
@@ -40,15 +42,14 @@ Download the newest `.nvda-addon` asset and install it in NVDA.
 
 ## Configuration
 
-The add-on reads the following environment variables when it starts:
+The add-on stores configuration in NVDA's add-on settings panel under the AI assistant settings.
 
-- `BROWSER_ASSISTANT_OLLAMA_URL` – custom Ollama HTTP API URL.
-- `BROWSER_ASSISTANT_OLLAMA_MODEL` – Ollama model name to use.
-- `BROWSER_ASSISTANT_OLLAMA_TIMEOUT_SECONDS` – request timeout in seconds.
-- `BROWSER_ASSISTANT_OLLAMA_NUM_CTX` – context window size for generation.
-- `BROWSER_ASSISTANT_OLLAMA_KEEP_ALIVE` – Ollama keep-alive duration.
-- `BROWSER_ASSISTANT_OLLAMA_MAX_RETRIES` – retry count for Ollama requests.
-- `BROWSER_ASSISTANT_OLLAMA_RETRY_BACKOFF_SECONDS` – base backoff seconds for retries.
+- Choose the active provider: `Ollama` or `Gemini`.
+- For Ollama: configure the server URL, model name, keep-alive duration, and context window size.
+- For Gemini: configure the model name, API key, optional bearer token, and base URL.
+- Shared runtime settings include request timeout, streaming, progress announcements, retry count, and sampling parameters.
+
+When using Gemini, the add-on can also fall back to the `GEMINI_API_KEY` or `GOOGLE_API_KEY` environment variables if no key is provided in the settings.
 
 ## Usage
 
