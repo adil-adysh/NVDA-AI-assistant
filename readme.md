@@ -8,6 +8,7 @@ An experimental NVDA add-on that uses a local Ollama model or Google Gemini to s
 - Uses NVDA accessibility state to collect page headings, links, buttons, landmarks, and visible content.
 - Includes application context by reading the foreground object title from NVDA.
 - Captures the current foreground window as an image and describes it with the selected provider.
+- Supports an AI assistant command layer with a single main shortcut and in-layer commands.
 - Supports an AI chat dialog that can start with page content or screenshot context.
 - Announces model installation progress and summary progress through NVDA messages.
 
@@ -57,9 +58,9 @@ When using Gemini, the add-on can also fall back to the `GEMINI_API_KEY` or `GOO
 1. Start your local Ollama server.
 2. Install or make sure the configured model is available. The add-on will pull the model automatically if it is missing.
 3. Open NVDA and focus a page or application window.
-5. Press `NVDA+Shift+A` to activate the AI assistant layer.
-6. In the layer, press `S` for page summary, `I` for image description, `C` for chat, `P` to start chat with page content, `X` to start chat with a screenshot, or `H` for help.
-7. NVDA will announce progress and show the final text in a browseable message dialog or chat window.
+4. Press `NVDA+Shift+A` to activate the AI assistant layer.
+5. In the layer, press `S` for page summary, `I` for image description, `C` for chat, `P` to start chat with page content, `X` to start chat with a screenshot, or `H` for help.
+6. NVDA will announce progress and show the final text in a browseable message dialog or chat window.
 
 ## Development
 
