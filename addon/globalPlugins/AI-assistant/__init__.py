@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     scriptCategory = _("Smart Browser Tools")
+    assistantLayerModeActive = False
+    layeredScriptToRun = None
 
     def __init__(self):
         super().__init__()
@@ -52,6 +54,12 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self._chatCoordinator = ChatCoordinator(
             client=self._provider,
             metrics_reporter=self._metrics_reporter,
+        )
+        self._assistantLayerGestures = (
+            ("s", self.script_summarizeCurrentPage),
+            ("i", self.script_describeCurrentWindow),
+            ("c", self.script_openChatWindow),
+            ("h", self.script_assistantLayerHelp),
         )
         self._startModelPreload()
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(AIAssistantSettingsPanel)
@@ -130,3 +138,61 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             raise
         finally:
             gui.mainFrame.postPopup()
+
+    @script(
+        description=_(
+            "Activate the AI assistant command layer. "
+            "Press S for summary, I for image describe, C for chat, H for help."
+        ),
+        gesture="kb:NVDA+Shift+A",
+    )
+    def script_assistantLayerCommands(self, gesture: Any):
+        logger.debug("Script assistantLayerCommands invoked gesture=%s", gesture)
+        if self.assistantLayerModeActive:
+            self.script_error(gesture)
+            return
+        for gesture_key, handler in self._assistantLayerGestures:
+            self.bindGesture(f"kb:{gesture_key}", handler.__name__[7:])
+        self.assistantLayerModeActive = True
+        ui.message(
+            _("AI assistant layer active. Press S for summary, I for image describe, C for chat, or H for help.")
+        )
+
+    def getScript(self, gesture):
+        if not getattr(self, "assistantLayerModeActive", False):
+            return globalPluginHandler.GlobalPlugin.getScript(self, gesture)
+        script = globalPluginHandler.GlobalPlugin.getScript(self, gesture)
+        if not script:
+            return self.script_error
+        self.layeredScriptToRun = next(
+            (handler for key, handler in self._assistantLayerGestures if key == gesture.mainKeyName),
+            None,
+        )
+        return self.runAndFinish
+
+    def runAndFinish(self, gesture):
+        if self.layeredScriptToRun is not None:
+            self.layeredScriptToRun(gesture)
+        else:
+            ui.message(_("Can't find this assistant layer script."))
+        self.finish()
+
+    def finish(self):
+        self.assistantLayerModeActive = False
+        self.clearGestureBindings()
+        self.bindGestures(self.__gestures)
+
+    def script_error(self, gesture):
+        ui.message(_("Can't find this assistant layer script."))
+        self.finish()
+
+    @script(
+        description=_("Lists available AI assistant layer commands."),
+    )
+    def script_assistantLayerHelp(self, gesture: Any):
+        ui.message(
+            _(
+                "Assistant layer commands: S for summary, I for image describe, C for chat, H for help. "
+                "Press the key after activating the layer with NVDA+Shift+A."
+            )
+        )
