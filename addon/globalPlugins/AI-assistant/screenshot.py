@@ -33,6 +33,6 @@ def capture_foreground_window_png() -> bytes:
 	return buffer.getvalue()
 
 
-def capture_foreground_window_base64() -> str:
-	"""Capture the current foreground window and return a base64-encoded PNG string."""
-	return base64.b64encode(capture_foreground_window_png()).decode("ascii")
+def capture_foreground_window_bytes() -> bytes:
+    """Capture the current foreground window and return raw image bytes."""
+    return capture_foreground_window_png()

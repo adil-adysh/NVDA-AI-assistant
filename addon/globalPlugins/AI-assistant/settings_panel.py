@@ -13,6 +13,9 @@ from .settings import (
     get_generate_top_p,
     get_generate_temperature,
     get_gemini_config,
+    get_image_format,
+    get_image_quality,
+    get_image_max_side,
     get_keep_alive,
     get_max_retries,
     get_num_ctx,
@@ -28,6 +31,9 @@ from .settings import (
     set_generate_top_p,
     set_generate_temperature,
     set_gemini_config,
+    set_image_format,
+    set_image_max_side,
+    set_image_quality,
     set_keep_alive,
     set_max_retries,
     set_num_ctx,
@@ -139,6 +145,24 @@ class AIAssistantSettingsPanel(SettingsPanel):
             groupHelper,
             _("Request timeout (seconds):"),
             str(get_timeout_seconds() if get_timeout_seconds() is not None else defaults.DEFAULT_TIMEOUT_SECONDS),
+        )
+        self.imageMaxSideEdit = self._add_labeled_text_ctrl(
+            groupHelper,
+            _("Image max side length (pixels):"),
+            str(get_image_max_side() if get_image_max_side() is not None else defaults.DEFAULT_IMAGE_MAX_SIDE),
+        )
+        self.imageFormatChoice = wx.Choice(self, choices=["PNG", "JPEG"])
+        self.imageFormatChoice.SetSelection(
+            ["PNG", "JPEG"].index(get_image_format())
+            if get_image_format() in {"PNG", "JPEG"}
+            else 0
+        )
+        groupHelper.addItem(wx.StaticText(self, label=_("Image format: ")))
+        groupHelper.addItem(self.imageFormatChoice)
+        self.imageQualityEdit = self._add_labeled_text_ctrl(
+            groupHelper,
+            _("Image quality (JPEG only, 1-100):"),
+            str(get_image_quality() if get_image_quality() is not None else defaults.DEFAULT_IMAGE_QUALITY),
         )
         self.streamingCheckbox = groupHelper.addItem(
             wx.CheckBox(self, label=_("Enable streaming"))
@@ -252,6 +276,29 @@ class AIAssistantSettingsPanel(SettingsPanel):
         if topP is None:
             return
 
+        imageMaxSide = self._parse_int(
+            self.imageMaxSideEdit,
+            _("Image max side length must be an integer of at least 128."),
+            minimum=128,
+        )
+        if imageMaxSide is None:
+            return
+
+        imageFormatIndex = self.imageFormatChoice.GetSelection()
+        if imageFormatIndex < 0 or imageFormatIndex >= 2:
+            self._show_error(_("Image format must be PNG or JPEG."))
+            return
+        imageFormat = ["PNG", "JPEG"][imageFormatIndex]
+
+        imageQuality = self._parse_int(
+            self.imageQualityEdit,
+            _("Image quality must be an integer between 1 and 100."),
+            minimum=1,
+        )
+        if imageQuality is None or imageQuality > 100:
+            self._show_error(_("Image quality must be an integer between 1 and 100."))
+            return
+
         provider = self._selected_provider()
 
         if provider == "ollama":
@@ -322,6 +369,10 @@ class AIAssistantSettingsPanel(SettingsPanel):
                 base_url=geminiBaseUrl,
             )
             set_gemini_config(config)
+
+        set_image_max_side(imageMaxSide)
+        set_image_format(imageFormat)
+        set_image_quality(imageQuality)
 
         save()
 

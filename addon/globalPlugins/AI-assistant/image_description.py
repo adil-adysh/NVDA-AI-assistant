@@ -10,8 +10,10 @@ import ui
 from .base_coordinator import BaseCoordinator
 from .prompt_builders import build_image_description_prompt
 from .providers.base import LLMProvider
-from .screenshot import capture_foreground_window_base64
+from .screenshot import capture_foreground_window_bytes
+from .image_utils import encode_image_base64, prepare_image_bytes
 from .models import SummaryResponse
+from .settings import get_image_format, get_image_max_side, get_image_quality
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +33,14 @@ class ImageDescriptionCoordinator(BaseCoordinator):
         *args: Any,
         **kwargs: Any,
     ) -> SummaryResponse:
-        image_base64 = capture_foreground_window_base64()
+        raw_image_bytes = capture_foreground_window_bytes()
+        processed_bytes = prepare_image_bytes(
+            image_bytes=raw_image_bytes,
+            max_side=get_image_max_side(),
+            image_format=get_image_format(),
+            quality=get_image_quality(),
+        )
+        image_base64 = encode_image_base64(processed_bytes)
         prompt = self._build_image_description_prompt()
         return self._client.describe_image(
             image_base64=image_base64,

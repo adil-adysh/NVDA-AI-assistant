@@ -297,6 +297,19 @@ def get_generate_presence_penalty() -> float:
     return _read_float("generatePresencePenalty", defaults.DEFAULT_GENERATE_PRESENCE_PENALTY)
 
 
+def get_image_max_side() -> int:
+    return _read_int("imageMaxSide", defaults.DEFAULT_IMAGE_MAX_SIDE, minimum=128)
+
+
+def get_image_format() -> str:
+    image_format = _read_string("imageFormat", defaults.DEFAULT_IMAGE_FORMAT).strip().upper()
+    return image_format if image_format in {"PNG", "JPEG"} else defaults.DEFAULT_IMAGE_FORMAT
+
+
+def get_image_quality() -> int:
+    return _read_int("imageQuality", defaults.DEFAULT_IMAGE_QUALITY, minimum=1)
+
+
 def set_provider(provider: str) -> None:
     _set_value("provider", str(provider).strip().lower())
 
@@ -415,6 +428,18 @@ def set_generate_top_p(generateTopP: float) -> None:
 
 def set_generate_presence_penalty(generatePresencePenalty: float) -> None:
     _set_value("generatePresencePenalty", float(generatePresencePenalty))
+
+
+def set_image_max_side(imageMaxSide: int) -> None:
+    _set_value("imageMaxSide", int(imageMaxSide))
+
+
+def set_image_format(imageFormat: str) -> None:
+    _set_value("imageFormat", str(imageFormat).strip().upper())
+
+
+def set_image_quality(imageQuality: int) -> None:
+    _set_value("imageQuality", int(imageQuality))
 
 
 def save() -> None:
