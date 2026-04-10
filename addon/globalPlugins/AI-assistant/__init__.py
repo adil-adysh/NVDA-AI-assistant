@@ -8,6 +8,7 @@ import addonHandler
 import globalPluginHandler
 import gui
 import ui
+from scriptHandler import script
 
 from .browser_extractor import BrowserAwarePageExtractor
 from .download_progress import DownloadProgressTracker
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
-    scriptCategory = "Smart Browser Tools"
+    scriptCategory = _("Smart Browser Tools")
 
     def __init__(self):
         super().__init__()
@@ -61,6 +62,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     # Scripts (keybinds)
     # ------------------------------------------------------------------
 
+    @script(
+        description=_("Summarizes the current page using the selected AI provider."),
+        gesture="kb:NVDA+Shift+S",
+    )
     def script_summarizeCurrentPage(self, gesture: Any):
         logger.debug("Script summarizeCurrentPage invoked gesture=%s", gesture)
         self._pageSummary.summarizeCurrentPage()
@@ -73,11 +78,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         super().terminate()
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.remove(AIAssistantSettingsPanel)
 
+    @script(
+        description=_("Captures and describes the current foreground window using the selected AI provider."),
+        gesture="kb:NVDA+Shift+I",
+    )
     def script_describeCurrentWindow(self, gesture: Any):
         logger.debug("Script describeCurrentWindow invoked gesture=%s", gesture)
         self._imageDescription.describeCurrentWindow()
-
-    __gestures = {
-        "kb:NVDA+Shift+S": "summarizeCurrentPage",
-        "kb:NVDA+Shift+I": "describeCurrentWindow",
-    }
