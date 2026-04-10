@@ -45,6 +45,16 @@ class ImageDescriptionCoordinator(BaseCoordinator):
     def _get_busy_message(self) -> str:
         return "Image description already in progress"
 
+    def _format_progress_message(self, generated_chars: int, preview: str) -> str:
+        if preview:
+            return f"Image description progress: {generated_chars} characters. {preview}"
+        return f"Image description progress: {generated_chars} characters generated"
+
+    def _present_result(self, result: SummaryResponse) -> None:
+        ui.message("Image description ready")
+        dialog_title = f"Image description ({result.model})"
+        ui.browseableMessage(result.text, title=dialog_title)
+
     def _build_image_description_prompt(self) -> str:
         foreground = self._getForegroundObjectSafe()
         app_title = None
