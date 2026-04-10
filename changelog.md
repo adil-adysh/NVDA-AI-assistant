@@ -1,10 +1,11 @@
-## v0.4 - 2026-04-10
-- Added Gemini provider integration and provider abstraction for Ollama and Gemini.
-- Refactored provider configurations and improved settings panel integration for clearer model and server selection.
-- Enhanced settings validation and user experience for AI assistant configuration.
-- Updated `.gitignore` to exclude local `.env` credential files.
+## v0.5.0 - 2026-04-11
+- Added a unified AI assistant command layer with a single main shortcut: `NVDA+Shift+A`.
+- Added layer commands for summary, image description, chat, page-content chat, screenshot chat, and help.
+- Added a new AI chat dialog with conversation history, tool calling support, and image/page context startup.
+- Improved Ollama response extraction and image description prompt behavior for more reliable multimodal results.
+- Refactored provider handling, chat coordination, and request metrics reporting.
 
-## v0.3
+## v0.4 - 2026-04-10
 - Refactored the global plugin into focused modules for URL detection and bookmark management.
 - Added on-demand current-page summarization through a local Ollama instance.
 - Added bounded page text extraction and asynchronous summary delivery so NVDA remains responsive.

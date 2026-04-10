@@ -8,6 +8,7 @@ An experimental NVDA add-on that uses a local Ollama model or Google Gemini to s
 - Uses NVDA accessibility state to collect page headings, links, buttons, landmarks, and visible content.
 - Includes application context by reading the foreground object title from NVDA.
 - Captures the current foreground window as an image and describes it with the selected provider.
+- Supports an AI chat dialog that can start with page content or screenshot context.
 - Announces model installation progress and summary progress through NVDA messages.
 
 ## Key features
@@ -29,8 +30,8 @@ An experimental NVDA add-on that uses a local Ollama model or Google Gemini to s
 - Ollama server URL: `http://127.0.0.1:11434`
 - Default Ollama model: `gemma4:e2b`
 - Default Gemini model: `gemini-flash-latest`
-- Summary keybind: `NVDA+Shift+S`
-- Image describe keybind: `NVDA+Shift+I`
+- Main assistant keybind: `NVDA+Shift+A`
+- Layer commands: `S` for summary, `I` for image describe, `C` for chat, `P` for page content chat, `X` for screenshot chat, `H` for help
 
 ## Download
 
@@ -56,10 +57,9 @@ When using Gemini, the add-on can also fall back to the `GEMINI_API_KEY` or `GOO
 1. Start your local Ollama server.
 2. Install or make sure the configured model is available. The add-on will pull the model automatically if it is missing.
 3. Open NVDA and focus a page or application window.
-4. Press `NVDA+Shift+S` to summarize the current page.
-5. NVDA will announce summary progress and show the final text in a browseable message dialog.
-6. Press `NVDA+Shift+I` to capture and describe the current foreground window image.
-7. NVDA will announce image description progress and show the final text in a browseable message dialog.
+5. Press `NVDA+Shift+A` to activate the AI assistant layer.
+6. In the layer, press `S` for page summary, `I` for image description, `C` for chat, `P` to start chat with page content, `X` to start chat with a screenshot, or `H` for help.
+7. NVDA will announce progress and show the final text in a browseable message dialog or chat window.
 
 ## Development
 
