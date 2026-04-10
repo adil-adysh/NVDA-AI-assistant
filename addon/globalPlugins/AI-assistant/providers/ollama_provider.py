@@ -5,7 +5,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from ..models import LLMRequest, LLMResponse, SummaryResponse, TaskType
+from ..models import LLMRequest, LLMResponse, SummaryResponse, TaskType, ToolCall
 from ..ollama_client import OllamaClient, OllamaClientError
 from .base import LLMProvider, LLMProviderError, ProgressCallback, PartialCallback, format_chat_messages
 from .config import OllamaConfig
@@ -83,7 +83,43 @@ class OllamaProvider(LLMProvider):
         except OllamaClientError as error:
             raise self._wrap_exception(error) from error
 
-        return LLMResponse(text=response.text, model=response.model, raw=response, metrics=None)
+        return LLMResponse(
+            text=response.text,
+            model=response.model,
+            raw=response,
+            metrics=None,
+            tool_calls=self._extract_tool_calls(response.metadata if response.metadata else {}),
+        )
+
+    def _extract_tool_calls(self, metadata: dict[str, Any]) -> list[ToolCall] | None:
+        raw_response = metadata.get("raw") if isinstance(metadata, dict) else None
+        if not isinstance(raw_response, dict):
+            return None
+
+        message = raw_response.get("message") if isinstance(raw_response.get("message"), dict) else raw_response
+        tool_calls = message.get("tool_calls") or message.get("toolCalls") or raw_response.get("tool_calls")
+        if isinstance(tool_calls, list):
+            return self._normalize_tool_calls(tool_calls)
+
+        function_call = None
+        if isinstance(message, dict):
+            function_call = message.get("function_call") or message.get("tool_call")
+        if isinstance(function_call, dict):
+            return self._normalize_tool_calls([function_call])
+
+        return None
+
+    def _normalize_tool_calls(self, tool_calls: list[Any]) -> list[ToolCall] | None:
+        calls: list[ToolCall] = []
+        for tc in tool_calls:
+            if not isinstance(tc, dict):
+                continue
+            name = str(tc.get("name", "")).strip()
+            if not name:
+                continue
+            arguments = tc.get("arguments") if isinstance(tc.get("arguments"), dict) else {}
+            calls.append(ToolCall(name=name, arguments=arguments, id=tc.get("id")))
+        return calls or None
 
     def _handle_chat_fallback(self, request: LLMRequest) -> LLMResponse:
         prompt = format_chat_messages(request.messages)

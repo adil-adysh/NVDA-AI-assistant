@@ -272,6 +272,7 @@ class GeminiClient:
         model: str,
         contents: ContentList,
         config: Optional[GenerateContentConfig] = None,
+        tools: Optional[list[dict[str, Any]]] = None,
     ) -> GenerateContentResponse:
         """Generate text using a Gemini model."""
         if not model or not model.strip():
@@ -285,6 +286,8 @@ class GeminiClient:
             generation_config = config.to_dict()
             if generation_config:
                 body["generationConfig"] = generation_config
+        if tools is not None:
+            body["tools"] = tools
 
         response = self._request_json(
             self._build_request(f"models/{model}:generateContent", body)
@@ -298,6 +301,7 @@ class GeminiClient:
         prompt: str,
         mime_type: str = "image/png",
         config: Optional[GenerateContentConfig] = None,
+        tools: Optional[list[dict[str, Any]]] = None,
     ) -> GenerateContentResponse:
         """Send an image plus a prompt to Gemini and return the text response."""
         if not model or not model.strip():
@@ -312,13 +316,14 @@ class GeminiClient:
             Content(parts=[image_part]),
             Content.from_text(prompt),
         ]
-        return self.generate_content(model=model, contents=contents, config=config)
+        return self.generate_content(model=model, contents=contents, config=config, tools=tools)
 
     def stream_content(
         self,
         model: str,
         contents: ContentList,
         config: Optional[GenerateContentConfig] = None,
+        tools: Optional[list[dict[str, Any]]] = None,
     ) -> Generator[str, None, None]:
         """Stream partial Gemini response text using SSE."""
         if not model or not model.strip():
@@ -332,6 +337,8 @@ class GeminiClient:
             generation_config = config.to_dict()
             if generation_config:
                 body["generationConfig"] = generation_config
+        if tools is not None:
+            body["tools"] = tools
 
         request = self._build_request(
             f"models/{model}:generateContent?alt=sse",

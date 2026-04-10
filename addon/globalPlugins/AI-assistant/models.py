@@ -25,6 +25,13 @@ class SummaryResponse:
     metadata: dict[str, Any] | None = None
 
 
+@dataclass(slots=True)
+class ToolCall:
+    name: str
+    arguments: dict[str, Any]
+    id: str | None = None
+
+
 class TaskType(str, Enum):
     SUMMARY = "summary"
     IMAGE_DESCRIPTION = "image_description"
@@ -48,7 +55,7 @@ class LLMRequest:
     messages: list[ChatMessage] | None = None
     tools: list[dict[str, Any]] | None = None
     stream: bool = False
-    stream_handler: Callable[[str], None] | None = None
+    stream_handler: Callable[[str, int], None] | None = None
     metadata: dict[str, Any] | None = None
 
 
@@ -58,3 +65,4 @@ class LLMResponse:
     model: str | None = None
     raw: Any | None = None
     metrics: Any | None = None
+    tool_calls: list[ToolCall] | None = None

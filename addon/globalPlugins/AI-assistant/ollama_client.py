@@ -51,12 +51,22 @@ class OllamaGenerateResponse(TypedDict, total=False):
     eval_duration: int
 
 
+class OllamaToolCall(TypedDict, total=False):
+    type: str
+    function: dict[str, Any]
+
+
 class OllamaChatMessage(TypedDict, total=False):
     role: str
     content: str
     images: list[str]
     tool_name: str
-    tool_calls: list[dict[str, Any]]
+    tool_calls: list[OllamaToolCall]
+
+
+class OllamaToolDefinition(TypedDict, total=False):
+    type: str
+    function: dict[str, Any]
 
 
 class OllamaChatRequest(TypedDict, total=False):
@@ -65,11 +75,18 @@ class OllamaChatRequest(TypedDict, total=False):
     stream: bool
     options: dict[str, Any]
     keep_alive: str
-    tools: list[dict[str, Any]]
+    tools: list[OllamaToolDefinition]
+
+
+class OllamaMessageResponse(TypedDict, total=False):
+    role: str
+    content: str
+    thinking: str
+    tool_calls: list[OllamaToolCall]
 
 
 class OllamaChatResponse(OllamaGenerateResponse, total=False):
-    message: dict[str, Any]
+    message: OllamaMessageResponse
 
 
 class OllamaRunningModel(TypedDict, total=False):
@@ -256,9 +273,19 @@ class OllamaClient:
     def chat(
         self,
         messages: list[OllamaChatMessage],
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[OllamaToolDefinition] | None = None,
         onPartial: Callable[[str, int], None] | None = None,
     ) -> SummaryResponse:
+        """Send a chat request to Ollama, optionally with tool definitions.
+
+        Args:
+            messages: A list of chat message dictionaries.
+            tools: Optional tool schemas for Ollama tool calling.
+            onPartial: Optional callback for streaming partial text chunks.
+
+        Returns:
+            A SummaryResponse containing the final assistant text and model.
+        """
         model = self._resolveModel()
         payload: OllamaChatRequest = {
             "model": model,
@@ -280,10 +307,12 @@ class OllamaClient:
             else:
                 chatText = str(typedResponse.get("response", "")).strip()
             finalResponse = typedResponse
+            metadata = {"raw": typedResponse}
         else:
             logger.debug("Starting stream /api/chat request for model=%s", model)
             chatText, finalResponse = self._requestGenerateStream(payload, onPartial, "/api/chat")
             logger.debug("Final generated chat length=%d", len(chatText))
+            metadata = {"raw": finalResponse}
 
         if not chatText:
             logger.debug(
@@ -297,7 +326,7 @@ class OllamaClient:
             raise OllamaClientError(
                 f"Empty chat response. final_response={{'done': {finalResponse.get('done')}, 'done_reason': {finalResponse.get('done_reason')}}}"
             )
-        return SummaryResponse(text=chatText, model=model)
+        return SummaryResponse(text=chatText, model=model, metadata=metadata)
 
     def listLocalModels(self) -> list[str]:
         logger.debug("Listing local Ollama models")

@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable
 from typing import Optional
 
-from ..models import LLMRequest, LLMResponse, SummaryResponse, TaskType
+from ..models import LLMRequest, LLMResponse, SummaryResponse, TaskType, ToolCall
 from .base import LLMProvider, LLMProviderError, PartialCallback, ProgressCallback, format_chat_messages
 from .config import GeminiConfig
 from ..gemini import GeminiClient, GeminiClientError
@@ -110,6 +110,45 @@ class GeminiProvider(LLMProvider):
 
         return self._handle_chat_fallback(request)
 
+    def _extract_tool_calls(self, raw_response: Any) -> list[ToolCall] | None:
+        if not isinstance(raw_response, dict):
+            return None
+
+        tool_calls = raw_response.get("tool_calls") or raw_response.get("toolCalls")
+        if isinstance(tool_calls, list):
+            return self._normalize_tool_calls(tool_calls)
+
+        # Official Gemini streaming/function-call responses may embed function call objects in candidates.
+        candidates = raw_response.get("candidates")
+        if isinstance(candidates, list):
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                content = candidate.get("content")
+                if isinstance(content, dict):
+                    if content.get("type") == "function_call":
+                        return self._normalize_tool_calls([content])
+                    if content.get("type") == "tool_call":
+                        return self._normalize_tool_calls([content])
+                    # nested message-style function call block
+                    function_call = content.get("function_call") or content.get("tool_call")
+                    if isinstance(function_call, dict):
+                        return self._normalize_tool_calls([function_call])
+
+        return None
+
+    def _normalize_tool_calls(self, tool_calls: list[Any]) -> list[ToolCall] | None:
+        calls: list[ToolCall] = []
+        for tc in tool_calls:
+            if not isinstance(tc, dict):
+                continue
+            name = str(tc.get("name", "")).strip()
+            if not name:
+                continue
+            arguments = tc.get("arguments") if isinstance(tc.get("arguments"), dict) else {}
+            calls.append(ToolCall(name=name, arguments=arguments, id=tc.get("id")))
+        return calls or None
+
     def _handle_multimodal_chat(self, request: LLMRequest) -> LLMResponse:
         parts: list[Part] = []
         for msg in request.messages or []:
@@ -123,13 +162,29 @@ class GeminiProvider(LLMProvider):
 
         if request.stream_handler is not None:
             text_output = ""
-            for chunk in self._client.stream_content(model=self._resolve_model(), contents=contents, config=self._build_generation_config()):
+            for chunk in self._client.stream_content(
+                model=self._resolve_model(),
+                contents=contents,
+                config=self._build_generation_config(),
+                tools=request.tools,
+            ):
                 text_output += chunk
-                request.stream_handler(chunk)
+                request.stream_handler(text_output, len(text_output))
             return LLMResponse(text=text_output, model="gemini", raw=None, metrics=None)
 
-        response = self._client.generate_content(model=self._resolve_model(), contents=contents, config=self._build_generation_config())
-        return LLMResponse(text=response.text, model="gemini", raw=response, metrics=None)
+        response = self._client.generate_content(
+            model=self._resolve_model(),
+            contents=contents,
+            config=self._build_generation_config(),
+            tools=request.tools,
+        )
+        return LLMResponse(
+            text=response.text,
+            model="gemini",
+            raw=response,
+            metrics=None,
+            tool_calls=self._extract_tool_calls(response.raw),
+        )
 
     def _handle_chat_fallback(self, request: LLMRequest) -> LLMResponse:
         prompt = format_chat_messages(request.messages)
