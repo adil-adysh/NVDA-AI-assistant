@@ -376,6 +376,14 @@ class OllamaClient:
             headers=headers,
             method=method,
         )
+        modelName = ""
+        if isinstance(payload, dict):
+            rawModel = payload.get("model")
+            if isinstance(rawModel, str) and rawModel.strip():
+                modelName = rawModel.strip()
+        if not modelName:
+            modelName = self._model or self._configuredModel() or get_model_name() or ""
+        modelInfo = f" model={modelName}" if modelName else ""
         lastErrorMessage = ""
         attempts = self._maxRetries + 1
 
@@ -397,7 +405,7 @@ class OllamaClient:
                 lastErrorMessage = f"HTTP {error.code}. {details}" if details else f"HTTP {error.code}."
                 if not self._isRetryableStatus(error.code) or attempt >= attempts:
                     raise OllamaClientError(
-                        f"Ollama request failed for {path} after {attempt} attempt(s): {lastErrorMessage}"
+                        f"Ollama request failed for {path} after {attempt} attempt(s): {lastErrorMessage}{modelInfo}"
                     )
             except urllibError.URLError as error:
                 reason = getattr(error, "reason", None)

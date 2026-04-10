@@ -11,14 +11,14 @@ import ui
 from .base_coordinator import BaseCoordinator
 from .browser_extractor import PageExtractionError
 from .models import PageSnapshot, SummaryResponse
-from .ollama_client import OllamaClient
 from .prompt_builders import build_page_summary_prompt
+from .providers.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
 
 class PageSummaryCoordinator(BaseCoordinator):
-    def __init__(self, extractor: Any, client: OllamaClient):
+    def __init__(self, extractor: Any, client: LLMProvider):
         super().__init__()
         self._extractor = extractor
         self._client = client

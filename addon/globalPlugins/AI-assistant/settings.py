@@ -152,14 +152,47 @@ def _read_bool(key: str, default: bool) -> bool:
     return default
 
 
+def get_provider() -> str:
+    """Return the selected LLM provider."""
+    return _read_string("provider", defaults.DEFAULT_PROVIDER).strip().lower()
+
+
+def get_ollama_model_name() -> str:
+    return _read_string("ollamaModelName", defaults.DEFAULT_OLLAMA_MODEL)
+
+
+def get_ollama_server_url() -> str:
+    return _read_string("ollamaServerUrl", defaults.DEFAULT_OLLAMA_URL)
+
+
+def get_gemini_model_name() -> str:
+    return _read_string("geminiModelName", defaults.DEFAULT_GEMINI_MODEL)
+
+
+def get_gemini_api_key() -> str:
+    return _read_string("geminiApiKey", "")
+
+
+def get_gemini_api_token() -> str:
+    return _read_string("geminiApiToken", "")
+
+
+def get_gemini_base_url() -> str:
+    return _read_string("geminiBaseUrl", defaults.DEFAULT_GEMINI_BASE_URL)
+
+
 def get_model_name() -> str:
-    """Return the configured Ollama model name."""
-    return _read_string("modelName", defaults.DEFAULT_OLLAMA_MODEL)
+    """Return the configured model name for the selected provider."""
+    if get_provider() == "gemini":
+        return get_gemini_model_name()
+    return get_ollama_model_name()
 
 
 def get_server_url() -> str:
-    """Return the configured Ollama server URL."""
-    return _read_string("serverUrl", defaults.DEFAULT_OLLAMA_URL)
+    """Return the configured backend URL for the selected provider."""
+    if get_provider() == "gemini":
+        return get_gemini_base_url()
+    return get_ollama_server_url()
 
 
 def is_streaming_enabled() -> bool:
@@ -218,12 +251,46 @@ def get_generate_presence_penalty() -> float:
     return _read_float("generatePresencePenalty", defaults.DEFAULT_GENERATE_PRESENCE_PENALTY)
 
 
+def set_provider(provider: str) -> None:
+    _set_value("provider", str(provider).strip().lower())
+
+
+def set_ollama_model_name(modelName: str) -> None:
+    _set_value("ollamaModelName", str(modelName).strip())
+
+
+def set_ollama_server_url(serverUrl: str) -> None:
+    _set_value("ollamaServerUrl", str(serverUrl).strip())
+
+
+def set_gemini_model_name(modelName: str) -> None:
+    _set_value("geminiModelName", str(modelName).strip())
+
+
+def set_gemini_api_key(apiKey: str) -> None:
+    _set_value("geminiApiKey", str(apiKey).strip())
+
+
+def set_gemini_api_token(apiToken: str) -> None:
+    _set_value("geminiApiToken", str(apiToken).strip())
+
+
+def set_gemini_base_url(baseUrl: str) -> None:
+    _set_value("geminiBaseUrl", str(baseUrl).strip())
+
+
 def set_model_name(modelName: str) -> None:
-    _set_value("modelName", str(modelName).strip())
+    if get_provider() == "gemini":
+        set_gemini_model_name(modelName)
+    else:
+        set_ollama_model_name(modelName)
 
 
 def set_server_url(serverUrl: str) -> None:
-    _set_value("serverUrl", str(serverUrl).strip())
+    if get_provider() == "gemini":
+        set_gemini_base_url(serverUrl)
+    else:
+        set_ollama_server_url(serverUrl)
 
 
 def set_streaming_enabled(enabled: bool) -> None:

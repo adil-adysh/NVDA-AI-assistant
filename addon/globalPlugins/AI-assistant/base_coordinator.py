@@ -8,7 +8,7 @@ from typing import Any
 import queueHandler
 import ui
 
-from .ollama_client import OllamaClientError
+from .providers.base import LLMProviderError
 from .settings import is_progress_enabled, is_streaming_enabled
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,7 @@ class BaseCoordinator:
 
 	def __init__(self) -> None:
 		"""Initialize shared coordinator state."""
+		super().__init__()
 		self._lock = threading.Lock()
 		self._active_worker: threading.Thread | None = None
 		self._last_announced_chars = 0
@@ -56,8 +57,8 @@ class BaseCoordinator:
 
 		try:
 			result = self._run_task_logic(progress_callback, *args, **kwargs)
-		except OllamaClientError as error:
-			logger.exception("Task failed with OllamaClientError")
+		except LLMProviderError as error:
+			logger.exception("Task failed with provider error")
 			self._handle_error(error)
 		except Exception as error:
 			logger.exception("Task failed with unexpected exception")
@@ -102,7 +103,7 @@ class BaseCoordinator:
 
 	def _run_task_logic(
 		self,
-		progress_callback: Callable[[str, int], None],
+		progress_callback: Callable[[str, int], None] | None,
 		*args: Any,
 		**kwargs: Any,
 	) -> Any:

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,3 +19,5 @@ class PageSnapshot:
 class SummaryResponse:
     text: str
     model: str
+    provider: str = "unknown"
+    metadata: dict[str, Any] | None = None

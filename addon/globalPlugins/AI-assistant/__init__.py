@@ -12,8 +12,9 @@ import ui
 from .browser_extractor import BrowserAwarePageExtractor
 from .download_progress import DownloadProgressTracker
 from .image_description import ImageDescriptionCoordinator
-from .ollama_client import OllamaClient, OllamaClientError
 from .page_summary import PageSummaryCoordinator
+from .providers.factory import ProviderFactory
+from .providers.base import LLMProviderError
 from .settings_panel import AIAssistantSettingsPanel
 
 logger = logging.getLogger(__name__)
@@ -26,27 +27,28 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         super().__init__()
         addonHandler.initTranslation()
         logger.debug("Browser Assistant plugin initializing")
-        self._client = OllamaClient()
+        self._provider = ProviderFactory.create_provider()
         self._pageSummary = PageSummaryCoordinator(
             extractor=BrowserAwarePageExtractor(),
-            client=self._client,
+            client=self._provider,
         )
-        self._imageDescription = ImageDescriptionCoordinator(client=self._client)
+        self._imageDescription = ImageDescriptionCoordinator(client=self._provider)
         self._startModelPreload()
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(AIAssistantSettingsPanel)
         logger.debug("Browser Assistant plugin initialized")
 
     def _startModelPreload(self):
         def worker():
-            ui.message("Checking Ollama model availability.")
+            provider_name = self._provider.provider_name()
+            ui.message(f"Checking {provider_name} model availability.")
             announcer = DownloadProgressTracker(ui.message)
 
             try:
-                model = self._client.ensureModelInstalled(onProgress=announcer.process_event)
-            except OllamaClientError as error:
+                model = self._provider.ensure_model_available(on_progress=announcer.process_event)
+            except LLMProviderError as error:
                 ui.message(str(error))
             else:
-                ui.message(f"Ollama model {model} is ready.")
+                ui.message(f"{provider_name.capitalize()} model {model} is ready.")
 
         thread = threading.Thread(
             target=worker,

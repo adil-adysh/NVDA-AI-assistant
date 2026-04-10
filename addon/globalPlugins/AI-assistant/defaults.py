@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 """Static default configuration values for the NVDA AI assistant."""
 
+DEFAULT_PROVIDER = "ollama"
 DEFAULT_OLLAMA_MODEL = "gemma4:e2b"
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 DEFAULT_OLLAMA_CLI = "ollama"
+DEFAULT_GEMINI_MODEL = "gemini-1.0"
+DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_ENABLE_STREAMING = True
 DEFAULT_ENABLE_PROGRESS_ANNOUNCEMENTS = True
 

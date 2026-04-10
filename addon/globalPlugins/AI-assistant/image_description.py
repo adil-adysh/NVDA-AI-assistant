@@ -8,8 +8,8 @@ from typing import Any, Optional
 import ui
 
 from .base_coordinator import BaseCoordinator
-from .ollama_client import OllamaClient
 from .prompt_builders import build_image_description_prompt
+from .providers.base import LLMProvider
 from .screenshot import capture_foreground_window_base64
 from .models import SummaryResponse
 
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class ImageDescriptionCoordinator(BaseCoordinator):
-	def __init__(self, client: OllamaClient):
+	def __init__(self, client: LLMProvider):
 		super().__init__()
 		self._client = client
 
