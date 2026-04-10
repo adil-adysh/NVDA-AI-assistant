@@ -8,18 +8,19 @@ from typing import Any
 from ..models import SummaryResponse
 from ..ollama_client import OllamaClient, OllamaClientError
 from .base import LLMProvider, LLMProviderError, ProgressCallback, PartialCallback
+from .config import OllamaConfig
 
 logger = logging.getLogger(__name__)
 
 
 class OllamaProvider(LLMProvider):
-    def __init__(
-        self,
-        model: str | None = None,
-        server_url: str | None = None,
-        timeout_seconds: float | None = None,
-    ) -> None:
-        self._client = OllamaClient(baseURL=server_url, model=model, timeoutSeconds=timeout_seconds)
+    def __init__(self, config: OllamaConfig) -> None:
+        self._config = config
+        self._client = OllamaClient(
+            baseURL=config.server_url,
+            model=config.model_name,
+            timeoutSeconds=config.timeout_seconds,
+        )
 
     def provider_name(self) -> str:
         return "ollama"

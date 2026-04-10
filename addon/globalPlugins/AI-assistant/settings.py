@@ -4,6 +4,7 @@ from typing import Any
 import config as nvda_config
 
 from . import defaults
+from .providers.config import GeminiConfig, OllamaConfig, ProviderConfig
 
 
 def _get_ai_assistant_section() -> Any:
@@ -181,18 +182,63 @@ def get_gemini_base_url() -> str:
     return _read_string("geminiBaseUrl", defaults.DEFAULT_GEMINI_BASE_URL)
 
 
+def get_ollama_config() -> OllamaConfig:
+    return OllamaConfig(
+        provider="ollama",
+        model_name=get_ollama_model_name(),
+        timeout_seconds=get_timeout_seconds(),
+        enable_streaming=is_streaming_enabled(),
+        enable_progress=is_progress_enabled(),
+        num_ctx=get_num_ctx(),
+        max_retries=get_max_retries(),
+        retry_backoff_seconds=get_retry_backoff_seconds(),
+        generate_temperature=get_generate_temperature(),
+        generate_top_k=get_generate_top_k(),
+        generate_top_p=get_generate_top_p(),
+        generate_presence_penalty=get_generate_presence_penalty(),
+        server_url=get_ollama_server_url(),
+        keep_alive=get_keep_alive(),
+    )
+
+
+def get_gemini_config() -> GeminiConfig:
+    return GeminiConfig(
+        provider="gemini",
+        model_name=get_gemini_model_name(),
+        timeout_seconds=get_timeout_seconds(),
+        enable_streaming=is_streaming_enabled(),
+        enable_progress=is_progress_enabled(),
+        num_ctx=get_num_ctx(),
+        max_retries=get_max_retries(),
+        retry_backoff_seconds=get_retry_backoff_seconds(),
+        generate_temperature=get_generate_temperature(),
+        generate_top_k=get_generate_top_k(),
+        generate_top_p=get_generate_top_p(),
+        api_key=get_gemini_api_key(),
+        api_token=get_gemini_api_token(),
+        base_url=get_gemini_base_url(),
+    )
+
+
+def get_active_provider_config() -> ProviderConfig:
+    if get_provider() == "gemini":
+        return get_gemini_config()
+    return get_ollama_config()
+
+
 def get_model_name() -> str:
     """Return the configured model name for the selected provider."""
-    if get_provider() == "gemini":
-        return get_gemini_model_name()
-    return get_ollama_model_name()
+    return get_active_provider_config().model_name
 
 
 def get_server_url() -> str:
     """Return the configured backend URL for the selected provider."""
-    if get_provider() == "gemini":
-        return get_gemini_base_url()
-    return get_ollama_server_url()
+    active = get_active_provider_config()
+    if isinstance(active, GeminiConfig):
+        return active.base_url
+    if isinstance(active, OllamaConfig):
+        return active.server_url
+    return ""
 
 
 def is_streaming_enabled() -> bool:
@@ -271,12 +317,46 @@ def set_gemini_api_key(apiKey: str) -> None:
     _set_value("geminiApiKey", str(apiKey).strip())
 
 
-def set_gemini_api_token(apiToken: str) -> None:
-    _set_value("geminiApiToken", str(apiToken).strip())
+def set_gemini_api_token(apiToken: str | None) -> None:
+    _set_value("geminiApiToken", str(apiToken or "").strip())
 
 
 def set_gemini_base_url(baseUrl: str) -> None:
     _set_value("geminiBaseUrl", str(baseUrl).strip())
+
+
+def set_ollama_config(config: OllamaConfig) -> None:
+    set_provider(config.provider)
+    set_ollama_model_name(config.model_name)
+    set_ollama_server_url(config.server_url)
+    set_timeout_seconds(config.timeout_seconds)
+    set_num_ctx(config.num_ctx)
+    set_keep_alive(config.keep_alive)
+    set_max_retries(config.max_retries)
+    set_retry_backoff_seconds(config.retry_backoff_seconds)
+    set_generate_temperature(config.generate_temperature)
+    set_generate_top_k(config.generate_top_k)
+    set_generate_top_p(config.generate_top_p)
+    set_generate_presence_penalty(config.generate_presence_penalty)
+    set_streaming_enabled(config.enable_streaming)
+    set_progress_enabled(config.enable_progress)
+
+
+def set_gemini_config(config: GeminiConfig) -> None:
+    set_provider(config.provider)
+    set_gemini_model_name(config.model_name)
+    set_gemini_api_key(config.api_key)
+    set_gemini_api_token(config.api_token)
+    set_gemini_base_url(config.base_url)
+    set_timeout_seconds(config.timeout_seconds)
+    set_num_ctx(config.num_ctx)
+    set_max_retries(config.max_retries)
+    set_retry_backoff_seconds(config.retry_backoff_seconds)
+    set_generate_temperature(config.generate_temperature)
+    set_generate_top_k(config.generate_top_k)
+    set_generate_top_p(config.generate_top_p)
+    set_streaming_enabled(config.enable_streaming)
+    set_progress_enabled(config.enable_progress)
 
 
 def set_model_name(modelName: str) -> None:
