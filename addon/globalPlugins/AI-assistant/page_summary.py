@@ -6,11 +6,11 @@ from typing import Any
 
 from typing import Optional
 
-import ui
-
+from . import nvda_ui
 from .base_coordinator import BaseCoordinator
 from .browser_extractor import PageExtractionError
-from .models import PageSnapshot, SummaryResponse
+from .models import LLMRequest, LLMResponse, PageSnapshot, TaskType
+from .metrics_reporter import MetricsReporter
 from .prompt_builders import build_page_summary_prompt
 from .providers.base import LLMProvider
 from .request_metrics import SummaryRequestMetrics, estimate_tokens
@@ -19,8 +19,13 @@ logger = logging.getLogger(__name__)
 
 
 class PageSummaryCoordinator(BaseCoordinator):
-    def __init__(self, extractor: Any, client: LLMProvider):
-        super().__init__()
+    def __init__(
+        self,
+        extractor: Any,
+        client: LLMProvider,
+        metrics_reporter: MetricsReporter | None = None,
+    ):
+        super().__init__(metrics_reporter)
         self._extractor = extractor
         self._client = client
 
@@ -28,7 +33,7 @@ class PageSummaryCoordinator(BaseCoordinator):
         try:
             snapshot = self._extractor.extract()
         except PageExtractionError as error:
-            ui.message(str(error))
+            nvda_ui.message(str(error))
             return
 
         prompt = build_page_summary_prompt(snapshot)
@@ -40,7 +45,7 @@ class PageSummaryCoordinator(BaseCoordinator):
             len(snapshot.buttons),
             len(snapshot.landmarks),
         )
-        ui.message("Summarizing current page")
+        nvda_ui.message("Summarizing current page")
         self.start_task(snapshot, prompt)
 
     def _build_request_metrics(self, snapshot: PageSnapshot, prompt: str) -> SummaryRequestMetrics:
@@ -57,19 +62,28 @@ class PageSummaryCoordinator(BaseCoordinator):
         progress_callback: Optional[Callable[[str, int], None]],
         snapshot: PageSnapshot,
         prompt: str,
-    ) -> tuple[SummaryResponse, str]:
-        response = self._client.summarize(prompt, on_partial=progress_callback)
+    ) -> tuple[LLMResponse, str]:
+        response = self._client.generate(
+            LLMRequest(
+                task_type=TaskType.SUMMARY,
+                input_text=prompt,
+                stream=progress_callback is not None,
+                stream_handler=progress_callback,
+                metadata=None,
+            )
+        )
         if self._request_metrics is not None:
             self._request_metrics.output_chars = len(response.text or "")
             self._request_metrics.output_tokens_estimated = estimate_tokens(response.text)
-            self._request_metrics.model = response.model
+            self._request_metrics.model = response.model or "unknown"
         return response, snapshot.title
 
-    def _present_result(self, result: tuple[SummaryResponse, str]) -> None:
+    def _present_result(self, result: tuple[LLMResponse, str]) -> None:
         response, page_title = result
-        ui.message("Page summary ready")
-        dialogTitle = f"Page summary ({response.model}) - {page_title}"
-        ui.browseableMessage(response.text, title=dialogTitle)
+        nvda_ui.message("Page summary ready")
+        model_name = response.model or "unknown"
+        dialogTitle = f"Page summary ({model_name}) - {page_title}"
+        nvda_ui.browseable_message(response.text, title=dialogTitle)
 
     def _format_progress_message(self, generated_chars: int, preview: str) -> str:
         if preview:

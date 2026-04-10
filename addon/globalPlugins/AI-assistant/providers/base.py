@@ -5,7 +5,7 @@ import abc
 from collections.abc import Callable
 from typing import Any
 
-from ..models import SummaryResponse
+from ..models import LLMRequest, LLMResponse, SummaryResponse
 
 PartialCallback = Callable[[str, int], None]
 ProgressCallback = Callable[[str], None]
@@ -31,7 +31,7 @@ class LLMProvider(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def summarize(self, prompt: str, on_partial: PartialCallback | None = None) -> SummaryResponse:
+    def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -39,8 +39,12 @@ class LLMProvider(abc.ABC):
         self,
         image_base64: str,
         prompt: str,
-        on_partial: PartialCallback | None = None,
+        stream_handler: PartialCallback | None = None,
     ) -> SummaryResponse:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def generate(self, request: LLMRequest) -> LLMResponse:
         raise NotImplementedError
 
     @abc.abstractmethod

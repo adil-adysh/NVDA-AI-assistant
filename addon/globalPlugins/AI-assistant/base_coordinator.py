@@ -1,21 +1,17 @@
 # -*- coding: utf-8 -*-
 # pyright: reportMissingImports=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
-import json
 import logging
 import threading
 import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
-import queueHandler
-import ui
-
+from . import nvda_ui
+from .execution_context import ExecutionContext
+from .metrics_reporter import FileMetricsReporter, MetricsReporter
 from .providers.base import LLMProviderError
 from .request_metrics import RequestMetrics
 from .settings import (
-    get_request_metrics_log_path,
-    get_request_metrics_logging_enabled,
     is_progress_enabled,
     is_streaming_enabled,
 )
@@ -30,13 +26,15 @@ class BaseCoordinator:
 	DELTA_THRESHOLD: int = 180
 	PREVIEW_LENGTH: int = 120
 
-	def __init__(self) -> None:
+	def __init__(self, metrics_reporter: MetricsReporter | None = None) -> None:
 		"""Initialize shared coordinator state."""
 		super().__init__()
 		self._lock = threading.Lock()
 		self._active_worker: threading.Thread | None = None
 		self._last_announced_chars = 0
 		self._request_metrics: RequestMetrics | None = None
+		self.execution_context: ExecutionContext | None = None
+		self.metrics_reporter = metrics_reporter or FileMetricsReporter()
 
 	def start_task(self, *args: Any, **kwargs: Any) -> None:
 		"""Public entrypoint to start a background task.
@@ -45,7 +43,7 @@ class BaseCoordinator:
 		"""
 		with self._lock:
 			if self._active_worker is not None and self._active_worker.is_alive():
-				self._queue_to_nvda(ui.message, self._get_busy_message())
+				self._queue_to_nvda(nvda_ui.message, self._get_busy_message())
 				return
 
 		worker = threading.Thread(
@@ -61,6 +59,7 @@ class BaseCoordinator:
 	def _run_in_background(self, *args: Any, **kwargs: Any) -> None:
 		"""Internal wrapper executed in the background thread."""
 		self._last_announced_chars = 0
+		self.execution_context = ExecutionContext()
 		self._pre_run(*args, **kwargs)
 
 		progress_callback = self._handle_progress if is_streaming_enabled() else None
@@ -98,14 +97,14 @@ class BaseCoordinator:
 
 		self._last_announced_chars = generated_chars
 		preview = " ".join(partial_text.strip().split())[-self.PREVIEW_LENGTH:]
-		message = self._format_progress_message(generated_chars, preview)
-		if message:
-			self._queue_to_nvda(ui.message, message)
+		message_text = self._format_progress_message(generated_chars, preview)
+		if message_text:
+			self._queue_to_nvda(nvda_ui.message, message_text)
 
 	def _handle_error(self, error: Exception) -> None:
 		"""Handle and dispatch errors to NVDA UI."""
-		message = self._format_error_message(error)
-		self._queue_to_nvda(ui.message, message)
+		message_text = self._format_error_message(error)
+		self._queue_to_nvda(nvda_ui.message, message_text)
 
 	def _queue_to_nvda(
 		self,
@@ -113,7 +112,7 @@ class BaseCoordinator:
 		*args: Any,
 	) -> None:
 		"""Queue execution on the NVDA event queue."""
-		queueHandler.queueFunction(queueHandler.eventQueue, callback, *args)
+		nvda_ui.queue(callback, *args)
 
 	def _build_request_metrics(self, *args: Any, **kwargs: Any) -> RequestMetrics | None:
 		"""Return a metrics object for the current request, if supported."""
@@ -138,19 +137,8 @@ class BaseCoordinator:
 	def _report_request_metrics(self, metrics: RequestMetrics, result: Any | None) -> None:
 		"""Report request metrics. Subclasses may override this to capture richer telemetry."""
 		logger.debug("Request metrics: %s", metrics.to_dict())
-		if get_request_metrics_logging_enabled():
-			log_path = Path(get_request_metrics_log_path()).expanduser()
-			try:
-				log_path.parent.mkdir(parents=True, exist_ok=True)
-			except Exception:
-				logger.exception("Unable to create metrics log folder %s", log_path.parent)
-				return
-			try:
-				with log_path.open("a", encoding="utf-8") as handle:
-					handle.write(json.dumps(metrics.to_log_record(), ensure_ascii=False))
-					handle.write("\n")
-			except Exception:
-				logger.exception("Unable to write request metrics log to %s", log_path)
+		if self.metrics_reporter:
+			self.metrics_reporter.report(metrics)
 
 	# --- Required Hooks ---
 

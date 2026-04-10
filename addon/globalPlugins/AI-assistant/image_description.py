@@ -6,28 +6,38 @@ from collections.abc import Callable
 from io import BytesIO
 from typing import Any, Optional
 
-import ui
+from . import nvda_ui
 from PIL import Image
 
 from .base_coordinator import BaseCoordinator
+from .image_services import ImageCaptureService, ImageEncoder, ImagePreprocessor
+from .metrics_reporter import MetricsReporter
 from .prompt_builders import build_image_description_prompt
 from .providers.base import LLMProvider
 from .request_metrics import ImageRequestMetrics, estimate_tokens
-from .screenshot import capture_foreground_window_bytes
-from .image_utils import encode_image_base64, prepare_image_bytes
-from .models import SummaryResponse
+from .models import LLMRequest, LLMResponse, TaskType
 from .settings import get_image_format, get_image_max_side, get_image_quality
 
 logger = logging.getLogger(__name__)
 
 
 class ImageDescriptionCoordinator(BaseCoordinator):
-    def __init__(self, client: LLMProvider):
-        super().__init__()
+    def __init__(
+        self,
+        client: LLMProvider,
+        metrics_reporter: MetricsReporter | None = None,
+        capture_service: ImageCaptureService | None = None,
+        preprocessor: ImagePreprocessor | None = None,
+        encoder: ImageEncoder | None = None,
+    ):
+        super().__init__(metrics_reporter)
         self._client = client
+        self._capture_service = capture_service or ImageCaptureService()
+        self._preprocessor = preprocessor or ImagePreprocessor()
+        self._encoder = encoder or ImageEncoder()
 
     def describeCurrentWindow(self) -> None:
-        ui.message("Describing current window image")
+        nvda_ui.message("Describing current window image")
         self.start_task()
 
     def _build_request_metrics(self) -> ImageRequestMetrics:
@@ -41,15 +51,15 @@ class ImageDescriptionCoordinator(BaseCoordinator):
         progress_callback: Optional[Callable[[str, int], None]],
         *args: Any,
         **kwargs: Any,
-    ) -> SummaryResponse:
-        raw_image_bytes = capture_foreground_window_bytes()
-        processed_bytes = prepare_image_bytes(
+    ) -> LLMResponse:
+        raw_image_bytes = self._capture_service.capture()
+        processed_bytes = self._preprocessor.preprocess(
             image_bytes=raw_image_bytes,
             max_side=get_image_max_side(),
             image_format=get_image_format(),
             quality=get_image_quality(),
         )
-        image_base64 = encode_image_base64(processed_bytes)
+        image_base64 = self._encoder.encode(processed_bytes)
         prompt = self._build_image_description_prompt()
 
         if self._request_metrics is not None:
@@ -63,17 +73,22 @@ class ImageDescriptionCoordinator(BaseCoordinator):
                 width, height = image.size
                 self._request_metrics.image_pixels = width * height
 
-        response = self._client.describe_image(
-            image_base64=image_base64,
-            prompt=prompt,
-            on_partial=progress_callback,
+        response = self._client.generate(
+            LLMRequest(
+                task_type=TaskType.IMAGE_DESCRIPTION,
+                input_text=prompt,
+                image_base64=image_base64,
+                stream=progress_callback is not None,
+                stream_handler=progress_callback,
+                metadata=None,
+            )
         )
 
         if self._request_metrics is not None:
             self._request_metrics.base64_size = len(image_base64)
             self._request_metrics.output_chars = len(response.text or "")
             self._request_metrics.output_tokens_estimated = estimate_tokens(response.text)
-            self._request_metrics.model = response.model
+            self._request_metrics.model = response.model or "unknown"
 
         return response
 
@@ -88,10 +103,11 @@ class ImageDescriptionCoordinator(BaseCoordinator):
             return f"Image description progress: {generated_chars} characters. {preview}"
         return f"Image description progress: {generated_chars} characters generated"
 
-    def _present_result(self, result: SummaryResponse) -> None:
-        ui.message("Image description ready")
-        dialog_title = f"Image description ({result.model})"
-        ui.browseableMessage(result.text, title=dialog_title)
+    def _present_result(self, result: LLMResponse) -> None:
+        nvda_ui.message("Image description ready")
+        model_name = result.model or "unknown"
+        dialog_title = f"Image description ({model_name})"
+        nvda_ui.browseable_message(result.text, title=dialog_title)
 
     def _build_image_description_prompt(self) -> str:
         foreground = self._getForegroundObjectSafe()

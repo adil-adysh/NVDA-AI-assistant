@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import config as nvda_config
 
 from . import defaults
-from .providers.config import GeminiConfig, OllamaConfig, ProviderConfig
+
+if TYPE_CHECKING:
+    from .providers.config import GeminiConfig, OllamaConfig, ProviderConfig
 
 
 def _get_ai_assistant_section() -> Any:
@@ -184,7 +188,9 @@ def get_gemini_base_url() -> str:
     return _read_string("geminiBaseUrl", defaults.DEFAULT_GEMINI_BASE_URL)
 
 
-def get_ollama_config() -> OllamaConfig:
+def get_ollama_config() -> "OllamaConfig":
+    from .providers.config import OllamaConfig
+
     return OllamaConfig(
         provider="ollama",
         model_name=get_ollama_model_name(),
@@ -203,7 +209,9 @@ def get_ollama_config() -> OllamaConfig:
     )
 
 
-def get_gemini_config() -> GeminiConfig:
+def get_gemini_config() -> "GeminiConfig":
+    from .providers.config import GeminiConfig
+
     return GeminiConfig(
         provider="gemini",
         model_name=get_gemini_model_name(),
@@ -222,7 +230,7 @@ def get_gemini_config() -> GeminiConfig:
     )
 
 
-def get_active_provider_config() -> ProviderConfig:
+def get_active_provider_config() -> "ProviderConfig":
     if get_provider() == "gemini":
         return get_gemini_config()
     return get_ollama_config()

@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from .factory import ProviderFactory
-from .base import LLMProvider, PartialCallback, ProgressCallback
+from .base import LLMProvider, LLMRequest, LLMResponse, PartialCallback, ProgressCallback
 from ..settings import get_active_provider_config
 
 logger = logging.getLogger(__name__)
@@ -41,22 +41,26 @@ class ProviderProxy(LLMProvider):
         self._refresh()
         return self._provider.supports_image_description()
 
-    def summarize(self, prompt: str, on_partial: PartialCallback | None = None) -> Any:
+    def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> Any:
         self._refresh()
-        return self._provider.summarize(prompt, on_partial=on_partial)
+        return self._provider.summarize(prompt, stream_handler=stream_handler)
 
     def describe_image(
         self,
         image_base64: str,
         prompt: str,
-        on_partial: PartialCallback | None = None,
+        stream_handler: PartialCallback | None = None,
     ) -> Any:
         self._refresh()
         return self._provider.describe_image(
             image_base64=image_base64,
             prompt=prompt,
-            on_partial=on_partial,
+            stream_handler=stream_handler,
         )
+
+    def generate(self, request: LLMRequest) -> LLMResponse:
+        self._refresh()
+        return self._provider.generate(request)
 
     def ensure_model_available(self, on_progress: ProgressCallback | None = None) -> str | None:
         self._refresh()

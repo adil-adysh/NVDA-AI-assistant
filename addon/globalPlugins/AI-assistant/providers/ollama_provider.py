@@ -5,7 +5,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from ..models import SummaryResponse
+from ..models import LLMRequest, LLMResponse, SummaryResponse, TaskType
 from ..ollama_client import OllamaClient, OllamaClientError
 from .base import LLMProvider, LLMProviderError, ProgressCallback, PartialCallback
 from .config import OllamaConfig
@@ -36,9 +36,9 @@ class OllamaProvider(LLMProvider):
             return error
         return LLMProviderError(str(error))
 
-    def summarize(self, prompt: str, on_partial: PartialCallback | None = None) -> SummaryResponse:
+    def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
         try:
-            response = self._client.summarize(prompt, onPartial=on_partial)
+            response = self._client.summarize(prompt, onPartial=stream_handler)
         except OllamaClientError as error:
             raise self._wrap_exception(error) from error
         return SummaryResponse(text=response.text, model=response.model, provider=self.provider_name())
@@ -47,13 +47,30 @@ class OllamaProvider(LLMProvider):
         self,
         image_base64: str,
         prompt: str,
-        on_partial: PartialCallback | None = None,
+        stream_handler: PartialCallback | None = None,
     ) -> SummaryResponse:
         try:
-            response = self._client.describeImage(image_base64, prompt=prompt, onPartial=on_partial)
+            response = self._client.describeImage(image_base64, prompt=prompt, onPartial=stream_handler)
         except OllamaClientError as error:
             raise self._wrap_exception(error) from error
         return SummaryResponse(text=response.text, model=response.model, provider=self.provider_name())
+
+    def generate(self, request: LLMRequest) -> LLMResponse:
+        if request.task_type == TaskType.SUMMARY:
+            response = self.summarize(request.input_text or "", stream_handler=request.stream_handler)
+            return LLMResponse(text=response.text, model=response.model, raw=None, metrics=None)
+
+        if request.task_type == TaskType.IMAGE_DESCRIPTION:
+            if request.image_base64 is None:
+                raise LLMProviderError("Image base64 data is required for image_description.")
+            response = self.describe_image(
+                request.image_base64,
+                request.input_text or "",
+                stream_handler=request.stream_handler,
+            )
+            return LLMResponse(text=response.text, model=response.model, raw=None, metrics=None)
+
+        raise LLMProviderError(f"Unsupported task type: {request.task_type}")
 
     def ensure_model_available(self, on_progress: ProgressCallback | None = None) -> str | None:
         def progress_adapter(event: dict[str, Any]) -> None:

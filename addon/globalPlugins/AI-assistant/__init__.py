@@ -13,6 +13,8 @@ from scriptHandler import script
 from .browser_extractor import BrowserAwarePageExtractor
 from .download_progress import DownloadProgressTracker
 from .image_description import ImageDescriptionCoordinator
+from .image_services import ImageCaptureService, ImageEncoder, ImagePreprocessor
+from .metrics_reporter import FileMetricsReporter
 from .page_summary import PageSummaryCoordinator
 from .providers.base import LLMProviderError
 from .providers.provider_proxy import ProviderProxy
@@ -29,11 +31,23 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         addonHandler.initTranslation()
         logger.debug("Browser Assistant plugin initializing")
         self._provider = ProviderProxy()
+        self._metrics_reporter = FileMetricsReporter()
+        self._capture_service = ImageCaptureService()
+        self._preprocessor = ImagePreprocessor()
+        self._encoder = ImageEncoder()
+
         self._pageSummary = PageSummaryCoordinator(
             extractor=BrowserAwarePageExtractor(),
             client=self._provider,
+            metrics_reporter=self._metrics_reporter,
         )
-        self._imageDescription = ImageDescriptionCoordinator(client=self._provider)
+        self._imageDescription = ImageDescriptionCoordinator(
+            client=self._provider,
+            metrics_reporter=self._metrics_reporter,
+            capture_service=self._capture_service,
+            preprocessor=self._preprocessor,
+            encoder=self._encoder,
+        )
         self._startModelPreload()
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(AIAssistantSettingsPanel)
         logger.debug("Browser Assistant plugin initialized")

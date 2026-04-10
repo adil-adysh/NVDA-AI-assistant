@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable
 from typing import Optional
 
-from ..models import SummaryResponse
+from ..models import LLMRequest, LLMResponse, SummaryResponse, TaskType
 from .base import LLMProvider, LLMProviderError, PartialCallback, ProgressCallback
 from .config import GeminiConfig
 from ..gemini import GeminiClient, GeminiClientError
@@ -38,18 +38,18 @@ class GeminiProvider(LLMProvider):
         model = self._config.model_name
         return model.strip() if model else ""
 
-    def summarize(self, prompt: str, on_partial: PartialCallback | None = None) -> SummaryResponse:
+    def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
         model = self._resolve_model()
         if not model:
             raise LLMProviderError("Gemini model name is required.")
 
         try:
             config = self._build_generation_config()
-            if on_partial:
+            if stream_handler is not None:
                 accumulated = ""
                 for chunk in self._client.stream_content(model=model, contents=prompt, config=config):
                     accumulated = f"{accumulated}{chunk}"
-                    on_partial(accumulated, len(accumulated))
+                    stream_handler(accumulated, len(accumulated))
                 return SummaryResponse(text=accumulated, model=model, provider=self.provider_name())
 
             response = self._client.generate_content(model=model, contents=prompt, config=config)
@@ -61,7 +61,7 @@ class GeminiProvider(LLMProvider):
         self,
         image_base64: str,
         prompt: str,
-        on_partial: PartialCallback | None = None,
+        stream_handler: PartialCallback | None = None,
     ) -> SummaryResponse:
         model = self._resolve_model()
         if not model:
@@ -73,12 +73,12 @@ class GeminiProvider(LLMProvider):
 
         try:
             config = self._build_generation_config()
-            if on_partial:
+            if stream_handler is not None:
                 accumulated = ""
                 image_part = Part.from_bytes(image_bytes, mime_type="image/png")
                 for chunk in self._client.stream_content(model=model, contents=[image_part, prompt], config=config):
                     accumulated = f"{accumulated}{chunk}"
-                    on_partial(accumulated, len(accumulated))
+                    stream_handler(accumulated, len(accumulated))
                 return SummaryResponse(text=accumulated, model=model, provider=self.provider_name())
             response = self._client.describe_image(model=model, image_bytes=image_bytes, prompt=prompt, config=config)
         except GeminiClientError as error:
@@ -97,6 +97,23 @@ class GeminiProvider(LLMProvider):
 
     def get_model_info(self, model_name: str):
         return self._client.get_model(model_name)
+
+    def generate(self, request: LLMRequest) -> LLMResponse:
+        if request.task_type == TaskType.SUMMARY:
+            response = self.summarize(request.input_text or "", stream_handler=request.stream_handler)
+            return LLMResponse(text=response.text, model=response.model, raw=None, metrics=None)
+
+        if request.task_type == TaskType.IMAGE_DESCRIPTION:
+            if request.image_base64 is None:
+                raise LLMProviderError("Image base64 data is required for image_description.")
+            response = self.describe_image(
+                request.image_base64,
+                request.input_text or "",
+                stream_handler=request.stream_handler,
+            )
+            return LLMResponse(text=response.text, model=response.model, raw=None, metrics=None)
+
+        raise LLMProviderError(f"Unsupported task type: {request.task_type}")
 
     def ensure_model_available(self, on_progress: ProgressCallback | None = None) -> str | None:
         model = self._resolve_model()
