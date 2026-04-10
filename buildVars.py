@@ -23,10 +23,10 @@ addon_info = AddonInfo(
 	# Translators: Long description to be shown for this add-on on add-on information found in add-on store
 	addon_description=_("""NVDA AI assistant helps NVDA users by using AI to simplify complex information, summarize content, and provide contextual guidance for tasks that are otherwise hard to access."""),
 	# version
-	addon_version="0.3",
+	addon_version="0.4",
 	# Brief changelog for this version
 	# Translators: what's new content for the add-on version to be shown in the add-on store
-	addon_changelog=_("""Initial NVDA AI assistant release."""),
+	addon_changelog=_("""Added Gemini provider support, improved provider settings and configuration, and ignored local .env credential files."""),
 	# Author(s)
 	addon_author="adil shaikh <ah.shaikh97@gmail.com>",
 	# URL for the add-on documentation support
