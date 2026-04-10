@@ -206,7 +206,7 @@ class OllamaClient:
             response = self._requestJSON("POST", "/api/generate", payload)
             logger.debug("Raw response: %s", response)
             typedResponse = self._validateGenerateResponse(response, "/api/generate")
-            summaryText = str(typedResponse.get("response", "")).strip()
+            summaryText = self._extractGenerateText(typedResponse)
             finalResponse = typedResponse
         else:
             logger.debug("Starting stream /api/generate request for model=%s", model)
@@ -248,7 +248,7 @@ class OllamaClient:
             logger.debug("Starting non-stream image generate request for model=%s", model)
             response = self._requestJSON("POST", "/api/generate", payload)
             typedResponse = self._validateGenerateResponse(response, "/api/generate")
-            descriptionText = str(typedResponse.get("response", "")).strip()
+            descriptionText = self._extractGenerateText(typedResponse)
             finalResponse = typedResponse
         else:
             logger.debug("Starting stream image generate request for model=%s", model)
@@ -744,6 +744,17 @@ class OllamaClient:
         if not isinstance(parsed, dict):
             raise OllamaClientError(f"Ollama returned an unexpected response payload for {path}.")
         return cast(dict[str, Any], parsed)
+
+    def _extractGenerateText(self, response: dict[str, Any]) -> str:
+        text = str(response.get("response", "")).strip()
+        if text:
+            return text
+        message = response.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, str):
+                return content.strip()
+        return ""
 
     def _validateGenerateResponse(
         self,

@@ -19,6 +19,7 @@ from .page_summary import PageSummaryCoordinator
 from .providers.base import LLMProviderError
 from .providers.provider_proxy import ProviderProxy
 from .settings_panel import AIAssistantSettingsPanel
+from .chat_coordinator import ChatCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             capture_service=self._capture_service,
             preprocessor=self._preprocessor,
             encoder=self._encoder,
+        )
+        self._chatCoordinator = ChatCoordinator(
+            client=self._provider,
+            metrics_reporter=self._metrics_reporter,
         )
         self._startModelPreload()
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(AIAssistantSettingsPanel)
@@ -99,3 +104,29 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def script_describeCurrentWindow(self, gesture: Any):
         logger.debug("Script describeCurrentWindow invoked gesture=%s", gesture)
         self._imageDescription.describeCurrentWindow()
+
+    @script(
+        description=_("Opens the AI chat window."),
+        gesture="kb:NVDA+Shift+C",
+    )
+    def script_openChatWindow(self, gesture: Any):
+        logger.debug("Script openChatWindow invoked gesture=%s", gesture)
+        from . import chat_ui
+
+        if chat_ui.chatDialogInstance:
+            try:
+                chat_ui.chatDialogInstance.Raise()
+            except Exception:
+                pass
+            return
+
+        gui.mainFrame.prePopup()
+        parent = getattr(gui, "mainFrame", None)
+        chat_ui.chatDialogInstance = chat_ui.ChatDialog(parent, coordinator=self._chatCoordinator)
+        try:
+            chat_ui.chatDialogInstance.Show()
+        except Exception:
+            chat_ui.chatDialogInstance = None
+            raise
+        finally:
+            gui.mainFrame.postPopup()

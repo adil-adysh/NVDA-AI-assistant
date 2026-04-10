@@ -81,6 +81,12 @@ class ChatCoordinator(BaseCoordinator):
 
         return response.text
 
+    def get_history(self) -> list[ChatMessage]:
+        return list(self._history)
+
+    def reset(self) -> None:
+        self._history = []
+
     def _execute_tool(self, tool_call: ToolCall) -> str:
         if tool_call.name == "get_time":
             import datetime
