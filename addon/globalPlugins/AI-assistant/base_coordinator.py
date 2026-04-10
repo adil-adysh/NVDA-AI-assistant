@@ -1,15 +1,24 @@
 # -*- coding: utf-8 -*-
 # pyright: reportMissingImports=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
+import json
 import logging
 import threading
+import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import queueHandler
 import ui
 
 from .providers.base import LLMProviderError
-from .settings import is_progress_enabled, is_streaming_enabled
+from .request_metrics import RequestMetrics
+from .settings import (
+    get_request_metrics_log_path,
+    get_request_metrics_logging_enabled,
+    is_progress_enabled,
+    is_streaming_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +36,7 @@ class BaseCoordinator:
 		self._lock = threading.Lock()
 		self._active_worker: threading.Thread | None = None
 		self._last_announced_chars = 0
+		self._request_metrics: RequestMetrics | None = None
 
 	def start_task(self, *args: Any, **kwargs: Any) -> None:
 		"""Public entrypoint to start a background task.
@@ -54,16 +64,22 @@ class BaseCoordinator:
 		self._pre_run(*args, **kwargs)
 
 		progress_callback = self._handle_progress if is_streaming_enabled() else None
+		self._request_metrics = self._build_request_metrics(*args, **kwargs)
+		if self._request_metrics is not None:
+			self._request_metrics.start_time = time.perf_counter()
 
 		try:
 			result = self._run_task_logic(progress_callback, *args, **kwargs)
 		except LLMProviderError as error:
 			logger.exception("Task failed with provider error")
+			self._finalize_request_metrics(False, error)
 			self._handle_error(error)
 		except Exception as error:
 			logger.exception("Task failed with unexpected exception")
+			self._finalize_request_metrics(False, error)
 			self._handle_error(error)
 		else:
+			self._finalize_request_metrics(True, None, result)
 			self._queue_to_nvda(self._present_result, result)
 		finally:
 			with self._lock:
@@ -98,6 +114,43 @@ class BaseCoordinator:
 	) -> None:
 		"""Queue execution on the NVDA event queue."""
 		queueHandler.queueFunction(queueHandler.eventQueue, callback, *args)
+
+	def _build_request_metrics(self, *args: Any, **kwargs: Any) -> RequestMetrics | None:
+		"""Return a metrics object for the current request, if supported."""
+		return None
+
+	def _finalize_request_metrics(
+		self,
+		success: bool,
+		error: Exception | None = None,
+		result: Any | None = None,
+	) -> None:
+		if self._request_metrics is None:
+			return
+		end_time = time.perf_counter()
+		self._request_metrics.finalize(end_time, success, str(error) if error is not None else None)
+		try:
+			self._report_request_metrics(self._request_metrics, result)
+		except Exception:
+			logger.exception("Failed to report request metrics")
+		self._request_metrics = None
+
+	def _report_request_metrics(self, metrics: RequestMetrics, result: Any | None) -> None:
+		"""Report request metrics. Subclasses may override this to capture richer telemetry."""
+		logger.debug("Request metrics: %s", metrics.to_dict())
+		if get_request_metrics_logging_enabled():
+			log_path = Path(get_request_metrics_log_path()).expanduser()
+			try:
+				log_path.parent.mkdir(parents=True, exist_ok=True)
+			except Exception:
+				logger.exception("Unable to create metrics log folder %s", log_path.parent)
+				return
+			try:
+				with log_path.open("a", encoding="utf-8") as handle:
+					handle.write(json.dumps(metrics.to_log_record(), ensure_ascii=False))
+					handle.write("\n")
+			except Exception:
+				logger.exception("Unable to write request metrics log to %s", log_path)
 
 	# --- Required Hooks ---
 

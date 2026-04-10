@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """Static default configuration values for the NVDA AI assistant."""
 
+import os
+from pathlib import Path
+
 DEFAULT_PROVIDER = "ollama"
 DEFAULT_OLLAMA_MODEL = "gemma4:e2b"
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
@@ -25,3 +28,11 @@ DEFAULT_GENERATE_PRESENCE_PENALTY = 0
 DEFAULT_IMAGE_MAX_SIDE = 1024
 DEFAULT_IMAGE_FORMAT = "PNG"
 DEFAULT_IMAGE_QUALITY = 80
+
+DEFAULT_REQUEST_METRICS_LOGGING = False
+APPDATA = os.getenv("APPDATA")
+DEFAULT_REQUEST_METRICS_LOG_PATH = str(
+    Path(APPDATA if APPDATA else Path.home() / "AppData" / "Roaming")
+    / "nvda"
+    / "nvda_ai_assistant_request_metrics.jsonl"
+)

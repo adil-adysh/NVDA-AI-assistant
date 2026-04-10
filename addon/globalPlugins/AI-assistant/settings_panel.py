@@ -22,6 +22,8 @@ from .settings import (
     get_progress_enabled,
     get_provider,
     get_ollama_config,
+    get_request_metrics_log_path,
+    get_request_metrics_logging_enabled,
     get_retry_backoff_seconds,
     get_streaming_enabled,
     get_timeout_seconds,
@@ -40,6 +42,8 @@ from .settings import (
     set_progress_enabled,
     set_provider,
     set_ollama_config,
+    set_request_metrics_log_path,
+    set_request_metrics_logging_enabled,
     set_streaming_enabled,
     set_timeout_seconds,
 )
@@ -145,6 +149,15 @@ class AIAssistantSettingsPanel(SettingsPanel):
             groupHelper,
             _("Request timeout (seconds):"),
             str(get_timeout_seconds() if get_timeout_seconds() is not None else defaults.DEFAULT_TIMEOUT_SECONDS),
+        )
+        self.requestMetricsLoggingCheckbox = groupHelper.addItem(
+            wx.CheckBox(self, label=_("Enable request metrics logging"))
+        )
+        self.requestMetricsLoggingCheckbox.Value = get_request_metrics_logging_enabled()
+        self.requestMetricsLogPathEdit = self._add_labeled_text_ctrl(
+            groupHelper,
+            _("Metrics log file path:"),
+            get_request_metrics_log_path(),
         )
         self.imageMaxSideEdit = self._add_labeled_text_ctrl(
             groupHelper,
@@ -299,6 +312,12 @@ class AIAssistantSettingsPanel(SettingsPanel):
             self._show_error(_("Image quality must be an integer between 1 and 100."))
             return
 
+        requestMetricsLoggingEnabled = self.requestMetricsLoggingCheckbox.Value
+        requestMetricsLogPath = self.requestMetricsLogPathEdit.Value.strip()
+        if requestMetricsLoggingEnabled and not requestMetricsLogPath:
+            self._show_error(_("Metrics log file path cannot be empty when logging is enabled."))
+            return
+
         provider = self._selected_provider()
 
         if provider == "ollama":
@@ -373,6 +392,8 @@ class AIAssistantSettingsPanel(SettingsPanel):
         set_image_max_side(imageMaxSide)
         set_image_format(imageFormat)
         set_image_quality(imageQuality)
+        set_request_metrics_logging_enabled(requestMetricsLoggingEnabled)
+        set_request_metrics_log_path(requestMetricsLogPath)
 
         save()
 

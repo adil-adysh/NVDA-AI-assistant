@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import os
+from pathlib import Path
 from typing import Any
 
 import config as nvda_config
@@ -310,6 +312,20 @@ def get_image_quality() -> int:
     return _read_int("imageQuality", defaults.DEFAULT_IMAGE_QUALITY, minimum=1)
 
 
+def get_request_metrics_logging_enabled() -> bool:
+    return _read_bool("requestMetricsLoggingEnabled", defaults.DEFAULT_REQUEST_METRICS_LOGGING)
+
+
+def get_request_metrics_log_path() -> str:
+    path = _read_string("requestMetricsLogPath", defaults.DEFAULT_REQUEST_METRICS_LOG_PATH)
+    resolved = Path(path).expanduser()
+    if resolved.is_absolute():
+        return str(resolved)
+
+    appdata_path = Path(os.getenv("APPDATA") or Path.home() / "AppData" / "Roaming") / "nvda"
+    return str((appdata_path / resolved).resolve())
+
+
 def set_provider(provider: str) -> None:
     _set_value("provider", str(provider).strip().lower())
 
@@ -440,6 +456,14 @@ def set_image_format(imageFormat: str) -> None:
 
 def set_image_quality(imageQuality: int) -> None:
     _set_value("imageQuality", int(imageQuality))
+
+
+def set_request_metrics_logging_enabled(enabled: bool) -> None:
+    _set_value("requestMetricsLoggingEnabled", bool(enabled))
+
+
+def set_request_metrics_log_path(path: str) -> None:
+    _set_value("requestMetricsLogPath", str(path).strip())
 
 
 def save() -> None:

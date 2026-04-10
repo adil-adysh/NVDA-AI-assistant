@@ -3,13 +3,16 @@
 import api
 import logging
 from collections.abc import Callable
+from io import BytesIO
 from typing import Any, Optional
 
 import ui
+from PIL import Image
 
 from .base_coordinator import BaseCoordinator
 from .prompt_builders import build_image_description_prompt
 from .providers.base import LLMProvider
+from .request_metrics import ImageRequestMetrics, estimate_tokens
 from .screenshot import capture_foreground_window_bytes
 from .image_utils import encode_image_base64, prepare_image_bytes
 from .models import SummaryResponse
@@ -27,6 +30,12 @@ class ImageDescriptionCoordinator(BaseCoordinator):
         ui.message("Describing current window image")
         self.start_task()
 
+    def _build_request_metrics(self) -> ImageRequestMetrics:
+        return ImageRequestMetrics(
+            request_type="image_description",
+            provider=self._client.provider_name(),
+        )
+
     def _run_task_logic(
         self,
         progress_callback: Optional[Callable[[str, int], None]],
@@ -42,11 +51,31 @@ class ImageDescriptionCoordinator(BaseCoordinator):
         )
         image_base64 = encode_image_base64(processed_bytes)
         prompt = self._build_image_description_prompt()
-        return self._client.describe_image(
+
+        if self._request_metrics is not None:
+            self._request_metrics.raw_image_bytes = len(raw_image_bytes)
+            self._request_metrics.processed_image_bytes = len(processed_bytes)
+            self._request_metrics.prompt_chars = len(prompt)
+            self._request_metrics.prompt_tokens_estimated = estimate_tokens(prompt)
+            if len(raw_image_bytes) > 0:
+                self._request_metrics.resize_ratio = len(processed_bytes) / len(raw_image_bytes)
+            with Image.open(BytesIO(processed_bytes)) as image:
+                width, height = image.size
+                self._request_metrics.image_pixels = width * height
+
+        response = self._client.describe_image(
             image_base64=image_base64,
             prompt=prompt,
             on_partial=progress_callback,
         )
+
+        if self._request_metrics is not None:
+            self._request_metrics.base64_size = len(image_base64)
+            self._request_metrics.output_chars = len(response.text or "")
+            self._request_metrics.output_tokens_estimated = estimate_tokens(response.text)
+            self._request_metrics.model = response.model
+
+        return response
 
     def _get_task_name(self) -> str:
         return "BrowserAssistantImageDescription"

@@ -13,6 +13,7 @@ from .browser_extractor import PageExtractionError
 from .models import PageSnapshot, SummaryResponse
 from .prompt_builders import build_page_summary_prompt
 from .providers.base import LLMProvider
+from .request_metrics import SummaryRequestMetrics, estimate_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class PageSummaryCoordinator(BaseCoordinator):
             ui.message(str(error))
             return
 
+        prompt = build_page_summary_prompt(snapshot)
         logger.debug(
             "Starting page summary worker for title=%s headings=%d links=%d buttons=%d landmarks=%d",
             snapshot.title,
@@ -39,15 +41,28 @@ class PageSummaryCoordinator(BaseCoordinator):
             len(snapshot.landmarks),
         )
         ui.message("Summarizing current page")
-        self.start_task(snapshot)
+        self.start_task(snapshot, prompt)
+
+    def _build_request_metrics(self, snapshot: PageSnapshot, prompt: str) -> SummaryRequestMetrics:
+        return SummaryRequestMetrics(
+            request_type="summary",
+            provider=self._client.provider_name(),
+            input_chars=len(snapshot.text or ""),
+            prompt_chars=len(prompt),
+            prompt_tokens_estimated=estimate_tokens(prompt),
+        )
 
     def _run_task_logic(
         self,
         progress_callback: Optional[Callable[[str, int], None]],
         snapshot: PageSnapshot,
+        prompt: str,
     ) -> tuple[SummaryResponse, str]:
-        prompt = build_page_summary_prompt(snapshot)
         response = self._client.summarize(prompt, on_partial=progress_callback)
+        if self._request_metrics is not None:
+            self._request_metrics.output_chars = len(response.text or "")
+            self._request_metrics.output_tokens_estimated = estimate_tokens(response.text)
+            self._request_metrics.model = response.model
         return response, snapshot.title
 
     def _present_result(self, result: tuple[SummaryResponse, str]) -> None:
