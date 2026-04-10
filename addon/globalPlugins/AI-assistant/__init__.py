@@ -13,8 +13,8 @@ from .browser_extractor import BrowserAwarePageExtractor
 from .download_progress import DownloadProgressTracker
 from .image_description import ImageDescriptionCoordinator
 from .page_summary import PageSummaryCoordinator
-from .providers.factory import ProviderFactory
 from .providers.base import LLMProviderError
+from .providers.provider_proxy import ProviderProxy
 from .settings_panel import AIAssistantSettingsPanel
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         super().__init__()
         addonHandler.initTranslation()
         logger.debug("Browser Assistant plugin initializing")
-        self._provider = ProviderFactory.create_provider()
+        self._provider = ProviderProxy()
         self._pageSummary = PageSummaryCoordinator(
             extractor=BrowserAwarePageExtractor(),
             client=self._provider,
@@ -66,6 +66,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self._pageSummary.summarizeCurrentPage()
 
     def terminate(self):
+        try:
+            self._provider.close()
+        except Exception:
+            logger.exception("Error closing provider during terminate")
         super().terminate()
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.remove(AIAssistantSettingsPanel)
 

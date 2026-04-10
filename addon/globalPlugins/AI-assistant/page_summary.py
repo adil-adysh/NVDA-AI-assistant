@@ -47,7 +47,7 @@ class PageSummaryCoordinator(BaseCoordinator):
         snapshot: PageSnapshot,
     ) -> tuple[SummaryResponse, str]:
         prompt = build_page_summary_prompt(snapshot)
-        response = self._client.summarize(prompt, onPartial=progress_callback)
+        response = self._client.summarize(prompt, on_partial=progress_callback)
         return response, snapshot.title
 
     def _present_result(self, result: tuple[SummaryResponse, str]) -> None:

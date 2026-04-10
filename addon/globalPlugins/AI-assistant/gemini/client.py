@@ -9,6 +9,7 @@ import ssl
 import time
 from typing import Any, Dict, Generator, List, Optional, Union
 from urllib import error as urllib_error
+from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
 from .errors import GeminiAPIError, GeminiClientError
@@ -16,6 +17,8 @@ from .types import (
     Content,
     GenerateContentConfig,
     GenerateContentResponse,
+    ListModelsResponse,
+    ModelInfo,
     Part,
 )
 
@@ -162,12 +165,15 @@ class GeminiClient:
     def _build_request(
         self,
         path: str,
-        body: Dict[str, Any],
+        body: Optional[Dict[str, Any]] = None,
         extra_headers: Optional[Dict[str, str]] = None,
+        method: str = "POST",
     ) -> urllib_request.Request:
         url = f"{self.base_url}/{path.lstrip('/')}"
-        data = json.dumps(body).encode("utf-8")
-        request = urllib_request.Request(url, data=data, method="POST")
+        data = None
+        if body is not None:
+            data = json.dumps(body).encode("utf-8")
+        request = urllib_request.Request(url, data=data, method=method)
         for key, value in self._build_headers(extra_headers).items():
             request.add_header(key, value)
         return request
@@ -230,6 +236,37 @@ class GeminiClient:
             raise GeminiClientError("At least one `contents` item is required.")
         return normalized
 
+    def _build_get_request(
+        self,
+        path: str,
+        query: Optional[Dict[str, Any]] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ) -> urllib_request.Request:
+        if query:
+            query_string = urllib_parse.urlencode({k: v for k, v in query.items() if v is not None})
+            path = f"{path}?{query_string}"
+        return self._build_request(path, body=None, extra_headers=extra_headers, method="GET")
+
+    def list_models(
+        self,
+        page_size: int = 50,
+        page_token: Optional[str] = None,
+    ) -> ListModelsResponse:
+        response = self._request_json(
+            self._build_get_request(
+                "models",
+                query={"pageSize": page_size, "pageToken": page_token},
+            )
+        )
+        return ListModelsResponse.from_dict(response)
+
+    def get_model(self, model_name: str) -> ModelInfo:
+        if not model_name:
+            raise GeminiClientError("Model name is required.")
+        normalized = model_name if model_name.startswith("models/") else f"models/{model_name}"
+        response = self._request_json(self._build_get_request(normalized))
+        return ModelInfo.from_dict(response)
+
     def generate_content(
         self,
         model: str,
@@ -270,7 +307,7 @@ class GeminiClient:
         if not prompt or not prompt.strip():
             raise GeminiClientError("prompt is required.")
 
-        image_part = Part.from_bytes(image_bytes=image_bytes, mime_type=mime_type)
+        image_part = Part.from_bytes(image_bytes, mime_type=mime_type)
         contents = [
             Content(parts=[image_part]),
             Content.from_text(prompt),

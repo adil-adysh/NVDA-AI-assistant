@@ -178,11 +178,6 @@ class AIAssistantSettingsPanel(SettingsPanel):
             _("Top-p sampling:"),
             str(get_generate_top_p() if get_generate_top_p() is not None else defaults.DEFAULT_GENERATE_TOP_P),
         )
-        self.presencePenaltyEdit = self._add_labeled_text_ctrl(
-            groupHelper,
-            _("Repetition penalty:"),
-            str(get_generate_presence_penalty() if get_generate_presence_penalty() is not None else defaults.DEFAULT_GENERATE_PRESENCE_PENALTY),
-        )
         return groupSizer
 
     def _show_error(self, message: str) -> None:
@@ -231,19 +226,6 @@ class AIAssistantSettingsPanel(SettingsPanel):
             minimum=0.000001,
         )
         if timeoutSeconds is None:
-            return
-
-        numCtx = self._parse_int(
-            self.numCtxEdit,
-            _("num_ctx must be an integer of at least 256."),
-            minimum=256,
-        )
-        if numCtx is None:
-            return
-
-        keepAlive = self.keepAliveEdit.Value.strip()
-        if not keepAlive:
-            self._show_error(_("Keep-alive duration cannot be empty."))
             return
 
         temperature = self._parse_float(
@@ -335,7 +317,6 @@ class AIAssistantSettingsPanel(SettingsPanel):
                 generate_temperature=temperature,
                 generate_top_k=topK,
                 generate_top_p=topP,
-                generate_presence_penalty=presencePenalty,
                 api_key=geminiApiKey,
                 api_token=geminiApiToken or None,
                 base_url=geminiBaseUrl,

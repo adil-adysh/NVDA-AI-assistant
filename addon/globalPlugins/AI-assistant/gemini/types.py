@@ -47,7 +47,9 @@ class Part:
             return Part()
         if isinstance(data, Part):
             return data
-        inline_data = data.get("inline_data") if isinstance(data, dict) else None
+        inline_data = None
+        if isinstance(data, dict):
+            inline_data = data.get("inline_data")
         if isinstance(inline_data, dict):
             data_value = inline_data.get("data")
             mime_type_value = inline_data.get("mime_type")
@@ -203,6 +205,80 @@ class GenerateContentConfig:
         if self.labels is not None:
             result["labels"] = self.labels
         return result
+
+
+class ModelDict(TypedDict, total=False):
+    name: Optional[str]
+    baseModelId: Optional[str]
+    version: Optional[str]
+    displayName: Optional[str]
+    description: Optional[str]
+    inputTokenLimit: Optional[int]
+    outputTokenLimit: Optional[int]
+    supportedGenerationMethods: Optional[List[str]]
+    thinking: Optional[bool]
+    temperature: Optional[float]
+    maxTemperature: Optional[float]
+    topP: Optional[float]
+    topK: Optional[int]
+
+
+@dataclass
+class ModelInfo:
+    name: Optional[str] = None
+    base_model_id: Optional[str] = None
+    version: Optional[str] = None
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    input_token_limit: Optional[int] = None
+    output_token_limit: Optional[int] = None
+    supported_generation_methods: Optional[List[str]] = None
+    thinking: Optional[bool] = None
+    temperature: Optional[float] = None
+    max_temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    raw: Dict[str, Any] = field(default_factory=dict)
+
+    @staticmethod
+    def from_dict(data: Union[Dict[str, Any], "ModelInfo"] | None) -> "ModelInfo":
+        if data is None:
+            return ModelInfo()
+        if isinstance(data, ModelInfo):
+            return data
+        return ModelInfo(
+            name=data.get("name"),
+            base_model_id=data.get("baseModelId"),
+            version=data.get("version"),
+            display_name=data.get("displayName"),
+            description=data.get("description"),
+            input_token_limit=data.get("inputTokenLimit"),
+            output_token_limit=data.get("outputTokenLimit"),
+            supported_generation_methods=data.get("supportedGenerationMethods"),
+            thinking=data.get("thinking"),
+            temperature=data.get("temperature"),
+            max_temperature=data.get("maxTemperature"),
+            top_p=data.get("topP"),
+            top_k=data.get("topK"),
+            raw=data,
+        )
+
+
+@dataclass
+class ListModelsResponse:
+    models: List[ModelInfo] = field(default_factory=list)
+    next_page_token: Optional[str] = None
+
+    @staticmethod
+    def from_dict(data: Optional[Dict[str, Any]]) -> "ListModelsResponse":
+        if not data:
+            return ListModelsResponse()
+        models_data = data.get("models") or []
+        models = [ModelInfo.from_dict(item) for item in models_data if isinstance(item, dict)]
+        return ListModelsResponse(
+            models=models,
+            next_page_token=data.get("nextPageToken"),
+        )
 
 
 class CandidateDict(TypedDict, total=False):

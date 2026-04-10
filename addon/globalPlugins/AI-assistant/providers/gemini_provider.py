@@ -75,7 +75,7 @@ class GeminiProvider(LLMProvider):
             config = self._build_generation_config()
             if on_partial:
                 accumulated = ""
-                image_part = Part.from_bytes(image_bytes=image_bytes, mime_type="image/png")
+                image_part = Part.from_bytes(image_bytes, mime_type="image/png")
                 for chunk in self._client.stream_content(model=model, contents=[image_part, prompt], config=config):
                     accumulated = f"{accumulated}{chunk}"
                     on_partial(accumulated, len(accumulated))
@@ -91,6 +91,12 @@ class GeminiProvider(LLMProvider):
             top_p=self._config.generate_top_p,
             top_k=self._config.generate_top_k,
         )
+
+    def list_models(self, page_size: int = 50, page_token: Optional[str] = None):
+        return self._client.list_models(page_size=page_size, page_token=page_token)
+
+    def get_model_info(self, model_name: str):
+        return self._client.get_model(model_name)
 
     def ensure_model_available(self, on_progress: ProgressCallback | None = None) -> str | None:
         model = self._resolve_model()
