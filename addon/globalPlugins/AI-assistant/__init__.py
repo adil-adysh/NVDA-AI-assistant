@@ -10,10 +10,11 @@ import gui
 import ui
 from scriptHandler import script
 
-from .browser_extractor import BrowserAwarePageExtractor
+from .browser_extractor import BrowserAwarePageExtractor, PageExtractionError
 from .download_progress import DownloadProgressTracker
 from .image_description import ImageDescriptionCoordinator
 from .image_services import ImageCaptureService, ImageEncoder, ImagePreprocessor
+from .settings import get_image_format, get_image_max_side, get_image_quality
 from .metrics_reporter import FileMetricsReporter
 from .page_summary import PageSummaryCoordinator
 from .providers.base import LLMProviderError
@@ -59,6 +60,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             ("s", self.script_summarizeCurrentPage),
             ("i", self.script_describeCurrentWindow),
             ("c", self.script_openChatWindow),
+            ("p", self.script_openChatWithPageContent),
+            ("x", self.script_openChatWithScreenshot),
             ("h", self.script_assistantLayerHelp),
         )
         self._startModelPreload()
@@ -91,7 +94,6 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
     @script(
         description=_("Summarizes the current page using the selected AI provider."),
-        gesture="kb:NVDA+Shift+S",
     )
     def script_summarizeCurrentPage(self, gesture: Any):
         logger.debug("Script summarizeCurrentPage invoked gesture=%s", gesture)
@@ -107,7 +109,6 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
     @script(
         description=_("Captures and describes the current foreground window using the selected AI provider."),
-        gesture="kb:NVDA+Shift+I",
     )
     def script_describeCurrentWindow(self, gesture: Any):
         logger.debug("Script describeCurrentWindow invoked gesture=%s", gesture)
@@ -115,22 +116,34 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
     @script(
         description=_("Opens the AI chat window."),
-        gesture="kb:NVDA+Shift+C",
     )
     def script_openChatWindow(self, gesture: Any):
         logger.debug("Script openChatWindow invoked gesture=%s", gesture)
+        self._open_chat_window()
+
+    def _open_chat_window(
+        self,
+        initial_text: str | None = None,
+        initial_image_base64: str | None = None,
+    ) -> None:
         from . import chat_ui
 
         if chat_ui.chatDialogInstance:
             try:
                 chat_ui.chatDialogInstance.Raise()
+                chat_ui.chatDialogInstance.set_initial_state(initial_text, initial_image_base64)
             except Exception:
                 pass
             return
 
         gui.mainFrame.prePopup()
         parent = getattr(gui, "mainFrame", None)
-        chat_ui.chatDialogInstance = chat_ui.ChatDialog(parent, coordinator=self._chatCoordinator)
+        chat_ui.chatDialogInstance = chat_ui.ChatDialog(
+            parent,
+            coordinator=self._chatCoordinator,
+            initial_text=initial_text,
+            initial_image_base64=initial_image_base64,
+        )
         try:
             chat_ui.chatDialogInstance.Show()
         except Exception:
@@ -138,6 +151,49 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             raise
         finally:
             gui.mainFrame.postPopup()
+
+    @script(
+        description=_("Opens the AI chat window with current page content preloaded."),
+    )
+    def script_openChatWithPageContent(self, gesture: Any):
+        logger.debug("Script openChatWithPageContent invoked gesture=%s", gesture)
+        try:
+            snapshot = self._pageSummary._extractor.extract()
+        except PageExtractionError as error:
+            ui.message(str(error))
+            return
+        except Exception as error:
+            ui.message(str(error))
+            return
+
+        title = snapshot.title or _("Unknown")
+        app_title = snapshot.appTitle or _("Unknown")
+        initial_text = (
+            _("Page content:\nTitle: {title}\nApp: {app}\n\n{content}\n\nQuestion: ")
+            .format(title=title, app=app_title, content=snapshot.text)
+        )
+        self._open_chat_window(initial_text=initial_text)
+
+    @script(
+        description=_("Opens the AI chat window with a screenshot attached."),
+    )
+    def script_openChatWithScreenshot(self, gesture: Any):
+        logger.debug("Script openChatWithScreenshot invoked gesture=%s", gesture)
+        try:
+            raw_image = self._capture_service.capture()
+            processed_image = self._preprocessor.preprocess(
+                image_bytes=raw_image,
+                max_side=get_image_max_side(),
+                image_format=get_image_format(),
+                quality=get_image_quality(),
+            )
+            image_base64 = self._encoder.encode(processed_image)
+        except Exception as error:
+            ui.message(str(error))
+            return
+
+        initial_text = _("Describe this screenshot.")
+        self._open_chat_window(initial_text=initial_text, initial_image_base64=image_base64)
 
     @script(
         description=_(
@@ -155,7 +211,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             self.bindGesture(f"kb:{gesture_key}", handler.__name__[7:])
         self.assistantLayerModeActive = True
         ui.message(
-            _("AI assistant layer active. Press S for summary, I for image describe, C for chat, or H for help.")
+            _(
+                "AI assistant layer active. "
+                "Press S for summary, I for image describe, C for chat, P for page content, X for screenshot, or H for help."
+            )
         )
 
     def getScript(self, gesture):
@@ -192,7 +251,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def script_assistantLayerHelp(self, gesture: Any):
         ui.message(
             _(
-                "Assistant layer commands: S for summary, I for image describe, C for chat, H for help. "
+                "Assistant layer commands: S for summary, I for image describe, C for chat, "
+                "P for page content, X for screenshot, H for help. "
                 "Press the key after activating the layer with NVDA+Shift+A."
             )
         )

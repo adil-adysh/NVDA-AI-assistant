@@ -12,13 +12,31 @@ chatDialogInstance = None
 
 
 class ChatDialog(wx.Dialog):
-    def __init__(self, parent: wx.Window | None, coordinator: ChatCoordinator) -> None:
+    def __init__(
+        self,
+        parent: wx.Window | None,
+        coordinator: ChatCoordinator,
+        initial_text: str | None = None,
+        initial_image_base64: str | None = None,
+    ) -> None:
         super().__init__(parent, title=_("AI Chat"), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self._coordinator = coordinator
+        self._attached_image_base64 = initial_image_base64
         self._build_ui()
         self._refresh_history()
+        if initial_text:
+            self.inputCtrl.SetValue(initial_text)
+        if initial_image_base64:
+            self._set_status(_("Screenshot attached to the initial chat."))
         self.SetMinSize((640, 520))
         self.CenterOnScreen()
+
+    def set_initial_state(self, initial_text: str | None = None, initial_image_base64: str | None = None) -> None:
+        if initial_text is not None:
+            self.inputCtrl.SetValue(initial_text)
+        self._attached_image_base64 = initial_image_base64
+        if initial_image_base64:
+            self._set_status(_("Screenshot attached to the initial chat."))
 
     def _build_ui(self) -> None:
         mainSizer = wx.BoxSizer(wx.VERTICAL)
@@ -74,15 +92,19 @@ class ChatDialog(wx.Dialog):
 
     def on_send(self, event: Any) -> None:
         message = self.inputCtrl.Value.strip()
-        if not message:
+        if not message and not self._attached_image_base64:
             return
 
         self.inputCtrl.Value = ""
-        self._append_local_history("User", message)
+        self._append_local_history("User", message, image_attached=bool(self._attached_image_base64))
         self._set_status(_("Sending..."))
         self._set_ui_enabled(False)
 
-        thread = threading.Thread(target=self._send_message, args=(message,), daemon=True)
+        thread = threading.Thread(
+            target=self._send_message,
+            args=(message,),
+            daemon=True,
+        )
         thread.start()
 
     def on_clear(self, event: Any) -> None:
@@ -100,8 +122,14 @@ class ChatDialog(wx.Dialog):
 
     def _send_message(self, message: str) -> None:
         tools = self._get_tool_definitions() if self.toolCheckbox.Value else None
+        image_base64 = self._attached_image_base64
         try:
-            self._coordinator.send_message(message, progress_callback=self._on_progress, tools=tools)
+            self._coordinator.send_message(
+                message,
+                image_base64=image_base64,
+                progress_callback=self._on_progress,
+                tools=tools,
+            )
         except Exception as error:
             wx.CallAfter(self._append_local_history, "Error", str(error))
             wx.CallAfter(self._set_status, _("Error sending message"))
@@ -109,6 +137,7 @@ class ChatDialog(wx.Dialog):
             wx.CallAfter(self._refresh_history)
             wx.CallAfter(self._set_status, _("Ready"))
         finally:
+            self._attached_image_base64 = None
             wx.CallAfter(self._set_ui_enabled, True)
 
     def _on_progress(self, partial_text: str, generated_chars: int) -> None:
@@ -123,8 +152,13 @@ class ChatDialog(wx.Dialog):
         self.closeButton.Enable(enabled)
         self.inputCtrl.Enable(enabled)
 
-    def _append_local_history(self, role: str, content: str, tool_name: str | None = None) -> None:
-        label = f"{role}: " if role != "Tool" else f"{role}/{tool_name or 'unknown'}: "
+    def _append_local_history(self, role: str, content: str, tool_name: str | None = None, image_attached: bool = False) -> None:
+        if role == "User" and image_attached:
+            label = _("User (image attached): ")
+        elif role == "Tool":
+            label = f"{role}/{tool_name or 'unknown'}: "
+        else:
+            label = f"{role}: "
         self.historyCtrl.AppendText(f"{label}{content}\n")
         self.historyCtrl.ShowPosition(self.historyCtrl.GetLastPosition())
 
