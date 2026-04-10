@@ -243,6 +243,8 @@ def get_model_name() -> str:
 
 def get_server_url() -> str:
     """Return the configured backend URL for the selected provider."""
+    from .providers.config import GeminiConfig, OllamaConfig
+
     active = get_active_provider_config()
     if isinstance(active, GeminiConfig):
         return active.base_url

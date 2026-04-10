@@ -51,6 +51,27 @@ class OllamaGenerateResponse(TypedDict, total=False):
     eval_duration: int
 
 
+class OllamaChatMessage(TypedDict, total=False):
+    role: str
+    content: str
+    images: list[str]
+    tool_name: str
+    tool_calls: list[dict[str, Any]]
+
+
+class OllamaChatRequest(TypedDict, total=False):
+    model: str
+    messages: list[OllamaChatMessage]
+    stream: bool
+    options: dict[str, Any]
+    keep_alive: str
+    tools: list[dict[str, Any]]
+
+
+class OllamaChatResponse(OllamaGenerateResponse, total=False):
+    message: dict[str, Any]
+
+
 class OllamaRunningModel(TypedDict, total=False):
     name: str
     model: str
@@ -172,7 +193,7 @@ class OllamaClient:
             finalResponse = typedResponse
         else:
             logger.debug("Starting stream /api/generate request for model=%s", model)
-            summaryText, finalResponse = self._requestGenerateStream(payload, onPartial)
+            summaryText, finalResponse = self._requestGenerateStream(payload, onPartial, "/api/generate")
             logger.debug("Final generated summary length=%d", len(summaryText))
 
         if not summaryText:
@@ -214,7 +235,7 @@ class OllamaClient:
             finalResponse = typedResponse
         else:
             logger.debug("Starting stream image generate request for model=%s", model)
-            descriptionText, finalResponse = self._requestGenerateStream(payload, onPartial)
+            descriptionText, finalResponse = self._requestGenerateStream(payload, onPartial, "/api/generate")
             logger.debug("Final generated description length=%d", len(descriptionText))
 
         if not descriptionText:
@@ -231,6 +252,52 @@ class OllamaClient:
                 f"Empty image description. Prompt size={len(payload['prompt'])}. final_response={{'done': {finalResponse.get('done')}, 'done_reason': {finalResponse.get('done_reason')}}}"
             )
         return SummaryResponse(text=descriptionText, model=model)
+
+    def chat(
+        self,
+        messages: list[OllamaChatMessage],
+        tools: list[dict[str, Any]] | None = None,
+        onPartial: Callable[[str, int], None] | None = None,
+    ) -> SummaryResponse:
+        model = self._resolveModel()
+        payload: OllamaChatRequest = {
+            "model": model,
+            "messages": messages,
+            "options": self._defaultGenerateOptions(),
+            "keep_alive": get_keep_alive(),
+        }
+        if tools:
+            payload["tools"] = tools
+
+        if onPartial is None:
+            payload["stream"] = False
+            logger.debug("Starting non-stream /api/chat request for model=%s", model)
+            response = self._requestJSON("POST", "/api/chat", payload)
+            typedResponse = self._validateGenerateResponse(response, "/api/chat")
+            message = typedResponse.get("message")
+            if isinstance(message, dict):
+                chatText = str(message.get("content", "")).strip()
+            else:
+                chatText = str(typedResponse.get("response", "")).strip()
+            finalResponse = typedResponse
+        else:
+            logger.debug("Starting stream /api/chat request for model=%s", model)
+            chatText, finalResponse = self._requestGenerateStream(payload, onPartial, "/api/chat")
+            logger.debug("Final generated chat length=%d", len(chatText))
+
+        if not chatText:
+            logger.debug(
+                "Empty chat response detected response=%s",
+                {
+                    "done": finalResponse.get("done"),
+                    "done_reason": finalResponse.get("done_reason"),
+                    "response_len": len(str(finalResponse.get("response", ""))),
+                },
+            )
+            raise OllamaClientError(
+                f"Empty chat response. final_response={{'done': {finalResponse.get('done')}, 'done_reason': {finalResponse.get('done_reason')}}}"
+            )
+        return SummaryResponse(text=chatText, model=model)
 
     def listLocalModels(self) -> list[str]:
         logger.debug("Listing local Ollama models")
@@ -444,8 +511,8 @@ class OllamaClient:
         self,
         payload: dict[str, Any],
         onPartial: Callable[[str, int], None],
+        path: str = "/api/generate",
     ) -> tuple[str, OllamaGenerateResponse]:
-        path = "/api/generate"
         streamPayload: dict[str, Any] = dict(payload)
         streamPayload["stream"] = True
         body = json.dumps(streamPayload).encode("utf-8")
@@ -491,13 +558,17 @@ class OllamaClient:
 
                         parsed = self._validateGenerateResponse(self._parseJSON(line, path), path, requireDone=False)
                         lastParsed = parsed
+                        piece = str(parsed.get("response", ""))
+                        if not piece:
+                            message = parsed.get("message")
+                            if isinstance(message, dict):
+                                piece = str(message.get("content", ""))
                         logger.debug(
                             "Stream chunk path=%s done=%s response_len=%d",
                             path,
                             parsed.get("done"),
-                            len(str(parsed.get("response", ""))),
+                            len(piece),
                         )
-                        piece = str(parsed.get("response", ""))
                         if piece:
                             chunks.append(piece)
                             generatedChars += len(piece)

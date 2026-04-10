@@ -7,7 +7,7 @@ from typing import Any
 
 from ..models import LLMRequest, LLMResponse, SummaryResponse, TaskType
 from ..ollama_client import OllamaClient, OllamaClientError
-from .base import LLMProvider, LLMProviderError, ProgressCallback, PartialCallback
+from .base import LLMProvider, LLMProviderError, ProgressCallback, PartialCallback, format_chat_messages
 from .config import OllamaConfig
 
 logger = logging.getLogger(__name__)
@@ -55,6 +55,41 @@ class OllamaProvider(LLMProvider):
             raise self._wrap_exception(error) from error
         return SummaryResponse(text=response.text, model=response.model, provider=self.provider_name())
 
+    def _handle_chat(self, request: LLMRequest) -> LLMResponse:
+        if not request.messages:
+            return LLMResponse(text="No input provided", model=self.provider_name(), raw=None, metrics=None)
+
+        messages = []
+        for msg in request.messages:
+            if msg is None:
+                continue
+            chat_message: dict[str, Any] = {
+                "role": msg.role,
+                "content": msg.content or "",
+            }
+            if msg.image_base64:
+                chat_message["images"] = [msg.image_base64]
+            if msg.tool_name:
+                chat_message["tool_name"] = msg.tool_name
+            if msg.tool_calls:
+                chat_message["tool_calls"] = msg.tool_calls
+            messages.append(chat_message)
+
+        if not messages:
+            return self._handle_chat_fallback(request)
+
+        try:
+            response = self._client.chat(messages, tools=request.tools, onPartial=request.stream_handler)
+        except OllamaClientError as error:
+            raise self._wrap_exception(error) from error
+
+        return LLMResponse(text=response.text, model=response.model, raw=response, metrics=None)
+
+    def _handle_chat_fallback(self, request: LLMRequest) -> LLMResponse:
+        prompt = format_chat_messages(request.messages)
+        result = self.summarize(prompt, stream_handler=request.stream_handler)
+        return LLMResponse(text=result.text, model=result.model, raw=result, metrics=None)
+
     def generate(self, request: LLMRequest) -> LLMResponse:
         if request.task_type == TaskType.SUMMARY:
             response = self.summarize(request.input_text or "", stream_handler=request.stream_handler)
@@ -69,6 +104,9 @@ class OllamaProvider(LLMProvider):
                 stream_handler=request.stream_handler,
             )
             return LLMResponse(text=response.text, model=response.model, raw=None, metrics=None)
+
+        if request.task_type == TaskType.CHAT:
+            return self._handle_chat(request)
 
         raise LLMProviderError(f"Unsupported task type: {request.task_type}")
 

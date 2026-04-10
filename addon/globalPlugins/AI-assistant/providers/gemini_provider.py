@@ -7,10 +7,10 @@ from collections.abc import Callable
 from typing import Optional
 
 from ..models import LLMRequest, LLMResponse, SummaryResponse, TaskType
-from .base import LLMProvider, LLMProviderError, PartialCallback, ProgressCallback
+from .base import LLMProvider, LLMProviderError, PartialCallback, ProgressCallback, format_chat_messages
 from .config import GeminiConfig
 from ..gemini import GeminiClient, GeminiClientError
-from ..gemini.types import GenerateContentConfig, Part
+from ..gemini.types import Content, GenerateContentConfig, Part
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +98,44 @@ class GeminiProvider(LLMProvider):
     def get_model_info(self, model_name: str):
         return self._client.get_model(model_name)
 
+    def _supports_multimodal(self) -> bool:
+        return True
+
+    def _handle_chat(self, request: LLMRequest) -> LLMResponse:
+        if not request.messages:
+            return LLMResponse(text="No input provided", model="gemini", raw=None, metrics=None)
+
+        if self._supports_multimodal():
+            return self._handle_multimodal_chat(request)
+
+        return self._handle_chat_fallback(request)
+
+    def _handle_multimodal_chat(self, request: LLMRequest) -> LLMResponse:
+        parts: list[Part] = []
+        for msg in request.messages or []:
+            role_prefix = f"{msg.role.upper()}: "
+            if msg.content:
+                parts.append(Part(text=role_prefix + msg.content, role=msg.role))
+            if msg.image_base64:
+                parts.append(Part.from_base64(msg.image_base64, mime_type="image/png", role=msg.role))
+
+        contents = [Content(parts=parts)]
+
+        if request.stream_handler is not None:
+            text_output = ""
+            for chunk in self._client.stream_content(model=self._resolve_model(), contents=contents, config=self._build_generation_config()):
+                text_output += chunk
+                request.stream_handler(chunk)
+            return LLMResponse(text=text_output, model="gemini", raw=None, metrics=None)
+
+        response = self._client.generate_content(model=self._resolve_model(), contents=contents, config=self._build_generation_config())
+        return LLMResponse(text=response.text, model="gemini", raw=response, metrics=None)
+
+    def _handle_chat_fallback(self, request: LLMRequest) -> LLMResponse:
+        prompt = format_chat_messages(request.messages)
+        result = self.summarize(prompt, stream_handler=request.stream_handler)
+        return LLMResponse(text=result.text, model=result.model, raw=result, metrics=None)
+
     def generate(self, request: LLMRequest) -> LLMResponse:
         if request.task_type == TaskType.SUMMARY:
             response = self.summarize(request.input_text or "", stream_handler=request.stream_handler)
@@ -112,6 +150,9 @@ class GeminiProvider(LLMProvider):
                 stream_handler=request.stream_handler,
             )
             return LLMResponse(text=response.text, model=response.model, raw=None, metrics=None)
+
+        if request.task_type == TaskType.CHAT:
+            return self._handle_chat(request)
 
         raise LLMProviderError(f"Unsupported task type: {request.task_type}")
 
