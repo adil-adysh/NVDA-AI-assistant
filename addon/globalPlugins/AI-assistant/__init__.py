@@ -14,7 +14,7 @@ from .browser_extractor import BrowserAwarePageExtractor, PageExtractionError
 from .download_progress import DownloadProgressTracker
 from .image_description import ImageDescriptionCoordinator
 from .image_services import ImageCaptureService, ImageEncoder, ImagePreprocessor
-from .settings import get_image_format, get_image_max_side, get_image_quality
+from .settings import get_image_format, get_image_max_side, get_image_quality, get_provider, set_provider
 from .metrics_reporter import FileMetricsReporter
 from .page_summary import PageSummaryCoordinator
 from .providers.base import LLMProviderError
@@ -66,6 +66,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             ("c", self.script_openChatWindow),
             ("p", self.script_openChatWithPageContent),
             ("x", self.script_openChatWithScreenshot),
+            ("t", self.script_toggleAIProvider),
             ("h", self.script_assistantLayerHelp),
         )
         self._startModelPreload()
@@ -232,7 +233,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         ui.message(
             _(
                 "AI assistant layer active. "
-                "Press S for summary, I for image describe, C for chat, P for page content, X for screenshot, or H for help."
+                "Press S for summary, I for image describe, C for chat, P for page content, X for screenshot, T for provider toggle, or H for help."
             )
         )
 
@@ -265,13 +266,32 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self.finish()
 
     @script(
+        description=_("Toggles the active AI provider between Ollama and Gemini."),
+    )
+    def script_toggleAIProvider(self, gesture: Any):
+        log.debug("Script toggleAIProvider invoked gesture=%s", gesture)
+        current_provider = get_provider()
+        target_provider = "gemini" if current_provider == "ollama" else "ollama"
+        self._set_active_provider(target_provider)
+
+    def _set_active_provider(self, provider: str) -> None:
+        try:
+            set_provider(provider)
+        except Exception as error:
+            ui.message(str(error))
+            return
+
+        ui.message(_(f"AI provider switched to {provider.capitalize()}.") )
+        self._startModelPreload()
+
+    @script(
         description=_("Lists available AI assistant layer commands."),
     )
     def script_assistantLayerHelp(self, gesture: Any):
         ui.message(
             _(
                 "Assistant layer commands: S for summary, I for image describe, C for chat, "
-                "P for page content, X for screenshot, H for help. "
+                "P for page content, X for screenshot, T for provider toggle, H for help. "
                 "Press the key after activating the layer with NVDA+Shift+A."
             )
         )

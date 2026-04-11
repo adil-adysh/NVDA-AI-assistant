@@ -134,6 +134,13 @@ def get_provider() -> str:
     return _read_string("provider", defaults.DEFAULT_PROVIDER).strip().lower()
 
 
+def set_provider(provider: str) -> None:
+    provider_value = str(provider or "").strip().lower()
+    if provider_value not in {"ollama", "gemini"}:
+        raise ValueError(f"Unsupported provider: {provider}")
+    _set_value("provider", provider_value)
+
+
 def get_ollama_model_name() -> str:
     return _read_string("ollamaModelName", defaults.DEFAULT_OLLAMA_MODEL)
 
