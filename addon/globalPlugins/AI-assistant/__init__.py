@@ -2,7 +2,9 @@
 # pyright: reportMissingImports=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUntypedBaseClass=false
 from logHandler import log
 import threading
-from typing import Any
+import builtins
+from collections.abc import Callable
+from typing import Any, cast
 
 import addonHandler
 import globalPluginHandler
@@ -10,64 +12,68 @@ import gui
 import ui
 from scriptHandler import script
 
-from .browser_extractor import BrowserAwarePageExtractor, PageExtractionError
-from .download_progress import DownloadProgressTracker
-from .image_description import ImageDescriptionCoordinator
+from .browser_extractor import BrowserAwarePageExtractor
 from .image_services import ImageCaptureService, ImageEncoder, ImagePreprocessor
-from .settings import (
-    get_image_format,
-    get_image_max_side,
-    get_image_quality,
-    get_provider,
-    get_provider_state,
-    set_provider,
-    subscribe_provider_state_change,
-    unsubscribe_provider_state_change,
-)
 from .metrics_reporter import FileMetricsReporter
-from .page_summary import PageSummaryCoordinator
+from .llm_service import ProviderLLMService
+from . import nvda_ui
+from .settings import get_provider, get_provider_state, set_provider, subscribe_provider_state_change, unsubscribe_provider_state_change
 from .providers.base import LLMProviderError
 from .tool_registry import ToolDefinition, ToolRegistry
 from .providers.provider_proxy import ProviderProxy
 from .settings_panel import AIAssistantSettingsPanel
 from .chat_coordinator import ChatCoordinator
+from .use_case_engine import UseCaseEngine
+from .context_collectors import ImageContextCollector, PageContextCollector
+from .context_pipeline import ContextPipeline
+from .models import ProgressEvent
+from .tool_executor import ToolExecutor
 from . import addonConfig
+
+def _translate(message: str) -> str:
+    return message
+
+
+_ = cast(Callable[[str], str], getattr(builtins, "_", _translate))
 
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     scriptCategory = _("Smart Browser Tools")
-    assistantLayerModeActive = False
-    layeredScriptToRun = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
+        self.assistantLayerModeActive = False
+        self.layeredScriptToRun = None
         addonHandler.initTranslation()
         addonConfig.initialize()
         log.debug("Browser Assistant plugin initializing")
         self._provider = ProviderProxy()
         self._metrics_reporter = FileMetricsReporter()
-        self._capture_service = ImageCaptureService()
-        self._preprocessor = ImagePreprocessor()
-        self._encoder = ImageEncoder()
-
-        self._pageSummary = PageSummaryCoordinator(
-            extractor=BrowserAwarePageExtractor(),
-            client=self._provider,
-            metrics_reporter=self._metrics_reporter,
+        self._pageContextCollector = PageContextCollector(extractor=BrowserAwarePageExtractor())
+        self._imageContextCollector = ImageContextCollector(
+            capture_service=ImageCaptureService(),
+            preprocessor=ImagePreprocessor(),
+            encoder=ImageEncoder(),
         )
-        self._imageDescription = ImageDescriptionCoordinator(
-            client=self._provider,
-            metrics_reporter=self._metrics_reporter,
-            capture_service=self._capture_service,
-            preprocessor=self._preprocessor,
-            encoder=self._encoder,
+
+        self._contextPipeline = ContextPipeline(
+            collectors=(self._pageContextCollector, self._imageContextCollector),
         )
         self._toolRegistry = ToolRegistry()
         self._register_default_tools()
+        self._toolExecutor = ToolExecutor(self._toolRegistry)
+        self._llmService = ProviderLLMService(self._provider, tool_executor=self._toolExecutor)
         self._chatCoordinator = ChatCoordinator(
-            client=self._provider,
-            tool_registry=self._toolRegistry,
+            client=self._llmService,
+            tool_executor=self._toolExecutor,
             metrics_reporter=self._metrics_reporter,
+        )
+        self._useCaseEngine = UseCaseEngine(
+            chat_coordinator=self._chatCoordinator,
+            llm_service=self._llmService,
+            context_pipeline=self._contextPipeline,
+            page_context_collector=self._pageContextCollector,
+            image_context_collector=self._imageContextCollector,
         )
         subscribe_provider_state_change(self._on_provider_state_change)
         self._assistantLayerGestures = (
@@ -96,12 +102,11 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
     def _startModelPreload(self):
         def worker():
-            provider_name = self._provider.provider_name()
+            provider_name = self._llmService.provider_name()
             ui.message(f"Checking {provider_name} model availability.")
-            announcer = DownloadProgressTracker(ui.message)
 
             try:
-                model = self._provider.ensure_model_available(on_progress=announcer.process_event)
+                model = self._llmService.ensure_model_available(on_progress=ui.message)
             except LLMProviderError as error:
                 ui.message(str(error))
             except Exception as error:
@@ -117,7 +122,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         )
         thread.start()
 
-    def _on_provider_state_change(self, provider_state) -> None:
+    def _on_provider_state_change(self, provider_state: Any) -> None:
         try:
             from . import chat_ui
 
@@ -135,15 +140,19 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     )
     def script_summarizeCurrentPage(self, gesture: Any):
         log.debug("Script summarizeCurrentPage invoked gesture=%s", gesture)
-        self._pageSummary.summarizeCurrentPage()
+        self._run_use_case_in_background(
+            "summary",
+            title=_("Page summary"),
+            render_result=lambda result: self._present_use_case_result(result, title=_("Page summary")),
+        )
 
-    def terminate(self):
+    def terminate(self) -> None:
         try:
             unsubscribe_provider_state_change(self._on_provider_state_change)
         except Exception:
             log.exception("Error unsubscribing provider state listener")
         try:
-            self._provider.close()
+            self._llmService.close()
         except Exception:
             log.exception("Error closing provider during terminate")
         super().terminate()
@@ -154,14 +163,25 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     )
     def script_describeCurrentWindow(self, gesture: Any):
         log.debug("Script describeCurrentWindow invoked gesture=%s", gesture)
-        self._imageDescription.describeCurrentWindow()
+        self._run_use_case_in_background(
+            "describe_image",
+            title=_("Image description"),
+            render_result=lambda result: self._present_use_case_result(result, title=_("Image description")),
+        )
 
     @script(
         description=_("Opens the AI chat window."),
     )
     def script_openChatWindow(self, gesture: Any):
         log.debug("Script openChatWindow invoked gesture=%s", gesture)
-        self._open_chat_window()
+        self._run_use_case_in_background(
+            "open_chat",
+            title=_("AI Chat"),
+            render_result=lambda result: self._open_chat_window(
+                initial_text=result.initial_text,
+                initial_image_base64=result.initial_image_base64,
+            ),
+        )
 
     def _open_chat_window(
         self,
@@ -197,48 +217,70 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         finally:
             gui.mainFrame.postPopup()
 
+    def _run_use_case_in_background(self, use_case_id: str, title: str, render_result: Callable[[Any], None]) -> None:
+        def worker() -> None:
+            try:
+                result = self._useCaseEngine.execute(use_case_id, progress=self._progress_handler)
+            except Exception as error:
+                nvda_ui.queue(ui.message, _(f"Error: {error}"))
+                return
+
+            nvda_ui.queue(render_result, result)
+
+        thread = threading.Thread(
+            target=worker,
+            name=f"AIassistant{title.replace(' ', '')}Worker",
+            daemon=True,
+        )
+        thread.start()
+
+    def _present_use_case_result(self, use_case_result: Any, title: str) -> None:
+        output_text = None
+        if isinstance(use_case_result, dict):
+            output_text = use_case_result.get("output_text")
+        else:
+            metadata = getattr(use_case_result, "metadata", None)
+            if isinstance(metadata, dict):
+                output_text = metadata.get("output_text")
+
+        if not isinstance(output_text, str) or not output_text.strip():
+            ui.message(_("No result to display."))
+            return
+
+        ui.browseableMessage(output_text, title=title)
+
+    def _progress_handler(self, event: ProgressEvent) -> None:
+        if event.stage == "error":
+            nvda_ui.queue(ui.message, _("Error: ") + event.message)
+            return
+
+        if event.stage in {"start", "collecting_context", "building_prompt", "llm_request", "tool_execution", "complete"}:
+            nvda_ui.queue(ui.message, event.message)
+
     @script(
         description=_("Opens the AI chat window with current page content preloaded."),
     )
     def script_openChatWithPageContent(self, gesture: Any):
         log.debug("Script openChatWithPageContent invoked gesture=%s", gesture)
-        try:
-            snapshot = self._pageSummary._extractor.extract()
-        except PageExtractionError as error:
-            ui.message(str(error))
-            return
-        except Exception as error:
-            ui.message(str(error))
-            return
-
-        title = snapshot.title or _("Unknown")
-        app_title = snapshot.appTitle or _("Unknown")
-        initial_text = (
-            _("Page content:\nTitle: {title}\nApp: {app}\n\n{content}\n\nQuestion: ")
-            .format(title=title, app=app_title, content=snapshot.text)
+        self._run_use_case_in_background(
+            "open_chat_with_page_content",
+            title=_("AI Chat"),
+            render_result=lambda result: self._open_chat_window(initial_text=result.initial_text),
         )
-        self._open_chat_window(initial_text=initial_text)
 
     @script(
         description=_("Opens the AI chat window with a screenshot attached."),
     )
     def script_openChatWithScreenshot(self, gesture: Any):
         log.debug("Script openChatWithScreenshot invoked gesture=%s", gesture)
-        try:
-            raw_image = self._capture_service.capture()
-            processed_image = self._preprocessor.preprocess(
-                image_bytes=raw_image,
-                max_side=get_image_max_side(),
-                image_format=get_image_format(),
-                quality=get_image_quality(),
-            )
-            image_base64 = self._encoder.encode(processed_image)
-        except Exception as error:
-            ui.message(str(error))
-            return
-
-        initial_text = _("Describe this screenshot.")
-        self._open_chat_window(initial_text=initial_text, initial_image_base64=image_base64)
+        self._run_use_case_in_background(
+            "open_chat_with_screenshot",
+            title=_("AI Chat"),
+            render_result=lambda result: self._open_chat_window(
+                initial_text=result.initial_text,
+                initial_image_base64=result.initial_image_base64,
+            ),
+        )
 
     @script(
         description=_(
@@ -252,17 +294,17 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         if self.assistantLayerModeActive:
             self.script_error(gesture)
             return
+        self.layeredScriptToRun = None
         for gesture_key, handler in self._assistantLayerGestures:
             self.bindGesture(f"kb:{gesture_key}", handler.__name__[7:])
         self.assistantLayerModeActive = True
         ui.message(
             _(
-                "AI assistant layer active. "
-                "Press S for summary, I for image describe, C for chat, P for page content, X for screenshot, T for provider toggle, or H for help."
+                "AI assistant layer active. Press S for summary, I for image describe, C for chat, P for page content, X for screenshot, T for provider toggle, or H for help."
             )
         )
 
-    def getScript(self, gesture):
+    def getScript(self, gesture: Any):
         if not getattr(self, "assistantLayerModeActive", False):
             return globalPluginHandler.GlobalPlugin.getScript(self, gesture)
         script = globalPluginHandler.GlobalPlugin.getScript(self, gesture)
@@ -274,19 +316,22 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         )
         return self.runAndFinish
 
-    def runAndFinish(self, gesture):
-        if self.layeredScriptToRun is not None:
-            self.layeredScriptToRun(gesture)
-        else:
-            ui.message(_("Can't find this assistant layer script."))
-        self.finish()
+    def runAndFinish(self, gesture: Any):
+        try:
+            if self.layeredScriptToRun is not None:
+                self.layeredScriptToRun(gesture)
+            else:
+                ui.message(_("Can't find this assistant layer script."))
+        finally:
+            self.finish()
 
-    def finish(self):
+    def finish(self) -> None:
         self.assistantLayerModeActive = False
+        self.layeredScriptToRun = None
         self.clearGestureBindings()
         self.bindGestures(self.__gestures)
 
-    def script_error(self, gesture):
+    def script_error(self, gesture: Any):
         ui.message(_("Can't find this assistant layer script."))
         self.finish()
 
@@ -311,9 +356,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
         if chat_ui.chatDialogInstance:
             try:
-                chat_ui.chatDialogInstance.refresh_provider_title()
+                chat_ui.chatDialogInstance.update_provider_state(get_provider_state())
             except Exception:
-                log.exception("Error refreshing chat dialog title after provider switch")
+                log.exception("Error updating chat dialog title after provider switch")
 
         self._startModelPreload()
 
@@ -323,8 +368,6 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def script_assistantLayerHelp(self, gesture: Any):
         ui.message(
             _(
-                "Assistant layer commands: S for summary, I for image describe, C for chat, "
-                "P for page content, X for screenshot, T for provider toggle, H for help. "
-                "Press the key after activating the layer with NVDA+Shift+A."
+                "Assistant layer commands: S for summary, I for image describe, C for chat, P for page content, X for screenshot, T for provider toggle, H for help. Press the key after activating the layer with NVDA+Shift+A."
             )
         )

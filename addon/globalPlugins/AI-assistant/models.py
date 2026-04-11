@@ -1,6 +1,24 @@
 # -*- coding: utf-8 -*-
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Callable, Literal
+
+
+@dataclass(frozen=True, slots=True)
+class ProgressEvent:
+    stage: Literal[
+        "start",
+        "collecting_context",
+        "building_prompt",
+        "llm_request",
+        "streaming",
+        "tool_execution",
+        "complete",
+        "error",
+    ]
+    message: str
+
+
+ProgressHandler = Callable[[ProgressEvent], None]
 
 
 @dataclass(frozen=True, slots=True)

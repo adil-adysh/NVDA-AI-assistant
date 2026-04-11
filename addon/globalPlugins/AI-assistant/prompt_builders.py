@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from typing import Any
+from .context import ImageContext, PageContext
 
 
 def build_system_prompt_for_nvda_assistant() -> str:
@@ -21,13 +21,13 @@ def build_system_prompt_for_nvda_assistant() -> str:
 	)
 
 
-def build_page_summary_prompt(snapshot: Any) -> str:
-	"""Build a page summary prompt from an extracted snapshot."""
-	headings = _format_headings(snapshot.headings)
-	links = _format_list(snapshot.links)
-	buttons = _format_list(snapshot.buttons)
-	landmarks = _format_list(snapshot.landmarks)
-	truncated_notice = "yes" if snapshot.truncated else "no"
+def build_page_summary_prompt(context: PageContext) -> str:
+	"""Build a page summary prompt from structured page context."""
+	headings = _format_headings(context.headings)
+	links = _format_list(context.links)
+	buttons = _format_list(context.buttons)
+	landmarks = _format_list(context.landmarks)
+	truncated_notice = "yes" if context.truncated else "no"
 
 	return (
 		f"{build_system_prompt_for_nvda_assistant()}\n"
@@ -44,14 +44,14 @@ def build_page_summary_prompt(snapshot: Any) -> str:
 		"\n"
 		"* (Up to 3 useful next steps)\n\n"
 		"Context:\n"
-		f"App: {snapshot.appTitle or 'Unknown'}\n"
-		f"Title: {snapshot.title}\n"
+		f"App: {context.app_title or 'Unknown'}\n"
+		f"Title: {context.title}\n"
 		f"Trimmed: {truncated_notice}\n\n"
 		"Counts:\n"
-		f"Headings: {len(snapshot.headings)}\n"
-		f"Links: {len(snapshot.links)}\n"
-		f"Buttons: {len(snapshot.buttons)}\n"
-		f"Landmarks: {len(snapshot.landmarks)}\n\n"
+		f"Headings: {len(context.headings)}\n"
+		f"Links: {len(context.links)}\n"
+		f"Buttons: {len(context.buttons)}\n"
+		f"Landmarks: {len(context.landmarks)}\n\n"
 		"Headings:\n"
 		f"{headings}\n\n"
 		"Landmarks:\n"
@@ -61,17 +61,17 @@ def build_page_summary_prompt(snapshot: Any) -> str:
 		"Buttons:\n"
 		f"{buttons}\n\n"
 		"Content:\n"
-		f"{snapshot.text}"
+		f"{context.text}"
 	)
 
 
-def build_image_description_prompt(app_title: str | None = None, window_title: str | None = None) -> str:
+def build_image_description_prompt(context: ImageContext) -> str:
 	"""Build a prompt for describing a captured foreground window image."""
 	context_lines = []
-	if app_title:
-		context_lines.append(f"App: {app_title}")
-	if window_title:
-		context_lines.append(f"Window: {window_title}")
+	if context.app_title:
+		context_lines.append(f"App: {context.app_title}")
+	if context.window_title:
+		context_lines.append(f"Window: {context.window_title}")
 
 	context_section = "\n".join(context_lines) + "\n" if context_lines else ""
 

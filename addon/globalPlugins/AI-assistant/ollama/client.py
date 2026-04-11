@@ -139,6 +139,7 @@ class OllamaClient:
             response = _requestJSON(
                 self._baseURL,
                 "/api/generate",
+                "POST",
                 self._timeoutSeconds,
                 {
                     "Accept": "application/json",
@@ -193,6 +194,7 @@ class OllamaClient:
             response = _requestJSON(
                 self._baseURL,
                 "/api/generate",
+                "POST",
                 self._timeoutSeconds,
                 {
                     "Accept": "application/json",
@@ -254,6 +256,7 @@ class OllamaClient:
             response = _requestJSON(
                 self._baseURL,
                 "/api/chat",
+                "POST",
                 self._timeoutSeconds,
                 {
                     "Accept": "application/json",
@@ -302,6 +305,7 @@ class OllamaClient:
         response = _requestJSON(
             self._baseURL,
             "/api/ps",
+            "GET",
             self._timeoutSeconds,
             {
                 "Accept": "application/json",
@@ -330,6 +334,7 @@ class OllamaClient:
         response = _requestJSON(
             self._baseURL,
             "/api/show",
+            "POST",
             self._timeoutSeconds,
             {
                 "Accept": "application/json",
@@ -353,6 +358,7 @@ class OllamaClient:
         response = _requestJSON(
             self._baseURL,
             "/api/generate",
+            "POST",
             self._timeoutSeconds,
             {
                 "Accept": "application/json",
@@ -374,6 +380,7 @@ class OllamaClient:
         response = _requestJSON(
             self._baseURL,
             "/api/generate",
+            "POST",
             self._timeoutSeconds,
             {
                 "Accept": "application/json",
