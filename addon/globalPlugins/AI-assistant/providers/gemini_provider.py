@@ -4,13 +4,14 @@ from __future__ import annotations
 import base64
 from logHandler import log
 from collections.abc import Callable
-from typing import Optional
+from typing import Any, Optional
 
-from ..models import LLMRequest, LLMResponse, SummaryResponse, TaskType, ToolCall
-from .base import LLMProvider, LLMProviderError, PartialCallback, ProgressCallback, format_chat_messages
+from ..models import LLMResponse, SummaryResponse, ToolCall
+from .base import LLMProvider, LLMProviderError, PartialCallback, ProgressCallback
 from .config import GeminiConfig
 from ..gemini import GeminiClient, GeminiClientError
 from ..gemini.types import Content, GenerateContentConfig, Part
+from ..core.canonical import Message, Tool
 
 
 class GeminiProvider(LLMProvider):
@@ -99,21 +100,86 @@ class GeminiProvider(LLMProvider):
     def _supports_multimodal(self) -> bool:
         return True
 
-    def _handle_chat(self, request: LLMRequest) -> LLMResponse:
+    def _convert_message_to_content(self, message: Message) -> Content | dict[str, Any]:
+        has_function_parts = False
+        part_items: list[Any] = []
+
+        for part in message.parts:
+            if part.type == "text":
+                part_items.append(Part(text=part.text or "", role=message.role))
+            elif part.type == "image":
+                if part.image is not None:
+                    part_items.append(Part.from_bytes(part.image, mime_type="image/png", role=message.role))
+            elif part.type == "tool_call":
+                has_function_parts = True
+                part_items.append(
+                    {
+                        "functionCall": {
+                            "name": part.tool_name or "",
+                            "arguments": part.tool_args or {},
+                        }
+                    }
+                )
+            elif part.type == "tool_result":
+                has_function_parts = True
+                part_items.append(
+                    {
+                        "functionResponse": {
+                            "name": part.tool_name or "",
+                            "response": part.tool_result if part.tool_result is not None else part.text or "",
+                        }
+                    }
+                )
+
+        if has_function_parts:
+            payload_parts: list[dict[str, Any]] = []
+            for item in part_items:
+                if isinstance(item, Part):
+                    payload_parts.append(item.to_dict())
+                else:
+                    payload_parts.append(item)
+            return {"role": message.role, "parts": payload_parts}
+
+        return Content(parts=[item for item in part_items if isinstance(item, Part)], role=message.role)
+
+    def _convert_tool(self, tool: Tool) -> dict[str, Any]:
+        return {
+            "functionDeclarations": [
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": tool.parameters,
+                        "required": list(tool.required),
+                    },
+                }
+            ]
+        }
+
+    def _handle_chat(self, messages: list[Message], tools: list[Tool] | None, stream_handler: PartialCallback | None) -> LLMResponse:
         log.debug(
-            "GeminiProvider._handle_chat: task_type=%s messages=%s tools=%s stream=%s",
-            request.task_type,
-            [(msg.role, msg.content) for msg in request.messages] if request.messages else None,
-            request.tools,
-            request.stream,
+            "GeminiProvider._handle_chat: canonical_messages=%s tools=%s stream=%s",
+            [(msg.role, [part.type for part in msg.parts]) for msg in messages],
+            [tool.name for tool in tools] if tools else None,
+            stream_handler is not None,
         )
-        if not request.messages:
+        if not messages:
             return LLMResponse(text="No input provided", model="gemini", raw=None, metrics=None)
 
-        if self._supports_multimodal():
-            return self._handle_multimodal_chat(request)
+        contents: list[Any] = [self._convert_message_to_content(msg) for msg in messages]
+        gemini_tools = [self._convert_tool(tool) for tool in tools] if tools else None
 
-        return self._handle_chat_fallback(request)
+        log.debug(
+            "GeminiProvider._handle_chat: provider_payload=%s tools=%s",
+            contents,
+            gemini_tools,
+        )
+
+        if self._supports_multimodal():
+            return self._handle_multimodal_chat(messages, tools, stream_handler)
+
+        return self._handle_chat_fallback(messages)
 
     def _extract_tool_calls(self, raw_response: Any) -> list[ToolCall] | None:
         if not isinstance(raw_response, dict):
@@ -154,59 +220,55 @@ class GeminiProvider(LLMProvider):
             calls.append(ToolCall(name=name, arguments=arguments, id=tc.get("id")))
         return calls or None
 
-    def _handle_multimodal_chat(self, request: LLMRequest) -> LLMResponse:
-        contents: list[Content] = []
+    def _handle_multimodal_chat(
+        self,
+        messages: list[Message],
+        tools: list[Tool] | None,
+        stream_handler: PartialCallback | None,
+    ) -> LLMResponse:
+        contents: list[Any] = []
         system_instruction: Content | None = None
-        for msg in request.messages or []:
+        for msg in messages:
             if msg.role == "system":
-                if msg.content:
+                text = "".join(part.text or "" for part in msg.parts if part.type == "text")
+                if text:
                     if system_instruction is None:
-                        system_instruction = Content(parts=[Part(text=msg.content, role="system")], role="system")
+                        system_instruction = Content(parts=[Part(text=text, role="system")], role="system")
                     else:
-                        system_instruction.parts.append(Part(text=msg.content, role="system"))
+                        system_instruction.parts.append(Part(text=text, role="system"))
                 continue
 
-            if msg.content:
-                contents.append(
-                    Content(
-                        parts=[Part(text=msg.content, role=msg.role)],
-                        role=msg.role,
-                    )
-                )
-            if msg.image_base64:
-                contents.append(
-                    Content(
-                        parts=[Part.from_base64(msg.image_base64, mime_type="image/png", role=msg.role)],
-                        role=msg.role,
-                    )
-                )
+            content_item = self._convert_message_to_content(msg)
+            if content_item:
+                contents.append(content_item)
 
+        gemini_tools = [self._convert_tool(tool) for tool in tools] if tools else None
         log.debug(
             "GeminiProvider._handle_multimodal_chat: model=%s contents=%s systemInstruction=%s tools=%s stream=%s",
             self._resolve_model(),
-            [content.to_dict() for content in contents],
+            [item.to_dict() if isinstance(item, Content) else item for item in contents],
             system_instruction.to_dict() if system_instruction is not None else None,
-            request.tools,
-            request.stream_handler is not None,
+            [tool.name for tool in tools] if tools else None,
+            stream_handler is not None,
         )
-        if request.stream_handler is not None:
+        if stream_handler is not None:
             text_output = ""
             for chunk in self._client.stream_content(
                 model=self._resolve_model(),
                 contents=contents,
                 config=self._build_generation_config(),
-                tools=request.tools,
+                tools=gemini_tools,
                 system_instruction=system_instruction,
             ):
                 text_output += chunk
-                request.stream_handler(text_output, len(text_output))
+                stream_handler(text_output, len(text_output))
             return LLMResponse(text=text_output, model="gemini", raw=None, metrics=None)
 
         response = self._client.generate_content(
             model=self._resolve_model(),
             contents=contents,
             config=self._build_generation_config(),
-            tools=request.tools,
+            tools=gemini_tools,
             system_instruction=system_instruction,
         )
         log.debug(
@@ -223,30 +285,23 @@ class GeminiProvider(LLMProvider):
             tool_calls=self._extract_tool_calls(response.raw),
         )
 
-    def _handle_chat_fallback(self, request: LLMRequest) -> LLMResponse:
-        prompt = format_chat_messages(request.messages)
-        result = self.summarize(prompt, stream_handler=request.stream_handler)
+    def _handle_chat_fallback(self, messages: list[Message]) -> LLMResponse:
+        prompt = "\n".join(
+            "".join(part.text or "" for part in message.parts if part.type == "text")
+            for message in messages
+        )
+        result = self.summarize(prompt)
         return LLMResponse(text=result.text, model=result.model, raw=result, metrics=None)
 
-    def generate(self, request: LLMRequest) -> LLMResponse:
-        if request.task_type == TaskType.SUMMARY:
-            response = self.summarize(request.input_text or "", stream_handler=request.stream_handler)
-            return LLMResponse(text=response.text, model=response.model, raw=None, metrics=None)
-
-        if request.task_type == TaskType.IMAGE_DESCRIPTION:
-            if request.image_base64 is None:
-                raise LLMProviderError("Image base64 data is required for image_description.")
-            response = self.describe_image(
-                request.image_base64,
-                request.input_text or "",
-                stream_handler=request.stream_handler,
-            )
-            return LLMResponse(text=response.text, model=response.model, raw=None, metrics=None)
-
-        if request.task_type == TaskType.CHAT:
-            return self._handle_chat(request)
-
-        raise LLMProviderError(f"Unsupported task type: {request.task_type}")
+    def generate(
+        self,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
+        stream_handler: PartialCallback | None = None,
+    ) -> LLMResponse:
+        if not messages:
+            return LLMResponse(text="No input provided", model="gemini", raw=None, metrics=None)
+        return self._handle_chat(messages=messages, tools=tools, stream_handler=stream_handler)
 
     def ensure_model_available(self, on_progress: ProgressCallback | None = None) -> str | None:
         model = self._resolve_model()

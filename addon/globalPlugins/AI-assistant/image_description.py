@@ -15,7 +15,7 @@ from .metrics_reporter import MetricsReporter
 from .prompt_builders import build_image_description_prompt
 from .providers.base import LLMProvider
 from .request_metrics import ImageRequestMetrics, estimate_tokens
-from .models import LLMRequest, LLMResponse, TaskType
+from .models import SummaryResponse
 from .settings import get_image_format, get_image_max_side, get_image_quality
 
 
@@ -49,7 +49,7 @@ class ImageDescriptionCoordinator(BaseCoordinator):
         progress_callback: Optional[Callable[[str, int], None]],
         *args: Any,
         **kwargs: Any,
-    ) -> LLMResponse:
+    ) -> SummaryResponse:
         raw_image_bytes = self._capture_service.capture()
         processed_bytes = self._preprocessor.preprocess(
             image_bytes=raw_image_bytes,
@@ -71,15 +71,10 @@ class ImageDescriptionCoordinator(BaseCoordinator):
                 width, height = image.size
                 self._request_metrics.image_pixels = width * height
 
-        response = self._client.generate(
-            LLMRequest(
-                task_type=TaskType.IMAGE_DESCRIPTION,
-                input_text=prompt,
-                image_base64=image_base64,
-                stream=progress_callback is not None,
-                stream_handler=progress_callback,
-                metadata=None,
-            )
+        response = self._client.describe_image(
+            image_base64=image_base64,
+            prompt=prompt,
+            stream_handler=progress_callback,
         )
 
         if self._request_metrics is not None:
@@ -101,7 +96,7 @@ class ImageDescriptionCoordinator(BaseCoordinator):
             return f"Image description progress: {generated_chars} characters. {preview}"
         return f"Image description progress: {generated_chars} characters generated"
 
-    def _present_result(self, result: LLMResponse) -> None:
+    def _present_result(self, result: SummaryResponse) -> None:
         nvda_ui.message("Image description ready")
         model_name = result.model or "unknown"
         dialog_title = f"Image description ({model_name})"

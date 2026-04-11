@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import base64
 from logHandler import log
 from typing import Any
 
-from ..models import LLMRequest, LLMResponse, SummaryResponse, TaskType, ToolCall
+from ..models import LLMResponse, SummaryResponse, ToolCall
 from ..ollama_client import OllamaClient, OllamaClientError
-from .base import LLMProvider, LLMProviderError, ProgressCallback, PartialCallback, format_chat_messages
+from .base import LLMProvider, LLMProviderError, ProgressCallback, PartialCallback
 from .config import OllamaConfig
+from ..core.canonical import Message, Tool
 
 
 class OllamaProvider(LLMProvider):
@@ -52,39 +54,65 @@ class OllamaProvider(LLMProvider):
             raise self._wrap_exception(error) from error
         return SummaryResponse(text=response.text, model=response.model, provider=self.provider_name())
 
-    def _handle_chat(self, request: LLMRequest) -> LLMResponse:
-        if not request.messages:
+    def _convert_tool(self, tool: Tool) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": tool.parameters,
+                    "required": list(tool.required),
+                },
+            },
+        }
+
+    def _handle_chat(self, messages: list[Message], tools: list[Tool] | None, stream_handler: PartialCallback | None) -> LLMResponse:
+        if not messages:
             return LLMResponse(text="No input provided", model=self.provider_name(), raw=None, metrics=None)
 
+        chat_messages: list[dict[str, Any]] = []
+        for msg in messages:
+            chat_message: dict[str, Any] = {"role": msg.role}
+            text_parts: list[str] = []
+            tool_name: str | None = None
+            tool_calls: list[dict[str, Any]] = []
+
+            for part in msg.parts:
+                if part.type == "text" and part.text is not None:
+                    text_parts.append(part.text)
+                elif part.type == "image" and part.image is not None:
+                    chat_message.setdefault("images", []).append(base64.b64encode(part.image).decode("ascii"))
+                elif part.type == "tool_call":
+                    tool_name = part.tool_name or tool_name
+                    tool_calls.append({"name": part.tool_name or "", "arguments": part.tool_args or {}})
+                elif part.type == "tool_result":
+                    tool_name = part.tool_name or tool_name
+                    chat_message["content"] = part.tool_result if part.tool_result is not None else part.text or ""
+
+            if text_parts:
+                chat_message["content"] = "\n".join(text_parts)
+            if tool_name:
+                chat_message["tool_name"] = tool_name
+            if tool_calls:
+                chat_message["tool_calls"] = tool_calls
+
+            chat_messages.append(chat_message)
+
         log.debug(
-            "OllamaProvider._handle_chat: request.messages=%s tools=%s",
-            [msg.role for msg in request.messages if msg is not None],
-            [tool.get("name") for tool in request.tools] if request.tools else None,
+            "OllamaProvider._handle_chat: canonical_messages=%s tools=%s",
+            [(msg.role, [part.type for part in msg.parts]) for msg in messages],
+            [tool.name for tool in tools] if tools else None,
         )
-
-        messages = []
-        for msg in request.messages:
-            if msg is None:
-                continue
-            chat_message: dict[str, Any] = {
-                "role": msg.role,
-                "content": msg.content or "",
-            }
-            if msg.image_base64:
-                chat_message["images"] = [msg.image_base64]
-            if msg.tool_name:
-                chat_message["tool_name"] = msg.tool_name
-            if msg.tool_calls:
-                chat_message["tool_calls"] = msg.tool_calls
-            messages.append(chat_message)
-
-        log.debug("OllamaProvider._handle_chat: sending messages=%s", messages)
-
-        if not messages:
-            return self._handle_chat_fallback(request)
+        log.debug("OllamaProvider._handle_chat: sending messages=%s", chat_messages)
 
         try:
-            response = self._client.chat(messages, tools=request.tools, onPartial=request.stream_handler)
+            response = self._client.chat(
+                chat_messages,
+                tools=[self._convert_tool(tool) for tool in tools] if tools else None,
+                onPartial=stream_handler,
+            )
         except OllamaClientError as error:
             log.debug("OllamaProvider._handle_chat: chat request failed: %s", error)
             raise self._wrap_exception(error) from error
@@ -147,30 +175,23 @@ class OllamaProvider(LLMProvider):
             calls.append(ToolCall(name=name, arguments=arguments, id=tc.get("id")))
         return calls or None
 
-    def _handle_chat_fallback(self, request: LLMRequest) -> LLMResponse:
-        prompt = format_chat_messages(request.messages)
-        result = self.summarize(prompt, stream_handler=request.stream_handler)
+    def _handle_chat_fallback(self, messages: list[Message]) -> LLMResponse:
+        plain_text = "\n".join(
+            "".join(part.text or "" for part in msg.parts if part.type == "text")
+            for msg in messages
+        )
+        result = self.summarize(plain_text)
         return LLMResponse(text=result.text, model=result.model, raw=result, metrics=None)
 
-    def generate(self, request: LLMRequest) -> LLMResponse:
-        if request.task_type == TaskType.SUMMARY:
-            response = self.summarize(request.input_text or "", stream_handler=request.stream_handler)
-            return LLMResponse(text=response.text, model=response.model, raw=None, metrics=None)
-
-        if request.task_type == TaskType.IMAGE_DESCRIPTION:
-            if request.image_base64 is None:
-                raise LLMProviderError("Image base64 data is required for image_description.")
-            response = self.describe_image(
-                request.image_base64,
-                request.input_text or "",
-                stream_handler=request.stream_handler,
-            )
-            return LLMResponse(text=response.text, model=response.model, raw=None, metrics=None)
-
-        if request.task_type == TaskType.CHAT:
-            return self._handle_chat(request)
-
-        raise LLMProviderError(f"Unsupported task type: {request.task_type}")
+    def generate(
+        self,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
+        stream_handler: PartialCallback | None = None,
+    ) -> LLMResponse:
+        if not messages:
+            return LLMResponse(text="No input provided", model=self.provider_name(), raw=None, metrics=None)
+        return self._handle_chat(messages=messages, tools=tools, stream_handler=stream_handler)
 
     def ensure_model_available(self, on_progress: ProgressCallback | None = None) -> str | None:
         def progress_adapter(event: dict[str, Any]) -> None:

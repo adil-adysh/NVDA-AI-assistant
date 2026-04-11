@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 from dataclasses import dataclass
-from enum import Enum
-from typing import Any, Literal, Optional
-from collections.abc import Callable
+from typing import Any, Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,12 +30,6 @@ class ToolCall:
     id: str | None = None
 
 
-class TaskType(str, Enum):
-    SUMMARY = "summary"
-    IMAGE_DESCRIPTION = "image_description"
-    CHAT = "chat"
-
-
 @dataclass(frozen=True, slots=True)
 class ChatMessage:
     role: Literal["user", "assistant", "system", "tool"]
@@ -45,18 +37,6 @@ class ChatMessage:
     image_base64: str | None = None
     tool_name: str | None = None
     tool_calls: list[dict[str, Any]] | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class LLMRequest:
-    task_type: TaskType
-    input_text: str | None = None
-    image_base64: str | None = None
-    messages: list[ChatMessage] | None = None
-    tools: list[dict[str, Any]] | None = None
-    stream: bool = False
-    stream_handler: Callable[[str, int], None] | None = None
-    metadata: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)

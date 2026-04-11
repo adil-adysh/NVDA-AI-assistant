@@ -3,10 +3,12 @@ from __future__ import annotations
 
 from logHandler import log
 import threading
+from collections.abc import Callable
 from typing import Any
 
 from .factory import ProviderFactory
-from .base import LLMProvider, LLMRequest, LLMResponse, PartialCallback, ProgressCallback
+from .base import LLMProvider, LLMResponse, PartialCallback, ProgressCallback
+from ..core.canonical import Message, Tool
 from ..settings import get_active_provider_config
 
 
@@ -64,10 +66,15 @@ class ProviderProxy(LLMProvider):
             stream_handler=stream_handler,
         )
 
-    def generate(self, request: LLMRequest) -> LLMResponse:
+    def generate(
+        self,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
+        stream_handler: Callable[[str, int], None] | None = None,
+    ) -> LLMResponse:
         self._warn_if_main_thread("generate")
         self._refresh()
-        return self._provider.generate(request)
+        return self._provider.generate(messages=messages, tools=tools, stream_handler=stream_handler)
 
     def ensure_model_available(self, on_progress: ProgressCallback | None = None) -> str | None:
         self._warn_if_main_thread("ensure_model_available")

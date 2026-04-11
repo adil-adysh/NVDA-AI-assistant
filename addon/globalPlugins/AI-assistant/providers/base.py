@@ -5,7 +5,8 @@ import abc
 from collections.abc import Callable
 from typing import Any
 
-from ..models import ChatMessage, LLMRequest, LLMResponse, SummaryResponse
+from ..core.canonical import Message, Tool
+from ..models import LLMResponse, SummaryResponse
 
 PartialCallback = Callable[[str, int], None]
 ProgressCallback = Callable[[str], None]
@@ -44,7 +45,12 @@ class LLMProvider(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def generate(self, request: LLMRequest) -> LLMResponse:
+    def generate(
+        self,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
+        stream_handler: Callable[[str, int], None] | None = None,
+    ) -> LLMResponse:
         raise NotImplementedError
 
     @abc.abstractmethod

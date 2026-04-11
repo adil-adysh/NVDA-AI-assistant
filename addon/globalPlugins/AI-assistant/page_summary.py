@@ -9,7 +9,7 @@ from typing import Optional
 from . import nvda_ui
 from .base_coordinator import BaseCoordinator
 from .browser_extractor import PageExtractionError
-from .models import LLMRequest, LLMResponse, PageSnapshot, TaskType
+from .models import PageSnapshot, SummaryResponse
 from .metrics_reporter import MetricsReporter
 from .prompt_builders import build_page_summary_prompt
 from .providers.base import LLMProvider
@@ -60,15 +60,10 @@ class PageSummaryCoordinator(BaseCoordinator):
         progress_callback: Optional[Callable[[str, int], None]],
         snapshot: PageSnapshot,
         prompt: str,
-    ) -> tuple[LLMResponse, str]:
-        response = self._client.generate(
-            LLMRequest(
-                task_type=TaskType.SUMMARY,
-                input_text=prompt,
-                stream=progress_callback is not None,
-                stream_handler=progress_callback,
-                metadata=None,
-            )
+    ) -> tuple[SummaryResponse, str]:
+        response = self._client.summarize(
+            prompt,
+            stream_handler=progress_callback,
         )
         if self._request_metrics is not None:
             self._request_metrics.output_chars = len(response.text or "")
@@ -76,7 +71,7 @@ class PageSummaryCoordinator(BaseCoordinator):
             self._request_metrics.model = response.model or "unknown"
         return response, snapshot.title
 
-    def _present_result(self, result: tuple[LLMResponse, str]) -> None:
+    def _present_result(self, result: tuple[SummaryResponse, str]) -> None:
         response, page_title = result
         nvda_ui.message("Page summary ready")
         model_name = response.model or "unknown"
