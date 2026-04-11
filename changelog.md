@@ -1,3 +1,8 @@
+## v0.5.2 - 2026-04-11
+- Fixed Gemini streaming payload serialization by normalizing Gemini `contents` and `tools` request shapes.
+- Improved Gemini streaming and debug logging to make request flow and tool-call behavior visible.
+- Aligned Gemini chat and stream endpoints with the official API examples.
+
 ## v0.5.1 - 2026-04-11
 - Refactored add-on logging to use NVDA `logHandler` across core AI assistant modules.
 - Improved tool-call and streaming diagnostics for more reliable assistant behavior.
