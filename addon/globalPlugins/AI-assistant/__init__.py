@@ -22,6 +22,7 @@ from .tool_registry import ToolDefinition, ToolRegistry
 from .providers.provider_proxy import ProviderProxy
 from .settings_panel import AIAssistantSettingsPanel
 from .chat_coordinator import ChatCoordinator
+from . import addonConfig
 
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
@@ -32,6 +33,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def __init__(self):
         super().__init__()
         addonHandler.initTranslation()
+        addonConfig.initialize()
         log.debug("Browser Assistant plugin initializing")
         self._provider = ProviderProxy()
         self._metrics_reporter = FileMetricsReporter()

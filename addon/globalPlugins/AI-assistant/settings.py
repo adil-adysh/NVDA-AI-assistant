@@ -19,14 +19,12 @@ def _get_ai_assistant_section() -> Any:
         return None
 
     if hasattr(conf, "get"):
-        section = conf.get("aiAssistant")
-    else:
-        try:
-            section = conf["aiAssistant"]
-        except Exception:
-            section = None
+        return conf.get("aiAssistant")
 
-    return section
+    try:
+        return conf["aiAssistant"]
+    except Exception:
+        return None
 
 
 def _ensure_ai_assistant_section() -> Any:
@@ -39,6 +37,23 @@ def _ensure_ai_assistant_section() -> Any:
         conf["aiAssistant"] = {}
         section = _get_ai_assistant_section()
     return section
+
+
+def _get_raw_setting(key: str, default: Any) -> Any:
+    section = _get_ai_assistant_section()
+    if section is None:
+        return default
+
+    if isinstance(section, dict):
+        return section.get(key, default)
+
+    if hasattr(section, "get"):
+        return section.get(key, default)
+
+    try:
+        return section[key]
+    except Exception:
+        return default
 
 
 def _set_value(key: str, value: Any) -> None:
@@ -54,45 +69,26 @@ def _set_value(key: str, value: Any) -> None:
 
 
 def _read_string(key: str, default: str) -> str:
-    section = _get_ai_assistant_section()
-    if section is None:
-        return default
-
-    if isinstance(section, dict):
-        value = section.get(key)
-    elif hasattr(section, "get"):
-        value = section.get(key)
-    else:
-        try:
-            value = section[key]
-        except Exception:
-            value = None
-
+    value = _get_raw_setting(key, default)
     return value if isinstance(value, str) else default
 
 
 def _read_int(key: str, default: int, minimum: int | None = None) -> int:
-    section = _get_ai_assistant_section()
-    if section is None:
+    raw = _get_raw_setting(key, default)
+    if isinstance(raw, bool):
         return default
-
-    if isinstance(section, dict):
-        raw = section.get(key)
-    elif hasattr(section, "get"):
-        raw = section.get(key)
-    else:
-        try:
-            raw = section[key]
-        except Exception:
-            raw = None
-
     if isinstance(raw, int):
         value = raw
+    elif isinstance(raw, float):
+        value = int(raw)
     elif isinstance(raw, str):
         try:
             value = int(raw.strip())
         except ValueError:
-            return default
+            try:
+                value = int(float(raw.strip()))
+            except ValueError:
+                return default
     else:
         return default
 
@@ -102,20 +98,7 @@ def _read_int(key: str, default: int, minimum: int | None = None) -> int:
 
 
 def _read_float(key: str, default: float, minimum: float | None = None) -> float:
-    section = _get_ai_assistant_section()
-    if section is None:
-        return default
-
-    if isinstance(section, dict):
-        raw = section.get(key)
-    elif hasattr(section, "get"):
-        raw = section.get(key)
-    else:
-        try:
-            raw = section[key]
-        except Exception:
-            raw = None
-
+    raw = _get_raw_setting(key, default)
     if isinstance(raw, float):
         value = raw
     elif isinstance(raw, int):
@@ -134,20 +117,7 @@ def _read_float(key: str, default: float, minimum: float | None = None) -> float
 
 
 def _read_bool(key: str, default: bool) -> bool:
-    section = _get_ai_assistant_section()
-    if section is None:
-        return default
-
-    if isinstance(section, dict):
-        value = section.get(key)
-    elif hasattr(section, "get"):
-        value = section.get(key)
-    else:
-        try:
-            value = section[key]
-        except Exception:
-            value = None
-
+    value = _get_raw_setting(key, default)
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
