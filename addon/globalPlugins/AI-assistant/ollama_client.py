@@ -48,9 +48,15 @@ class OllamaGenerateResponse(TypedDict, total=False):
     eval_duration: int
 
 
+class OllamaFunction(TypedDict, total=False):
+    name: str
+    arguments: dict[str, Any]
+    index: int
+
+
 class OllamaToolCall(TypedDict, total=False):
     type: str
-    function: dict[str, Any]
+    function: OllamaFunction
 
 
 class OllamaChatMessage(TypedDict, total=False):
@@ -63,7 +69,7 @@ class OllamaChatMessage(TypedDict, total=False):
 
 class OllamaToolDefinition(TypedDict, total=False):
     type: str
-    function: dict[str, Any]
+    function: OllamaFunction
 
 
 class OllamaChatRequest(TypedDict, total=False):
@@ -581,6 +587,7 @@ class OllamaClient:
                 function_call = message.get("function_call") or message.get("tool_call")
                 if isinstance(function_call, dict):
                     accumulatedToolCalls.append(function_call)
+                return
 
             tool_calls = parsed_response.get("tool_calls") or parsed_response.get("toolCalls")
             if isinstance(tool_calls, list):
@@ -595,11 +602,7 @@ class OllamaClient:
 
             final_response = dict(parsed_response)
             message = dict(parsed_response.get("message") or {}) if isinstance(parsed_response.get("message"), dict) else {}
-            existing_tool_calls = message.get("tool_calls") or message.get("toolCalls") or parsed_response.get("tool_calls") or parsed_response.get("toolCalls")
-            if isinstance(existing_tool_calls, list):
-                merged_tool_calls = list(existing_tool_calls) + accumulatedToolCalls
-            else:
-                merged_tool_calls = list(accumulatedToolCalls)
+            merged_tool_calls = list(accumulatedToolCalls)
             message["tool_calls"] = merged_tool_calls
             final_response["message"] = message
             final_response["tool_calls"] = merged_tool_calls
@@ -702,6 +705,14 @@ class OllamaClient:
                 lastErrorMessage = f"Ollama stream ended before done=true for {path}."
             if emittedPartial or attempt >= attempts:
                 if lastParsed is not None:
+                    if emittedPartial:
+                        partial_response = _attach_accumulated_tool_calls(lastParsed)
+                        log.debug(
+                            "Returning partial stream response after incomplete stream path=%s total_chars=%d",
+                            path,
+                            generatedChars,
+                        )
+                        return "".join(chunks).strip(), partial_response
                     log.debug(
                         "Stream terminated with lastParsed=%s",
                         {"done": lastParsed.get("done"), "done_reason": lastParsed.get("done_reason"), "response_len": len(str(lastParsed.get("response", ""))),},
