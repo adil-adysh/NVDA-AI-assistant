@@ -8,6 +8,7 @@ from typing import Any
 import wx
 
 from .chat_coordinator import ChatCoordinator
+from .settings import get_model_name, get_provider
 from .tool_registry import ToolRegistry
 
 chatDialogInstance = None
@@ -27,6 +28,7 @@ class ChatDialog(wx.Dialog):
         self._tool_registry = tool_registry
         self._attached_image_base64 = initial_image_base64
         self._build_ui()
+        self._refresh_provider_title()
         self._refresh_history()
         if initial_text:
             self.inputCtrl.SetValue(initial_text)
@@ -36,6 +38,7 @@ class ChatDialog(wx.Dialog):
         self.CenterOnScreen()
 
     def set_initial_state(self, initial_text: str | None = None, initial_image_base64: str | None = None) -> None:
+        self._refresh_provider_title()
         if initial_text is not None:
             self.inputCtrl.SetValue(initial_text)
         self._attached_image_base64 = initial_image_base64
@@ -96,7 +99,23 @@ class ChatDialog(wx.Dialog):
         self.SetSizer(mainSizer)
         self.Bind(wx.EVT_WINDOW_DESTROY, self.onDestroy)
 
+    def _refresh_provider_title(self) -> None:
+        provider = get_provider().strip()
+        model_name = get_model_name().strip()
+        title = _("AI Chat")
+        if provider:
+            provider_label = provider.capitalize()
+            if model_name:
+                title = f"{title} — {provider_label} ({model_name})"
+            else:
+                title = f"{title} — {provider_label}"
+        self.SetTitle(title)
+
+    def refresh_provider_title(self) -> None:
+        self._refresh_provider_title()
+
     def on_send(self, event: Any) -> None:
+        self._refresh_provider_title()
         message = self.inputCtrl.Value.strip()
         if not message and not self._attached_image_base64:
             return

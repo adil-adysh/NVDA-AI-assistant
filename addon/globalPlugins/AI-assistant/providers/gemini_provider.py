@@ -126,7 +126,7 @@ class GeminiProvider(LLMProvider):
                     {
                         "functionResponse": {
                             "name": part.tool_name or "",
-                            "response": part.tool_result if part.tool_result is not None else part.text or "",
+                            "response": self._normalize_function_response(part.tool_result, part.text),
                         }
                     }
                 )
@@ -142,17 +142,22 @@ class GeminiProvider(LLMProvider):
 
         return Content(parts=[item for item in part_items if isinstance(item, Part)], role=message.role)
 
+    def _normalize_function_response(self, tool_result: dict[str, Any] | None, fallback_text: str | None) -> dict[str, Any]:
+        if isinstance(tool_result, dict):
+            return tool_result
+
+        if fallback_text is None or fallback_text == "":
+            return {}
+
+        return {"text": fallback_text}
+
     def _convert_tool(self, tool: Tool) -> dict[str, Any]:
         return {
             "functionDeclarations": [
                 {
                     "name": tool.name,
                     "description": tool.description,
-                    "parameters": {
-                        "type": "object",
-                        "properties": tool.parameters,
-                        "required": list(tool.required),
-                    },
+                    "parameters": tool.parameters,
                 }
             ]
         }
@@ -182,12 +187,16 @@ class GeminiProvider(LLMProvider):
         return self._handle_chat_fallback(messages)
 
     def _extract_tool_calls(self, raw_response: Any) -> list[ToolCall] | None:
+        log.debug("GeminiProvider._extract_tool_calls: raw_response=%s", raw_response)
         if not isinstance(raw_response, dict):
+            log.debug("GeminiProvider._extract_tool_calls: raw response is not a dict")
             return None
 
         tool_calls = raw_response.get("tool_calls") or raw_response.get("toolCalls")
         if isinstance(tool_calls, list):
-            return self._normalize_tool_calls(tool_calls)
+            normalized = self._normalize_tool_calls(tool_calls)
+            log.debug("GeminiProvider._extract_tool_calls: extracted top-level tool_calls=%s", [tc.name for tc in normalized] if normalized else None)
+            return normalized
 
         # Official Gemini streaming/function-call responses may embed function call objects in candidates.
         candidates = raw_response.get("candidates")
@@ -198,14 +207,32 @@ class GeminiProvider(LLMProvider):
                 content = candidate.get("content")
                 if isinstance(content, dict):
                     if content.get("type") == "function_call":
-                        return self._normalize_tool_calls([content])
+                        normalized = self._normalize_tool_calls([content])
+                        log.debug("GeminiProvider._extract_tool_calls: extracted function_call candidate=%s", [tc.name for tc in normalized] if normalized else None)
+                        return normalized
                     if content.get("type") == "tool_call":
-                        return self._normalize_tool_calls([content])
+                        normalized = self._normalize_tool_calls([content])
+                        log.debug("GeminiProvider._extract_tool_calls: extracted tool_call candidate=%s", [tc.name for tc in normalized] if normalized else None)
+                        return normalized
                     # nested message-style function call block
                     function_call = content.get("function_call") or content.get("tool_call")
                     if isinstance(function_call, dict):
-                        return self._normalize_tool_calls([function_call])
+                        normalized = self._normalize_tool_calls([function_call])
+                        log.debug("GeminiProvider._extract_tool_calls: extracted nested function_call/tool_call=%s", [tc.name for tc in normalized] if normalized else None)
+                        return normalized
+                    # Gemini may embed function call payloads inside content.parts as functionCall/args
+                    parts = content.get("parts")
+                    if isinstance(parts, list):
+                        for part in parts:
+                            if not isinstance(part, dict):
+                                continue
+                            function_call = part.get("function_call") or part.get("tool_call") or part.get("functionCall")
+                            if isinstance(function_call, dict):
+                                normalized = self._normalize_tool_calls([function_call])
+                                log.debug("GeminiProvider._extract_tool_calls: extracted part-level functionCall=%s", [tc.name for tc in normalized] if normalized else None)
+                                return normalized
 
+        log.debug("GeminiProvider._extract_tool_calls: no tool calls found")
         return None
 
     def _normalize_tool_calls(self, tool_calls: list[Any]) -> list[ToolCall] | None:
@@ -213,10 +240,19 @@ class GeminiProvider(LLMProvider):
         for tc in tool_calls:
             if not isinstance(tc, dict):
                 continue
-            name = str(tc.get("name", "")).strip()
+            if "function" in tc and isinstance(tc.get("function"), dict):
+                function_payload = tc["function"]
+                name = str(function_payload.get("name", "")).strip()
+                arguments = function_payload.get("arguments") if isinstance(function_payload.get("arguments"), dict) else {}
+            elif "functionCall" in tc and isinstance(tc.get("functionCall"), dict):
+                function_payload = tc["functionCall"]
+                name = str(function_payload.get("name", "")).strip()
+                arguments = function_payload.get("args") if isinstance(function_payload.get("args"), dict) else {}
+            else:
+                name = str(tc.get("name", "")).strip()
+                arguments = tc.get("arguments") if isinstance(tc.get("arguments"), dict) else {}
             if not name:
                 continue
-            arguments = tc.get("arguments") if isinstance(tc.get("arguments"), dict) else {}
             calls.append(ToolCall(name=name, arguments=arguments, id=tc.get("id")))
         return calls or None
 
@@ -251,7 +287,12 @@ class GeminiProvider(LLMProvider):
             [tool.name for tool in tools] if tools else None,
             stream_handler is not None,
         )
-        if stream_handler is not None:
+        if stream_handler is not None and gemini_tools is None:
+            log.debug(
+                "GeminiProvider._handle_multimodal_chat: streaming without tools, contents=%s systemInstruction=%s",
+                [item.to_dict() if isinstance(item, Content) else item for item in contents],
+                system_instruction.to_dict() if system_instruction is not None else None,
+            )
             text_output = ""
             for chunk in self._client.stream_content(
                 model=self._resolve_model(),
@@ -271,18 +312,22 @@ class GeminiProvider(LLMProvider):
             tools=gemini_tools,
             system_instruction=system_instruction,
         )
+        if stream_handler is not None and response.text:
+            stream_handler(response.text, len(response.text))
+        tool_calls = self._extract_tool_calls(response.raw)
         log.debug(
-            "GeminiProvider._handle_multimodal_chat response: text_len=%d candidates=%s raw_keys=%s",
+            "GeminiProvider._handle_multimodal_chat response: text_len=%d candidates=%s raw_keys=%s tool_calls=%s",
             len(response.text or ""),
             len(response.candidates) if response.candidates is not None else None,
             list(response.raw.keys()) if isinstance(response.raw, dict) else None,
+            [tc.name for tc in tool_calls] if tool_calls else None,
         )
         return LLMResponse(
             text=response.text,
             model="gemini",
             raw=response,
             metrics=None,
-            tool_calls=self._extract_tool_calls(response.raw),
+            tool_calls=tool_calls,
         )
 
     def _handle_chat_fallback(self, messages: list[Message]) -> LLMResponse:

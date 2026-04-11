@@ -29,8 +29,17 @@ class ChatCoordinator(BaseCoordinator):
 
     def _convert_to_canonical_message(self, message: ChatMessage) -> CanonicalMessage:
         parts: list[CanonicalPart] = []
-        if message.content is not None:
-            parts.append(CanonicalPart(type="text", text=message.content))
+        if message.role == "tool":
+            parts.append(
+                CanonicalPart(
+                    type="tool_result",
+                    text=message.content,
+                    tool_name=message.tool_name,
+                )
+            )
+        else:
+            if message.content is not None:
+                parts.append(CanonicalPart(type="text", text=message.content))
         if message.image_base64 is not None:
             try:
                 import base64
@@ -40,14 +49,6 @@ class ChatCoordinator(BaseCoordinator):
                 image_bytes = None
             if image_bytes is not None:
                 parts.append(CanonicalPart(type="image", image=image_bytes))
-        if message.role == "tool":
-            parts.append(
-                CanonicalPart(
-                    type="tool_result",
-                    text=message.content,
-                    tool_name=message.tool_name,
-                )
-            )
         if message.tool_calls:
             for tool_call in message.tool_calls:
                 if isinstance(tool_call, dict):
@@ -136,8 +137,10 @@ class ChatCoordinator(BaseCoordinator):
             getattr(response, "raw", None),
         )
         steps = 0
+        tool_loop_executed = False
 
         while response.tool_calls and steps < self.MAX_TOOL_STEPS:
+            tool_loop_executed = True
             for tool_call in response.tool_calls:
                 log.debug("ChatCoordinator tool call: name=%s arguments=%s", tool_call.name, tool_call.arguments)
                 try:
@@ -160,14 +163,25 @@ class ChatCoordinator(BaseCoordinator):
                 tools=canonical_tools,
                 stream_handler=progress_callback,
             )
+            log.debug(
+                "ChatCoordinator follow-up response: text_len=%d tool_calls=%s raw=%s",
+                len(response.text or ""),
+                [tc.name for tc in response.tool_calls] if response.tool_calls else None,
+                getattr(response, "raw", None),
+            )
             steps += 1
 
-        self._history.append(
-            ChatMessage(
-                role="assistant",
-                content=response.text,
+        if response.text or not tool_loop_executed:
+            self._history.append(
+                ChatMessage(
+                    role="assistant",
+                    content=response.text,
+                )
             )
-        )
+        else:
+            log.debug(
+                "ChatCoordinator send_message: tool loop completed without assistant text; not appending blank assistant message"
+            )
 
         return response.text
 

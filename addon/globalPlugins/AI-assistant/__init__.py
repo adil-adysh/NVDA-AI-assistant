@@ -149,6 +149,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
         if chat_ui.chatDialogInstance:
             try:
+                chat_ui.chatDialogInstance.refresh_provider_title()
                 chat_ui.chatDialogInstance.Raise()
                 chat_ui.chatDialogInstance.set_initial_state(initial_text, initial_image_base64)
             except Exception:
@@ -281,7 +282,15 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             ui.message(str(error))
             return
 
-        ui.message(_(f"AI provider switched to {provider.capitalize()}.") )
+        ui.message(_(f"AI provider switched to {provider.capitalize()}."))
+        from . import chat_ui
+
+        if chat_ui.chatDialogInstance:
+            try:
+                chat_ui.chatDialogInstance.refresh_provider_title()
+            except Exception:
+                log.exception("Error refreshing chat dialog title after provider switch")
+
         self._startModelPreload()
 
     @script(

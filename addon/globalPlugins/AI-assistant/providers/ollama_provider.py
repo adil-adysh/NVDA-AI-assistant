@@ -60,11 +60,7 @@ class OllamaProvider(LLMProvider):
             "function": {
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": {
-                    "type": "object",
-                    "properties": tool.parameters,
-                    "required": list(tool.required),
-                },
+                "parameters": tool.parameters,
             },
         }
 
