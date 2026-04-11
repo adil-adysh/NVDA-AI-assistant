@@ -1,3 +1,8 @@
+## v0.5.3 - 2026-04-11
+- Added real-time provider title updates in the open chat window when switching between Ollama and Gemini.
+- Implemented canonical chat message and tool handling for more reliable provider request payloads and tool invocation flow.
+- Improved Gemini and Ollama tool-call serialization, provider state management, and debug logging.
+
 ## v0.5.2 - 2026-04-11
 - Fixed Gemini streaming payload serialization by normalizing Gemini `contents` and `tools` request shapes.
 - Improved Gemini streaming and debug logging to make request flow and tool-call behavior visible.

@@ -14,7 +14,7 @@ from site_scons.site_tools.NVDATool.utils import _
 # Add-on information variables
 addon_info = AddonInfo(
 	# add-on Name/identifier, internal for NVDA
-	addon_name="nvdaAIAssistant",
+	addon_name="AIAssistant",
 	# Add-on summary/title, usually the user visible name of the add-on
 	# Translators: Summary/title for this add-on
 	# to be shown on installation and add-on information found in add-on store
@@ -23,10 +23,10 @@ addon_info = AddonInfo(
 	# Translators: Long description to be shown for this add-on on add-on information found in add-on store
 	addon_description=_("""NVDA AI assistant helps NVDA users by using AI to simplify complex information, summarize content, and provide contextual guidance for tasks that are otherwise hard to access."""),
 	# version
-	addon_version="0.5.2",
+	addon_version="0.5.3",
 	# Brief changelog for this version
 	# Translators: what's new content for this add-on version to be shown in the add-on store
-	addon_changelog=_("""Fixed Gemini streaming request payloads and tool-call serialization, and improved Gemini debug logging."""),
+	addon_changelog=_("""Improved provider switching and chat UI title updates, added canonical tool/message handling, and enhanced Gemini/Ollama tool support and diagnostics."""),
 	# Author(s)
 	addon_author="adil shaikh <ah.shaikh97@gmail.com>",
 	# URL for the add-on documentation support
