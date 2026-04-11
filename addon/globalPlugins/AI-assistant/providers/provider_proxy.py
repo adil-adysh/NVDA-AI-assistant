@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from logHandler import log
+import threading
 from typing import Any
 
 from .factory import ProviderFactory
@@ -28,6 +29,10 @@ class ProviderProxy(LLMProvider):
             log.exception("Error closing previous provider")
         self._provider = ProviderFactory.create_provider(self._active_config)
 
+    def _warn_if_main_thread(self, method_name: str) -> None:
+        if threading.current_thread() is threading.main_thread():
+            log.warning("ProviderProxy.%s called on main thread; this may block NVDA UI", method_name)
+
     def provider_name(self) -> str:
         self._refresh()
         return self._provider.provider_name()
@@ -41,6 +46,7 @@ class ProviderProxy(LLMProvider):
         return self._provider.supports_image_description()
 
     def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> Any:
+        self._warn_if_main_thread("summarize")
         self._refresh()
         return self._provider.summarize(prompt, stream_handler=stream_handler)
 
@@ -50,6 +56,7 @@ class ProviderProxy(LLMProvider):
         prompt: str,
         stream_handler: PartialCallback | None = None,
     ) -> Any:
+        self._warn_if_main_thread("describe_image")
         self._refresh()
         return self._provider.describe_image(
             image_base64=image_base64,
@@ -58,10 +65,12 @@ class ProviderProxy(LLMProvider):
         )
 
     def generate(self, request: LLMRequest) -> LLMResponse:
+        self._warn_if_main_thread("generate")
         self._refresh()
         return self._provider.generate(request)
 
     def ensure_model_available(self, on_progress: ProgressCallback | None = None) -> str | None:
+        self._warn_if_main_thread("ensure_model_available")
         self._refresh()
         return self._provider.ensure_model_available(on_progress=on_progress)
 

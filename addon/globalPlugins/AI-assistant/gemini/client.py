@@ -12,6 +12,8 @@ from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
+from logHandler import log
+
 from .errors import GeminiAPIError, GeminiClientError
 from .types import (
     Content,
@@ -176,11 +178,24 @@ class GeminiClient:
         request = urllib_request.Request(url, data=data, method=method)
         for key, value in self._build_headers(extra_headers).items():
             request.add_header(key, value)
+        log.debug(
+            "GeminiClient._build_request: method=%s url=%s body=%s headers=%s",
+            method,
+            url,
+            body,
+            list(request.header_items()),
+        )
         return request
 
     def _request_json(self, request: urllib_request.Request) -> Dict[str, Any]:
         attempt = 0
         while True:
+            log.debug(
+                "GeminiClient._request_json: url=%s method=%s headers=%s",
+                request.full_url,
+                request.get_method(),
+                list(request.header_items()),
+            )
             try:
                 with urllib_request.urlopen(
                     request,
@@ -198,6 +213,12 @@ class GeminiClient:
                     error_payload = json.loads(body)
                 except ValueError:
                     pass
+                log.error(
+                    "GeminiClient._request_json HTTPError status=%s body=%s error_payload=%s",
+                    exc.code,
+                    body,
+                    error_payload,
+                )
                 raise GeminiAPIError(
                     status_code=exc.code,
                     body=body,
@@ -220,11 +241,11 @@ class GeminiClient:
         normalized: List[Dict[str, Any]] = []
         for item in items:
             if isinstance(item, Content):
-                normalized.append(item.to_dict())
+                normalized.append(self._normalize_content(item))
             elif isinstance(item, Part):
-                normalized.append(Content(parts=[item]).to_dict())
+                normalized.append(self._normalize_content(Content(parts=[item])))
             elif isinstance(item, str):
-                normalized.append(Content.from_text(item).to_dict())
+                normalized.append(self._normalize_content(Content.from_text(item)))
             elif isinstance(item, dict):
                 normalized.append(item)
             else:
@@ -234,6 +255,49 @@ class GeminiClient:
 
         if not normalized:
             raise GeminiClientError("At least one `contents` item is required.")
+        return normalized
+
+    def _normalize_content(self, content: Content) -> Dict[str, Any]:
+        data: Dict[str, Any] = {}
+        if content.parts:
+            parts: list[Dict[str, Any]] = []
+            for part in content.parts:
+                part_data: Dict[str, Any] = {}
+                if part.text is not None:
+                    part_data["text"] = part.text
+                if part.data is not None:
+                    if part.mime_type is None:
+                        raise GeminiClientError("mime_type is required when data is provided")
+                    part_data["inline_data"] = {
+                        "data": part.data,
+                        "mime_type": part.mime_type,
+                    }
+                parts.append(part_data)
+            data["parts"] = parts
+        if content.role is not None:
+            data["role"] = content.role
+        return data
+
+    def _normalize_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for tool in tools:
+            if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
+                function_payload = tool["function"]
+                normalized.append(
+                    {
+                        "functionDeclarations": [
+                            {
+                                "name": function_payload.get("name"),
+                                "description": function_payload.get("description"),
+                                "parameters": function_payload.get("parameters"),
+                            }
+                        ]
+                    }
+                )
+                continue
+
+            # Unknown tool shape; preserve it if it already matches Gemini schema.
+            normalized.append(tool)
         return normalized
 
     def _build_get_request(
@@ -273,6 +337,7 @@ class GeminiClient:
         contents: ContentList,
         config: Optional[GenerateContentConfig] = None,
         tools: Optional[list[dict[str, Any]]] = None,
+        system_instruction: Optional[Content] = None,
     ) -> GenerateContentResponse:
         """Generate text using a Gemini model."""
         if not model or not model.strip():
@@ -287,11 +352,23 @@ class GeminiClient:
             if generation_config:
                 body["generationConfig"] = generation_config
         if tools is not None:
-            body["tools"] = tools
+            body["tools"] = self._normalize_tools(tools)
+        if system_instruction is not None:
+            body["systemInstruction"] = system_instruction.to_dict()
 
+        normalized_contents = self._normalize_contents(contents)
+        normalized_tools = self._normalize_tools(tools) if tools is not None else None
+        log.debug(
+            "GeminiClient.generate_content: model=%s contents=%s config=%s tools=%s",
+            model,
+            normalized_contents,
+            config.to_dict() if config is not None else None,
+            normalized_tools,
+        )
         response = self._request_json(
             self._build_request(f"models/{model}:generateContent", body)
         )
+        log.debug("GeminiClient.generate_content response keys=%s", list(response.keys()) if isinstance(response, dict) else None)
         return GenerateContentResponse.from_dict(response)
 
     def describe_image(
@@ -324,6 +401,7 @@ class GeminiClient:
         contents: ContentList,
         config: Optional[GenerateContentConfig] = None,
         tools: Optional[list[dict[str, Any]]] = None,
+        system_instruction: Optional[Content] = None,
     ) -> Generator[str, None, None]:
         """Stream partial Gemini response text using SSE."""
         if not model or not model.strip():
@@ -338,12 +416,23 @@ class GeminiClient:
             if generation_config:
                 body["generationConfig"] = generation_config
         if tools is not None:
-            body["tools"] = tools
+            body["tools"] = self._normalize_tools(tools)
+        if system_instruction is not None:
+            body["systemInstruction"] = system_instruction.to_dict()
 
+        normalized_contents = self._normalize_contents(contents)
+        normalized_tools = self._normalize_tools(tools) if tools is not None else None
         request = self._build_request(
-            f"models/{model}:generateContent?alt=sse",
+            f"models/{model}:streamGenerateContent?alt=sse",
             body,
             extra_headers={"Accept": "text/event-stream"},
+        )
+        log.debug(
+            "GeminiClient.stream_content request: model=%s contents=%s config=%s tools=%s",
+            model,
+            normalized_contents,
+            config.to_dict() if config is not None else None,
+            normalized_tools,
         )
 
         try:
@@ -360,6 +449,22 @@ class GeminiClient:
                 error_payload = json.loads(body)
             except ValueError:
                 pass
+            log.error(
+                "GeminiClient.stream_content HTTPError: url=%s method=%s status=%s body=%s error_payload=%s",
+                request.full_url,
+                request.get_method(),
+                exc.code,
+                body,
+                error_payload,
+            )
+            log.error(
+                "GeminiClient._request_json HTTPError: url=%s method=%s status=%s body=%s error_payload=%s",
+                request.full_url,
+                request.get_method(),
+                exc.code,
+                body,
+                error_payload,
+            )
             raise GeminiAPIError(
                 status_code=exc.code,
                 body=body,

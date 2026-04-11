@@ -72,7 +72,7 @@ class BaseCoordinator:
 			self._finalize_request_metrics(False, error)
 			self._handle_error(error)
 		except Exception as error:
-			logception("Task failed with unexpected exception")
+			log.exception("Task failed with unexpected exception")
 			self._finalize_request_metrics(False, error)
 			self._handle_error(error)
 		else:

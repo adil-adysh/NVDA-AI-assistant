@@ -93,6 +93,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 model = self._provider.ensure_model_available(on_progress=announcer.process_event)
             except LLMProviderError as error:
                 ui.message(str(error))
+            except Exception as error:
+                log.exception("Unexpected error during model preload")
+                ui.message(str(error))
             else:
                 ui.message(f"{provider_name.capitalize()} model {model} is ready.")
 

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pyright: reportMissingImports=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
 from logHandler import log
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -47,6 +48,8 @@ class ChatCoordinator(BaseCoordinator):
             stream=progress_callback is not None,
             stream_handler=progress_callback,
         )
+        if threading.current_thread() is threading.main_thread():
+            log.warning("ChatCoordinator.send_message called on main thread; should be invoked from a background worker")
         log.debug(
             "ChatCoordinator.send_message: user_text=%r image_attached=%s tool_defs=%s",
             text,

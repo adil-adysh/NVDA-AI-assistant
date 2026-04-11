@@ -100,6 +100,13 @@ class GeminiProvider(LLMProvider):
         return True
 
     def _handle_chat(self, request: LLMRequest) -> LLMResponse:
+        log.debug(
+            "GeminiProvider._handle_chat: task_type=%s messages=%s tools=%s stream=%s",
+            request.task_type,
+            [(msg.role, msg.content) for msg in request.messages] if request.messages else None,
+            request.tools,
+            request.stream,
+        )
         if not request.messages:
             return LLMResponse(text="No input provided", model="gemini", raw=None, metrics=None)
 
@@ -148,16 +155,40 @@ class GeminiProvider(LLMProvider):
         return calls or None
 
     def _handle_multimodal_chat(self, request: LLMRequest) -> LLMResponse:
-        parts: list[Part] = []
+        contents: list[Content] = []
+        system_instruction: Content | None = None
         for msg in request.messages or []:
-            role_prefix = f"{msg.role.upper()}: "
+            if msg.role == "system":
+                if msg.content:
+                    if system_instruction is None:
+                        system_instruction = Content(parts=[Part(text=msg.content, role="system")], role="system")
+                    else:
+                        system_instruction.parts.append(Part(text=msg.content, role="system"))
+                continue
+
             if msg.content:
-                parts.append(Part(text=role_prefix + msg.content, role=msg.role))
+                contents.append(
+                    Content(
+                        parts=[Part(text=msg.content, role=msg.role)],
+                        role=msg.role,
+                    )
+                )
             if msg.image_base64:
-                parts.append(Part.from_base64(msg.image_base64, mime_type="image/png", role=msg.role))
+                contents.append(
+                    Content(
+                        parts=[Part.from_base64(msg.image_base64, mime_type="image/png", role=msg.role)],
+                        role=msg.role,
+                    )
+                )
 
-        contents = [Content(parts=parts)]
-
+        log.debug(
+            "GeminiProvider._handle_multimodal_chat: model=%s contents=%s systemInstruction=%s tools=%s stream=%s",
+            self._resolve_model(),
+            [content.to_dict() for content in contents],
+            system_instruction.to_dict() if system_instruction is not None else None,
+            request.tools,
+            request.stream_handler is not None,
+        )
         if request.stream_handler is not None:
             text_output = ""
             for chunk in self._client.stream_content(
@@ -165,6 +196,7 @@ class GeminiProvider(LLMProvider):
                 contents=contents,
                 config=self._build_generation_config(),
                 tools=request.tools,
+                system_instruction=system_instruction,
             ):
                 text_output += chunk
                 request.stream_handler(text_output, len(text_output))
@@ -175,6 +207,13 @@ class GeminiProvider(LLMProvider):
             contents=contents,
             config=self._build_generation_config(),
             tools=request.tools,
+            system_instruction=system_instruction,
+        )
+        log.debug(
+            "GeminiProvider._handle_multimodal_chat response: text_len=%d candidates=%s raw_keys=%s",
+            len(response.text or ""),
+            len(response.candidates) if response.candidates is not None else None,
+            list(response.raw.keys()) if isinstance(response.raw, dict) else None,
         )
         return LLMResponse(
             text=response.text,

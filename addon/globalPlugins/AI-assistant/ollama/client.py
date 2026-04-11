@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 import socket
 import time
 from collections.abc import Callable
@@ -10,7 +11,7 @@ from logHandler import log
 
 from .. import defaults
 from .errors import OllamaClientError
-from .http import _parseJSON, _requestJSON, _requestPullStream
+from .http import _parseJSON, _requestJSON, _requestPullStream, _readErrorBody
 from .response import (
     _attach_accumulated_tool_calls,
     _extractGenerateText,
@@ -121,9 +122,10 @@ class OllamaClient:
         onPartial: Callable[[str, int], None] | None = None,
     ) -> SummaryResponse:
         model = self._resolveModel()
+        prompt_text = str(prompt)
         payload: dict[str, Any] = {
             "model": model,
-            "prompt": prompt,
+            "prompt": prompt_text,
             "options": self._defaultGenerateOptions(),
             "keep_alive": get_keep_alive(),
         }
@@ -176,9 +178,10 @@ class OllamaClient:
         onPartial: Callable[[str, int], None] | None = None,
     ) -> SummaryResponse:
         model = self._resolveModel()
+        prompt_text = str(prompt)
         payload: dict[str, Any] = {
             "model": model,
-            "prompt": prompt,
+            "prompt": prompt_text,
             "images": [imageBase64],
             "options": self._defaultGenerateOptions(),
             "keep_alive": get_keep_alive(),
@@ -437,6 +440,7 @@ class OllamaClient:
         response = _requestJSON(
             self._baseURL,
             "/api/tags",
+            "GET",
             self._timeoutSeconds,
             {
                 "Accept": "application/json",
@@ -481,9 +485,20 @@ class OllamaClient:
     ) -> tuple[str, OllamaGenerateResponse]:
         streamPayload: dict[str, Any] = dict(payload)
         streamPayload["stream"] = True
-        body = json.dumps(streamPayload).encode("utf-8")
+        if "prompt" in streamPayload:
+            streamPayload["prompt"] = str(streamPayload["prompt"])
+        payload_types = {key: type(value).__name__ for key, value in streamPayload.items()}
+        log.debug("Ollama stream payload shape=%s", payload_types)
+        try:
+            body = json.dumps(streamPayload).encode("utf-8")
+        except (TypeError, ValueError) as error:
+            log.exception("Failed to serialize Ollama stream payload: %s", error)
+            raise OllamaClientError(
+                f"Ollama stream payload is not JSON serializable: {error}. "
+                f"Payload keys and types: {payload_types}"
+            ) from error
         headers = {
-            "Accept": "application/json",
+            "Accept": "application/x-ndjson, application/json",
             "Connection": "keep-alive",
             "Content-Type": "application/json",
             "User-Agent": "browser-assistant/0.1",
