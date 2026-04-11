@@ -1,4 +1,5 @@
-## v0.5.3 - 2026-04-11
+## v0.5.3 - 2026-04-12
+- Refactored AI assistant architecture to remove deprecated modules, introduce improved context management, and enhance LLM service integration.
 - Added real-time provider title updates in the open chat window when switching between Ollama and Gemini.
 - Implemented canonical chat message and tool handling for more reliable provider request payloads and tool invocation flow.
 - Improved Gemini and Ollama tool-call serialization, provider state management, and debug logging.
