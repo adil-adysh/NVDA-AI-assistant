@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from logHandler import log
 import threading
 from typing import Any
 
 import wx
 
 from .chat_coordinator import ChatCoordinator
+from .tool_registry import ToolRegistry
 
 chatDialogInstance = None
 
@@ -16,11 +18,13 @@ class ChatDialog(wx.Dialog):
         self,
         parent: wx.Window | None,
         coordinator: ChatCoordinator,
+        tool_registry: ToolRegistry,
         initial_text: str | None = None,
         initial_image_base64: str | None = None,
     ) -> None:
         super().__init__(parent, title=_("AI Chat"), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self._coordinator = coordinator
+        self._tool_registry = tool_registry
         self._attached_image_base64 = initial_image_base64
         self._build_ui()
         self._refresh_history()
@@ -65,8 +69,10 @@ class ChatDialog(wx.Dialog):
         self.inputCtrl.SetToolTip(_("Type a message and press Enter or click Send."))
         mainSizer.Add(self.inputCtrl, 0, wx.ALL | wx.EXPAND, 10)
 
-        self.toolCheckbox = wx.CheckBox(self, label=_("Enable get_time tool calling"))
-        self.toolCheckbox.SetToolTip(_("Allow the model to call the built-in get_time tool."))
+        self.toolCheckbox = wx.CheckBox(self, label=_("Enable tool calling"))
+        supported_tools = ", ".join(self._tool_registry.get_tool_names()) or _("none")
+        self.toolCheckbox.SetToolTip(_("Allow the model to call available tools: {tools}.").format(tools=supported_tools))
+        self.toolCheckbox.SetValue(True)
         mainSizer.Add(self.toolCheckbox, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
         buttonSizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -109,11 +115,14 @@ class ChatDialog(wx.Dialog):
 
     def on_clear(self, event: Any) -> None:
         self._coordinator.reset()
+        self._attached_image_base64 = None
+        self.inputCtrl.Value = ""
         self._refresh_history()
         self._set_status(_("Ready"))
+        self._set_ui_enabled(True)
 
     def on_close(self, event: Any) -> None:
-        self.Close()
+        self.Destroy()
 
     def onDestroy(self, evt: Any) -> None:
         global chatDialogInstance
@@ -122,6 +131,12 @@ class ChatDialog(wx.Dialog):
 
     def _send_message(self, message: str) -> None:
         tools = self._get_tool_definitions() if self.toolCheckbox.Value else None
+        log.debug(
+            "ChatDialog._send_message: message=%r tool_call_enabled=%s tool_names=%s",
+            message,
+            self.toolCheckbox.Value,
+            [tool.get("function", {}).get("name") for tool in tools] if tools else None,
+        )
         image_base64 = self._attached_image_base64
         try:
             self._coordinator.send_message(
@@ -155,6 +170,8 @@ class ChatDialog(wx.Dialog):
     def _append_local_history(self, role: str, content: str, tool_name: str | None = None, image_attached: bool = False) -> None:
         if role == "User" and image_attached:
             label = _("User (image attached): ")
+            if not content:
+                content = _("[Image only]")
         elif role == "Tool":
             label = f"{role}/{tool_name or 'unknown'}: "
         else:
@@ -175,17 +192,4 @@ class ChatDialog(wx.Dialog):
         self.historyCtrl.ShowPosition(self.historyCtrl.GetLastPosition())
 
     def _get_tool_definitions(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_time",
-                    "description": "Get the current local date and time.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "required": [],
-                    },
-                },
-            }
-        ]
+        return self._tool_registry.get_definitions()

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-import logging
+from logHandler import log
 from pathlib import Path
 
 from .request_metrics import RequestMetrics
@@ -11,7 +11,7 @@ from .settings import (
     get_request_metrics_logging_enabled,
 )
 
-logger = logging.getLogger(__name__)
+
 
 
 class MetricsReporter:
@@ -28,11 +28,11 @@ class FileMetricsReporter(MetricsReporter):
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
         except Exception:
-            logger.exception("Unable to create metrics log folder %s", log_path.parent)
+            log.exception("Unable to create metrics log folder %s", log_path.parent)
             return
         try:
             with log_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(metrics.to_log_record(), ensure_ascii=False))
                 handle.write("\n")
         except Exception:
-            logger.exception("Unable to write request metrics log to %s", log_path)
+            log.exception("Unable to write request metrics log to %s", log_path)

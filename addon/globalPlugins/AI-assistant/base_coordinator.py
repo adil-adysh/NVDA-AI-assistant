@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # pyright: reportMissingImports=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
-import logging
+from logHandler import log
 import threading
 import time
 from collections.abc import Callable
@@ -15,8 +15,6 @@ from .settings import (
     is_progress_enabled,
     is_streaming_enabled,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class BaseCoordinator:
@@ -70,11 +68,11 @@ class BaseCoordinator:
 		try:
 			result = self._run_task_logic(progress_callback, *args, **kwargs)
 		except LLMProviderError as error:
-			logger.exception("Task failed with provider error")
+			log.exception("Task failed with provider error")
 			self._finalize_request_metrics(False, error)
 			self._handle_error(error)
 		except Exception as error:
-			logger.exception("Task failed with unexpected exception")
+			logception("Task failed with unexpected exception")
 			self._finalize_request_metrics(False, error)
 			self._handle_error(error)
 		else:
@@ -131,12 +129,12 @@ class BaseCoordinator:
 		try:
 			self._report_request_metrics(self._request_metrics, result)
 		except Exception:
-			logger.exception("Failed to report request metrics")
+			log.exception("Failed to report request metrics")
 		self._request_metrics = None
 
 	def _report_request_metrics(self, metrics: RequestMetrics, result: Any | None) -> None:
 		"""Report request metrics. Subclasses may override this to capture richer telemetry."""
-		logger.debug("Request metrics: %s", metrics.to_dict())
+		log.debug("Request metrics: %s", metrics.to_dict())
 		if self.metrics_reporter:
 			self.metrics_reporter.report(metrics)
 
@@ -146,6 +144,7 @@ class BaseCoordinator:
 		self,
 		progress_callback: Callable[[str, int], None] | None,
 		*args: Any,
+
 		**kwargs: Any,
 	) -> Any:
 		"""Subclasses must perform feature-specific background work and return a result."""

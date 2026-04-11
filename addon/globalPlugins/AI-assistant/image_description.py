@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # pyright: reportMissingImports=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
 import api
-import logging
+from logHandler import log
 from collections.abc import Callable
 from io import BytesIO
 from typing import Any, Optional
@@ -17,8 +17,6 @@ from .providers.base import LLMProvider
 from .request_metrics import ImageRequestMetrics, estimate_tokens
 from .models import LLMRequest, LLMResponse, TaskType
 from .settings import get_image_format, get_image_max_side, get_image_quality
-
-logger = logging.getLogger(__name__)
 
 
 class ImageDescriptionCoordinator(BaseCoordinator):

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # pyright: reportMissingImports=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
-import logging
+from logHandler import log
 from collections.abc import Callable
 from typing import Any
 
@@ -14,8 +14,6 @@ from .metrics_reporter import MetricsReporter
 from .prompt_builders import build_page_summary_prompt
 from .providers.base import LLMProvider
 from .request_metrics import SummaryRequestMetrics, estimate_tokens
-
-logger = logging.getLogger(__name__)
 
 
 class PageSummaryCoordinator(BaseCoordinator):
@@ -37,7 +35,7 @@ class PageSummaryCoordinator(BaseCoordinator):
             return
 
         prompt = build_page_summary_prompt(snapshot)
-        logger.debug(
+        log.debug(
             "Starting page summary worker for title=%s headings=%d links=%d buttons=%d landmarks=%d",
             snapshot.title,
             len(snapshot.headings),

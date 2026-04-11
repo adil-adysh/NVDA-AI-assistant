@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
-import logging
+from logHandler import log
 import socket
 import time
 from collections.abc import Callable
@@ -9,7 +9,7 @@ from urllib import error as urllibError
 from urllib import request as urllibRequest
 
 from . import defaults
-from .models import PageSnapshot, SummaryResponse
+from .models import SummaryResponse
 from .settings import (
     get_generate_presence_penalty,
     get_generate_top_k,
@@ -23,9 +23,6 @@ from .settings import (
     get_server_url,
     get_timeout_seconds,
 )
-
-logger = logging.getLogger(__name__)
-
 
 
 class OllamaModelEntry(TypedDict):
@@ -147,7 +144,7 @@ class OllamaClient:
         self._keepAlive: str = get_keep_alive()
         self._maxRetries: int = get_max_retries()
         self._retryBackoffSeconds: float = get_retry_backoff_seconds()
-        logger.debug(
+        log.debug(
             "OllamaClient initialized baseURL=%s model=%s timeout=%.1fs num_ctx=%d keep_alive=%s max_retries=%d backoff=%.2fs",
             self._baseURL,
             self._model,
@@ -198,23 +195,23 @@ class OllamaClient:
         }
 
         promptLength = len(payload["prompt"])
-        logger.debug("Prompt length=%d", promptLength)
+        log.debug("Prompt length=%d", promptLength)
 
         if onPartial is None:
             payload["stream"] = False
-            logger.debug("Starting non-stream /api/generate request for model=%s", model)
+            log.debug("Starting non-stream /api/generate request for model=%s", model)
             response = self._requestJSON("POST", "/api/generate", payload)
-            logger.debug("Raw response: %s", response)
+            log.debug("Raw response: %s", response)
             typedResponse = self._validateGenerateResponse(response, "/api/generate")
             summaryText = self._extractGenerateText(typedResponse)
             finalResponse = typedResponse
         else:
-            logger.debug("Starting stream /api/generate request for model=%s", model)
+            log.debug("Starting stream /api/generate request for model=%s", model)
             summaryText, finalResponse = self._requestGenerateStream(payload, onPartial, "/api/generate")
-            logger.debug("Final generated summary length=%d", len(summaryText))
+            log.debug("Final generated summary length=%d", len(summaryText))
 
         if not summaryText:
-            logger.debug(
+            log.debug(
                 "Empty response detected prompt_length=%d final_response=%s",
                 promptLength,
                 {
@@ -245,18 +242,18 @@ class OllamaClient:
 
         if onPartial is None:
             payload["stream"] = False
-            logger.debug("Starting non-stream image generate request for model=%s", model)
+            log.debug("Starting non-stream image generate request for model=%s", model)
             response = self._requestJSON("POST", "/api/generate", payload)
             typedResponse = self._validateGenerateResponse(response, "/api/generate")
             descriptionText = self._extractGenerateText(typedResponse)
             finalResponse = typedResponse
         else:
-            logger.debug("Starting stream image generate request for model=%s", model)
+            log.debug("Starting stream image generate request for model=%s", model)
             descriptionText, finalResponse = self._requestGenerateStream(payload, onPartial, "/api/generate")
-            logger.debug("Final generated description length=%d", len(descriptionText))
+            log.debug("Final generated description length=%d", len(descriptionText))
 
         if not descriptionText:
-            logger.debug(
+            log.debug(
                 "Empty image description detected prompt_length=%d final_response=%s",
                 len(payload["prompt"]),
                 {
@@ -296,32 +293,43 @@ class OllamaClient:
         if tools:
             payload["tools"] = tools
 
+        log.debug(
+            "OllamaClient.chat payload: model=%s messages=%s tools=%s",
+            model,
+            messages,
+            [tool.get("type") or tool.get("function", {}).get("name") for tool in tools] if tools else None,
+        )
+
+        message = None
         if onPartial is None:
             payload["stream"] = False
-            logger.debug("Starting non-stream /api/chat request for model=%s", model)
+            log.debug("Starting non-stream /api/chat request for model=%s", model)
             response = self._requestJSON("POST", "/api/chat", payload)
+            log.debug("OllamaClient.chat raw response: %s", response)
             typedResponse = self._validateGenerateResponse(response, "/api/chat")
             message = typedResponse.get("message")
+            chatText = ""
             if isinstance(message, dict):
                 chatText = str(message.get("content", "")).strip()
             else:
                 chatText = str(typedResponse.get("response", "")).strip()
+            log.debug("OllamaClient.chat parsed message=%s chatText=%r", message, chatText)
             finalResponse = typedResponse
             metadata = {"raw": typedResponse}
         else:
-            logger.debug("Starting stream /api/chat request for model=%s", model)
+            log.debug("Starting stream /api/chat request for model=%s", model)
             chatText, finalResponse = self._requestGenerateStream(payload, onPartial, "/api/chat")
-            logger.debug("Final generated chat length=%d", len(chatText))
+            log.debug("Final generated chat length=%d", len(chatText))
+            if isinstance(finalResponse, dict):
+                message = finalResponse.get("message")
             metadata = {"raw": finalResponse}
 
-        if not chatText:
-            logger.debug(
-                "Empty chat response detected response=%s",
-                {
-                    "done": finalResponse.get("done"),
-                    "done_reason": finalResponse.get("done_reason"),
-                    "response_len": len(str(finalResponse.get("response", ""))),
-                },
+        if not chatText and not self._responseHasToolCalls(finalResponse):
+            log.debug(
+                "Empty chat response detected finalResponse=%s message=%s chatText=%r",
+                finalResponse,
+                message,
+                chatText,
             )
             raise OllamaClientError(
                 f"Empty chat response. final_response={{'done': {finalResponse.get('done')}, 'done_reason': {finalResponse.get('done_reason')}}}"
@@ -329,11 +337,11 @@ class OllamaClient:
         return SummaryResponse(text=chatText, model=model, metadata=metadata)
 
     def listLocalModels(self) -> list[str]:
-        logger.debug("Listing local Ollama models")
+        log.debug("Listing local Ollama models")
         return self._listModels()
 
     def listRunningModels(self) -> tuple[str, ...]:
-        logger.debug("Listing running Ollama models")
+        log.debug("Listing running Ollama models")
         response = self._requestJSON("GET", "/api/ps")
         typedResponse = cast(OllamaRunningModelsResponse, response)
         models: Any = typedResponse.get("models", [])
@@ -352,7 +360,7 @@ class OllamaClient:
     def showModel(self, model: str) -> OllamaShowResponse:
         if not model.strip():
             raise OllamaClientError("Model name is required for /api/show.")
-        logger.debug("Showing Ollama model details model=%s", model.strip())
+        log.debug("Showing Ollama model details model=%s", model.strip())
         response = self._requestJSON("POST", "/api/show", {"model": model.strip()})
         return cast(OllamaShowResponse, response)
 
@@ -365,7 +373,7 @@ class OllamaClient:
         }
         if keepAlive is not None:
             payload["keep_alive"] = keepAlive
-        logger.debug("Loading model %s with keep_alive=%s", modelName, keepAlive)
+        log.debug("Loading model %s with keep_alive=%s", modelName, keepAlive)
         response = self._requestJSON("POST", "/api/generate", payload)
         return self._validateGenerateResponse(response, "/api/generate")
 
@@ -391,7 +399,7 @@ class OllamaClient:
             self._model = normalized[modelName.lower()]
             return self._model
 
-        logger.info("Ollama model %s not installed; pulling it now.", modelName)
+        log.info("Ollama model %s not installed; pulling it now.", modelName)
         self._pullModel(modelName, onProgress=onProgress)
 
         installed = self._listModels()
@@ -406,7 +414,7 @@ class OllamaClient:
         if not model.strip():
             raise OllamaClientError("Model name is required for /api/pull.")
         payload = {"model": model.strip()}
-        logger.debug("Pulling Ollama model %s", model)
+        log.debug("Pulling Ollama model %s", model)
         response = self._requestPullStream("POST", "/api/pull", payload, onProgress)
         errorMessage = str(response.get("error", "")).strip()
         if errorMessage:
@@ -419,7 +427,7 @@ class OllamaClient:
     def _resolveModel(self) -> str:
         configured = self._configuredModel()
         if configured is not None:
-            logger.debug("Using configured Ollama model %s", configured)
+            log.debug("Using configured Ollama model %s", configured)
             return self.ensureModelInstalled(configured)
 
         return self.ensureModelInstalled()
@@ -485,7 +493,7 @@ class OllamaClient:
 
         for attempt in range(1, attempts + 1):
             started = time.monotonic()
-            logger.debug("HTTPRequest attempt=%d method=%s path=%s", attempt, method, path)
+            log.debug("HTTPRequest attempt=%d method=%s path=%s", attempt, method, path)
             try:
                 with urllibRequest.urlopen(request, timeout=self._timeoutSeconds) as response:
                     try:
@@ -494,7 +502,7 @@ class OllamaClient:
                         raise OllamaClientError(
                             f"Ollama returned non-UTF-8 content for {path}: {error}"
                         )
-                    logger.debug("HTTPRequest succeeded method=%s path=%s bytes=%d", method, path, len(raw))
+                    log.debug("HTTPRequest succeeded method=%s path=%s bytes=%d", method, path, len(raw))
                 return self._parseJSON(raw, path)
             except urllibError.HTTPError as error:
                 details = self._readErrorBody(error)
@@ -561,9 +569,49 @@ class OllamaClient:
         attempts = self._maxRetries + 1
 
         lastParsed: Any | None = None
+        accumulatedToolCalls: list[dict[str, Any]] = []
+
+        def _record_tool_metadata(parsed_response: dict[str, Any]) -> None:
+            nonlocal accumulatedToolCalls
+            message = parsed_response.get("message")
+            if isinstance(message, dict):
+                tool_calls = message.get("tool_calls") or message.get("toolCalls")
+                if isinstance(tool_calls, list):
+                    accumulatedToolCalls.extend([tc for tc in tool_calls if isinstance(tc, dict)])
+                function_call = message.get("function_call") or message.get("tool_call")
+                if isinstance(function_call, dict):
+                    accumulatedToolCalls.append(function_call)
+
+            tool_calls = parsed_response.get("tool_calls") or parsed_response.get("toolCalls")
+            if isinstance(tool_calls, list):
+                accumulatedToolCalls.extend([tc for tc in tool_calls if isinstance(tc, dict)])
+            function_call = parsed_response.get("function_call") or parsed_response.get("tool_call")
+            if isinstance(function_call, dict):
+                accumulatedToolCalls.append(function_call)
+
+        def _attach_accumulated_tool_calls(parsed_response: dict[str, Any]) -> dict[str, Any]:
+            if not accumulatedToolCalls:
+                return parsed_response
+
+            final_response = dict(parsed_response)
+            message = dict(parsed_response.get("message") or {}) if isinstance(parsed_response.get("message"), dict) else {}
+            existing_tool_calls = message.get("tool_calls") or message.get("toolCalls") or parsed_response.get("tool_calls") or parsed_response.get("toolCalls")
+            if isinstance(existing_tool_calls, list):
+                merged_tool_calls = list(existing_tool_calls) + accumulatedToolCalls
+            else:
+                merged_tool_calls = list(accumulatedToolCalls)
+            message["tool_calls"] = merged_tool_calls
+            final_response["message"] = message
+            final_response["tool_calls"] = merged_tool_calls
+            log.debug(
+                "Attaching accumulated tool metadata to final stream response: tool_calls_count=%d",
+                len(merged_tool_calls),
+            )
+            return final_response
+
         for attempt in range(1, attempts + 1):
             started = time.monotonic()
-            logger.debug("Stream request attempt=%d path=%s", attempt, path)
+            log.debug("Stream request attempt=%d path=%s", attempt, path)
             chunks: list[str] = []
             generatedChars = 0
             emittedPartial = False
@@ -586,13 +634,14 @@ class OllamaClient:
                             continue
 
                         parsed = self._validateGenerateResponse(self._parseJSON(line, path), path, requireDone=False)
+                        _record_tool_metadata(parsed)
                         lastParsed = parsed
                         piece = str(parsed.get("response", ""))
                         if not piece:
                             message = parsed.get("message")
                             if isinstance(message, dict):
                                 piece = str(message.get("content", ""))
-                        logger.debug(
+                        log.debug(
                             "Stream chunk path=%s done=%s response_len=%d",
                             path,
                             parsed.get("done"),
@@ -606,12 +655,13 @@ class OllamaClient:
                                 try:
                                     onPartial(piece, generatedChars)
                                 except Exception:
-                                    logger.exception("onPartial callback failed")
+                                    log.exception("onPartial callback failed")
                                     callbackFailed = True
 
                         if parsed.get("done") is True:
-                            logger.debug("Stream finished path=%s total_chars=%d", path, generatedChars)
-                            return "".join(chunks).strip(), parsed
+                            final_parsed = _attach_accumulated_tool_calls(parsed)
+                            log.debug("Stream finished path=%s total_chars=%d", path, generatedChars)
+                            return "".join(chunks).strip(), final_parsed
             except urllibError.HTTPError as error:
                 details = self._readErrorBody(error)
                 lastErrorMessage = f"HTTP {error.code}. {details}" if details else f"HTTP {error.code}."
@@ -652,7 +702,7 @@ class OllamaClient:
                 lastErrorMessage = f"Ollama stream ended before done=true for {path}."
             if emittedPartial or attempt >= attempts:
                 if lastParsed is not None:
-                    logger.debug(
+                    log.debug(
                         "Stream terminated with lastParsed=%s",
                         {"done": lastParsed.get("done"), "done_reason": lastParsed.get("done_reason"), "response_len": len(str(lastParsed.get("response", ""))),},
                     )
@@ -705,7 +755,7 @@ class OllamaClient:
                         try:
                             onProgress(parsed)
                         except Exception:
-                            logger.exception("onProgress callback failed")
+                            log.exception("onProgress callback failed")
                     lastParsed = parsed
                 return lastParsed
         except urllibError.HTTPError as error:
@@ -755,6 +805,22 @@ class OllamaClient:
             if isinstance(content, str):
                 return content.strip()
         return ""
+
+    def _responseHasToolCalls(self, response: dict[str, Any]) -> bool:
+        message = response.get("message")
+        if isinstance(message, dict):
+            tool_calls = message.get("tool_calls") or message.get("toolCalls")
+            if isinstance(tool_calls, list) and tool_calls:
+                return True
+            function_call = message.get("function_call") or message.get("tool_call")
+            if isinstance(function_call, dict):
+                return True
+
+        tool_calls = response.get("tool_calls") or response.get("toolCalls")
+        if isinstance(tool_calls, list) and tool_calls:
+            return True
+
+        return False
 
     def _validateGenerateResponse(
         self,

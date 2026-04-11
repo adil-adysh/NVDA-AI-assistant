@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import base64
-import logging
+from logHandler import log
 from collections.abc import Callable
 from typing import Optional
 
@@ -11,8 +11,6 @@ from .base import LLMProvider, LLMProviderError, PartialCallback, ProgressCallba
 from .config import GeminiConfig
 from ..gemini import GeminiClient, GeminiClientError
 from ..gemini.types import Content, GenerateContentConfig, Part
-
-logger = logging.getLogger(__name__)
 
 
 class GeminiProvider(LLMProvider):

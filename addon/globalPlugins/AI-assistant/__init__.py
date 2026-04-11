@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # pyright: reportMissingImports=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUntypedBaseClass=false
-import logging
+from logHandler import log
 import threading
 from typing import Any
 
@@ -18,11 +18,10 @@ from .settings import get_image_format, get_image_max_side, get_image_quality
 from .metrics_reporter import FileMetricsReporter
 from .page_summary import PageSummaryCoordinator
 from .providers.base import LLMProviderError
+from .tool_registry import ToolDefinition, ToolRegistry
 from .providers.provider_proxy import ProviderProxy
 from .settings_panel import AIAssistantSettingsPanel
 from .chat_coordinator import ChatCoordinator
-
-logger = logging.getLogger(__name__)
 
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
@@ -33,7 +32,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def __init__(self):
         super().__init__()
         addonHandler.initTranslation()
-        logger.debug("Browser Assistant plugin initializing")
+        log.debug("Browser Assistant plugin initializing")
         self._provider = ProviderProxy()
         self._metrics_reporter = FileMetricsReporter()
         self._capture_service = ImageCaptureService()
@@ -52,8 +51,11 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             preprocessor=self._preprocessor,
             encoder=self._encoder,
         )
+        self._toolRegistry = ToolRegistry()
+        self._register_default_tools()
         self._chatCoordinator = ChatCoordinator(
             client=self._provider,
+            tool_registry=self._toolRegistry,
             metrics_reporter=self._metrics_reporter,
         )
         self._assistantLayerGestures = (
@@ -66,7 +68,18 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         )
         self._startModelPreload()
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(AIAssistantSettingsPanel)
-        logger.debug("Browser Assistant plugin initialized")
+        log.debug("Browser Assistant plugin initialized")
+
+    def _register_default_tools(self) -> None:
+        self._toolRegistry.register_tool(
+            ToolDefinition(
+                name="get_time",
+                description="Get the current local date and time.",
+                parameters={},
+                required=[],
+                executor=lambda args: __import__("datetime").datetime.now().isoformat(),
+            )
+        )
 
     def _startModelPreload(self):
         def worker():
@@ -96,14 +109,14 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         description=_("Summarizes the current page using the selected AI provider."),
     )
     def script_summarizeCurrentPage(self, gesture: Any):
-        logger.debug("Script summarizeCurrentPage invoked gesture=%s", gesture)
+        log.debug("Script summarizeCurrentPage invoked gesture=%s", gesture)
         self._pageSummary.summarizeCurrentPage()
 
     def terminate(self):
         try:
             self._provider.close()
         except Exception:
-            logger.exception("Error closing provider during terminate")
+            log.exception("Error closing provider during terminate")
         super().terminate()
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.remove(AIAssistantSettingsPanel)
 
@@ -111,14 +124,14 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         description=_("Captures and describes the current foreground window using the selected AI provider."),
     )
     def script_describeCurrentWindow(self, gesture: Any):
-        logger.debug("Script describeCurrentWindow invoked gesture=%s", gesture)
+        log.debug("Script describeCurrentWindow invoked gesture=%s", gesture)
         self._imageDescription.describeCurrentWindow()
 
     @script(
         description=_("Opens the AI chat window."),
     )
     def script_openChatWindow(self, gesture: Any):
-        logger.debug("Script openChatWindow invoked gesture=%s", gesture)
+        log.debug("Script openChatWindow invoked gesture=%s", gesture)
         self._open_chat_window()
 
     def _open_chat_window(
@@ -141,6 +154,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         chat_ui.chatDialogInstance = chat_ui.ChatDialog(
             parent,
             coordinator=self._chatCoordinator,
+            tool_registry=self._toolRegistry,
             initial_text=initial_text,
             initial_image_base64=initial_image_base64,
         )
@@ -156,7 +170,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         description=_("Opens the AI chat window with current page content preloaded."),
     )
     def script_openChatWithPageContent(self, gesture: Any):
-        logger.debug("Script openChatWithPageContent invoked gesture=%s", gesture)
+        log.debug("Script openChatWithPageContent invoked gesture=%s", gesture)
         try:
             snapshot = self._pageSummary._extractor.extract()
         except PageExtractionError as error:
@@ -178,7 +192,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         description=_("Opens the AI chat window with a screenshot attached."),
     )
     def script_openChatWithScreenshot(self, gesture: Any):
-        logger.debug("Script openChatWithScreenshot invoked gesture=%s", gesture)
+        log.debug("Script openChatWithScreenshot invoked gesture=%s", gesture)
         try:
             raw_image = self._capture_service.capture()
             processed_image = self._preprocessor.preprocess(
@@ -203,7 +217,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         gesture="kb:NVDA+Shift+A",
     )
     def script_assistantLayerCommands(self, gesture: Any):
-        logger.debug("Script assistantLayerCommands invoked gesture=%s", gesture)
+        log.debug("Script assistantLayerCommands invoked gesture=%s", gesture)
         if self.assistantLayerModeActive:
             self.script_error(gesture)
             return

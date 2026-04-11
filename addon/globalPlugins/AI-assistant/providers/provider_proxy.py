@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import logging
+from logHandler import log
 from typing import Any
 
 from .factory import ProviderFactory
 from .base import LLMProvider, LLMRequest, LLMResponse, PartialCallback, ProgressCallback
 from ..settings import get_active_provider_config
 
-logger = logging.getLogger(__name__)
 
 
 class ProviderProxy(LLMProvider):
@@ -21,12 +20,12 @@ class ProviderProxy(LLMProvider):
         if current_config == self._active_config:
             return
 
-        logger.debug("ProviderProxy detected config change, recreating provider")
+        log.debug("ProviderProxy detected config change, recreating provider")
         self._active_config = current_config
         try:
             self._provider.close()
         except Exception:
-            logger.exception("Error closing previous provider")
+            log.exception("Error closing previous provider")
         self._provider = ProviderFactory.create_provider(self._active_config)
 
     def provider_name(self) -> str:
@@ -70,4 +69,4 @@ class ProviderProxy(LLMProvider):
         try:
             self._provider.close()
         except Exception:
-            logger.exception("Error closing provider in ProviderProxy.close")
+            log.exception("Error closing provider in ProviderProxy.close")

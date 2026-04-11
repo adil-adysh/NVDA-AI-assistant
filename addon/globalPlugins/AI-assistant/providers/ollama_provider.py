@@ -1,16 +1,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import logging
-from collections.abc import Callable
+from logHandler import log
 from typing import Any
 
 from ..models import LLMRequest, LLMResponse, SummaryResponse, TaskType, ToolCall
 from ..ollama_client import OllamaClient, OllamaClientError
 from .base import LLMProvider, LLMProviderError, ProgressCallback, PartialCallback, format_chat_messages
 from .config import OllamaConfig
-
-logger = logging.getLogger(__name__)
 
 
 class OllamaProvider(LLMProvider):
@@ -59,6 +56,12 @@ class OllamaProvider(LLMProvider):
         if not request.messages:
             return LLMResponse(text="No input provided", model=self.provider_name(), raw=None, metrics=None)
 
+        log.debug(
+            "OllamaProvider._handle_chat: request.messages=%s tools=%s",
+            [msg.role for msg in request.messages if msg is not None],
+            [tool.get("name") for tool in request.tools] if request.tools else None,
+        )
+
         messages = []
         for msg in request.messages:
             if msg is None:
@@ -75,38 +78,56 @@ class OllamaProvider(LLMProvider):
                 chat_message["tool_calls"] = msg.tool_calls
             messages.append(chat_message)
 
+        log.debug("OllamaProvider._handle_chat: sending messages=%s", messages)
+
         if not messages:
             return self._handle_chat_fallback(request)
 
         try:
             response = self._client.chat(messages, tools=request.tools, onPartial=request.stream_handler)
         except OllamaClientError as error:
+            log.debug("OllamaProvider._handle_chat: chat request failed: %s", error)
             raise self._wrap_exception(error) from error
+
+        tool_calls = self._extract_tool_calls(response.metadata if response.metadata else {})
+        log.debug(
+            "OllamaProvider._handle_chat: provider returned text_len=%d tool_calls=%s raw=%s",
+            len(response.text or ""),
+            [tc.name for tc in tool_calls] if tool_calls else None,
+            response.metadata,
+        )
 
         return LLMResponse(
             text=response.text,
             model=response.model,
             raw=response,
             metrics=None,
-            tool_calls=self._extract_tool_calls(response.metadata if response.metadata else {}),
+            tool_calls=tool_calls,
         )
 
     def _extract_tool_calls(self, metadata: dict[str, Any]) -> list[ToolCall] | None:
+        log.debug("OllamaProvider._extract_tool_calls: metadata=%s", metadata)
         raw_response = metadata.get("raw") if isinstance(metadata, dict) else None
         if not isinstance(raw_response, dict):
+            log.debug("OllamaProvider._extract_tool_calls: raw response is not a dict")
             return None
 
         message = raw_response.get("message") if isinstance(raw_response.get("message"), dict) else raw_response
         tool_calls = message.get("tool_calls") or message.get("toolCalls") or raw_response.get("tool_calls")
         if isinstance(tool_calls, list):
-            return self._normalize_tool_calls(tool_calls)
+            normalized = self._normalize_tool_calls(tool_calls)
+            log.debug("OllamaProvider._extract_tool_calls: normalized tool_calls=%s", [tc.name for tc in normalized] if normalized else None)
+            return normalized
 
         function_call = None
         if isinstance(message, dict):
             function_call = message.get("function_call") or message.get("tool_call")
         if isinstance(function_call, dict):
-            return self._normalize_tool_calls([function_call])
+            normalized = self._normalize_tool_calls([function_call])
+            log.debug("OllamaProvider._extract_tool_calls: normalized single function_call=%s", [tc.name for tc in normalized] if normalized else None)
+            return normalized
 
+        log.debug("OllamaProvider._extract_tool_calls: no tool calls found")
         return None
 
     def _normalize_tool_calls(self, tool_calls: list[Any]) -> list[ToolCall] | None:
@@ -114,10 +135,15 @@ class OllamaProvider(LLMProvider):
         for tc in tool_calls:
             if not isinstance(tc, dict):
                 continue
-            name = str(tc.get("name", "")).strip()
+            function_payload = tc.get("function") if isinstance(tc.get("function"), dict) else None
+            if function_payload is not None:
+                name = str(function_payload.get("name", "")).strip()
+                arguments = function_payload.get("arguments") if isinstance(function_payload.get("arguments"), dict) else {}
+            else:
+                name = str(tc.get("name", "")).strip()
+                arguments = tc.get("arguments") if isinstance(tc.get("arguments"), dict) else {}
             if not name:
                 continue
-            arguments = tc.get("arguments") if isinstance(tc.get("arguments"), dict) else {}
             calls.append(ToolCall(name=name, arguments=arguments, id=tc.get("id")))
         return calls or None
 
