@@ -18,7 +18,7 @@ addon_info = AddonInfo(
 	# Add-on summary/title, usually the user visible name of the add-on
 	# Translators: Summary/title for this add-on
 	# to be shown on installation and add-on information found in add-on store
-	addon_summary=_("NVDA AI assistant"),
+	addon_summary=_("AI assistant"),
 	# Add-on description
 	# Translators: Long description to be shown for this add-on on add-on information found in add-on store
 	addon_description=_("""NVDA AI assistant helps NVDA users by using AI to simplify complex information, summarize content, and provide contextual guidance for tasks that are otherwise hard to access."""),

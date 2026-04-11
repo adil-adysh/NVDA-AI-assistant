@@ -397,14 +397,6 @@ class AIAssistantSettingsPanel(SettingsPanel):
 
         save()
 
-        try:
-            from . import chat_ui
-
-            if chat_ui.chatDialogInstance:
-                chat_ui.chatDialogInstance.refresh_provider_title()
-        except Exception:
-            log.exception("Error refreshing chat dialog title after settings save")
-
     def _selected_provider(self) -> str:
         index = self.providerChoice.GetSelection()
         if index < 0 or index >= len(self._providerOptions):

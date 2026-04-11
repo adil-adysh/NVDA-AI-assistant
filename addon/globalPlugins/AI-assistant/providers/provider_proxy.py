@@ -9,13 +9,27 @@ from typing import Any
 from .factory import ProviderFactory
 from .base import LLMProvider, LLMResponse, PartialCallback, ProgressCallback
 from ..core.canonical import Message, Tool
-from ..settings import get_active_provider_config
+from ..settings import (
+    ProviderState,
+    get_active_provider_config,
+    subscribe_provider_state_change,
+    unsubscribe_provider_state_change,
+)
 
 
 
 class ProviderProxy(LLMProvider):
     def __init__(self) -> None:
         self._active_config = get_active_provider_config()
+        self._provider = ProviderFactory.create_provider(self._active_config)
+        subscribe_provider_state_change(self._on_provider_state_change)
+
+    def _recreate_provider(self, config: "ProviderConfig") -> None:
+        self._active_config = config
+        try:
+            self._provider.close()
+        except Exception:
+            log.exception("Error closing previous provider")
         self._provider = ProviderFactory.create_provider(self._active_config)
 
     def _refresh(self) -> None:
@@ -24,12 +38,10 @@ class ProviderProxy(LLMProvider):
             return
 
         log.debug("ProviderProxy detected config change, recreating provider")
-        self._active_config = current_config
-        try:
-            self._provider.close()
-        except Exception:
-            log.exception("Error closing previous provider")
-        self._provider = ProviderFactory.create_provider(self._active_config)
+        self._recreate_provider(current_config)
+
+    def _on_provider_state_change(self, provider_state: ProviderState) -> None:
+        self._refresh()
 
     def _warn_if_main_thread(self, method_name: str) -> None:
         if threading.current_thread() is threading.main_thread():
@@ -82,6 +94,10 @@ class ProviderProxy(LLMProvider):
         return self._provider.ensure_model_available(on_progress=on_progress)
 
     def close(self) -> None:
+        try:
+            unsubscribe_provider_state_change(self._on_provider_state_change)
+        except Exception:
+            log.exception("Error unsubscribing provider state listener")
         try:
             self._provider.close()
         except Exception:

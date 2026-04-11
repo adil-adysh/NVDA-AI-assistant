@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 
 import config as nvda_config
 
@@ -56,7 +57,7 @@ def _get_raw_setting(key: str, default: Any) -> Any:
         return default
 
 
-def _set_value(key: str, value: Any) -> None:
+def _set_value(key: str, value: Any, notify: bool = False) -> None:
     section = _ensure_ai_assistant_section()
     if section is None:
         return
@@ -66,6 +67,9 @@ def _set_value(key: str, value: Any) -> None:
     except Exception:
         if isinstance(section, dict):
             section[key] = value
+
+    if notify:
+        _notify_provider_state_changed()
 
 
 def _read_string(key: str, default: str) -> str:
@@ -129,6 +133,16 @@ def _read_bool(key: str, default: bool) -> bool:
     return default
 
 
+@dataclass(frozen=True)
+class ProviderState:
+    provider: str
+    model_name: str
+    backend_url: str
+
+
+_provider_state_listeners: list[Callable[[ProviderState], None]] = []
+
+
 def get_provider() -> str:
     """Return the selected LLM provider."""
     return _read_string("provider", defaults.DEFAULT_PROVIDER).strip().lower()
@@ -138,7 +152,7 @@ def set_provider(provider: str) -> None:
     provider_value = str(provider or "").strip().lower()
     if provider_value not in {"ollama", "gemini"}:
         raise ValueError(f"Unsupported provider: {provider}")
-    _set_value("provider", provider_value)
+    _set_value("provider", provider_value, notify=True)
 
 
 def get_ollama_model_name() -> str:
@@ -216,6 +230,42 @@ def get_active_provider_config() -> "ProviderConfig":
 def get_model_name() -> str:
     """Return the configured model name for the selected provider."""
     return get_active_provider_config().model_name
+
+
+def get_provider_state() -> "ProviderState":
+    active = get_active_provider_config()
+    from .providers.config import GeminiConfig, OllamaConfig
+
+    backend_url = ""
+    if isinstance(active, GeminiConfig):
+        backend_url = active.base_url
+    elif isinstance(active, OllamaConfig):
+        backend_url = active.server_url
+
+    return ProviderState(
+        provider=active.provider,
+        model_name=active.model_name,
+        backend_url=backend_url,
+    )
+
+
+def subscribe_provider_state_change(listener: Callable[["ProviderState"], None]) -> None:
+    if listener not in _provider_state_listeners:
+        _provider_state_listeners.append(listener)
+
+
+def unsubscribe_provider_state_change(listener: Callable[["ProviderState"], None]) -> None:
+    if listener in _provider_state_listeners:
+        _provider_state_listeners.remove(listener)
+
+
+def _notify_provider_state_changed() -> None:
+    state = get_provider_state()
+    for listener in list(_provider_state_listeners):
+        try:
+            listener(state)
+        except Exception:
+            pass
 
 
 def get_server_url() -> str:
@@ -313,20 +363,16 @@ def get_request_metrics_log_path() -> str:
     return str((appdata_path / resolved).resolve())
 
 
-def set_provider(provider: str) -> None:
-    _set_value("provider", str(provider).strip().lower())
-
-
 def set_ollama_model_name(modelName: str) -> None:
-    _set_value("ollamaModelName", str(modelName).strip())
+    _set_value("ollamaModelName", str(modelName).strip(), notify=True)
 
 
 def set_ollama_server_url(serverUrl: str) -> None:
-    _set_value("ollamaServerUrl", str(serverUrl).strip())
+    _set_value("ollamaServerUrl", str(serverUrl).strip(), notify=True)
 
 
 def set_gemini_model_name(modelName: str) -> None:
-    _set_value("geminiModelName", str(modelName).strip())
+    _set_value("geminiModelName", str(modelName).strip(), notify=True)
 
 
 def set_gemini_api_key(apiKey: str) -> None:
@@ -338,41 +384,43 @@ def set_gemini_api_token(apiToken: str | None) -> None:
 
 
 def set_gemini_base_url(baseUrl: str) -> None:
-    _set_value("geminiBaseUrl", str(baseUrl).strip())
+    _set_value("geminiBaseUrl", str(baseUrl).strip(), notify=True)
 
 
 def set_ollama_config(config: OllamaConfig) -> None:
-    set_provider(config.provider)
-    set_ollama_model_name(config.model_name)
-    set_ollama_server_url(config.server_url)
-    set_timeout_seconds(config.timeout_seconds)
-    set_num_ctx(config.num_ctx)
-    set_keep_alive(config.keep_alive)
-    set_max_retries(config.max_retries)
-    set_retry_backoff_seconds(config.retry_backoff_seconds)
-    set_generate_temperature(config.generate_temperature)
-    set_generate_top_k(config.generate_top_k)
-    set_generate_top_p(config.generate_top_p)
-    set_generate_presence_penalty(config.generate_presence_penalty)
-    set_streaming_enabled(config.enable_streaming)
-    set_progress_enabled(config.enable_progress)
+    _set_value("provider", config.provider, notify=False)
+    _set_value("ollamaModelName", config.model_name, notify=False)
+    _set_value("ollamaServerUrl", config.server_url, notify=False)
+    _set_value("timeoutSeconds", config.timeout_seconds, notify=False)
+    _set_value("numCtx", config.num_ctx, notify=False)
+    _set_value("keepAlive", config.keep_alive, notify=False)
+    _set_value("maxRetries", config.max_retries, notify=False)
+    _set_value("retryBackoffSeconds", config.retry_backoff_seconds, notify=False)
+    _set_value("generateTemperature", config.generate_temperature, notify=False)
+    _set_value("generateTopK", config.generate_top_k, notify=False)
+    _set_value("generateTopP", config.generate_top_p, notify=False)
+    _set_value("generatePresencePenalty", config.generate_presence_penalty, notify=False)
+    _set_value("enableStreaming", config.enable_streaming, notify=False)
+    _set_value("enableProgressAnnouncements", config.enable_progress, notify=False)
+    _notify_provider_state_changed()
 
 
 def set_gemini_config(config: GeminiConfig) -> None:
-    set_provider(config.provider)
-    set_gemini_model_name(config.model_name)
-    set_gemini_api_key(config.api_key)
-    set_gemini_api_token(config.api_token)
-    set_gemini_base_url(config.base_url)
-    set_timeout_seconds(config.timeout_seconds)
-    set_num_ctx(config.num_ctx)
-    set_max_retries(config.max_retries)
-    set_retry_backoff_seconds(config.retry_backoff_seconds)
-    set_generate_temperature(config.generate_temperature)
-    set_generate_top_k(config.generate_top_k)
-    set_generate_top_p(config.generate_top_p)
-    set_streaming_enabled(config.enable_streaming)
-    set_progress_enabled(config.enable_progress)
+    _set_value("provider", config.provider, notify=False)
+    _set_value("geminiModelName", config.model_name, notify=False)
+    _set_value("geminiApiKey", config.api_key, notify=False)
+    _set_value("geminiApiToken", str(config.api_token or "").strip(), notify=False)
+    _set_value("geminiBaseUrl", config.base_url, notify=False)
+    _set_value("timeoutSeconds", config.timeout_seconds, notify=False)
+    _set_value("numCtx", config.num_ctx, notify=False)
+    _set_value("maxRetries", config.max_retries, notify=False)
+    _set_value("retryBackoffSeconds", config.retry_backoff_seconds, notify=False)
+    _set_value("generateTemperature", config.generate_temperature, notify=False)
+    _set_value("generateTopK", config.generate_top_k, notify=False)
+    _set_value("generateTopP", config.generate_top_p, notify=False)
+    _set_value("enableStreaming", config.enable_streaming, notify=False)
+    _set_value("enableProgressAnnouncements", config.enable_progress, notify=False)
+    _notify_provider_state_changed()
 
 
 def set_model_name(modelName: str) -> None:

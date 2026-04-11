@@ -8,7 +8,7 @@ from typing import Any
 import wx
 
 from .chat_coordinator import ChatCoordinator
-from .settings import get_model_name, get_provider
+from .settings import ProviderState
 from .tool_registry import ToolRegistry
 
 chatDialogInstance = None
@@ -20,12 +20,14 @@ class ChatDialog(wx.Dialog):
         parent: wx.Window | None,
         coordinator: ChatCoordinator,
         tool_registry: ToolRegistry,
+        provider_state: ProviderState,
         initial_text: str | None = None,
         initial_image_base64: str | None = None,
     ) -> None:
         super().__init__(parent, title=_("AI Chat"), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self._coordinator = coordinator
         self._tool_registry = tool_registry
+        self._provider_state = provider_state
         self._attached_image_base64 = initial_image_base64
         self._build_ui()
         self._refresh_provider_title()
@@ -38,12 +40,15 @@ class ChatDialog(wx.Dialog):
         self.CenterOnScreen()
 
     def set_initial_state(self, initial_text: str | None = None, initial_image_base64: str | None = None) -> None:
-        self._refresh_provider_title()
         if initial_text is not None:
             self.inputCtrl.SetValue(initial_text)
         self._attached_image_base64 = initial_image_base64
         if initial_image_base64:
             self._set_status(_("Screenshot attached to the initial chat."))
+
+    def update_provider_state(self, provider_state: ProviderState) -> None:
+        self._provider_state = provider_state
+        self._refresh_provider_title()
 
     def _build_ui(self) -> None:
         mainSizer = wx.BoxSizer(wx.VERTICAL)
@@ -100,8 +105,8 @@ class ChatDialog(wx.Dialog):
         self.Bind(wx.EVT_WINDOW_DESTROY, self.onDestroy)
 
     def _refresh_provider_title(self) -> None:
-        provider = get_provider().strip()
-        model_name = get_model_name().strip()
+        provider = self._provider_state.provider.strip()
+        model_name = self._provider_state.model_name.strip()
         title = _("AI Chat")
         if provider:
             provider_label = provider.capitalize()
@@ -115,7 +120,6 @@ class ChatDialog(wx.Dialog):
         self._refresh_provider_title()
 
     def on_send(self, event: Any) -> None:
-        self._refresh_provider_title()
         message = self.inputCtrl.Value.strip()
         if not message and not self._attached_image_base64:
             return

@@ -14,7 +14,16 @@ from .browser_extractor import BrowserAwarePageExtractor, PageExtractionError
 from .download_progress import DownloadProgressTracker
 from .image_description import ImageDescriptionCoordinator
 from .image_services import ImageCaptureService, ImageEncoder, ImagePreprocessor
-from .settings import get_image_format, get_image_max_side, get_image_quality, get_provider, set_provider
+from .settings import (
+    get_image_format,
+    get_image_max_side,
+    get_image_quality,
+    get_provider,
+    get_provider_state,
+    set_provider,
+    subscribe_provider_state_change,
+    unsubscribe_provider_state_change,
+)
 from .metrics_reporter import FileMetricsReporter
 from .page_summary import PageSummaryCoordinator
 from .providers.base import LLMProviderError
@@ -60,6 +69,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             tool_registry=self._toolRegistry,
             metrics_reporter=self._metrics_reporter,
         )
+        subscribe_provider_state_change(self._on_provider_state_change)
         self._assistantLayerGestures = (
             ("s", self.script_summarizeCurrentPage),
             ("i", self.script_describeCurrentWindow),
@@ -107,6 +117,15 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         )
         thread.start()
 
+    def _on_provider_state_change(self, provider_state) -> None:
+        try:
+            from . import chat_ui
+
+            if chat_ui.chatDialogInstance:
+                chat_ui.chatDialogInstance.update_provider_state(provider_state)
+        except Exception:
+            log.exception("Error updating chat dialog title after provider state changed")
+
     # ------------------------------------------------------------------
     # Scripts (keybinds)
     # ------------------------------------------------------------------
@@ -119,6 +138,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self._pageSummary.summarizeCurrentPage()
 
     def terminate(self):
+        try:
+            unsubscribe_provider_state_change(self._on_provider_state_change)
+        except Exception:
+            log.exception("Error unsubscribing provider state listener")
         try:
             self._provider.close()
         except Exception:
@@ -149,7 +172,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
         if chat_ui.chatDialogInstance:
             try:
-                chat_ui.chatDialogInstance.refresh_provider_title()
+                chat_ui.chatDialogInstance.update_provider_state(get_provider_state())
                 chat_ui.chatDialogInstance.Raise()
                 chat_ui.chatDialogInstance.set_initial_state(initial_text, initial_image_base64)
             except Exception:
@@ -162,6 +185,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             parent,
             coordinator=self._chatCoordinator,
             tool_registry=self._toolRegistry,
+            provider_state=get_provider_state(),
             initial_text=initial_text,
             initial_image_base64=initial_image_base64,
         )
