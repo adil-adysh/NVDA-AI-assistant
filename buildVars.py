@@ -23,10 +23,10 @@ addon_info = AddonInfo(
 	# Translators: Long description to be shown for this add-on on add-on information found in add-on store
 	addon_description=_("""NVDA AI assistant helps NVDA users by using AI to simplify complex information, summarize content, and provide contextual guidance for tasks that are otherwise hard to access."""),
 	# version
-	addon_version="0.5.0",
+	addon_version="0.5.1",
 	# Brief changelog for this version
 	# Translators: what's new content for the add-on version to be shown in the add-on store
-	addon_changelog=_("""Added an AI assistant command layer, new chat startup modes with page and screenshot context, and improved Ollama response handling."""),
+	addon_changelog=_("""Refactored add-on logging to use NVDA logHandler across core assistant modules and improved streaming tool-call diagnostics."""),
 	# Author(s)
 	addon_author="adil shaikh <ah.shaikh97@gmail.com>",
 	# URL for the add-on documentation support

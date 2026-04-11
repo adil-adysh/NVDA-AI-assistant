@@ -6,6 +6,11 @@ An experimental NVDA add-on that uses a local Ollama model or Google Gemini to s
 
 - Summarizes the current page content using a local Ollama LLM or Gemini.
 - Uses NVDA accessibility state to collect page headings, links, buttons, landmarks, and visible content.
+
+## Release status
+
+- Latest release: `v0.5.1`
+- Patch update includes a logging refactor to NVDA `logHandler` and improved assistant diagnostics.
 - Includes application context by reading the foreground object title from NVDA.
 - Captures the current foreground window as an image and describes it with the selected provider.
 - Supports an AI assistant command layer with a single main shortcut and in-layer commands.
