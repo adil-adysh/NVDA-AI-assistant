@@ -60,7 +60,7 @@ def build_page_summary_prompt(context: PageContext) -> str:
 		f"{landmarks}\n\n"
 		"Links:\n"
 		f"{links}\n\n"
-		"Buttons:\n"
+			"Buttons:\n"
 		f"{buttons}\n\n"
 		"Content:\n"
 		f"{context.text}"
