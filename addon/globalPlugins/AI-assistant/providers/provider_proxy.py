@@ -4,14 +4,13 @@ from __future__ import annotations
 from logHandler import log
 import threading
 from collections.abc import Callable
-from typing import Any
 
-from .factory import ProviderFactory
-from .base import LLMProvider, LLMResponse, PartialCallback, ProgressCallback
+from .interfaces import LLMProvider, PartialCallback, ProgressCallback
+from ..core.messages import LLMResponse, SummaryResponse
 from ..core.canonical import Message, Tool
+from .session import ProviderSession
 from ..settings import (
     ProviderState,
-    get_active_provider_config,
     subscribe_provider_state_change,
     unsubscribe_provider_state_change,
 )
@@ -20,25 +19,11 @@ from ..settings import (
 
 class ProviderProxy(LLMProvider):
     def __init__(self) -> None:
-        self._active_config = get_active_provider_config()
-        self._provider = ProviderFactory.create_provider(self._active_config)
+        self._session = ProviderSession.from_active_config()
         subscribe_provider_state_change(self._on_provider_state_change)
 
-    def _recreate_provider(self, config: "ProviderConfig") -> None:
-        self._active_config = config
-        try:
-            self._provider.close()
-        except Exception:
-            log.exception("Error closing previous provider")
-        self._provider = ProviderFactory.create_provider(self._active_config)
-
     def _refresh(self) -> None:
-        current_config = get_active_provider_config()
-        if current_config == self._active_config:
-            return
-
-        log.debug("ProviderProxy detected config change, recreating provider")
-        self._recreate_provider(current_config)
+        self._session.refresh()
 
     def _on_provider_state_change(self, provider_state: ProviderState) -> None:
         self._refresh()
@@ -49,30 +34,30 @@ class ProviderProxy(LLMProvider):
 
     def provider_name(self) -> str:
         self._refresh()
-        return self._provider.provider_name()
+        return self._session.provider_name()
 
     def supports_streaming(self) -> bool:
         self._refresh()
-        return self._provider.supports_streaming()
+        return self._session.supports_streaming()
 
     def supports_image_description(self) -> bool:
         self._refresh()
-        return self._provider.supports_image_description()
+        return self._session.supports_image_description()
 
-    def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> Any:
+    def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
         self._warn_if_main_thread("summarize")
         self._refresh()
-        return self._provider.summarize(prompt, stream_handler=stream_handler)
+        return self._session.summarize(prompt, stream_handler=stream_handler)
 
     def describe_image(
         self,
         image_base64: str,
         prompt: str,
         stream_handler: PartialCallback | None = None,
-    ) -> Any:
+    ) -> SummaryResponse:
         self._warn_if_main_thread("describe_image")
         self._refresh()
-        return self._provider.describe_image(
+        return self._session.describe_image(
             image_base64=image_base64,
             prompt=prompt,
             stream_handler=stream_handler,
@@ -86,12 +71,12 @@ class ProviderProxy(LLMProvider):
     ) -> LLMResponse:
         self._warn_if_main_thread("generate")
         self._refresh()
-        return self._provider.generate(messages=messages, tools=tools, stream_handler=stream_handler)
+        return self._session.generate(messages=messages, tools=tools, stream_handler=stream_handler)
 
     def ensure_model_available(self, on_progress: ProgressCallback | None = None) -> str | None:
         self._warn_if_main_thread("ensure_model_available")
         self._refresh()
-        return self._provider.ensure_model_available(on_progress=on_progress)
+        return self._session.ensure_model_available(on_progress=on_progress)
 
     def close(self) -> None:
         try:
@@ -99,6 +84,6 @@ class ProviderProxy(LLMProvider):
         except Exception:
             log.exception("Error unsubscribing provider state listener")
         try:
-            self._provider.close()
+            self._session.close()
         except Exception:
             log.exception("Error closing provider in ProviderProxy.close")

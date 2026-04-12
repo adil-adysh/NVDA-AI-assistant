@@ -3,13 +3,13 @@ from __future__ import annotations
 
 from ..settings import get_active_provider_config
 from .config import GeminiConfig, OllamaConfig, ProviderConfig
-from .gemini_provider import GeminiProvider
-from .ollama_provider import OllamaProvider
+from .interfaces import LLMProvider
+from .adapters import GeminiProvider, OllamaProvider
 
 
 class ProviderFactory:
     @staticmethod
-    def create_provider(config: ProviderConfig | None = None) -> "Provider":
+    def create_provider(config: ProviderConfig | None = None) -> LLMProvider:
         provider_config = config if config is not None else get_active_provider_config()
 
         if isinstance(provider_config, GeminiConfig):
@@ -21,4 +21,4 @@ class ProviderFactory:
         raise ValueError(f"Unsupported provider config: {provider_config}")
 
 
-Provider = OllamaProvider | GeminiProvider
+Provider = LLMProvider

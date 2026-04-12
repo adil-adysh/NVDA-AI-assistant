@@ -9,7 +9,7 @@ from typing import Any
 from . import nvda_ui
 from .execution_context import ExecutionContext
 from .metrics_reporter import FileMetricsReporter, MetricsReporter
-from .providers.base import LLMProviderError
+from .providers.interfaces import LLMProviderError
 from .request_metrics import RequestMetrics
 from .settings import (
     is_progress_enabled,

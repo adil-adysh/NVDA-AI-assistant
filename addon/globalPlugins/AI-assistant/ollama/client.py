@@ -29,7 +29,7 @@ from .types import (
     OllamaToolDefinition,
     OllamaToolCall,
 )
-from ..models import SummaryResponse
+from ..core.messages import SummaryResponse
 from ..settings import (
     get_generate_presence_penalty,
     get_generate_top_k,

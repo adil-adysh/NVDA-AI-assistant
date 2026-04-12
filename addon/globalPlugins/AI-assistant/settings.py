@@ -2,13 +2,19 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 import config as nvda_config
 
 from . import defaults
+from .settings_state import (
+    ProviderState,
+    _notify_provider_state_changed as _notify_provider_state_changed_impl,
+    get_provider_state as _build_provider_state,
+    subscribe_provider_state_change,
+    unsubscribe_provider_state_change,
+)
 
 if TYPE_CHECKING:
     from .providers.config import GeminiConfig, OllamaConfig, ProviderConfig
@@ -133,14 +139,8 @@ def _read_bool(key: str, default: bool) -> bool:
     return default
 
 
-@dataclass(frozen=True)
-class ProviderState:
-    provider: str
-    model_name: str
-    backend_url: str
-
-
-_provider_state_listeners: list[Callable[[ProviderState], None]] = []
+def _notify_provider_state_changed() -> None:
+	_notify_provider_state_changed_impl(get_provider_state)
 
 
 def get_provider() -> str:
@@ -234,38 +234,7 @@ def get_model_name() -> str:
 
 def get_provider_state() -> "ProviderState":
     active = get_active_provider_config()
-    from .providers.config import GeminiConfig, OllamaConfig
-
-    backend_url = ""
-    if isinstance(active, GeminiConfig):
-        backend_url = active.base_url
-    elif isinstance(active, OllamaConfig):
-        backend_url = active.server_url
-
-    return ProviderState(
-        provider=active.provider,
-        model_name=active.model_name,
-        backend_url=backend_url,
-    )
-
-
-def subscribe_provider_state_change(listener: Callable[["ProviderState"], None]) -> None:
-    if listener not in _provider_state_listeners:
-        _provider_state_listeners.append(listener)
-
-
-def unsubscribe_provider_state_change(listener: Callable[["ProviderState"], None]) -> None:
-    if listener in _provider_state_listeners:
-        _provider_state_listeners.remove(listener)
-
-
-def _notify_provider_state_changed() -> None:
-    state = get_provider_state()
-    for listener in list(_provider_state_listeners):
-        try:
-            listener(state)
-        except Exception:
-            pass
+    return _build_provider_state(active)
 
 
 def get_server_url() -> str:

@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
-from .base import LLMProvider, LLMProviderError
 from .config import GeminiConfig, OllamaConfig, ProviderConfig
 from .factory import ProviderFactory
-from .gemini_provider import GeminiProvider
-from .ollama_provider import OllamaProvider
+from .interfaces import LLMProvider, LLMProviderError, PartialCallback, ProgressCallback, format_chat_messages
+from .adapters import GeminiProvider, OllamaProvider
 
 __all__ = [
     "LLMProvider",
     "LLMProviderError",
+    "PartialCallback",
+    "ProgressCallback",
+    "format_chat_messages",
     "ProviderConfig",
     "OllamaConfig",
     "GeminiConfig",

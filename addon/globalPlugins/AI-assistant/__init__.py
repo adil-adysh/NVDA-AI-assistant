@@ -12,22 +12,18 @@ import gui
 import ui
 from scriptHandler import script
 
-from .browser_extractor import BrowserAwarePageExtractor
 from .image_services import ImageCaptureService, ImageEncoder, ImagePreprocessor
 from .metrics_reporter import FileMetricsReporter
-from .llm_service import ProviderLLMService
+from .service import ChatCoordinator, ProviderLLMService
 from . import nvda_ui
 from .settings import get_provider, get_provider_state, set_provider, subscribe_provider_state_change, unsubscribe_provider_state_change
-from .providers.base import LLMProviderError
-from .tool_registry import ToolDefinition, ToolRegistry
+from .providers.interfaces import LLMProviderError
+from .tools import ToolDefinition, ToolRegistry, ToolExecutor
 from .providers.provider_proxy import ProviderProxy
 from .settings_panel import AIAssistantSettingsPanel
-from .chat_coordinator import ChatCoordinator
-from .use_case_engine import UseCaseEngine
-from .context_collectors import ImageContextCollector, PageContextCollector
-from .context_pipeline import ContextPipeline
-from .models import ProgressEvent
-from .tool_executor import ToolExecutor
+from .use_case import UseCaseEngine
+from .context import BrowserAwarePageExtractor, ContextPipeline, ImageContextCollector, PageContextCollector
+from .core.events import ProgressEvent
 from . import addonConfig
 
 def _translate(message: str) -> str:

@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-from .context import ImageContext, PageContext
+from __future__ import annotations
+
+from .types import ImageContext, PageContext
 
 
 def build_system_prompt_for_nvda_assistant() -> str:

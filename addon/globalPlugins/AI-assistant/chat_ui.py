@@ -7,9 +7,9 @@ from typing import Any
 
 import wx
 
-from .chat_coordinator import ChatCoordinator
+from .service import ChatCoordinator
 from .settings import ProviderState
-from .tool_registry import ToolRegistry
+from .tools import ToolRegistry
 
 chatDialogInstance = None
 
