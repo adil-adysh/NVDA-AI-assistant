@@ -42,9 +42,7 @@ class BrowserAwarePageExtractor:
 		self,
 		candidateProviders: Sequence[CandidateProvider] | None = None,
 	):
-		super().__init__()
 		log.debug("BrowserAwarePageExtractor initialized with %d candidate providers", len(candidateProviders or []))
-		super().__init__()
 		self._seenTextSignatures: set[str] = set()
 		self._candidateProviders = tuple(candidateProviders or buildDefaultCandidateProviders())
 
@@ -166,6 +164,33 @@ class BrowserAwarePageExtractor:
 			foreground=foreground,
 			appName=appName,
 		)
+
+	def _getFocusObjectSafe(self) -> object | None:
+		try:
+			return api.getFocusObject()
+		except Exception:
+			return None
+
+	def _getFocusAncestorsSafe(self) -> tuple[object, ...]:
+		try:
+			ancestors = api.getFocusAncestors()
+		except Exception:
+			return ()
+		if ancestors is None:
+			return ()
+		return tuple(ancestors)
+
+	def _getNavigatorObjectSafe(self) -> object | None:
+		try:
+			return api.getNavigatorObject()
+		except Exception:
+			return None
+
+	def _getForegroundObjectSafe(self) -> object | None:
+		try:
+			return api.getForegroundObject()
+		except Exception:
+			return None
 
 	def _resolveBrowserTreeInterceptor(self, context: ExtractionContext):
 		if self._isUsableTreeInterceptor(context.focusTreeInterceptor):

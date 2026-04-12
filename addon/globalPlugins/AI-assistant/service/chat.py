@@ -14,7 +14,7 @@ from ..core.message_transforms import build_user_message, message_to_chat_messag
 from ..core.messages import ChatMessage, LLMResponse
 from ..core.events import ProgressHandler
 from .llm import LLMService
-from ..metrics_reporter import MetricsReporter
+from ..observability.reporter import MetricsReporter
 
 
 class ChatCoordinator(BaseCoordinator):

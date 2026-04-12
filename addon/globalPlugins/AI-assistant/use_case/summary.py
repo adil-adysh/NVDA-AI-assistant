@@ -6,8 +6,8 @@ from typing import Callable
 from ..context.collectors import PageContextCollector
 from ..context.prompts import build_page_summary_prompt
 from ..context.types import PageContext, PromptContext
-from ..service import LLMService
-from ..request_metrics import estimate_tokens
+from ..service.llm import LLMService
+from ..observability.metrics import estimate_tokens
 from .types import UseCaseResult
 
 

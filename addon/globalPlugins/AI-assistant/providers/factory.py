@@ -4,7 +4,8 @@ from __future__ import annotations
 from ..settings import get_active_provider_config
 from .config import GeminiConfig, OllamaConfig, ProviderConfig
 from .interfaces import LLMProvider
-from .adapters import GeminiProvider, OllamaProvider
+from .adapters.gemini import GeminiProvider
+from .adapters.ollama import OllamaProvider
 
 
 class ProviderFactory:

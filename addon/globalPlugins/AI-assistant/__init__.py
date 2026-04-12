@@ -9,20 +9,23 @@ from typing import Any, cast
 import addonHandler
 import globalPluginHandler
 import gui
-import ui
 from scriptHandler import script
 
-from .image_services import ImageCaptureService, ImageEncoder, ImagePreprocessor
-from .metrics_reporter import FileMetricsReporter
-from .service import ChatCoordinator, ProviderLLMService
-from . import nvda_ui
+from .image.services import ImageCaptureService, ImageEncoder, ImagePreprocessor
+from .observability.reporter import FileMetricsReporter
+from .service.chat import ChatCoordinator
+from .service.llm import ProviderLLMService
+from .ui import nvda_ui
 from .settings import get_provider, get_provider_state, set_provider, subscribe_provider_state_change, unsubscribe_provider_state_change
 from .providers.interfaces import LLMProviderError
 from .tools import ToolDefinition, ToolRegistry, ToolExecutor
 from .providers.provider_proxy import ProviderProxy
-from .settings_panel import AIAssistantSettingsPanel
-from .use_case import UseCaseEngine
-from .context import BrowserAwarePageExtractor, ContextPipeline, ImageContextCollector, PageContextCollector
+from .ui.settings_panel import AIAssistantSettingsPanel
+from .use_case.engine import UseCaseEngine
+from .context.collectors.image import ImageContextCollector
+from .context.collectors.page import PageContextCollector
+from .context.extractors.browser import BrowserAwarePageExtractor
+from .context.pipeline import ContextPipeline
 from .core.events import ProgressEvent
 from . import addonConfig
 
@@ -82,7 +85,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             ("h", self.script_assistantLayerHelp),
         )
         self._startModelPreload()
-        gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(AIAssistantSettingsPanel)
+        category_classes = gui.settingsDialogs.NVDASettingsDialog.categoryClasses
+        if AIAssistantSettingsPanel not in category_classes:
+            category_classes.append(AIAssistantSettingsPanel)
         log.debug("Browser Assistant plugin initialized")
 
     def _register_default_tools(self) -> None:
@@ -99,17 +104,17 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def _startModelPreload(self):
         def worker():
             provider_name = self._llmService.provider_name()
-            ui.message(f"Checking {provider_name} model availability.")
+            nvda_ui.queue(nvda_ui.message, f"Checking {provider_name} model availability.")
 
             try:
-                model = self._llmService.ensure_model_available(on_progress=ui.message)
+                model = self._llmService.ensure_model_available(on_progress=lambda text: nvda_ui.queue(nvda_ui.message, text))
             except LLMProviderError as error:
-                ui.message(str(error))
+                nvda_ui.queue(nvda_ui.message, str(error))
             except Exception as error:
                 log.exception("Unexpected error during model preload")
-                ui.message(str(error))
+                nvda_ui.queue(nvda_ui.message, str(error))
             else:
-                ui.message(f"{provider_name.capitalize()} model {model} is ready.")
+                nvda_ui.queue(nvda_ui.message, f"{provider_name.capitalize()} model {model} is ready.")
 
         thread = threading.Thread(
             target=worker,
@@ -120,7 +125,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
     def _on_provider_state_change(self, provider_state: Any) -> None:
         try:
-            from . import chat_ui
+            from .ui import chat_ui
 
             if chat_ui.chatDialogInstance:
                 chat_ui.chatDialogInstance.update_provider_state(provider_state)
@@ -152,7 +157,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         except Exception:
             log.exception("Error closing provider during terminate")
         super().terminate()
-        gui.settingsDialogs.NVDASettingsDialog.categoryClasses.remove(AIAssistantSettingsPanel)
+        category_classes = gui.settingsDialogs.NVDASettingsDialog.categoryClasses
+        if AIAssistantSettingsPanel in category_classes:
+            category_classes.remove(AIAssistantSettingsPanel)
 
     @script(
         description=_("Captures and describes the current foreground window using the selected AI provider."),
@@ -184,7 +191,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         initial_text: str | None = None,
         initial_image_base64: str | None = None,
     ) -> None:
-        from . import chat_ui
+        from .ui import chat_ui
 
         if chat_ui.chatDialogInstance:
             try:
@@ -218,7 +225,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             try:
                 result = self._useCaseEngine.execute(use_case_id, progress=self._progress_handler)
             except Exception as error:
-                nvda_ui.queue(ui.message, _(f"Error: {error}"))
+                nvda_ui.queue(nvda_ui.message, _(f"Error: {error}"))
                 return
 
             nvda_ui.queue(render_result, result)
@@ -240,18 +247,18 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 output_text = metadata.get("output_text")
 
         if not isinstance(output_text, str) or not output_text.strip():
-            ui.message(_("No result to display."))
+            nvda_ui.message(_("No result to display."))
             return
 
-        ui.browseableMessage(output_text, title=title)
+        nvda_ui.browseable_message(output_text, title=title)
 
     def _progress_handler(self, event: ProgressEvent) -> None:
         if event.stage == "error":
-            nvda_ui.queue(ui.message, _("Error: ") + event.message)
+            nvda_ui.queue(nvda_ui.message, _("Error: ") + event.message)
             return
 
         if event.stage in {"start", "collecting_context", "building_prompt", "llm_request", "tool_execution", "complete"}:
-            nvda_ui.queue(ui.message, event.message)
+            nvda_ui.queue(nvda_ui.message, event.message)
 
     @script(
         description=_("Opens the AI chat window with current page content preloaded."),
@@ -294,7 +301,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         for gesture_key, handler in self._assistantLayerGestures:
             self.bindGesture(f"kb:{gesture_key}", handler.__name__[7:])
         self.assistantLayerModeActive = True
-        ui.message(
+        nvda_ui.message(
             _(
                 "AI assistant layer active. Press S for summary, I for image describe, C for chat, P for page content, X for screenshot, T for provider toggle, or H for help."
             )
@@ -317,7 +324,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             if self.layeredScriptToRun is not None:
                 self.layeredScriptToRun(gesture)
             else:
-                ui.message(_("Can't find this assistant layer script."))
+                nvda_ui.message(_("Can't find this assistant layer script."))
         finally:
             self.finish()
 
@@ -328,7 +335,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self.bindGestures(self.__gestures)
 
     def script_error(self, gesture: Any):
-        ui.message(_("Can't find this assistant layer script."))
+        nvda_ui.message(_("Can't find this assistant layer script."))
         self.finish()
 
     @script(
@@ -344,11 +351,11 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         try:
             set_provider(provider)
         except Exception as error:
-            ui.message(str(error))
+            nvda_ui.message(str(error))
             return
 
-        ui.message(_(f"AI provider switched to {provider.capitalize()}."))
-        from . import chat_ui
+        nvda_ui.message(_(f"AI provider switched to {provider.capitalize()}."))
+        from .ui import chat_ui
 
         if chat_ui.chatDialogInstance:
             try:
@@ -362,7 +369,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         description=_("Lists available AI assistant layer commands."),
     )
     def script_assistantLayerHelp(self, gesture: Any):
-        ui.message(
+        nvda_ui.message(
             _(
                 "Assistant layer commands: S for summary, I for image describe, C for chat, P for page content, X for screenshot, T for provider toggle, H for help. Press the key after activating the layer with NVDA+Shift+A."
             )

@@ -7,9 +7,9 @@ from typing import Any
 
 import wx
 
-from .service import ChatCoordinator
-from .settings import ProviderState
-from .tools import ToolRegistry
+from ..config.state import ProviderState
+from ..service import ChatCoordinator
+from ..tools import ToolRegistry
 
 chatDialogInstance = None
 
@@ -79,7 +79,7 @@ class ChatDialog(wx.Dialog):
 
         self.toolCheckbox = wx.CheckBox(self, label=_("Enable tool calling"))
         supported_tools = ", ".join(self._tool_registry.get_tool_names()) or _("none")
-        self.toolCheckbox.SetToolTip(_("Allow the model to call available tools: {tools}.").format(tools=supported_tools))
+        self.toolCheckbox.SetToolTip(_("Allow the model to call available tools: {tools}." ).format(tools=supported_tools))
         self.toolCheckbox.SetValue(True)
         mainSizer.Add(self.toolCheckbox, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 

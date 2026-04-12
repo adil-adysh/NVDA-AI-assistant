@@ -9,7 +9,7 @@ from urllib import request as urllibRequest
 
 from logHandler import log
 
-from .. import defaults
+from ..config import defaults
 from .errors import OllamaClientError
 from .http import _parseJSON, _requestJSON, _requestPullStream, _readErrorBody
 from .response import (

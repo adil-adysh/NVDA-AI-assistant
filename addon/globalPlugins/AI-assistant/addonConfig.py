@@ -4,7 +4,7 @@ from __future__ import annotations
 import config as nvda_config
 from logHandler import log
 
-from . import defaults
+from .config import defaults
 
 SECTION_NAME = "aiAssistant"
 

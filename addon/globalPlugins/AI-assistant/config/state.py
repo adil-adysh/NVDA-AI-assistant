@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 
 @dataclass(frozen=True)
@@ -15,8 +15,8 @@ class ProviderState:
 _provider_state_listeners: list[Callable[[ProviderState], None]] = []
 
 
-def get_provider_state(active_provider: object) -> ProviderState:
-	from .providers.config import GeminiConfig, OllamaConfig
+def get_provider_state(active_provider: Any) -> ProviderState:
+	from ..providers.config import GeminiConfig, OllamaConfig
 
 	backend_url = ""
 	if isinstance(active_provider, GeminiConfig):

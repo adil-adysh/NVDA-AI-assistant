@@ -6,8 +6,8 @@ from typing import Any
 from gui import guiHelper
 from gui.settingsDialogs import SettingsPanel
 
-from . import defaults
-from .settings import (
+from ..config import defaults
+from ..settings import (
     get_generate_presence_penalty,
     get_generate_top_k,
     get_generate_top_p,
@@ -47,7 +47,7 @@ from .settings import (
     set_streaming_enabled,
     set_timeout_seconds,
 )
-from .providers.config import GeminiConfig, OllamaConfig
+from ..providers.config import GeminiConfig, OllamaConfig
 
 addonHandler.initTranslation()
 

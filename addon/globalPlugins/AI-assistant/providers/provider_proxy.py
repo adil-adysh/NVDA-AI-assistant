@@ -9,11 +9,7 @@ from .interfaces import LLMProvider, PartialCallback, ProgressCallback
 from ..core.messages import LLMResponse, SummaryResponse
 from ..core.canonical import Message, Tool
 from .session import ProviderSession
-from ..settings import (
-    ProviderState,
-    subscribe_provider_state_change,
-    unsubscribe_provider_state_change,
-)
+from ..config.state import ProviderState, subscribe_provider_state_change, unsubscribe_provider_state_change
 
 
 

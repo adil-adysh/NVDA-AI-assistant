@@ -6,11 +6,11 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from . import nvda_ui
-from .execution_context import ExecutionContext
-from .metrics_reporter import FileMetricsReporter, MetricsReporter
+from .ui import nvda_ui
+from .observability.context import ExecutionContext
+from .observability.metrics import RequestMetrics
+from .observability.reporter import FileMetricsReporter, MetricsReporter
 from .providers.interfaces import LLMProviderError
-from .request_metrics import RequestMetrics
 from .settings import (
     is_progress_enabled,
     is_streaming_enabled,

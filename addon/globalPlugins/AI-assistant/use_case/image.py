@@ -6,8 +6,8 @@ from typing import Callable
 from ..context.collectors import ImageContextCollector
 from ..context.prompts import build_image_description_prompt
 from ..context.types import ImageContext, PromptContext
-from ..service import LLMService
-from ..request_metrics import estimate_tokens
+from ..service.llm import LLMService
+from ..observability.metrics import estimate_tokens
 from .types import UseCaseResult
 
 

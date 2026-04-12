@@ -5,11 +5,10 @@ import base64
 import ctypes
 from ctypes import wintypes
 from io import BytesIO
-from typing import Literal
 
 from PIL import Image, ImageGrab
 
-ImageFormat = Literal["PNG", "JPEG"]
+from .types import ImageFormat
 
 
 class ImageCaptureService:

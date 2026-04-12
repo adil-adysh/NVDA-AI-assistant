@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from .image_services import ImageEncoder, ImagePreprocessor
-from .image_services import ImageFormat
+from .services import ImageEncoder, ImagePreprocessor
+from .types import ImageFormat
 
 
 def prepare_image_bytes(

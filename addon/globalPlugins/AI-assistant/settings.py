@@ -7,8 +7,8 @@ from typing import Any, TYPE_CHECKING
 
 import config as nvda_config
 
-from . import defaults
-from .settings_state import (
+from .config import defaults
+from .config.state import (
     ProviderState,
     _notify_provider_state_changed as _notify_provider_state_changed_impl,
     get_provider_state as _build_provider_state,

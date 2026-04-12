@@ -4,7 +4,7 @@ import subprocess
 import time
 from typing import Any, Callable, Optional
 
-from . import defaults
+from ..config import defaults
 
 _BYTES_PER_MB = 1024 * 1024
 _BYTES_PER_GB = 1024 * 1024 * 1024

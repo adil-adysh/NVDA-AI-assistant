@@ -54,7 +54,7 @@ class OllamaProvider(LLMProvider):
 		try:
 			response = self._client.describeImage(image_base64, prompt=prompt, onPartial=stream_handler)
 		except OllamaClientError as error:
-		raise self._wrap_exception(error) from error
+			raise self._wrap_exception(error) from error
 		return SummaryResponse(text=response.text, model=response.model, provider=self.provider_name())
 
 	def _convert_tool(self, tool: Tool) -> dict[str, Any]:
