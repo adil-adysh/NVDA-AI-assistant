@@ -9,6 +9,8 @@ from .extractors import (
 	ExtractionContext,
 	GenericCandidateProvider,
 	PageExtractionError,
+	TerminalCandidateProvider,
+	TextEditorCandidateProvider,
 	TextAppCandidateProvider,
 	buildDefaultCandidateProviders,
 )
@@ -42,6 +44,8 @@ __all__ = [
 	"PageContextCollector",
 	"PageExtractionError",
 	"PromptContext",
+	"TerminalCandidateProvider",
+	"TextEditorCandidateProvider",
 	"TextAppCandidateProvider",
 	"buildDefaultCandidateProviders",
 ]

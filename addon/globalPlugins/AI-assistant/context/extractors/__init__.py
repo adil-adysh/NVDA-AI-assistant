@@ -10,6 +10,8 @@ from .candidates import (
 	TextAppCandidateProvider,
 	buildDefaultCandidateProviders,
 )
+from .terminal_candidates import TerminalCandidateProvider
+from .text_editor_candidates import TextEditorCandidateProvider
 
 __all__ = [
 	"BrowserAwarePageExtractor",
@@ -18,6 +20,8 @@ __all__ = [
 	"CandidateProvider",
 	"ExtractionContext",
 	"GenericCandidateProvider",
+	"TerminalCandidateProvider",
+	"TextEditorCandidateProvider",
 	"TextAppCandidateProvider",
 	"buildDefaultCandidateProviders",
 ]

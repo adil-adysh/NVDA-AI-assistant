@@ -6,6 +6,7 @@ from typing import Callable
 from ..context.pipeline import ContextPipeline
 from ..context.types import PageContext, PromptContext
 from .types import UseCaseResult
+from ..ui import nvda_ui
 
 
 def prepare_chat(
@@ -97,4 +98,4 @@ def _collect_prompt_context(context_pipeline: ContextPipeline | None, use_case_i
 		context_profile = ("app", "accessibility")
 	else:
 		context_profile = ("image",)
-	return context_pipeline.collect(use_case_id=use_case_id, context_profile=context_profile)
+	return nvda_ui.call(context_pipeline.collect, use_case_id=use_case_id, context_profile=context_profile)

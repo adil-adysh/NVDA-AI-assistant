@@ -41,11 +41,15 @@ class BrowserAwarePageExtractor:
 		self,
 		candidateProviders: Sequence[CandidateProvider] | None = None,
 	):
-		log.debug("BrowserAwarePageExtractor initialized with %d candidate providers", len(candidateProviders or []))
+		log.debug(
+			"BrowserAwarePageExtractor initialized with %d candidate providers",
+			len(candidateProviders or []),
+		)
 		self._seenTextSignatures: set[str] = set()
 		self._candidateProviders = tuple(candidateProviders or buildDefaultCandidateProviders())
 
 	def extract(self):
+		log.debug("BrowserAwarePageExtractor.extract: starting browser page extraction")
 		self._seenTextSignatures.clear()
 		context = self._buildContext()
 		browserInterceptor = self._resolveBrowserTreeInterceptor(context)
@@ -55,10 +59,13 @@ class BrowserAwarePageExtractor:
 		bestEffortScore = -1
 		activeProviders = [provider for provider in self._candidateProviders if provider.supports(context)]
 		log.debug(
-			f"Browser Assistant: active providers={','.join(provider.name for provider in activeProviders)}"
+			"BrowserAwarePageExtractor.extract: active providers=%s",
+			", ".join(provider.name for provider in activeProviders) or "<none>",
 		)
+		log.debug("BrowserAwarePageExtractor.extract: browserInterceptor=%s", self._describeObject(browserInterceptor))
 
 		if browserInterceptor is not None:
+			log.debug("BrowserAwarePageExtractor.extract: evaluating browser treeInterceptor first")
 			snapshot = self._buildSnapshot(browserInterceptor, context, sourceName="browserTreeInterceptor")
 			if snapshot is not None:
 				score = self._candidateScore(browserInterceptor, context, snapshot, "browserTreeInterceptor", browserInterceptor)
@@ -76,27 +83,38 @@ class BrowserAwarePageExtractor:
 				)
 
 		for provider in activeProviders:
+			log.debug("BrowserAwarePageExtractor.extract: iterating provider=%s", provider.name)
 			seenCandidates: set[int] = set()
 			for candidate in provider.iterCandidates(context):
 				identity = id(candidate)
 				if candidate is None or identity in seenCandidates:
 					continue
 				seenCandidates.add(identity)
+				log.debug(
+					"BrowserAwarePageExtractor.extract: provider=%s yielded candidate=%s",
+					provider.name,
+					self._describeObject(candidate),
+				)
 
 				if not self._shouldInspectCandidate(candidate, context, provider.name, browserInterceptor):
-					log.debug("Browser Assistant: candidate rejected by browser relevance heuristic")
+					log.debug(
+						"BrowserAwarePageExtractor.extract: provider=%s candidate rejected by browser relevance heuristic",
+						provider.name,
+					)
 					continue
 
-				log.debug(
-					f"Browser Assistant: provider={provider.name} candidate={type(candidate).__module__}.{type(candidate).__name__}"
-				)
 				text = self._extractText(candidate)
 				normalized = self._normalizeText(text)
 				log.debug(
-					f"Browser Assistant: provider={provider.name} normalized text length={len(normalized)}"
+					"BrowserAwarePageExtractor.extract: provider=%s normalized text length=%d",
+					provider.name,
+					len(normalized),
 				)
 				if not self._isMeaningfulText(normalized):
-					log.debug("Browser Assistant: candidate rejected by text quality heuristic")
+					log.debug(
+						"BrowserAwarePageExtractor.extract: provider=%s candidate rejected by text quality heuristic",
+						provider.name,
+					)
 					bestEffortSnapshot, bestEffortScore = self._bestEffortSnapshot(
 						candidate,
 						context,
@@ -111,23 +129,45 @@ class BrowserAwarePageExtractor:
 				trimmedText, truncated = self._trimText(normalized)
 				textSignature = self._textSignature(trimmedText)
 				if textSignature in self._seenTextSignatures:
-					log.debug("Browser Assistant: duplicate text content skipped")
+					log.debug(
+						"BrowserAwarePageExtractor.extract: provider=%s duplicate text content skipped",
+						provider.name,
+					)
 					continue
 				self._seenTextSignatures.add(textSignature)
 
 				snapshot = self._buildSnapshot(candidate, context, sourceName=provider.name, trimmedText=trimmedText, truncated=truncated)
 				if snapshot is not None:
 					score = self._candidateScore(candidate, context, snapshot, provider.name, browserInterceptor)
-					log.debug(f"Browser Assistant: provider={provider.name} candidate score={score}")
+					log.debug(
+						"BrowserAwarePageExtractor.extract: provider=%s candidate score=%d snapshot=%s",
+						provider.name,
+						score,
+						self._describeSnapshot(snapshot),
+					)
 					if score > bestScore:
+						log.debug(
+							"BrowserAwarePageExtractor.extract: provider=%s became new best candidate score=%d",
+							provider.name,
+						score,
+						)
 						bestSnapshot = snapshot
 						bestScore = score
 
 		if bestSnapshot is not None:
+			log.debug(
+				"BrowserAwarePageExtractor.extract: returning best snapshot score=%d snapshot=%s",
+				bestScore,
+				self._describeSnapshot(bestSnapshot),
+			)
 			return bestSnapshot
 
 		if bestEffortSnapshot is not None:
-			log.debug("Browser Assistant: falling back to best-effort snapshot")
+			log.debug(
+				"BrowserAwarePageExtractor.extract: falling back to best-effort snapshot score=%d snapshot=%s",
+				bestEffortScore,
+				self._describeSnapshot(bestEffortSnapshot),
+			)
 			return bestEffortSnapshot
 
 		raise PageExtractionError(
@@ -142,11 +182,11 @@ class BrowserAwarePageExtractor:
 		foreground = self._getForegroundObjectSafe()
 
 		log.debug(
-			"BrowserAwarePageExtractor context focus=%s ancestors=%d navigator=%s foreground=%s",
-			type(focus).__name__ if focus is not None else None,
+			"BrowserAwarePageExtractor._buildContext: focus=%s ancestors=%d navigator=%s foreground=%s",
+			self._describeObject(focus),
 			len(focusAncestors),
-			type(navigator).__name__ if navigator is not None else None,
-			type(foreground).__name__ if foreground is not None else None,
+			self._describeObject(navigator),
+			self._describeObject(foreground),
 		)
 
 		appName = None
@@ -159,6 +199,12 @@ class BrowserAwarePageExtractor:
 			maybeName = getattr(foregroundModule, "appName", None) if foregroundModule is not None else None
 			if isinstance(maybeName, str) and maybeName.strip():
 				appName = maybeName.strip().lower()
+
+		log.debug(
+			"BrowserAwarePageExtractor._buildContext: appName=%s focusTreeInterceptor=%s",
+			appName,
+			self._describeObject(focusTreeInterceptor),
+		)
 
 		return ExtractionContext(
 			focus=focus,
@@ -198,7 +244,7 @@ class BrowserAwarePageExtractor:
 
 	def _resolveBrowserTreeInterceptor(self, context: ExtractionContext):
 		if self._isUsableTreeInterceptor(context.focusTreeInterceptor):
-			log.debug("BrowserAwarePageExtractor using focus treeInterceptor")
+			log.debug("BrowserAwarePageExtractor._resolveBrowserTreeInterceptor: using focus treeInterceptor")
 			return context.focusTreeInterceptor
 
 		focus = context.focus
@@ -206,27 +252,44 @@ class BrowserAwarePageExtractor:
 			try:
 				resolved = treeInterceptorHandler.getTreeInterceptor(focus)
 				if self._isUsableTreeInterceptor(resolved):
+					log.debug(
+						"BrowserAwarePageExtractor._resolveBrowserTreeInterceptor: resolved treeInterceptor from focus handler=%s",
+						self._describeObject(resolved),
+					)
 					return resolved
 			except Exception:
+				log.debug("BrowserAwarePageExtractor._resolveBrowserTreeInterceptor: focus handler lookup failed", exc_info=True)
 				pass
 
 		if focus is not None:
 			interceptor = getattr(focus, "treeInterceptor", None)
 			if self._isUsableTreeInterceptor(interceptor):
+				log.debug(
+					"BrowserAwarePageExtractor._resolveBrowserTreeInterceptor: resolved treeInterceptor from focus=%s",
+					self._describeObject(interceptor),
+				)
 				return interceptor
 
 		if focus is not None and treeInterceptorHandler is not None:
 			try:
 				resolved = treeInterceptorHandler.getTreeInterceptor(focus)
 				if self._isUsableTreeInterceptor(resolved):
+					log.debug(
+						"BrowserAwarePageExtractor._resolveBrowserTreeInterceptor: resolved treeInterceptor from retry handler=%s",
+						self._describeObject(resolved),
+					)
 					return resolved
 			except Exception:
+				log.debug("BrowserAwarePageExtractor._resolveBrowserTreeInterceptor: retry handler lookup failed", exc_info=True)
 				pass
 
 		for obj in context.focusAncestors:
 			interceptor = getattr(obj, "treeInterceptor", None)
 			if self._isUsableTreeInterceptor(interceptor):
-				log.debug("BrowserAwarePageExtractor resolved treeInterceptor from focus ancestors")
+				log.debug(
+					"BrowserAwarePageExtractor._resolveBrowserTreeInterceptor: resolved treeInterceptor from focus ancestor=%s",
+					self._describeObject(obj),
+				)
 				return interceptor
 
 		for candidate in (context.navigator, context.foreground):
@@ -236,14 +299,29 @@ class BrowserAwarePageExtractor:
 				try:
 					resolved = treeInterceptorHandler.getTreeInterceptor(candidate)
 					if self._isUsableTreeInterceptor(resolved):
+						log.debug(
+							"BrowserAwarePageExtractor._resolveBrowserTreeInterceptor: resolved treeInterceptor from %s handler=%s",
+							"navigator" if candidate is context.navigator else "foreground",
+							self._describeObject(resolved),
+						)
 						return resolved
 				except Exception:
+					log.debug(
+						"BrowserAwarePageExtractor._resolveBrowserTreeInterceptor: %s handler lookup failed",
+						"navigator" if candidate is context.navigator else "foreground",
+						exc_info=True,
+					)
 					pass
 			interceptor = getattr(candidate, "treeInterceptor", None)
 			if self._isUsableTreeInterceptor(interceptor):
+				log.debug(
+					"BrowserAwarePageExtractor._resolveBrowserTreeInterceptor: resolved treeInterceptor from %s object=%s",
+					"navigator" if candidate is context.navigator else "foreground",
+					self._describeObject(interceptor),
+				)
 				return interceptor
 
-		log.debug("BrowserAwarePageExtractor did not find a usable treeInterceptor")
+		log.debug("BrowserAwarePageExtractor._resolveBrowserTreeInterceptor: no usable treeInterceptor found")
 		return None
 
 	def _isUsableTreeInterceptor(self, interceptor: object | None) -> bool:
@@ -548,3 +626,18 @@ class BrowserAwarePageExtractor:
 
 	def _textSignature(self, text: str) -> str:
 		return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
+
+	def _describeObject(self, obj: object | None) -> str:
+		if obj is None:
+			return "None"
+		return f"{type(obj).__module__}.{type(obj).__name__}"
+
+	def _describeSnapshot(self, snapshot: PageSnapshot | None) -> str:
+		if snapshot is None:
+			return "None"
+		return (
+			f"PageSnapshot(title={snapshot.title!r}, appTitle={snapshot.appTitle!r}, "
+			f"text_len={len(snapshot.text)}, truncated={snapshot.truncated}, "
+			f"headings={len(snapshot.headings)}, links={len(snapshot.links)}, "
+			f"buttons={len(snapshot.buttons)}, landmarks={len(snapshot.landmarks)})"
+		)

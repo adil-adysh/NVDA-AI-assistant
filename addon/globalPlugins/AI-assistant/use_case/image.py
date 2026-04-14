@@ -8,6 +8,7 @@ from ..context.prompts import build_image_description_prompt
 from ..context.types import ImageContext, PromptContext
 from ..service.llm import LLMService
 from ..observability.metrics import estimate_tokens
+from ..ui import nvda_ui
 from .types import UseCaseResult
 
 
@@ -48,7 +49,7 @@ def run_image_description_use_case(
 
 def _collect_image_context(image_context_collector: ImageContextCollector | None) -> ImageContext:
 	if image_context_collector is not None:
-		fragment = image_context_collector.collect("describe_image")
+		fragment = nvda_ui.call(image_context_collector.collect, "describe_image")
 		image_context = fragment.facts.get("image_context")
 		if isinstance(image_context, ImageContext):
 			return image_context

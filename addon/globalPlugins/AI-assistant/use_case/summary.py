@@ -8,6 +8,7 @@ from ..context.prompts import build_page_summary_prompt
 from ..context.types import PageContext, PromptContext
 from ..service.llm import LLMService
 from ..observability.metrics import estimate_tokens
+from ..ui import nvda_ui
 from .types import UseCaseResult
 
 
@@ -45,7 +46,7 @@ def run_summary_use_case(
 
 def _collect_page_context(page_context_collector: PageContextCollector | None) -> PageContext:
 	if page_context_collector is not None:
-		fragment = page_context_collector.collect("summary")
+		fragment = nvda_ui.call(page_context_collector.collect, "summary")
 		page_context = fragment.facts.get("page_context")
 		if isinstance(page_context, PageContext):
 			return page_context
