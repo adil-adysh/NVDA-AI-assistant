@@ -42,4 +42,3 @@ commit_parsers = [
   { message = "(?i)^(build)", skip = true },
   { message = ".*", group = "Other" }
 ]
-
