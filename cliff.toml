@@ -1,0 +1,45 @@
+[changelog]
+header = """
+# Changelog
+
+All notable changes to this project will be documented in this file.
+"""
+
+body = """
+{% if version %}
+## {{ version }} - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}
+## Unreleased
+{% endif %}
+
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group }}
+{% for commit in commits %}
+- {{ commit.message | upper_first }}
+{% endfor %}
+{% endfor %}
+"""
+
+footer = ""
+
+[git]
+conventional_commits = false
+filter_unconventional = false
+tag_pattern = "v[0-9]*"
+sort_commits = "newest"
+
+commit_parsers = [
+  { message = "(?i)^(feat|feature|add)", group = "Features" },
+  { message = "(?i)^(fix|bugfix|patch)", group = "Fixes" },
+  { message = "(?i)^(refactor|rework|rewrite|cleanup|update)", group = "Refactoring" },
+  { message = "(?i)^(perf|performance|improve|enhance|opt)", group = "Improvements" },
+  { message = "(?i)^(docs|documentation|readme|changelog)", group = "Improvements" },
+
+  { message = "(?i)^(chore)", skip = true },
+  { message = "(?i)^(style)", skip = true },
+  { message = "(?i)^(test)", skip = true },
+  { message = "(?i)^(ci)", skip = true },
+  { message = "(?i)^(build)", skip = true },
+  { message = ".*", group = "Other" }
+]
+
