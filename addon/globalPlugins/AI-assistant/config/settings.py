@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-import config as nvda_config
-
 from . import defaults
 from .state import (
 	ProviderState,
@@ -15,65 +13,27 @@ from .state import (
 	subscribe_provider_state_change,
 	unsubscribe_provider_state_change,
 )
+from .yaml_store import YamlConfigStore
 
 if TYPE_CHECKING:
 	from ..providers.config import GeminiConfig, OllamaConfig, ProviderConfig
 
 
-def _get_ai_assistant_section() -> Any:
-	conf = getattr(nvda_config, "conf", None)
-	if conf is None:
-		return None
-
-	if hasattr(conf, "get"):
-		return conf.get("aiAssistant")
-
-	try:
-		return conf["aiAssistant"]
-	except Exception:
-		return None
-
-
-def _ensure_ai_assistant_section() -> Any:
-	conf = getattr(nvda_config, "conf", None)
-	if conf is None:
-		return None
-
-	section = _get_ai_assistant_section()
-	if section is None:
-		conf["aiAssistant"] = {}
-		section = _get_ai_assistant_section()
-	return section
+_config_store = YamlConfigStore()
 
 
 def _get_raw_setting(key: str, default: Any) -> Any:
-	section = _get_ai_assistant_section()
-	if section is None:
-		return default
-
-	if isinstance(section, dict):
-		return section.get(key, default)
-
-	if hasattr(section, "get"):
-		return section.get(key, default)
-
-	try:
-		return section[key]
-	except Exception:
-		return default
+	return _config_store.get(key, default)
 
 
 def _set_value(key: str, value: Any, notify: bool = False) -> None:
-	section = _ensure_ai_assistant_section()
-	if section is None:
-		return
+	_config_store.set(key, value)
+	if notify:
+		_notify_provider_state_changed()
 
-	try:
-		section[key] = value
-	except Exception:
-		if isinstance(section, dict):
-			section[key] = value
 
+def _set_values(values: dict[str, Any], notify: bool = False) -> None:
+	_config_store.set_many(values)
 	if notify:
 		_notify_provider_state_changed()
 
@@ -83,44 +43,35 @@ def _read_string(key: str, default: str) -> str:
 	return value if isinstance(value, str) else default
 
 
-def _read_int(key: str, default: int, minimum: int | None = None) -> int:
-	raw = _get_raw_setting(key, default)
+def _parse_number(raw: Any, default: float) -> float:
 	if isinstance(raw, bool):
 		return default
 	if isinstance(raw, int):
-		value = raw
-	elif isinstance(raw, float):
-		value = int(raw)
-	elif isinstance(raw, str):
+		return float(raw)
+	if isinstance(raw, float):
+		return raw
+	if isinstance(raw, str):
 		try:
-			value = int(raw.strip())
+			return float(raw.strip())
 		except ValueError:
-			try:
-				value = int(float(raw.strip()))
-			except ValueError:
-				return default
-	else:
-		return default
+			return default
+	return default
 
-	if minimum is not None and value < minimum:
+
+def _read_int(key: str, default: int, minimum: int | None = None) -> int:
+	raw = _get_raw_setting(key, default)
+	value = _parse_number(raw, default)
+	try:
+		result = int(value)
+	except (TypeError, ValueError):
+		return default
+	if minimum is not None and result < minimum:
 		return minimum
-	return value
+	return result
 
 
 def _read_float(key: str, default: float, minimum: float | None = None) -> float:
-	raw = _get_raw_setting(key, default)
-	if isinstance(raw, float):
-		value = raw
-	elif isinstance(raw, int):
-		value = float(raw)
-	elif isinstance(raw, str):
-		try:
-			value = float(raw.strip())
-		except ValueError:
-			return default
-	else:
-		return default
-
+	value = _parse_number(_get_raw_setting(key, default), default)
 	if minimum is not None and value < minimum:
 		return minimum
 	return value
@@ -357,38 +308,48 @@ def set_gemini_base_url(baseUrl: str) -> None:
 
 
 def set_ollama_config(config: OllamaConfig) -> None:
-	_set_value("provider", config.provider, notify=False)
-	_set_value("ollamaModelName", config.model_name, notify=False)
-	_set_value("ollamaServerUrl", config.server_url, notify=False)
-	_set_value("timeoutSeconds", config.timeout_seconds, notify=False)
-	_set_value("numCtx", config.num_ctx, notify=False)
-	_set_value("keepAlive", config.keep_alive, notify=False)
-	_set_value("maxRetries", config.max_retries, notify=False)
-	_set_value("retryBackoffSeconds", config.retry_backoff_seconds, notify=False)
-	_set_value("generateTemperature", config.generate_temperature, notify=False)
-	_set_value("generateTopK", config.generate_top_k, notify=False)
-	_set_value("generateTopP", config.generate_top_p, notify=False)
-	_set_value("generatePresencePenalty", config.generate_presence_penalty, notify=False)
-	_set_value("enableStreaming", config.enable_streaming, notify=False)
-	_set_value("enableProgressAnnouncements", config.enable_progress, notify=False)
+	_set_values(
+		{
+			"provider": config.provider,
+			"ollamaModelName": config.model_name,
+			"ollamaServerUrl": config.server_url,
+			"timeoutSeconds": config.timeout_seconds,
+			"numCtx": config.num_ctx,
+			"keepAlive": config.keep_alive,
+			"maxRetries": config.max_retries,
+			"retryBackoffSeconds": config.retry_backoff_seconds,
+			"generateTemperature": config.generate_temperature,
+			"generateTopK": config.generate_top_k,
+			"generateTopP": config.generate_top_p,
+			"generatePresencePenalty": config.generate_presence_penalty,
+			"enableStreaming": config.enable_streaming,
+			"enableProgressAnnouncements": config.enable_progress,
+		},
+		notify=False,
+	)
 	_notify_provider_state_changed()
 
 
 def set_gemini_config(config: GeminiConfig) -> None:
-	_set_value("provider", config.provider, notify=False)
-	_set_value("geminiModelName", config.model_name, notify=False)
-	_set_value("geminiApiKey", config.api_key, notify=False)
-	_set_value("geminiApiToken", str(config.api_token or "").strip(), notify=False)
-	_set_value("geminiBaseUrl", config.base_url, notify=False)
-	_set_value("timeoutSeconds", config.timeout_seconds, notify=False)
-	_set_value("numCtx", config.num_ctx, notify=False)
-	_set_value("maxRetries", config.max_retries, notify=False)
-	_set_value("retryBackoffSeconds", config.retry_backoff_seconds, notify=False)
-	_set_value("generateTemperature", config.generate_temperature, notify=False)
-	_set_value("generateTopK", config.generate_top_k, notify=False)
-	_set_value("generateTopP", config.generate_top_p, notify=False)
-	_set_value("enableStreaming", config.enable_streaming, notify=False)
-	_set_value("enableProgressAnnouncements", config.enable_progress, notify=False)
+	_set_values(
+		{
+			"provider": config.provider,
+			"geminiModelName": config.model_name,
+			"geminiApiKey": config.api_key,
+			"geminiApiToken": str(config.api_token or "").strip(),
+			"geminiBaseUrl": config.base_url,
+			"timeoutSeconds": config.timeout_seconds,
+			"numCtx": config.num_ctx,
+			"maxRetries": config.max_retries,
+			"retryBackoffSeconds": config.retry_backoff_seconds,
+			"generateTemperature": config.generate_temperature,
+			"generateTopK": config.generate_top_k,
+			"generateTopP": config.generate_top_p,
+			"enableStreaming": config.enable_streaming,
+			"enableProgressAnnouncements": config.enable_progress,
+		},
+		notify=False,
+	)
 	_notify_provider_state_changed()
 
 
@@ -468,9 +429,3 @@ def set_request_metrics_logging_enabled(enabled: bool) -> None:
 
 def set_request_metrics_log_path(path: str) -> None:
 	_set_value("requestMetricsLogPath", str(path).strip())
-
-
-def save() -> None:
-	conf = getattr(nvda_config, "conf", None)
-	if conf is not None and hasattr(conf, "save"):
-		conf.save()

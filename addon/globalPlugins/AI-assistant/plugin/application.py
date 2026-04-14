@@ -11,7 +11,6 @@ import gui
 from logHandler import log
 
 from ..config.state import ProviderState, subscribe_provider_state_change, unsubscribe_provider_state_change
-from ..config import bootstrap as addonConfig
 from ..config.settings import get_provider, get_provider_state, set_provider
 from ..ui.settings_panel import AIAssistantSettingsPanel
 from ..ui import nvda_ui
@@ -33,7 +32,6 @@ class AIAssistantApplication:
 	def __init__(self, host: Any) -> None:
 		super().__init__()
 		addonHandler.initTranslation()
-		addonConfig.initialize()
 		log.debug("Browser Assistant plugin initializing")
 		self._host = host
 		self._services = build_plugin_services()

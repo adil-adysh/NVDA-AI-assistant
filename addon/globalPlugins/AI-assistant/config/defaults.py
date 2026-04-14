@@ -36,3 +36,9 @@ DEFAULT_REQUEST_METRICS_LOG_PATH = str(
     / "nvda"
     / "nvda_ai_assistant_request_metrics.jsonl"
 )
+DEFAULT_CONFIG_PATH = str(
+    Path(APPDATA if APPDATA else Path.home() / "AppData" / "Roaming")
+    / "nvda"
+    / "AIAssistant"
+    / "config.yaml"
+)
