@@ -78,23 +78,30 @@ jobs:
 
       - name: Validate version exists in changelog
         run: |
-          grep "^## ${VERSION}" CHANGELOG.md || (echo "Version not found in CHANGELOG.md" && exit 1)
+          VERSION="${{ steps.version.outputs.version }}"
+          CHANGELOG_FILE="changelog.md"
+          test -f "$CHANGELOG_FILE" || (echo "Missing $CHANGELOG_FILE" && exit 1)
+          grep "^## ${VERSION}" "$CHANGELOG_FILE" || (echo "Version not found in $CHANGELOG_FILE" && exit 1)
 
       - name: Check duplicate versions
         run: |
-          COUNT=$(grep -c "^## ${VERSION}" CHANGELOG.md)
+          VERSION="${{ steps.version.outputs.version }}"
+          CHANGELOG_FILE="changelog.md"
+          COUNT=$(grep -c "^## ${VERSION}" "$CHANGELOG_FILE")
           if [ "$COUNT" -ne 1 ]; then
-            echo "Duplicate or missing version entries in CHANGELOG.md"
+            echo "Duplicate or missing version entries in $CHANGELOG_FILE"
             exit 1
           fi
 
       - name: Extract changelog for version
         run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          CHANGELOG_FILE="changelog.md"
           awk -v ver="## ${VERSION}" '
           $0 ~ ver {flag=1; print; next}
           /^## / && flag {exit}
           flag
-          ' CHANGELOG.md > RELEASE_NOTES.md
+          ' "$CHANGELOG_FILE" > RELEASE_NOTES.md
 
       - name: Add SHA256 checksum
         run: |
