@@ -38,6 +38,11 @@ def _set_values(values: dict[str, Any], notify: bool = False) -> None:
 		_notify_provider_state_changed()
 
 
+def save() -> None:
+	"""Persist current configuration to storage."""
+	_config_store.save()
+
+
 def _read_string(key: str, default: str) -> str:
 	value = _get_raw_setting(key, default)
 	return value if isinstance(value, str) else default
