@@ -8,7 +8,7 @@ from typing import Any
 
 from logHandler import log
 
-from ..base_coordinator import BaseCoordinator
+from .base import BaseCoordinator
 from ..core.canonical import Message, Tool
 from ..core.message_transforms import build_user_message, message_to_chat_message
 from ..core.messages import ChatMessage, LLMResponse

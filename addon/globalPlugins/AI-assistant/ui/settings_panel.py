@@ -7,7 +7,7 @@ from gui import guiHelper
 from gui.settingsDialogs import SettingsPanel
 
 from ..config import defaults
-from ..settings import (
+from ..config.settings import (
     get_generate_presence_penalty,
     get_generate_top_k,
     get_generate_top_p,

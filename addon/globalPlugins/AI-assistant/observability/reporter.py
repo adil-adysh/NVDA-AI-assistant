@@ -7,7 +7,7 @@ from pathlib import Path
 from logHandler import log
 
 from .metrics import RequestMetrics
-from ..settings import get_request_metrics_log_path, get_request_metrics_logging_enabled
+from ..config.settings import get_request_metrics_log_path, get_request_metrics_logging_enabled
 
 
 class MetricsReporter:

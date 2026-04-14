@@ -4,11 +4,10 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Sequence
-from typing import Any, cast
 
 import api
 from logHandler import log
-from textInfos import POSITION_ALL, POSITION_CARET
+from textInfos import POSITION_ALL
 
 try:
 	import treeInterceptorHandler
@@ -155,6 +154,11 @@ class BrowserAwarePageExtractor:
 		maybeName = getattr(appModule, "appName", None) if appModule is not None else None
 		if isinstance(maybeName, str) and maybeName.strip():
 			appName = maybeName.strip().lower()
+		elif foreground is not None:
+			foregroundModule = getattr(foreground, "appModule", None)
+			maybeName = getattr(foregroundModule, "appName", None) if foregroundModule is not None else None
+			if isinstance(maybeName, str) and maybeName.strip():
+				appName = maybeName.strip().lower()
 
 		return ExtractionContext(
 			focus=focus,
@@ -211,10 +215,32 @@ class BrowserAwarePageExtractor:
 			if self._isUsableTreeInterceptor(interceptor):
 				return interceptor
 
+		if focus is not None and treeInterceptorHandler is not None:
+			try:
+				resolved = treeInterceptorHandler.getTreeInterceptor(focus)
+				if self._isUsableTreeInterceptor(resolved):
+					return resolved
+			except Exception:
+				pass
+
 		for obj in context.focusAncestors:
 			interceptor = getattr(obj, "treeInterceptor", None)
 			if self._isUsableTreeInterceptor(interceptor):
 				log.debug("BrowserAwarePageExtractor resolved treeInterceptor from focus ancestors")
+				return interceptor
+
+		for candidate in (context.navigator, context.foreground):
+			if candidate is None:
+				continue
+			if treeInterceptorHandler is not None:
+				try:
+					resolved = treeInterceptorHandler.getTreeInterceptor(candidate)
+					if self._isUsableTreeInterceptor(resolved):
+						return resolved
+				except Exception:
+					pass
+			interceptor = getattr(candidate, "treeInterceptor", None)
+			if self._isUsableTreeInterceptor(interceptor):
 				return interceptor
 
 		log.debug("BrowserAwarePageExtractor did not find a usable treeInterceptor")

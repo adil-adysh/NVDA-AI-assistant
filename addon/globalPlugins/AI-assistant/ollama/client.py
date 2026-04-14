@@ -30,7 +30,7 @@ from .types import (
     OllamaToolCall,
 )
 from ..core.messages import SummaryResponse
-from ..settings import (
+from ..config.settings import (
     get_generate_presence_penalty,
     get_generate_top_k,
     get_generate_top_p,

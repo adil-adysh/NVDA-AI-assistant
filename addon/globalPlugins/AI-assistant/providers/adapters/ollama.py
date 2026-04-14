@@ -9,7 +9,7 @@ from logHandler import log
 from ...core.canonical import Message, Tool
 from ...core.tooling import ToolCall
 from ...core.messages import LLMResponse, SummaryResponse
-from ...ollama_client import OllamaClient, OllamaClientError
+from ...ollama import OllamaClient, OllamaClientError
 from ..config import OllamaConfig
 from ..interfaces import LLMProvider, LLMProviderError, PartialCallback, ProgressCallback
 from ...tools import build_function_tool_definition, normalize_tool_calls

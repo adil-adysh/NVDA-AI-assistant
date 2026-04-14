@@ -13,7 +13,7 @@ from ...context.protocols import ContextFragment
 from ...context.types import ImageContext
 from ...image.services import ImageCaptureService, ImageEncoder, ImagePreprocessor
 from ...image.types import ImageFormat
-from ...settings import get_image_format, get_image_max_side, get_image_quality
+from ...config.settings import get_image_format, get_image_max_side, get_image_quality
 
 
 @dataclass(frozen=True, slots=True)

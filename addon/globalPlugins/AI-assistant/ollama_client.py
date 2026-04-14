@@ -1,4 +1,0 @@
-# -*- coding: utf-8 -*-
-from .ollama import OllamaClient, OllamaClientError
-
-__all__ = ["OllamaClient", "OllamaClientError"]

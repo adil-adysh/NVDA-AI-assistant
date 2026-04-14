@@ -75,7 +75,7 @@ class BrowserCandidateProvider(CandidateProvider):
 			if caretObj is not None:
 				yield caretObj
 
-		document = self._documentFromFocus(focus)
+		document = self._documentFromFocus(focus, context)
 		if document is not None:
 			yield document
 
@@ -97,6 +97,13 @@ class BrowserCandidateProvider(CandidateProvider):
 
 		for obj in context.focusAncestors:
 			interceptor = getattr(obj, "treeInterceptor", None)
+			if self._isUsableTreeInterceptor(interceptor):
+				return interceptor
+
+		for candidate in (context.navigator, context.foreground):
+			if candidate is None:
+				continue
+			interceptor = getattr(candidate, "treeInterceptor", None)
 			if self._isUsableTreeInterceptor(interceptor):
 				return interceptor
 
@@ -137,7 +144,7 @@ class BrowserCandidateProvider(CandidateProvider):
 			candidate = None
 		return candidate
 
-	def _documentFromFocus(self, focus: object) -> object | None:
+	def _documentFromFocus(self, focus: object, context: ExtractionContext) -> object | None:
 		try:
 			ancestors = list(api.getFocusAncestors())
 		except Exception:
@@ -146,6 +153,14 @@ class BrowserCandidateProvider(CandidateProvider):
 			role = getattr(obj, "role", None)
 			if self._isDocumentRole(role):
 				return obj
+
+		for candidate in (context.navigator, context.foreground):
+			if candidate is None:
+				continue
+			role = getattr(candidate, "role", None)
+			if self._isDocumentRole(role):
+				return candidate
+
 		return None
 
 	def _isDocumentRole(self, role: object) -> bool:

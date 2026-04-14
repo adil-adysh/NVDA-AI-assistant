@@ -6,7 +6,7 @@ from typing import Any
 
 from ..core.canonical import Message, Tool
 from ..core.messages import LLMResponse, SummaryResponse
-from ..settings import get_active_provider_config
+from ..config.settings import get_active_provider_config
 from .config import ProviderConfig
 from .interfaces import LLMProvider, PartialCallback, ProgressCallback
 from .factory import ProviderFactory
