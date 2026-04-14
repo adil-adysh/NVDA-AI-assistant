@@ -1,3 +1,15 @@
+## v0.5.5 - 2026-04-14
+- Added candidate providers for browser, terminal, and text editor contexts to improve contextual extraction coverage.
+- Enhanced extraction context handling to make page, terminal, and editor content more reliable for AI prompt construction.
+- Improved the assistant's ability to determine the correct active source for browser, terminal, and text editor inputs.
+
+## v0.5.4 - 2026-04-12
+- Added the core AI Assistant service layer with LLM provider abstractions, chat coordination, tool management, and use-case orchestration.
+- Added image processing, encoding, and observability support with metrics tracking, file-based metrics reporting, and download progress feedback.
+- Refactored the add-on into layered packages for `config`, `context`, `core`, `image`, `observability`, `providers`, `service`, `tools`, `ui`, and `use_case`.
+- Removed deprecated root-level modules and the legacy logger patching script.
+- Fixed browser-aware page extraction by restoring safe NVDA context accessors for focus, focus ancestors, navigator, and foreground.
+
 ## v0.5.4 - 2026-04-12
 - Added the core AI Assistant service layer with LLM provider abstractions, chat coordination, tool management, and use-case orchestration.
 - Added image processing, encoding, and observability support with metrics tracking, file-based metrics reporting, and download progress feedback.

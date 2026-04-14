@@ -23,10 +23,10 @@ addon_info = AddonInfo(
 	# Translators: Long description to be shown for this add-on on add-on information found in add-on store
 	addon_description=_("""NVDA AI assistant helps NVDA users by using AI to simplify complex information, summarize content, and provide contextual guidance for tasks that are otherwise hard to access."""),
 	# version
-	addon_version="0.5.4",
+	addon_version="0.5.5",
 	# Brief changelog for this version
 	# Translators: what's new content for this add-on version to be shown in the add-on store
-	addon_changelog=_("""Refactored the add-on into layered context, provider, image, observability, and UI modules; added core AI assistant service and image processing support; and fixed browser-aware extraction failures."""),
+	addon_changelog=_("""Added candidate providers for browser, terminal, and text editor context extraction; improved extraction context handling for more reliable assistant prompt input."""),
 	# Author(s)
 	addon_author="adil shaikh <ah.shaikh97@gmail.com>",
 	# URL for the add-on documentation support

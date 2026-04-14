@@ -62,7 +62,6 @@ class AIAssistantApplication:
 		)
 		subscribe_provider_state_change(self._on_provider_state_change)
 		self._register_settings_panel()
-		self.background.start_model_preload()
 		log.debug("Browser Assistant plugin initialized")
 
 	@property
