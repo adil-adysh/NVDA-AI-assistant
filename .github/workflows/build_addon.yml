@@ -62,6 +62,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -76,37 +78,18 @@ jobs:
           VERSION="${GITHUB_REF#refs/tags/}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Validate version exists in changelog
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          CHANGELOG_FILE="changelog.md"
-          test -f "$CHANGELOG_FILE" || (echo "Missing $CHANGELOG_FILE" && exit 1)
-          ESCAPED_VERSION=$(printf '%s' "$VERSION" | sed -e 's/[][.^$*\/]/\\&/g')
-          grep -E "^## ${ESCAPED_VERSION}([[:space:]]|$)" "$CHANGELOG_FILE" > /dev/null || (echo "Version not found in $CHANGELOG_FILE" && exit 1)
+      - name: Setup Rust
+        uses: actions/setup-rust@v1
+        with:
+          toolchain: stable
 
-      - name: Check duplicate versions
+      - name: Install git-cliff
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          CHANGELOG_FILE="changelog.md"
-          ESCAPED_VERSION=$(printf '%s' "$VERSION" | sed -e 's/[][.^$*\/]/\\&/g')
-          COUNT=$(grep -E -c "^## ${ESCAPED_VERSION}([[:space:]]|$)" "$CHANGELOG_FILE")
-          if [ "$COUNT" -ne 1 ]; then
-            echo "Duplicate or missing version entries in $CHANGELOG_FILE"
-            exit 1
-          fi
+          cargo install git-cliff
 
-      - name: Extract changelog for version
+      - name: Generate release notes
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          CHANGELOG_FILE="changelog.md"
-          awk -v ver="## ${VERSION}" '
-          index($0, ver) == 1 {flag=1; print; next}
-          /^## / && flag {exit}
-          flag
-          ' "$CHANGELOG_FILE" > RELEASE_NOTES.md
-
-      - name: Add SHA256 checksum
-        run: |
+          git-cliff --config cliff.toml --current --output RELEASE_NOTES.md
           echo -e "\n### SHA256" >> RELEASE_NOTES.md
           sha256sum *.nvda-addon >> RELEASE_NOTES.md
 
