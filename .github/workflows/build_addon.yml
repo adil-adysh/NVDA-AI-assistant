@@ -78,15 +78,18 @@ jobs:
           VERSION="${GITHUB_REF#refs/tags/}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
       - name: Install git-cliff binary
         run: |
           set -euo pipefail
-          LATEST_TAG=$(python -c "import json, urllib.request; print(json.load(urllib.request.urlopen('https://api.github.com/repos/jackfirth/git-cliff/releases/latest'))['tag_name'])")
-          GIT_CLIFF_VERSION=${LATEST_TAG#v}
-          URL="https://github.com/jackfirth/git-cliff/releases/download/${LATEST_TAG}/git-cliff_${GIT_CLIFF_VERSION}_Linux_x86_64.tar.gz"
-          echo "Installing git-cliff ${LATEST_TAG} from ${URL}"
-          curl -sSL "$URL" | tar xz -C /tmp
-          sudo mv /tmp/git-cliff /usr/local/bin/git-cliff
+          DOWNLOAD_URL=$(python3 -c "import json, urllib.request, sys; req=urllib.request.Request('https://api.github.com/repos/orhun/git-cliff/releases/latest', headers={'User-Agent':'github-actions'}); obj=json.loads(urllib.request.urlopen(req).read()); assets=[a['browser_download_url'] for a in obj['assets'] if 'x86_64-unknown-linux-gnu.tar.gz' in a['browser_download_url']]; print(assets[0] if assets else sys.exit('No x86_64 linux asset found'))")
+          echo "Installing git-cliff from ${DOWNLOAD_URL}"
+          curl -sSL "$DOWNLOAD_URL" | tar xz -C /tmp
+          sudo mv /tmp/git-cliff-*/git-cliff /usr/local/bin/git-cliff
           sudo chmod +x /usr/local/bin/git-cliff
 
       - name: Generate release notes
