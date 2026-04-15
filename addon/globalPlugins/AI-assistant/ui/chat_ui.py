@@ -72,9 +72,13 @@ class ChatDialog(wx.Dialog):
         inputLabel = wx.StaticText(self, label=_("Message:"))
         mainSizer.Add(inputLabel, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
 
-        self.inputCtrl = wx.TextCtrl(self, style=wx.TE_PROCESS_ENTER)
-        self.inputCtrl.Bind(wx.EVT_TEXT_ENTER, self.on_send)
-        self.inputCtrl.SetToolTip(_("Type a message and press Enter or click Send."))
+        self.inputCtrl = wx.TextCtrl(
+            self,
+            style=wx.TE_MULTILINE | wx.HSCROLL | wx.VSCROLL,
+        )
+        self.inputCtrl.SetMinSize((620, 120))
+        self.inputCtrl.Bind(wx.EVT_KEY_DOWN, self.on_input_key_down)
+        self.inputCtrl.SetToolTip(_("Type a message. Press Ctrl+Enter to send or click Send."))
         mainSizer.Add(self.inputCtrl, 0, wx.ALL | wx.EXPAND, 10)
 
         self.toolCheckbox = wx.CheckBox(self, label=_("Enable tool calling"))
@@ -118,6 +122,12 @@ class ChatDialog(wx.Dialog):
 
     def refresh_provider_title(self) -> None:
         self._refresh_provider_title()
+
+    def on_input_key_down(self, event: Any) -> None:
+        if event.ControlDown() and event.KeyCode == wx.WXK_RETURN:
+            self.on_send(event)
+        else:
+            event.Skip()
 
     def on_send(self, event: Any) -> None:
         message = self.inputCtrl.Value.strip()
