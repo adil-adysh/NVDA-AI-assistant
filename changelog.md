@@ -2,11 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.5.7 - 2026-04-15
+
+
+
+### Features
+
+- Feat: update add-on version to 0.5.7 and improve changelog description for better clarity
+
+- Feat: enhance provider architecture and error handling, add transaction management for chat interactions
+
+- Feat: improve error handling in chat UI by displaying message box for exceptions
+
+- Feat: enhance input field for message entry with multiline support and keyboard shortcuts
+
+- Feat: implement chat service architecture with message handling and session management
+
+
 ## v0.5.6 - 2026-04-14
 
 
 
 ### Features
+
+- Feat: update changelog validation to use consistent file naming and improve error handling
+
+- Feat: update changelog for version 0.5.6 with new features and improvements
 
 - Feat: update addon version to 0.5.6 and improve changelog content
 
