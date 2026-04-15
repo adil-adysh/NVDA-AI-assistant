@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from logHandler import log
+
 
 @dataclass(frozen=True)
 class ProviderState:
@@ -47,4 +49,4 @@ def _notify_provider_state_changed(get_current_state: Callable[[], ProviderState
 		try:
 			listener(state)
 		except Exception:
-			pass
+			log.exception("Error notifying provider state listener")

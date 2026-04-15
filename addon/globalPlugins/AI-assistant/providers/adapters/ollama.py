@@ -18,11 +18,14 @@ from ...tools import build_function_tool_definition, normalize_tool_calls
 class OllamaProvider(LLMProvider):
 	def __init__(self, config: OllamaConfig) -> None:
 		self._config = config
-		self._client = OllamaClient(
-			baseURL=config.server_url,
-			model=config.model_name,
-			timeoutSeconds=config.timeout_seconds,
-		)
+		try:
+			self._client = OllamaClient(
+				baseURL=config.server_url,
+				model=config.model_name,
+				timeoutSeconds=config.timeout_seconds,
+			)
+		except OllamaClientError as error:
+			raise self._wrap_exception(error) from error
 
 	def provider_name(self) -> str:
 		return "ollama"

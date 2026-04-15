@@ -16,6 +16,7 @@ from ..llm import ProviderLLMService
 from ...observability.reporter import MetricsReporter
 from .projector import project_chat_history
 from .session import ConversationSession
+from .transaction import ChatTurnTransaction
 
 
 class ChatCoordinator(BaseCoordinator):
@@ -23,10 +24,15 @@ class ChatCoordinator(BaseCoordinator):
 		self,
 		client: ProviderLLMService,
 		metrics_reporter: MetricsReporter | None = None,
+		session_factory: Callable[[], ConversationSession] = ConversationSession,
+		history_projector: Callable[[list[Message]], list[ChatMessage]] = project_chat_history,
 	) -> None:
 		super().__init__(metrics_reporter)
 		self._llm_service = client
-		self._session = ConversationSession()
+		self._session = session_factory()
+		self._session_lock = threading.RLock()
+		self._session_generation = 0
+		self._history_projector = history_projector
 
 	def send(
 		self,
@@ -34,7 +40,16 @@ class ChatCoordinator(BaseCoordinator):
 		tools: list[Tool] | None = None,
 		progress: ProgressHandler | None = None,
 	) -> LLMResponse:
-		return self._send(messages, tools=tools, stream_handler=None, progress=progress)
+		if not messages:
+			raise ValueError("ChatCoordinator.send requires at least one message")
+		transaction, generation = self._begin_transaction(tuple(messages))
+		return self._send_transaction(
+			transaction,
+			generation=generation,
+			tools=tools,
+			stream_handler=None,
+			progress=progress,
+		)
 
 	def send_message(
 		self,
@@ -46,8 +61,10 @@ class ChatCoordinator(BaseCoordinator):
 	) -> str:
 		user_message = self._build_user_message(text=text, image_base64=image_base64)
 		canonical_tools = self._convert_tool_definitions(tools)
-		response = self._send(
-			[user_message],
+		transaction, generation = self._begin_transaction((user_message,))
+		response = self._send_transaction(
+			transaction,
+			generation=generation,
 			tools=canonical_tools,
 			stream_handler=progress_callback,
 			progress=progress,
@@ -55,32 +72,42 @@ class ChatCoordinator(BaseCoordinator):
 		return response.text
 
 	def get_history(self) -> list[ChatMessage]:
-		return project_chat_history(self._session.snapshot())
+		with self._session_lock:
+			return self._history_projector(self._session.snapshot())
 
 	def reset(self) -> None:
-		self._session.reset()
+		with self._session_lock:
+			self._session.reset()
+			self._session_generation += 1
 
-	def _send(
+	def _begin_transaction(self, staged_messages: tuple[Message, ...]) -> tuple[ChatTurnTransaction, int]:
+		with self._session_lock:
+			generation = self._session_generation
+			prior_messages = tuple(self._session.snapshot())
+			return ChatTurnTransaction(prior_messages=prior_messages, staged_messages=staged_messages), generation
+
+	def _send_transaction(
 		self,
-		messages: list[Message],
+		transaction: ChatTurnTransaction,
+		generation: int,
 		tools: list[Tool] | None = None,
 		stream_handler: Callable[[str, int], None] | None = None,
 		progress: ProgressHandler | None = None,
 	) -> LLMResponse:
-		if not messages:
-			raise ValueError("ChatCoordinator.send requires at least one message")
-
-		self._session.extend(messages)
 		if threading.current_thread() is threading.main_thread():
 			log.warning("ChatCoordinator.send called on main thread; should be invoked from a background worker")
 
 		turn_result = self._llm_service.generate_with_transcript(
-			messages=self._session.snapshot(),
+			messages=transaction.request_messages(),
 			tools=tools,
 			stream_handler=stream_handler,
 			progress=progress,
 		)
-		self._session.extend(turn_result.messages)
+		with self._session_lock:
+			if generation == self._session_generation:
+				self._session.extend(transaction.committed_messages(turn_result.messages))
+			else:
+				log.debug("Discarding stale chat turn after session reset")
 		return turn_result.response
 
 	def _build_user_message(self, text: str | None, image_base64: str | None) -> Message:

@@ -134,14 +134,15 @@ class ChatDialog(wx.Dialog):
         if not message and not self._attached_image_base64:
             return
 
-        self.inputCtrl.Value = ""
-        self._append_local_history("User", message, image_attached=bool(self._attached_image_base64))
+        tool_call_enabled = self.toolCheckbox.Value
+        tools = self._get_tool_definitions() if tool_call_enabled else None
+        image_base64 = self._attached_image_base64
         self._set_status(_("Sending..."))
         self._set_ui_enabled(False)
 
         thread = threading.Thread(
             target=self._send_message,
-            args=(message,),
+            args=(message, image_base64, tools, tool_call_enabled),
             daemon=True,
         )
         thread.start()
@@ -162,15 +163,19 @@ class ChatDialog(wx.Dialog):
         chatDialogInstance = None
         evt.Skip()
 
-    def _send_message(self, message: str) -> None:
-        tools = self._get_tool_definitions() if self.toolCheckbox.Value else None
+    def _send_message(
+        self,
+        message: str,
+        image_base64: str | None,
+        tools: list[dict[str, Any]] | None,
+        tool_call_enabled: bool,
+    ) -> None:
         log.debug(
             "ChatDialog._send_message: message=%r tool_call_enabled=%s tool_names=%s",
             message,
-            self.toolCheckbox.Value,
+            tool_call_enabled,
             [tool.get("function", {}).get("name") for tool in tools] if tools else None,
         )
-        image_base64 = self._attached_image_base64
         try:
             self._coordinator.send_message(
                 message,
@@ -180,14 +185,14 @@ class ChatDialog(wx.Dialog):
             )
         except Exception as error:
             error_text = str(error)
-            wx.CallAfter(self._append_local_history, "Error", error_text)
             wx.CallAfter(self._set_status, _("Error sending message"))
             wx.CallAfter(wx.MessageBox, error_text, _("AI Chat Error"), wx.OK | wx.ICON_ERROR)
         else:
+            wx.CallAfter(self.inputCtrl.SetValue, "")
             wx.CallAfter(self._refresh_history)
             wx.CallAfter(self._set_status, _("Ready"))
-        finally:
             self._attached_image_base64 = None
+        finally:
             wx.CallAfter(self._set_ui_enabled, True)
 
     def _on_progress(self, partial_text: str, generated_chars: int) -> None:

@@ -40,7 +40,7 @@ class UseCasePresenter:
 				chat_ui.chatDialogInstance.Raise()
 				chat_ui.chatDialogInstance.set_initial_state(initial_text, initial_image_base64)
 			except Exception:
-				pass
+				log.exception("Error reusing chat dialog")
 			return
 
 		gui.mainFrame.prePopup()

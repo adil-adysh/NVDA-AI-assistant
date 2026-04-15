@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import os
+import tempfile
 import yaml
 from pathlib import Path
 from typing import Any
+
+from logHandler import log
 
 from .defaults import DEFAULT_CONFIG_PATH
 from .store import ConfigStore
@@ -30,17 +34,26 @@ class YamlConfigStore(ConfigStore):
 		except FileNotFoundError:
 			self._data = {}
 		except Exception:
+			log.exception("Error loading configuration from %s", self._file_path)
 			self._data = {}
 
 	def save(self) -> None:
 		self._file_path.parent.mkdir(parents=True, exist_ok=True)
-		with self._file_path.open("w", encoding="utf-8") as config_file:
-			yaml.safe_dump(
-				{self._section_name: self._data},
-				config_file,
-				sort_keys=False,
-				default_flow_style=False,
-			)
+		fd, temp_path = tempfile.mkstemp(prefix=self._file_path.stem, suffix=self._file_path.suffix, dir=self._file_path.parent)
+		try:
+			with os.fdopen(fd, "w", encoding="utf-8") as config_file:
+				yaml.safe_dump(
+					{self._section_name: self._data},
+					config_file,
+					sort_keys=False,
+					default_flow_style=False,
+				)
+			Path(temp_path).replace(self._file_path)
+		finally:
+			try:
+				Path(temp_path).unlink(missing_ok=True)
+			except Exception:
+				pass
 
 	def get(self, key: str, default: Any) -> Any:
 		return self._data.get(key, default)

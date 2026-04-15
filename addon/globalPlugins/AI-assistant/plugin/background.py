@@ -30,10 +30,9 @@ class BackgroundTaskRunner:
 
 	def start_model_preload(self) -> None:
 		def worker() -> None:
-			provider_name = self._llm_service.provider_name()
-			nvda_ui.queue(nvda_ui.message, f"Checking {provider_name} model availability.")
-
 			try:
+				provider_name = self._llm_service.provider_name()
+				nvda_ui.queue(nvda_ui.message, f"Checking {provider_name} model availability.")
 				model = self._llm_service.ensure_model_available(on_progress=lambda text: nvda_ui.queue(nvda_ui.message, text))
 			except LLMProviderError as error:
 				nvda_ui.queue(nvda_ui.message, str(error))

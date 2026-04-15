@@ -20,12 +20,15 @@ from ...tools import build_function_tool_definition, normalize_tool_calls
 class GeminiProvider(LLMProvider):
 	def __init__(self, config: GeminiConfig) -> None:
 		self._config = config
-		self._client = GeminiClient(
-			api_key=config.api_key,
-			api_token=config.api_token,
-			base_url=config.base_url,
-			timeout_seconds=config.timeout_seconds,
-		)
+		try:
+			self._client = GeminiClient(
+				api_key=config.api_key,
+				api_token=config.api_token,
+				base_url=config.base_url,
+				timeout_seconds=config.timeout_seconds,
+			)
+		except GeminiClientError as error:
+			raise LLMProviderError(str(error)) from error
 
 	def provider_name(self) -> str:
 		return "gemini"
