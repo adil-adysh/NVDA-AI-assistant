@@ -25,6 +25,12 @@ class ChatMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolExecutionResult:
+	tool_name: str
+	content: str
+
+
+@dataclass(frozen=True, slots=True)
 class LLMResponse:
 	text: str
 	model: str | None = None

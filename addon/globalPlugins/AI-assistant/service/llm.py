@@ -6,10 +6,11 @@ from typing import Protocol
 
 from ..core.events import ProgressEvent, ProgressHandler
 from ..core.canonical import Message, Tool
-from ..core.message_transforms import chat_messages_to_tool_results
-from ..core.messages import ChatMessage, LLMResponse, SummaryResponse
+from ..core.message_transforms import build_assistant_message, build_tool_result_message
+from ..core.messages import LLMResponse, SummaryResponse, ToolExecutionResult
 from ..providers.interfaces import LLMProvider, PartialCallback, ProgressCallback
 from ..tools import ToolExecutor
+from .chat.types import ConversationTurnResult
 
 
 class LLMService(Protocol):
@@ -87,7 +88,22 @@ class ProviderLLMService:
 		stream_handler: Callable[[str, int], None] | None = None,
 		progress: ProgressHandler | None = None,
 	) -> LLMResponse:
+		return self.generate_with_transcript(
+			messages=messages,
+			tools=tools,
+			stream_handler=stream_handler,
+			progress=progress,
+		).response
+
+	def generate_with_transcript(
+		self,
+		messages: list[Message],
+		tools: list[Tool] | None = None,
+		stream_handler: Callable[[str, int], None] | None = None,
+		progress: ProgressHandler | None = None,
+	) -> ConversationTurnResult:
 		canonical_messages = list(messages)
+		generated_messages: list[Message] = []
 
 		def emit(stage: str, message: str) -> None:
 			if progress is not None:
@@ -105,14 +121,17 @@ class ProviderLLMService:
 			tools=tools,
 			stream_handler=stream_adapter if (stream_handler is not None or progress is not None) else None,
 		)
+		generated_messages.append(build_assistant_message(text=response.text, tool_calls=response.tool_calls))
 		if self._tool_executor is None:
-			return response
+			return ConversationTurnResult(response=response, messages=tuple(generated_messages))
 
 		steps = 0
 		while response.tool_calls and steps < self.MAX_TOOL_STEPS:
 			emit("tool_execution", f"Executing {len(response.tool_calls)} tool call(s)...")
 			tool_messages = self._tool_executor.execute_tool_calls(response.tool_calls)
-			canonical_messages.extend(self._convert_tool_messages(tool_messages))
+			canonical_tool_messages = self._convert_tool_messages(tool_messages)
+			canonical_messages.extend(canonical_tool_messages)
+			generated_messages.extend(canonical_tool_messages)
 			emit("tool_execution", "Tool execution complete.")
 			emit("llm_request", f"Continuing response with {self.provider_name()}...")
 			response = self._provider.generate(
@@ -120,9 +139,10 @@ class ProviderLLMService:
 				tools=tools,
 				stream_handler=stream_adapter if (stream_handler is not None or progress is not None) else None,
 			)
+			generated_messages.append(build_assistant_message(text=response.text, tool_calls=response.tool_calls))
 			steps += 1
 
-		return response
+		return ConversationTurnResult(response=response, messages=tuple(generated_messages))
 
 	def ensure_model_available(self, on_progress: ProgressCallback | None = None) -> str | None:
 		return self._provider.ensure_model_available(on_progress=on_progress)
@@ -130,5 +150,5 @@ class ProviderLLMService:
 	def close(self) -> None:
 		self._provider.close()
 
-	def _convert_tool_messages(self, tool_messages: list["ChatMessage"]) -> list[Message]:
-		return chat_messages_to_tool_results(tool_messages)
+	def _convert_tool_messages(self, tool_messages: list[ToolExecutionResult]) -> list[Message]:
+		return [build_tool_result_message(tool_message.tool_name, tool_message.content) for tool_message in tool_messages]

@@ -42,11 +42,7 @@ def build_plugin_services() -> PluginServices:
 	_register_default_tools(tool_registry)
 	tool_executor = ToolExecutor(tool_registry)
 	llm_service = ProviderLLMService(provider, tool_executor=tool_executor)
-	chat_coordinator = ChatCoordinator(
-		client=llm_service,
-		tool_executor=tool_executor,
-		metrics_reporter=metrics_reporter,
-	)
+	chat_coordinator = ChatCoordinator(client=llm_service, metrics_reporter=metrics_reporter)
 	use_case_engine = UseCaseEngine(
 		chat_coordinator=chat_coordinator,
 		llm_service=llm_service,

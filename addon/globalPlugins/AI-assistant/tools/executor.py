@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from ..core.messages import ChatMessage
+from ..core.messages import ToolExecutionResult
 from ..core.tooling import ToolCall
 from .registry import ToolRegistry
 
@@ -18,18 +18,12 @@ class ToolExecutor:
 		except Exception as error:
 			raise RuntimeError(f"Tool '{tool_call.name}' execution failed: {error}") from error
 
-	def execute_tool_calls(self, tool_calls: list[ToolCall]) -> list[ChatMessage]:
-		tool_messages: list[ChatMessage] = []
+	def execute_tool_calls(self, tool_calls: list[ToolCall]) -> list[ToolExecutionResult]:
+		tool_messages: list[ToolExecutionResult] = []
 		for tool_call in tool_calls:
 			try:
 				result = self.execute(tool_call)
 			except Exception as error:
 				result = f"Tool error: {error}"
-			tool_messages.append(
-				ChatMessage(
-					role="tool",
-					content=result,
-					tool_name=tool_call.name,
-				)
-			)
+			tool_messages.append(ToolExecutionResult(tool_name=tool_call.name, content=result))
 		return tool_messages

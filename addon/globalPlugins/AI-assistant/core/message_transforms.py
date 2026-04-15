@@ -6,6 +6,7 @@ from typing import Any
 
 from .canonical import Message, Part
 from .messages import ChatMessage
+from .tooling import ToolCall
 
 
 def build_user_message(text: str | None = None, image_base64: str | None = None) -> Message:
@@ -18,6 +19,34 @@ def build_user_message(text: str | None = None, image_base64: str | None = None)
 		except Exception as error:
 			raise ValueError(f"Invalid image base64: {error}") from error
 	return Message(role="user", parts=tuple(parts))
+
+
+def build_assistant_message(text: str | None = None, tool_calls: list[ToolCall] | None = None) -> Message:
+	parts: list[Part] = []
+	if text:
+		parts.append(Part(type="text", text=text))
+	for tool_call in tool_calls or []:
+		parts.append(
+			Part(
+				type="tool_call",
+				tool_name=tool_call.name,
+				tool_args=tool_call.arguments,
+			)
+		)
+	return Message(role="assistant", parts=tuple(parts))
+
+
+def build_tool_result_message(tool_name: str, content: str) -> Message:
+	return Message(
+		role="tool",
+		parts=(
+			Part(
+				type="tool_result",
+				text=content,
+				tool_name=tool_name,
+			),
+		),
+	)
 
 
 def message_to_chat_message(message: Message) -> ChatMessage:

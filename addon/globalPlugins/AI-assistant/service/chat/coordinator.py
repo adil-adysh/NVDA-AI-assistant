@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# pyright: reportMissingImports=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -8,26 +7,26 @@ from typing import Any
 
 from logHandler import log
 
-from .base import BaseCoordinator
-from ..core.canonical import Message, Tool
-from ..core.message_transforms import build_user_message, message_to_chat_message
-from ..core.messages import ChatMessage, LLMResponse
-from ..core.events import ProgressHandler
-from .llm import LLMService
-from ..observability.reporter import MetricsReporter
+from ..base import BaseCoordinator
+from ...core.canonical import Message, Tool
+from ...core.message_transforms import build_user_message
+from ...core.messages import ChatMessage, LLMResponse
+from ...core.events import ProgressHandler
+from ..llm import ProviderLLMService
+from ...observability.reporter import MetricsReporter
+from .projector import project_chat_history
+from .session import ConversationSession
 
 
 class ChatCoordinator(BaseCoordinator):
 	def __init__(
 		self,
-		client: LLMService,
-		tool_executor: Any | None = None,
+		client: ProviderLLMService,
 		metrics_reporter: MetricsReporter | None = None,
 	) -> None:
 		super().__init__(metrics_reporter)
 		self._llm_service = client
-		self._tool_executor = tool_executor
-		self._history: list[ChatMessage] = []
+		self._session = ConversationSession()
 
 	def send(
 		self,
@@ -56,10 +55,10 @@ class ChatCoordinator(BaseCoordinator):
 		return response.text
 
 	def get_history(self) -> list[ChatMessage]:
-		return list(self._history)
+		return project_chat_history(self._session.snapshot())
 
 	def reset(self) -> None:
-		self._history = []
+		self._session.reset()
 
 	def _send(
 		self,
@@ -71,27 +70,18 @@ class ChatCoordinator(BaseCoordinator):
 		if not messages:
 			raise ValueError("ChatCoordinator.send requires at least one message")
 
-		self._append_history_from_messages(messages)
+		self._session.extend(messages)
 		if threading.current_thread() is threading.main_thread():
 			log.warning("ChatCoordinator.send called on main thread; should be invoked from a background worker")
 
-		response = self._llm_service.generate(
-			messages=messages,
+		turn_result = self._llm_service.generate_with_transcript(
+			messages=self._session.snapshot(),
 			tools=tools,
 			stream_handler=stream_handler,
 			progress=progress,
 		)
-		self._history.append(
-			ChatMessage(
-				role="assistant",
-				content=response.text,
-			)
-		)
-		return response
-
-	def _append_history_from_messages(self, messages: list[Message]) -> None:
-		for message in messages:
-			self._history.append(message_to_chat_message(message))
+		self._session.extend(turn_result.messages)
+		return turn_result.response
 
 	def _build_user_message(self, text: str | None, image_base64: str | None) -> Message:
 		return build_user_message(text=text, image_base64=image_base64)
