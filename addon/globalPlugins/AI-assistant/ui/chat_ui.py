@@ -179,8 +179,10 @@ class ChatDialog(wx.Dialog):
                 tools=tools,
             )
         except Exception as error:
-            wx.CallAfter(self._append_local_history, "Error", str(error))
+            error_text = str(error)
+            wx.CallAfter(self._append_local_history, "Error", error_text)
             wx.CallAfter(self._set_status, _("Error sending message"))
+            wx.CallAfter(wx.MessageBox, error_text, _("AI Chat Error"), wx.OK | wx.ICON_ERROR)
         else:
             wx.CallAfter(self._refresh_history)
             wx.CallAfter(self._set_status, _("Ready"))
