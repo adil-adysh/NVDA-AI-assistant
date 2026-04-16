@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from .types import ContextProfileList
+
 
 @dataclass(frozen=True, slots=True)
 class ContextFragment:
@@ -15,7 +17,7 @@ class ContextFragment:
 
 class ContextCollector(Protocol):
 	@property
-	def profiles(self) -> tuple[str, ...]:
+	def profiles(self) -> ContextProfileList:
 		...
 
 	def collect(self, use_case_id: str, **kwargs: Any) -> ContextFragment:

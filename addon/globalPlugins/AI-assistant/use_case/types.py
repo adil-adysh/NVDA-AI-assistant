@@ -4,14 +4,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..context.types import PromptContext
+from ..context.types import ContextProfileList, PromptContext
 
 
 @dataclass(frozen=True, slots=True)
 class UseCaseSpec:
 	id: str
 	description: str
-	context_profile: tuple[str, ...]
+	context_profile: ContextProfileList
 	prompt_key: str
 	tools: tuple[str, ...] = ()
 	requires_input: bool = False

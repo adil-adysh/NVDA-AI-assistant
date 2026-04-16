@@ -1,0 +1,26 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+from .base import UseCase
+from .chat import (
+	OpenChatUseCase,
+	OpenChatWithPageContentUseCase,
+	OpenChatWithScreenshotUseCase,
+)
+from .image import ImageDescriptionUseCase
+from .summary import SummaryUseCase
+from .types import UseCaseSpec
+
+
+def build_default_use_cases() -> tuple[UseCase, ...]:
+	return (
+		SummaryUseCase(),
+		ImageDescriptionUseCase(),
+		OpenChatUseCase(),
+		OpenChatWithPageContentUseCase(),
+		OpenChatWithScreenshotUseCase(),
+	)
+
+
+def build_default_use_case_specs() -> tuple[UseCaseSpec, ...]:
+	return tuple(use_case.spec for use_case in build_default_use_cases())

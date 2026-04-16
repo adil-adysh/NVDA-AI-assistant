@@ -1,56 +1,66 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
-from ..context.collectors import ImageContextCollector
+from ..context.pipeline import ContextPipeline
 from ..context.prompts import build_image_description_prompt
 from ..context.types import ImageContext, PromptContext
 from ..service.llm import LLMService
-from ..observability.metrics import estimate_tokens
-from ..ui import nvda_ui
-from .types import UseCaseResult
+from .base import UseCase
+from .types import UseCaseResult, UseCaseSpec
 
 
-def run_image_description_use_case(
-	llm_service: LLMService,
-	image_context_collector: ImageContextCollector | None,
-	emit: Callable[[str, str], None] | None = None,
-) -> UseCaseResult:
-	if emit is not None:
-		emit("collecting_context", "Collecting screenshot context...")
-	image_context = _collect_image_context(image_context_collector)
-	if emit is not None:
-		emit("building_prompt", "Building image description prompt...")
-	prompt = build_image_description_prompt(image_context)
-	if emit is not None:
-		emit("llm_request", "Generating image description...")
-	response = llm_service.describe_image(
-		image_base64=image_context.image_base64 or "",
-		prompt=prompt,
-	)
-	return UseCaseResult(
-		success=True,
-		message="Image description ready",
-		initial_image_base64=image_context.image_base64,
-		prompt_context=PromptContext(
-			use_case_id="describe_image",
-			facts={"image_context": image_context},
-			image_base64=image_context.image_base64,
-			metadata={
-				"prompt_key": "image_description",
-				"prompt_chars": len(prompt),
-				"prompt_tokens_estimated": estimate_tokens(prompt),
-			},
-		),
-		metadata={"output_text": response.text, "model": response.model, "prompt_key": "image_description"},
-	)
+class ImageDescriptionUseCase(UseCase):
+	@property
+	def spec(self) -> UseCaseSpec:
+		return UseCaseSpec(
+			id="describe_image",
+			description="Describe the current foreground window screenshot.",
+			context_profile=("image",),
+			prompt_key="image_description",
+			tools=(),
+			requires_input=False,
+		)
 
+	def execute(
+		self,
+		context_pipeline: ContextPipeline | None,
+		llm_service: LLMService,
+		emit: Callable[[str, str], None] | None = None,
+		**kwargs: object,
+	) -> UseCaseResult:
+		if emit is not None:
+			emit("collecting_context", "Collecting screenshot context...")
+		prompt_context = self.collect_prompt_context(context_pipeline, emit=emit)
+		if prompt_context is None:
+			raise ValueError("Unable to collect image context")
+		image_context = prompt_context.facts.get("image_context")
+		if not isinstance(image_context, ImageContext):
+			raise ValueError("Unable to collect image context")
 
-def _collect_image_context(image_context_collector: ImageContextCollector | None) -> ImageContext:
-	if image_context_collector is not None:
-		fragment = nvda_ui.call(image_context_collector.collect, "describe_image")
-		image_context = fragment.facts.get("image_context")
-		if isinstance(image_context, ImageContext):
-			return image_context
-	raise ValueError("Unable to collect image context")
+		if emit is not None:
+			emit("building_prompt", "Building image description prompt...")
+		prompt = build_image_description_prompt(image_context)
+		if emit is not None:
+			emit("llm_request", "Generating image description...")
+		response = llm_service.describe_image(
+			image_base64=image_context.image_base64 or "",
+			prompt=prompt,
+		)
+
+		return UseCaseResult(
+			success=True,
+			message="Image description ready",
+			initial_image_base64=image_context.image_base64,
+			prompt_context=PromptContext(
+				use_case_id=self.spec.id,
+				facts={"image_context": image_context},
+				image_base64=image_context.image_base64,
+				metadata={
+					"prompt_key": self.spec.prompt_key,
+					"prompt_chars": len(prompt),
+				},
+			),
+			metadata={"output_text": response.text, "model": response.model, "prompt_key": self.spec.prompt_key},
+		)

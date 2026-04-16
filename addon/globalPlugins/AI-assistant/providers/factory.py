@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from typing import Type
+
 from ..config.settings import get_active_provider_config
 from .adapters.gemini import GeminiProvider
 from .adapters.ollama import OllamaProvider
@@ -9,21 +11,28 @@ from .interfaces import LLMProvider, LLMProviderError
 
 
 class ProviderFactory:
-    @staticmethod
-    def create_provider(config: ProviderConfig | None = None) -> LLMProvider:
-        provider_config = config if config is not None else get_active_provider_config()
-        try:
-            if isinstance(provider_config, GeminiConfig):
-                return GeminiProvider(provider_config)
+	_provider_registry: dict[type[ProviderConfig], type[LLMProvider]] = {}
 
-            if isinstance(provider_config, OllamaConfig):
-                return OllamaProvider(provider_config)
+	@classmethod
+	def register_provider(cls, config_type: type[ProviderConfig], provider_type: type[LLMProvider]) -> None:
+		cls._provider_registry[config_type] = provider_type
 
-            raise ValueError(f"Unsupported provider config: {provider_config}")
-        except LLMProviderError:
-            raise
-        except Exception as error:
-            raise LLMProviderError(str(error)) from error
+	@classmethod
+	def create_provider(cls, config: ProviderConfig | None = None) -> LLMProvider:
+		provider_config = config if config is not None else get_active_provider_config()
+		provider_type = cls._provider_registry.get(type(provider_config))
+		if provider_type is None:
+			raise ValueError(f"Unsupported provider config type: {type(provider_config).__name__}")
+		try:
+			return provider_type(provider_config)
+		except LLMProviderError:
+			raise
+		except Exception as error:
+			raise LLMProviderError(str(error)) from error
+
+
+ProviderFactory.register_provider(GeminiConfig, GeminiProvider)
+ProviderFactory.register_provider(OllamaConfig, OllamaProvider)
 
 
 Provider = LLMProvider

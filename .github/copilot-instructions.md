@@ -1,27 +1,282 @@
-# Project Guidelines
+# GitHub Copilot Instructions — NVDA AI Assistant
 
-## Code Style
-- Python add-on code lives under [addon/globalPlugins/AI-assistant/](addon/globalPlugins/AI-assistant/).
-- Follow the repo's formatting and typing rules from [pyproject.toml](pyproject.toml): tabs for indentation, Ruff line length 110, and Pyright strict mode.
-- Keep type hints in new code and preserve the existing `pyright: report...=false` exceptions only where the current module already needs them.
-- Prefer small, focused changes that match the surrounding module style instead of broad refactors.
+## 1. Purpose of This File
+This repository implements an NVDA add-on with a layered architecture.
 
-## Architecture
-- The add-on starts in [addon/globalPlugins/AI-assistant/__init__.py](addon/globalPlugins/AI-assistant/__init__.py) where `GlobalPlugin` wires together context collection, provider access, tools, chat, and UI.
-- Context gathering flows through [addon/globalPlugins/AI-assistant/context/pipeline.py](addon/globalPlugins/AI-assistant/context/pipeline.py) and the collector/extractor modules under [addon/globalPlugins/AI-assistant/context/](addon/globalPlugins/AI-assistant/context/).
-- Provider selection is abstracted through [addon/globalPlugins/AI-assistant/providers/](addon/globalPlugins/AI-assistant/providers/) and the chat orchestration layer lives in [addon/globalPlugins/AI-assistant/service/](addon/globalPlugins/AI-assistant/service/).
-- Canonical message and tool types live in [addon/globalPlugins/AI-assistant/core/](addon/globalPlugins/AI-assistant/core/); keep provider adapters aligned with those shared types.
-- Build metadata, packaging inputs, and localization sources are defined in [buildVars.py](buildVars.py) and [sconstruct](sconstruct).
+Copilot MUST generate code that:
+- Respects strict layer boundaries
+- Uses existing abstractions (UseCase, ContextPipeline, ProviderProxy)
+- Avoids architectural shortcuts
 
-## Build and Test
-- Build the add-on package with `scons`.
-- Run linting with `python -m ruff check addon/globalPlugins/AI-assistant/`.
-- Run syntax checks with `python -m py_compile addon/globalPlugins/AI-assistant/<file>.py` for targeted modules.
-- Use [readme.md](readme.md) for user-facing behavior, and [addon/doc/en/readme.md](addon/doc/en/readme.md) for the generated help document source.
+---
 
-## Conventions
-- Treat the Ollama backend as stateless across requests; chat history must stay client-managed in the coordinator/service layer.
-- Keep provider-specific logic behind the provider/adapters boundary; do not leak Ollama or Gemini request details into UI or use-case code unless necessary.
-- When testing in a shared terminal, clear or override environment variables such as `OLLAMA_MODEL`, `GEMINI_API_KEY`, and `GOOGLE_API_KEY` so prior runs do not affect the result.
-- Update [buildVars.py](buildVars.py) instead of editing generated manifest or packaging outputs directly whenever the change is about add-on metadata.
-- Link to existing docs rather than duplicating them; the repo currently has the main overview in [readme.md](readme.md) and release notes in [changelog.md](changelog.md).
+## 2. System Overview (Mental Model)
+
+Flow of execution:
+
+NVDA → GlobalPlugin → AIAssistantApplication → UseCaseEngine  
+→ ContextPipeline → LLMService → ProviderProxy → Provider  
+→ Result → Presenter → NVDA UI
+
+This flow must NOT be bypassed.
+
+---
+
+## 3. Layer Responsibilities (STRICT)
+
+### plugin/
+- NVDA entrypoint, gestures, lifecycle
+- Threading (BackgroundTaskRunner)
+- Calls UseCaseEngine
+- NO business logic
+
+### use_case/
+- Defines features (summary, image, chat)
+- Pure orchestration layer
+- Uses:
+  - ContextPipeline
+  - LLMService
+- MUST NOT:
+  - Access NVDA APIs
+  - Call providers directly
+
+### context/
+- Collects structured data from NVDA/browser
+- Uses collectors (page, image, etc.)
+- Produces `PromptContext`
+- No business logic
+
+### providers/
+- Implements LLM providers (Gemini, Ollama)
+- Hidden behind `ProviderProxy`
+- Hot-swappable via config
+
+### service/
+- Wraps LLM interaction
+- Handles:
+  - tool execution
+  - streaming
+  - chat coordination
+- Only layer allowed to interact with providers
+
+### ui/
+- Rendering only
+- No logic, no provider calls
+
+---
+
+## 4. Dependency Rules (MANDATORY)
+
+Allowed:
+
+plugin → service → use_case → context  
+                  ↓  
+               providers  
+
+Forbidden:
+- use_case → providers
+- context → use_case
+- ui → service/provider direct calls
+
+---
+
+## 5. Use Case Pattern (REQUIRED)
+
+When adding a feature:
+
+1. Create a class extending `UseCase`
+2. Define:
+   - spec
+   - context_profile
+   - execution logic
+3. Register in:
+   `use_case/registry.py`
+
+Execution MUST go through:
+`UseCaseEngine`
+
+Never:
+- Call use cases directly from plugin
+- Hardcode mappings
+
+---
+
+## 6. Context System Rules
+
+- Always use `ContextPipeline`
+- Never manually assemble context in use cases
+- Use:
+  `ContextProfile = Literal["app", "accessibility", "image"]`
+
+Collectors must:
+- Be small and composable
+- Return structured data (not raw strings)
+
+---
+
+## 7. Provider Rules
+
+- Always access providers via:
+  `ProviderProxy`
+- Providers must implement:
+  `LLMProvider`
+
+Never:
+- Reference provider names outside `providers/`
+- Add provider-specific logic elsewhere
+
+---
+
+## 8. LLM / Chat Rules
+
+All model interaction MUST go through:
+- `LLMService`
+- `ProviderLLMService`
+- `ChatCoordinator`
+
+Responsibilities:
+- streaming
+- tool calls
+- session handling
+
+Never:
+- Call provider from use_case or UI
+- Duplicate chat logic
+
+---
+
+## 9. Tools System
+
+- Register tools in `ToolRegistry`
+- Execute via `ToolExecutor`
+
+Never:
+- Execute tools directly in use cases
+
+---
+
+## 10. Threading Rules (CRITICAL FOR NVDA)
+
+- Never block main thread
+- Use:
+  `BackgroundTaskRunner`
+
+All long operations must:
+- Run in background
+- Return results safely to UI
+
+---
+
+## 11. UI Rules
+
+- Render only
+- No logic
+- No provider or service calls
+
+Must support:
+- streaming updates
+- partial responses
+
+---
+
+## 12. Error Handling
+
+- NVDA must never crash
+- Always fail gracefully
+- Provide user-safe messages
+- Log internal errors clearly
+
+---
+
+## 13. Code Style
+
+### Python
+- Use type hints everywhere
+- Prefer:
+  - dataclasses
+  - Protocols
+  - TypedDict
+- Avoid dynamic typing unless necessary
+
+---
+
+## 14. Performance Constraints
+
+- NVDA is latency-sensitive
+- Prefer:
+  - streaming over blocking
+  - small memory footprint
+- Avoid:
+  - large synchronous operations
+  - unnecessary copies
+
+---
+
+## 15. When Generating Code
+
+Copilot must:
+
+1. Identify correct layer
+2. Follow existing patterns in that layer
+3. Reuse abstractions:
+   - UseCaseEngine
+   - ContextPipeline
+   - ProviderProxy
+4. Keep implementation minimal and consistent
+
+---
+
+## 16. What NOT to Do
+
+- Do not bypass UseCaseEngine
+- Do not mix UI and logic
+- Do not hardcode provider behavior
+- Do not access NVDA APIs outside plugin/context
+- Do not introduce global state
+- Do not duplicate context or chat logic
+
+---
+
+## 17. Good Patterns
+
+✔ Add feature:
+UseCase → Register → Trigger via application → Render via presenter
+
+✔ Add provider:
+Implement `LLMProvider` → Register in factory
+
+✔ Add tool:
+Register in ToolRegistry → Execute via ToolExecutor
+
+---
+
+## 18. Bad Patterns
+
+✘ Provider calls inside use_case  
+✘ NVDA API calls inside service  
+✘ Prompt building in UI  
+✘ Skipping ContextPipeline  
+✘ Blocking main thread  
+
+---
+
+## 19. Project Constraints
+
+- NVDA add-on (accessibility-critical)
+- Must remain responsive
+- Supports:
+  - page summarization
+  - image description
+  - contextual chat
+
+Providers:
+- Ollama (preferred, local-first)
+- Gemini (optional fallback)
+
+---
+
+## 20. If Uncertain
+
+- Do NOT guess architecture
+- Ask for clarification
+- Or follow existing similar implementation

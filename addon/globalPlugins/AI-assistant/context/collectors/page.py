@@ -6,7 +6,7 @@ from typing import Any
 
 from ..extractors.browser import BrowserAwarePageExtractor
 from ...context.protocols import ContextFragment
-from ...context.types import PageContext
+from ...context.types import ContextProfileList, PageContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,7 +14,7 @@ class PageContextCollector:
 	extractor: BrowserAwarePageExtractor | None = None
 
 	@property
-	def profiles(self) -> tuple[str, ...]:
+	def profiles(self) -> ContextProfileList:
 		return ("app", "accessibility")
 
 	def collect(self, use_case_id: str, **kwargs: Any) -> ContextFragment:

@@ -10,7 +10,7 @@ import api
 from PIL import Image
 
 from ...context.protocols import ContextFragment
-from ...context.types import ImageContext
+from ...context.types import ContextProfileList, ImageContext
 from ...image.services import ImageCaptureService, ImageEncoder, ImagePreprocessor
 from ...image.types import ImageFormat
 from ...config.settings import get_image_format, get_image_max_side, get_image_quality
@@ -23,7 +23,7 @@ class ImageContextCollector:
 	encoder: ImageEncoder | None = None
 
 	@property
-	def profiles(self) -> tuple[str, ...]:
+	def profiles(self) -> ContextProfileList:
 		return ("image",)
 
 	def collect(self, use_case_id: str, **kwargs: Any) -> ContextFragment:

@@ -11,15 +11,16 @@ class ContextPipeline:
 	def __init__(self, collectors: Sequence[ContextCollector]) -> None:
 		self._collectors = tuple(collectors)
 
-	def collect(self, use_case_id: str, context_profile: tuple[str, ...], **kwargs: Any) -> PromptContext:
+	def collect(self, use_case_id: str, context_profile: ContextProfileList, **kwargs: Any) -> PromptContext:
+		if not context_profile:
+			return PromptContext(use_case_id=use_case_id, metadata={"context_profile": context_profile})
+
 		merged_facts: dict[str, Any] = {}
 		merged_metadata: dict[str, Any] = {"context_profile": context_profile}
 		text_parts: list[str] = []
 		image_base64: str | None = None
 
 		for collector in self._collectors:
-			if not context_profile:
-				continue
 			if not set(collector.profiles).intersection(context_profile):
 				continue
 			fragment = collector.collect(use_case_id, **kwargs)

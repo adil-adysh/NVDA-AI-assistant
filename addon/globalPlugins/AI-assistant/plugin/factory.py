@@ -44,12 +44,9 @@ def build_plugin_services() -> PluginServices:
 	llm_service = ProviderLLMService(provider, tool_executor=tool_executor)
 	chat_coordinator = ChatCoordinator(client=llm_service, metrics_reporter=metrics_reporter)
 	use_case_engine = UseCaseEngine(
-		chat_coordinator=chat_coordinator,
 		llm_service=llm_service,
 		context_pipeline=context_pipeline,
-		page_context_collector=page_context_collector,
-		image_context_collector=image_context_collector,
-	)
+)
 	return PluginServices(
 		provider=provider,
 		metrics_reporter=metrics_reporter,

@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal, TypeAlias
+
+
+ContextProfile = Literal["app", "accessibility", "image"]
+ContextProfileList: TypeAlias = tuple[ContextProfile, ...]
 
 
 @dataclass(frozen=True, slots=True)
