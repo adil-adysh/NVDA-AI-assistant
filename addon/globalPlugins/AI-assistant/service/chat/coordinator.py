@@ -58,10 +58,16 @@ class ChatCoordinator(BaseCoordinator):
 		progress_callback: Callable[[str, int], None] | None = None,
 		tools: list[dict[str, Any]] | None = None,
 		progress: ProgressHandler | None = None,
-	) -> str:
+	) -> LLMResponse:
 		user_message = self._build_user_message(text=text, image_base64=image_base64)
 		canonical_tools = self._convert_tool_definitions(tools)
 		transaction, generation = self._begin_transaction((user_message,))
+		log.debug(
+			"ChatCoordinator.send_message starting: text=%r image_attached=%s tools=%s",
+			text,
+			image_base64 is not None,
+			[tool.get("function", {}).get("name") for tool in tools] if tools else None,
+		)
 		response = self._send_transaction(
 			transaction,
 			generation=generation,
@@ -69,7 +75,12 @@ class ChatCoordinator(BaseCoordinator):
 			stream_handler=progress_callback,
 			progress=progress,
 		)
-		return response.text
+		log.debug(
+			"ChatCoordinator.send_message finished: response_text=%r tool_calls=%s",
+			response.text,
+			[tc.name for tc in response.tool_calls] if response.tool_calls else None,
+		)
+		return response
 
 	def get_history(self) -> list[ChatMessage]:
 		with self._session_lock:

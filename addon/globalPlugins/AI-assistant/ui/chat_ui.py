@@ -255,11 +255,23 @@ a:hover { text-decoration: underline; }
             [tool.get("function", {}).get("name") for tool in tools] if tools else None,
         )
         try:
-            response_text = self._coordinator.send_message(
+            response = self._coordinator.send_message(
                 message,
                 image_base64=image_base64,
                 progress_callback=self._on_progress,
                 tools=tools,
+            )
+            response_text = response.text
+            thinking_trace = None
+            raw = getattr(response, "raw", None)
+            if raw is not None:
+                metadata = getattr(raw, "metadata", None)
+                if isinstance(metadata, dict):
+                    thinking_trace = metadata.get("thinking_trace")
+            log.debug(
+                "ChatDialog._send_message received response_text=%r thinking_trace=%r",
+                response_text,
+                thinking_trace,
             )
         except Exception as error:
             error_text = str(error)
@@ -268,7 +280,7 @@ a:hover { text-decoration: underline; }
         else:
             wx.CallAfter(self.inputCtrl.SetValue, "")
             wx.CallAfter(self._refresh_history)
-            wx.CallAfter(self._display_last_turn, message, response_text)
+            wx.CallAfter(self._display_last_turn, message, response_text, thinking_trace)
             wx.CallAfter(self._set_status, _("Ready"))
             self._attached_image_base64 = None
         finally:
@@ -305,8 +317,8 @@ a:hover { text-decoration: underline; }
             copy_button=True,
         )
 
-    def _display_last_turn(self, user_message: str, assistant_message: str) -> None:
-        html = self._build_last_turn_html(user_message, assistant_message)
+    def _display_last_turn(self, user_message: str, assistant_message: str, thinking_trace: str | None = None) -> None:
+        html = self._build_last_turn_html(user_message, assistant_message, thinking_trace)
         title = nvda_ui.format_browseable_title(_("Response Preview"), self._provider_state)
         nvda_ui.browseable_message(
             html,
@@ -316,23 +328,32 @@ a:hover { text-decoration: underline; }
             copy_button=True,
         )
 
-    def _build_last_turn_html(self, user_message: str, assistant_message: str) -> str:
+    def _build_last_turn_html(self, user_message: str, assistant_message: str, thinking_trace: str | None = None) -> str:
         user_html = self._render_message_html(user_message)
         assistant_html = self._render_message_html(assistant_message)
-        return (
-            "<!DOCTYPE html>"
-            "<html><head><meta charset=\"utf-8\"><style>"
-            "body{font-family:Arial,sans-serif;padding:16px;line-height:1.6;color:#111;}"
-            ".section{margin-bottom:18px;}"
-            "h4{font-size:1rem;font-weight:bold;margin:0 0 8px 0;}"
-            ".bubble{background:#f7f7f7;border-radius:10px;padding:12px;border:1px solid #ddd;}"
-            "</style></head><body>"
-            "<div class=\"section\"><h4>User query</h4>"
-            f"<div class=\"bubble\">{user_html}</div></div>"
-            "<div class=\"section\"><h4>Assistant response</h4>"
-            f"<div class=\"bubble\">{assistant_html}</div></div>"
-            "</body></html>"
-        )
+        thinking_html = self._render_message_html(thinking_trace or "") if thinking_trace else ""
+        result = [
+            "<!DOCTYPE html>",
+            "<html><head><meta charset=\"utf-8\"><style>",
+            "body{font-family:Arial,sans-serif;padding:16px;line-height:1.6;color:#111;}",
+            ".section{margin-bottom:18px;}",
+            "h4{font-size:1rem;font-weight:bold;margin:0 0 8px 0;}",
+            ".bubble{background:#f7f7f7;border-radius:10px;padding:12px;border:1px solid #ddd;}",
+            "</style></head><body>",
+            "<div class=\"section\"><h4>User query</h4>",
+            f"<div class=\"bubble\">{user_html}</div></div>",
+        ]
+        if thinking_trace:
+            result.extend([
+                "<div class=\"section\"><h4>Thinking trace</h4>",
+                f"<div class=\"bubble\">{thinking_html}</div></div>",
+            ])
+        result.extend([
+            "<div class=\"section\"><h4>Assistant response</h4>",
+            f"<div class=\"bubble\">{assistant_html}</div></div>",
+            "</body></html>",
+        ])
+        return "".join(result)
 
     def on_show_history(self, event: Any) -> None:
         self._show_history()

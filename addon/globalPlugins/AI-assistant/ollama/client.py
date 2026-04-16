@@ -277,16 +277,26 @@ class OllamaClient:
                 chatText = str(message.get("content", "")).strip()
             else:
                 chatText = str(typedResponse.get("response", "")).strip()
-            log.debug("OllamaClient.chat parsed message=%s chatText=%r", message, chatText)
+            thinking_trace = None
+            if isinstance(message, dict):
+                thinking_value = message.get("thinking")
+                if isinstance(thinking_value, str):
+                    thinking_trace = thinking_value.strip() or None
+            log.debug("OllamaClient.chat parsed message=%s chatText=%r thinking_trace=%s", message, chatText, thinking_trace)
             finalResponse = typedResponse
-            metadata = {"raw": typedResponse}
+            metadata = {"raw": typedResponse, "thinking_trace": thinking_trace}
         else:
             log.debug("Starting stream /api/chat request for model=%s", model)
             chatText, finalResponse = self._requestGenerateStream(payload, onPartial, "/api/chat")
             log.debug("Final generated chat length=%d", len(chatText))
+            thinking_trace = None
             if isinstance(finalResponse, dict):
                 message = finalResponse.get("message")
-            metadata = {"raw": finalResponse}
+                if isinstance(message, dict):
+                    thinking_value = message.get("thinking")
+                    if isinstance(thinking_value, str):
+                        thinking_trace = thinking_value.strip() or None
+            metadata = {"raw": finalResponse, "thinking_trace": thinking_trace}
 
         if not chatText and not _responseHasToolCalls(finalResponse):
             log.debug(
@@ -298,6 +308,7 @@ class OllamaClient:
             raise OllamaClientError(
                 f"Empty chat response. final_response={{'done': {finalResponse.get('done')}, 'done_reason': {finalResponse.get('done_reason')}}}"
             )
+        log.debug("OllamaClient.chat returning chatText=%r thinking_trace=%r metadata_keys=%s", chatText, metadata.get("thinking_trace"), list(metadata.keys()))
         return SummaryResponse(text=chatText, model=model, metadata=metadata)
 
     def listLocalModels(self) -> list[str]:
