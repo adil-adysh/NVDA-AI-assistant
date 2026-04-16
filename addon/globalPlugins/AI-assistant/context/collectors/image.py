@@ -9,8 +9,8 @@ from typing import Any, cast
 import api
 from PIL import Image
 
-from ...context.protocols import ContextFragment
-from ...context.types import ContextProfileList, ImageContext
+from ...context.protocols import CollectorInput, ContextFragment
+from ...context.types import ContextProfileList, IMAGE, ImageContext
 from ...image.services import ImageCaptureService, ImageEncoder, ImagePreprocessor
 from ...image.types import ImageFormat
 from ...config.settings import get_image_format, get_image_max_side, get_image_quality
@@ -24,9 +24,9 @@ class ImageContextCollector:
 
 	@property
 	def profiles(self) -> ContextProfileList:
-		return ("image",)
+		return (IMAGE,)
 
-	def collect(self, use_case_id: str, **kwargs: Any) -> ContextFragment:
+	def collect(self, input: CollectorInput) -> ContextFragment:
 		if self.capture_service is None or self.preprocessor is None or self.encoder is None:
 			raise ValueError("ImageContextCollector requires capture, preprocessor, and encoder services")
 
@@ -81,7 +81,7 @@ class ImageContextCollector:
 			},
 			image_base64=image_base64,
 			metadata={
-				"use_case_id": use_case_id,
+				"use_case_id": input.use_case_id,
 				"app_title": app_title,
 				"window_title": window_title,
 				"raw_image_bytes": len(raw_image_bytes),

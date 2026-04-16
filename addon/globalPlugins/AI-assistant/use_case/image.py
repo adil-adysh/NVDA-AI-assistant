@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 from ..context.pipeline import ContextPipeline
 from ..context.prompts import build_image_description_prompt
-from ..context.types import ImageContext, PromptContext
+from ..context.types import IMAGE, ImageContext, PromptContext
 from ..service.llm import LLMService
 from .base import UseCase
 from .types import UseCaseResult, UseCaseSpec
@@ -17,7 +17,7 @@ class ImageDescriptionUseCase(UseCase):
 		return UseCaseSpec(
 			id="describe_image",
 			description="Describe the current foreground window screenshot.",
-			context_profile=("image",),
+			context_profile=(IMAGE,),
 			prompt_key="image_description",
 			tools=(),
 			requires_input=False,

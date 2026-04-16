@@ -6,11 +6,12 @@ import builtins
 from typing import Callable, cast
 
 from ..context.collectors.image import ImageContextCollector
-from ..context.collectors.page import PageContextCollector
+from ..context.collectors.page import PageStructureCollector, PageTextCollector
 from ..context.extractors.browser import BrowserAwarePageExtractor
 from ..context.pipeline import ContextPipeline
 from ..image.services import ImageCaptureService, ImageEncoder, ImagePreprocessor
 from ..observability.reporter import FileMetricsReporter
+from ..ui import nvda_ui
 from ..providers.provider_proxy import ProviderProxy
 from ..service.chat import ChatCoordinator
 from ..service.llm import ProviderLLMService
@@ -29,14 +30,17 @@ _ = cast(Callable[[str], str], getattr(builtins, "_", _translate))
 def build_plugin_services() -> PluginServices:
 	provider = ProviderProxy()
 	metrics_reporter = FileMetricsReporter()
-	page_context_collector = PageContextCollector(extractor=BrowserAwarePageExtractor())
+	page_extractor = BrowserAwarePageExtractor()
+	page_text_collector = PageTextCollector(extractor=page_extractor)
+	page_structure_collector = PageStructureCollector(extractor=page_extractor)
 	image_context_collector = ImageContextCollector(
 		capture_service=ImageCaptureService(),
 		preprocessor=ImagePreprocessor(),
 		encoder=ImageEncoder(),
 	)
 	context_pipeline = ContextPipeline(
-		collectors=(page_context_collector, image_context_collector),
+		collectors=(page_text_collector, page_structure_collector, image_context_collector),
+		main_thread_executor=nvda_ui.call,
 	)
 	tool_registry = ToolRegistry()
 	_register_default_tools(tool_registry)
@@ -50,7 +54,8 @@ def build_plugin_services() -> PluginServices:
 	return PluginServices(
 		provider=provider,
 		metrics_reporter=metrics_reporter,
-		page_context_collector=page_context_collector,
+		page_text_collector=page_text_collector,
+		page_structure_collector=page_structure_collector,
 		image_context_collector=image_context_collector,
 		context_pipeline=context_pipeline,
 		tool_registry=tool_registry,

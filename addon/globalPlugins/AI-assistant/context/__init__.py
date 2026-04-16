@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from .collectors import ImageContextCollector, PageContextCollector
+from .collectors import ImageContextCollector, PageStructureCollector, PageTextCollector
 from .extractors import (
 	BrowserAwarePageExtractor,
 	BrowserCandidateProvider,
@@ -41,7 +41,8 @@ __all__ = [
 	"ImageContextCollector",
 	"PageContext",
 	"PageSnapshot",
-	"PageContextCollector",
+	"PageStructureCollector",
+	"PageTextCollector",
 	"PageExtractionError",
 	"PromptContext",
 	"TerminalCandidateProvider",

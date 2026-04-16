@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from .types import ContextProfileList
+from .types import ContextProfileList, PageSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,10 +15,16 @@ class ContextFragment:
 	metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class CollectorInput:
+	use_case_id: str
+	page_snapshot: PageSnapshot | None = None
+
+
 class ContextCollector(Protocol):
 	@property
 	def profiles(self) -> ContextProfileList:
 		...
 
-	def collect(self, use_case_id: str, **kwargs: Any) -> ContextFragment:
+	def collect(self, input: CollectorInput) -> ContextFragment:
 		...

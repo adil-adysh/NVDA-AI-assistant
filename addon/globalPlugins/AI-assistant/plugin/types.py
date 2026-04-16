@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..context.collectors.image import ImageContextCollector
-from ..context.collectors.page import PageContextCollector
+from ..context.collectors.page import PageStructureCollector, PageTextCollector
 from ..context.pipeline import ContextPipeline
 from ..observability.reporter import FileMetricsReporter
 from ..providers.provider_proxy import ProviderProxy
@@ -19,7 +19,8 @@ from ..use_case.engine import UseCaseEngine
 class PluginServices:
 	provider: ProviderProxy
 	metrics_reporter: FileMetricsReporter
-	page_context_collector: PageContextCollector
+	page_text_collector: PageTextCollector
+	page_structure_collector: PageStructureCollector
 	image_context_collector: ImageContextCollector
 	context_pipeline: ContextPipeline
 	tool_registry: ToolRegistry

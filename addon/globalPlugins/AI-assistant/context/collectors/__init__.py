@@ -2,6 +2,6 @@
 from __future__ import annotations
 
 from .image import ImageContextCollector
-from .page import PageContextCollector
+from .page import PageStructureCollector, PageTextCollector
 
-__all__ = ["PageContextCollector", "ImageContextCollector"]
+__all__ = ["PageStructureCollector", "PageTextCollector", "ImageContextCollector"]

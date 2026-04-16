@@ -5,41 +5,70 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..extractors.browser import BrowserAwarePageExtractor
-from ...context.protocols import ContextFragment
-from ...context.types import ContextProfileList, PageContext
+from ...context.protocols import CollectorInput, ContextFragment
+from ...context.types import APP, ContextCollectionError, ContextProfileList, PAGE, PageSnapshot
 
 
 @dataclass(frozen=True, slots=True)
-class PageContextCollector:
+class PageTextCollector:
 	extractor: BrowserAwarePageExtractor | None = None
 
 	@property
 	def profiles(self) -> ContextProfileList:
-		return ("app", "accessibility")
+		return (APP, PAGE)
 
-	def collect(self, use_case_id: str, **kwargs: Any) -> ContextFragment:
+	def collect(self, input: CollectorInput) -> ContextFragment:
 		if self.extractor is None:
-			raise ValueError("PageContextCollector requires an extractor")
+			raise ContextCollectionError("PageTextCollector requires an extractor")
 
-		snapshot = self.extractor.extract()
-		page_context = PageContext(
-			title=snapshot.title,
-			app_title=snapshot.appTitle,
-			text=snapshot.text,
-			truncated=snapshot.truncated,
-			headings=snapshot.headings,
-			links=snapshot.links,
-			buttons=snapshot.buttons,
-			landmarks=snapshot.landmarks,
-		)
+		snapshot = input.page_snapshot
+		if not isinstance(snapshot, PageSnapshot):
+			raise ContextCollectionError("PageTextCollector requires a page snapshot")
+
 		return ContextFragment(
 			facts={
-				"page_context": page_context,
+				"page_text": snapshot.text,
 				"page_snapshot": snapshot,
 			},
 			text=snapshot.text,
 			metadata={
-				"use_case_id": use_case_id,
+				"use_case_id": input.use_case_id,
+				"title": snapshot.title,
+				"app_title": snapshot.appTitle,
+				"truncated": snapshot.truncated,
+			},
+		)
+
+
+@dataclass(frozen=True, slots=True)
+class PageStructureCollector:
+	extractor: BrowserAwarePageExtractor | None = None
+
+	@property
+	def profiles(self) -> ContextProfileList:
+		return (PAGE,)
+
+	def collect(self, input: CollectorInput) -> ContextFragment:
+		if self.extractor is None:
+			raise ContextCollectionError("PageStructureCollector requires an extractor")
+
+		snapshot = input.page_snapshot
+		if not isinstance(snapshot, PageSnapshot):
+			raise ContextCollectionError("PageStructureCollector requires a page snapshot")
+
+		return ContextFragment(
+			facts={
+				"page_snapshot": snapshot,
+				"page_title": snapshot.title,
+				"page_app_title": snapshot.appTitle,
+				"page_truncated": snapshot.truncated,
+				"page_headings": snapshot.headings,
+				"page_links": snapshot.links,
+				"page_buttons": snapshot.buttons,
+				"page_landmarks": snapshot.landmarks,
+			},
+			metadata={
+				"use_case_id": input.use_case_id,
 				"title": snapshot.title,
 				"app_title": snapshot.appTitle,
 				"truncated": snapshot.truncated,

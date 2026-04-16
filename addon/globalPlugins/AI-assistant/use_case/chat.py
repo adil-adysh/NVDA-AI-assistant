@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from ..context.pipeline import ContextPipeline
-from ..context.types import PageContext, PromptContext
+from ..context.types import APP, IMAGE, PAGE, PageContext, PromptContext
 from ..service.llm import LLMService
 from .base import UseCase
 from .types import UseCaseResult, UseCaseSpec
@@ -50,7 +50,7 @@ class OpenChatWithPageContentUseCase(UseCase):
 		return UseCaseSpec(
 			id="open_chat_with_page_content",
 			description="Open chat with the current page content preloaded.",
-			context_profile=("app", "accessibility"),
+			context_profile=(APP, PAGE),
 			prompt_key="chat_with_page_context",
 			tools=(),
 			requires_input=True,
@@ -71,7 +71,7 @@ class OpenChatWithPageContentUseCase(UseCase):
 
 		page_content = kwargs.get("page_content")
 		if prompt_context is not None:
-			page_context = prompt_context.facts.get("page_context")
+			page_context = prompt_context.page_context
 			if isinstance(page_context, PageContext):
 				title = page_context.title or "Unknown"
 				app_title = page_context.app_title or "Unknown"
@@ -100,7 +100,7 @@ class OpenChatWithScreenshotUseCase(UseCase):
 		return UseCaseSpec(
 			id="open_chat_with_screenshot",
 			description="Open chat with a screenshot attached.",
-			context_profile=("image",),
+			context_profile=(IMAGE,),
 			prompt_key="chat_with_image_context",
 			tools=(),
 			requires_input=True,
