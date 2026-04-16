@@ -25,7 +25,7 @@ addon_info = AddonInfo(
 		"""NVDA AI assistant helps NVDA users by using AI to simplify complex information, summarize content, and provide contextual guidance for tasks that are otherwise hard to access."""
 	),
 	# version
-	addon_version="0.5.9",
+	addon_version="0.6.0",
 	# Brief changelog for this version
 	# Translators: what's new content for this add-on version to be shown in the add-on store
 	addon_changelog=_(
