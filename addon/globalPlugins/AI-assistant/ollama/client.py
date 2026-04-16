@@ -156,7 +156,7 @@ class OllamaClient:
             finalResponse = typedResponse
         else:
             log.debug("Starting stream /api/generate request for model=%s", model)
-            summaryText, finalResponse = self._requestGenerateStream(payload, onPartial, "/api/generate")
+            summaryText, finalResponse, _ = self._requestGenerateStream(payload, onPartial, "/api/generate")
             log.debug("Final generated summary length=%d", len(summaryText))
 
         if not summaryText:
@@ -210,7 +210,7 @@ class OllamaClient:
             finalResponse = typedResponse
         else:
             log.debug("Starting stream image generate request for model=%s", model)
-            descriptionText, finalResponse = self._requestGenerateStream(payload, onPartial, "/api/generate")
+            descriptionText, finalResponse, _ = self._requestGenerateStream(payload, onPartial, "/api/generate")
             log.debug("Final generated description length=%d", len(descriptionText))
 
         if not descriptionText:
@@ -287,10 +287,9 @@ class OllamaClient:
             metadata = {"raw": typedResponse, "thinking_trace": thinking_trace}
         else:
             log.debug("Starting stream /api/chat request for model=%s", model)
-            chatText, finalResponse = self._requestGenerateStream(payload, onPartial, "/api/chat")
-            log.debug("Final generated chat length=%d", len(chatText))
-            thinking_trace = None
-            if isinstance(finalResponse, dict):
+            chatText, finalResponse, thinking_trace = self._requestGenerateStream(payload, onPartial, "/api/chat")
+            log.debug("Final generated chat length=%d thinking_trace=%r", len(chatText), thinking_trace)
+            if thinking_trace is None and isinstance(finalResponse, dict):
                 message = finalResponse.get("message")
                 if isinstance(message, dict):
                     thinking_value = message.get("thinking")
@@ -504,7 +503,7 @@ class OllamaClient:
         payload: dict[str, Any],
         onPartial: Callable[[str, int], None],
         path: str = "/api/generate",
-    ) -> tuple[str, OllamaGenerateResponse]:
+    ) -> tuple[str, OllamaGenerateResponse, str | None]:
         streamPayload: dict[str, Any] = dict(payload)
         streamPayload["stream"] = True
         if "prompt" in streamPayload:
@@ -559,7 +558,8 @@ class OllamaClient:
         for attempt in range(1, attempts + 1):
             started = time.monotonic()
             log.debug("Stream request attempt=%d path=%s", attempt, path)
-            chunks: list[str] = []
+            contentChunks: list[str] = []
+            thinkingChunks: list[str] = []
             generatedChars = 0
             emittedPartial = False
             callbackFailed = False
@@ -583,32 +583,44 @@ class OllamaClient:
                         parsed = _validateGenerateResponse(_parseJSON(line, path), path, requireDone=False)
                         _record_tool_metadata(parsed)
                         lastParsed = parsed
-                        piece = str(parsed.get("response", ""))
-                        if not piece:
-                            message = parsed.get("message")
-                            if isinstance(message, dict):
-                                piece = str(message.get("content", ""))
+                        content_piece = ""
+                        message = parsed.get("message")
+                        if isinstance(message, dict):
+                            thinking_value = message.get("thinking")
+                            if isinstance(thinking_value, str) and thinking_value:
+                                thinkingChunks.append(thinking_value)
+
+                            content_value = message.get("content")
+                            if isinstance(content_value, str) and content_value:
+                                contentChunks.append(content_value)
+                                content_piece = content_value
+
+                        if not content_piece:
+                            content_piece = str(parsed.get("response", ""))
+                            if content_piece:
+                                contentChunks.append(content_piece)
+
                         log.debug(
                             "Stream chunk path=%s done=%s response_len=%d",
                             path,
                             parsed.get("done"),
-                            len(piece),
+                            len(content_piece),
                         )
-                        if piece:
-                            chunks.append(piece)
-                            generatedChars += len(piece)
+                        if content_piece:
+                            generatedChars += len(content_piece)
                             emittedPartial = True
                             if not callbackFailed:
                                 try:
-                                    onPartial(piece, generatedChars)
+                                    onPartial(content_piece, generatedChars)
                                 except Exception:
                                     log.exception("onPartial callback failed")
                                     callbackFailed = True
 
                         if parsed.get("done") is True:
                             final_parsed = _attach_accumulated_tool_calls(parsed, accumulatedToolCalls)
-                            log.debug("Stream finished path=%s total_chars=%d", path, generatedChars)
-                            return "".join(chunks).strip(), final_parsed
+                            thinking_trace = "".join(thinkingChunks).strip() or None
+                            log.debug("Stream finished path=%s total_chars=%d thinking_trace=%s", path, generatedChars, thinking_trace)
+                            return "".join(contentChunks).strip(), final_parsed, thinking_trace
             except urllibError.HTTPError as error:
                 details = _readErrorBody(error)
                 lastErrorMessage = f"HTTP {error.code}. {details}" if details else f"HTTP {error.code}."
@@ -651,12 +663,13 @@ class OllamaClient:
                 if lastParsed is not None:
                     if emittedPartial:
                         partial_response = _attach_accumulated_tool_calls(lastParsed, accumulatedToolCalls)
+                        thinking_trace = "".join(thinkingChunks).strip() or None
                         log.debug(
                             "Returning partial stream response after incomplete stream path=%s total_chars=%d",
                             path,
                             generatedChars,
                         )
-                        return "".join(chunks).strip(), partial_response
+                        return "".join(contentChunks).strip(), partial_response, thinking_trace
                     log.debug(
                         "Stream terminated with lastParsed=%s",
                         {"done": lastParsed.get("done"), "done_reason": lastParsed.get("done_reason"), "response_len": len(str(lastParsed.get("response", ""))),},
