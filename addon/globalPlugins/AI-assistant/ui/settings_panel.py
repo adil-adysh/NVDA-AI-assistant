@@ -195,6 +195,10 @@ class AIAssistantSettingsPanel(SettingsPanel):
             _("Repetition penalty:"),
             str(get_generate_presence_penalty() if get_generate_presence_penalty() is not None else defaults.DEFAULT_GENERATE_PRESENCE_PENALTY),
         )
+        self.ollamaThinkCheckbox = groupHelper.addItem(
+            wx.CheckBox(self, label=_('Enable Ollama think mode'))
+        )
+        self.ollamaThinkCheckbox.Value = config.think
         return groupSizer
 
     def _build_expert_settings(self, parentHelper):
@@ -352,6 +356,7 @@ class AIAssistantSettingsPanel(SettingsPanel):
                 generate_presence_penalty=presencePenalty,
                 server_url=ollamaServerUrl,
                 keep_alive=ollamaKeepAlive,
+                think=self.ollamaThinkCheckbox.Value,
             )
             set_ollama_config(config)
         else:
@@ -421,5 +426,6 @@ class AIAssistantSettingsPanel(SettingsPanel):
         self.geminiApiTokenEdit.Enable(not is_ollama)
         self.geminiBaseUrlEdit.Enable(not is_ollama)
         self.presencePenaltyEdit.Enable(is_ollama)
+        self.ollamaThinkCheckbox.Enable(is_ollama)
 
         self.Layout()

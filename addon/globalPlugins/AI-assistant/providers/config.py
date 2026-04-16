@@ -24,6 +24,7 @@ class OllamaConfig(ProviderConfig):
     server_url: str
     keep_alive: str
     generate_presence_penalty: float
+    think: bool
 
 
 @dataclass(frozen=True)

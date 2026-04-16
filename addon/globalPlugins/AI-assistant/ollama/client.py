@@ -68,6 +68,7 @@ class OllamaClient:
         baseURL: str | None = None,
         model: str | None = None,
         timeoutSeconds: float | None = None,
+        think: bool = False,
     ):
         super().__init__()
         baseUrlValue = baseURL or get_server_url()
@@ -79,6 +80,7 @@ class OllamaClient:
         self._keepAlive: str = get_keep_alive()
         self._maxRetries: int = get_max_retries()
         self._retryBackoffSeconds: float = get_retry_backoff_seconds()
+        self._think: bool = think
         log.debug(
             "OllamaClient initialized baseURL=%s model=%s timeout=%.1fs num_ctx=%d keep_alive=%s max_retries=%d backoff=%.2fs",
             self._baseURL,
@@ -239,13 +241,15 @@ class OllamaClient:
             "options": self._defaultGenerateOptions(),
             "keep_alive": get_keep_alive(),
         }
+        payload["think"] = self._think
         if tools:
             payload["tools"] = tools
 
         log.debug(
-            "OllamaClient.chat payload: model=%s messages=%s tools=%s",
+            "OllamaClient.chat payload: model=%s messages=%s think=%s tools=%s",
             model,
             messages,
+            self._think,
             [tool.get("type") or tool.get("function", {}).get("name") for tool in tools] if tools else None,
         )
 

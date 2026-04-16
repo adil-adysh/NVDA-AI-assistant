@@ -119,6 +119,10 @@ def get_ollama_server_url() -> str:
 	return _read_string("ollamaServerUrl", defaults.DEFAULT_OLLAMA_URL)
 
 
+def get_ollama_think() -> bool:
+	return _read_bool("ollamaThink", defaults.DEFAULT_OLLAMA_THINK)
+
+
 def get_gemini_model_name() -> str:
 	return _read_string("geminiModelName", defaults.DEFAULT_GEMINI_MODEL)
 
@@ -153,6 +157,7 @@ def get_ollama_config() -> "OllamaConfig":
 		generate_presence_penalty=get_generate_presence_penalty(),
 		server_url=get_ollama_server_url(),
 		keep_alive=get_keep_alive(),
+		think=get_ollama_think(),
 	)
 
 
@@ -296,6 +301,10 @@ def set_ollama_server_url(serverUrl: str) -> None:
 	_set_value("ollamaServerUrl", str(serverUrl).strip(), notify=True)
 
 
+def set_ollama_think(think: bool) -> None:
+	_set_value("ollamaThink", bool(think), notify=True)
+
+
 def set_gemini_model_name(modelName: str) -> None:
 	_set_value("geminiModelName", str(modelName).strip(), notify=True)
 
@@ -318,6 +327,7 @@ def set_ollama_config(config: OllamaConfig) -> None:
 			"provider": config.provider,
 			"ollamaModelName": config.model_name,
 			"ollamaServerUrl": config.server_url,
+			"ollamaThink": config.think,
 			"timeoutSeconds": config.timeout_seconds,
 			"numCtx": config.num_ctx,
 			"keepAlive": config.keep_alive,

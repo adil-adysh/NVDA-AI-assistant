@@ -23,6 +23,7 @@ class OllamaProvider(LLMProvider):
 				baseURL=config.server_url,
 				model=config.model_name,
 				timeoutSeconds=config.timeout_seconds,
+				think=config.think,
 			)
 		except OllamaClientError as error:
 			raise self._wrap_exception(error) from error

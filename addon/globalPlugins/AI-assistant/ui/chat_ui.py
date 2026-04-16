@@ -10,6 +10,7 @@ import markdown
 import wx
 
 from . import nvda_ui
+from ..config.settings import get_ollama_think, set_ollama_think
 from ..config.state import ProviderState
 from ..service import ChatCoordinator
 from ..tools import ToolRegistry
@@ -34,6 +35,7 @@ class ChatDialog(wx.Dialog):
         self._attached_image_base64 = initial_image_base64
         self._build_ui()
         self._refresh_provider_title()
+        self._refresh_ollama_think_checkbox()
         self._refresh_history()
         if initial_text:
             self.inputCtrl.SetValue(initial_text)
@@ -52,6 +54,17 @@ class ChatDialog(wx.Dialog):
     def update_provider_state(self, provider_state: ProviderState) -> None:
         self._provider_state = provider_state
         self._refresh_provider_title()
+        self._refresh_ollama_think_checkbox()
+
+    def on_think_toggled(self, event: Any) -> None:
+        if self._provider_state.provider.strip().lower() == "ollama":
+            set_ollama_think(self.thinkCheckbox.Value)
+        event.Skip()
+
+    def _refresh_ollama_think_checkbox(self) -> None:
+        is_ollama = self._provider_state.provider.strip().lower() == "ollama"
+        self.thinkCheckbox.Show(is_ollama)
+        self.Layout()
 
     HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
@@ -114,6 +127,14 @@ a:hover { text-decoration: underline; }
         self.toolCheckbox.SetToolTip(_("Allow the model to call available tools: {tools}." ).format(tools=supported_tools))
         self.toolCheckbox.SetValue(True)
         mainSizer.Add(self.toolCheckbox, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+
+        self.thinkCheckbox = wx.CheckBox(self, label=_('Enable Ollama think mode'))
+        self.thinkCheckbox.SetToolTip(
+            _('Send Ollama chat requests with think=true when Ollama is selected.')
+        )
+        self.thinkCheckbox.Value = get_ollama_think()
+        self.thinkCheckbox.Bind(wx.EVT_CHECKBOX, self.on_think_toggled)
+        mainSizer.Add(self.thinkCheckbox, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
         buttonSizer = wx.BoxSizer(wx.HORIZONTAL)
         self.sendButton = wx.Button(self, label=_("Send"))

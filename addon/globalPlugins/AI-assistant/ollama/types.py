@@ -53,6 +53,7 @@ class OllamaChatRequest(TypedDict, total=False):
     model: str
     messages: list[OllamaChatMessage]
     stream: bool
+    think: bool
     options: dict[str, Any]
     keep_alive: str
     tools: list[OllamaToolDefinition]
