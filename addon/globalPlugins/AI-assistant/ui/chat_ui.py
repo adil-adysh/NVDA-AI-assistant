@@ -275,9 +275,10 @@ a:hover { text-decoration: underline; }
     def _show_history(self) -> None:
         if not getattr(self, "_history_html", None):
             self._refresh_history()
+        title = nvda_ui.format_browseable_title(_("AI Chat History"), self._provider_state)
         nvda_ui.browseable_message(
             self._history_html,
-            title=_("AI Chat History"),
+            title=title,
             is_html=True,
             close_button=True,
             copy_button=True,
@@ -285,9 +286,10 @@ a:hover { text-decoration: underline; }
 
     def _display_last_turn(self, user_message: str, assistant_message: str) -> None:
         html = self._build_last_turn_html(user_message, assistant_message)
+        title = nvda_ui.format_browseable_title(_("Response Preview"), self._provider_state)
         nvda_ui.browseable_message(
             html,
-            title=_("Response Preview"),
+            title=title,
             is_html=True,
             close_button=True,
             copy_button=True,

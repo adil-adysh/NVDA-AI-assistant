@@ -9,9 +9,27 @@ from typing import Any, Callable
 import queueHandler
 import ui
 
+from ..config.state import ProviderState
+
 
 def message(text: str) -> None:
     ui.message(text)
+
+
+def format_browseable_title(title: str, provider_state: ProviderState | None = None) -> str:
+    """Return a title string that includes the current provider and model name."""
+    if provider_state is None:
+        return title
+
+    provider = provider_state.provider.strip()
+    model_name = provider_state.model_name.strip()
+    if not provider:
+        return title
+
+    provider_label = provider.capitalize()
+    if model_name:
+        return f"{title} — {provider_label} ({model_name})"
+    return f"{title} — {provider_label}"
 
 
 def browseable_message(

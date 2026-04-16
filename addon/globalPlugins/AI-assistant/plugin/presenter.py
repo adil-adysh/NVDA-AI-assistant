@@ -86,9 +86,10 @@ class UseCasePresenter:
 			nvda_ui.message(_("No result to display."))
 			return
 
+		browseable_title = nvda_ui.format_browseable_title(title, get_provider_state())
 		nvda_ui.browseable_message(
 			output_text,
-			title=title,
+			title=browseable_title,
 			is_html=is_html,
 			close_button=True,
 			copy_button=True,
