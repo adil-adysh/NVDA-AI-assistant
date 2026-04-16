@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import collections.abc
 import functools
 import threading
 from typing import Any, Callable
@@ -13,8 +14,22 @@ def message(text: str) -> None:
     ui.message(text)
 
 
-def browseable_message(text: str, title: str) -> None:
-    ui.browseableMessage(text, title=title)
+def browseable_message(
+    text: str,
+    title: str | None = None,
+    is_html: bool = False,
+    close_button: bool = False,
+    copy_button: bool = False,
+    sanitize_html_func: collections.abc.Callable[[str], str] = ui.nh3.clean,
+) -> None:
+    ui.browseableMessage(
+        text,
+        title=title,
+        isHtml=is_html,
+        closeButton=close_button,
+        copyButton=copy_button,
+        sanitizeHtmlFunc=sanitize_html_func,
+    )
 
 
 def queue(callback: Callable[..., None], *args: Any, **kwargs: Any) -> None:

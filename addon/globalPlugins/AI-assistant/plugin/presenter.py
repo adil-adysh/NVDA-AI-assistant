@@ -72,18 +72,27 @@ class UseCasePresenter:
 
 	def present_use_case_result(self, use_case_result: Any, title: str) -> None:
 		output_text = None
+		is_html = False
 		if isinstance(use_case_result, dict):
 			output_text = use_case_result.get("output_text")
+			is_html = bool(use_case_result.get("is_html"))
 		else:
 			metadata = getattr(use_case_result, "metadata", None)
 			if isinstance(metadata, dict):
 				output_text = metadata.get("output_text")
+				is_html = bool(metadata.get("is_html"))
 
 		if not isinstance(output_text, str) or not output_text.strip():
 			nvda_ui.message(_("No result to display."))
 			return
 
-		nvda_ui.browseable_message(output_text, title=title)
+		nvda_ui.browseable_message(
+			output_text,
+			title=title,
+			is_html=is_html,
+			close_button=True,
+			copy_button=True,
+		)
 
 	def progress_handler(self, event: ProgressEvent) -> None:
 		if event.stage == "error":
