@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from ..context.types import ContextProfileList, PromptContext
 
-LLMMethod = Literal["summarize", "describe_image"]
+LLMMethod = Literal["summarize", "describe_image", "generate"]
 
 
 @dataclass(frozen=True, slots=True)

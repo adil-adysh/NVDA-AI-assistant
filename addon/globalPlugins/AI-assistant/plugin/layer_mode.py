@@ -30,6 +30,7 @@ class AssistantLayerController:
 		self._restore_default_gestures = restore_default_gestures
 		self._active = False
 		self._layered_script_to_run: Callable[[Any], None] | None = None
+		self._keep_active = False
 
 	@property
 	def active(self) -> bool:
@@ -44,7 +45,7 @@ class AssistantLayerController:
 		self._active = True
 		nvda_ui.message(
 			_(
-				"AI assistant layer active. Press S for summary, I for image describe, C for chat, P for page content, X for screenshot, T for provider toggle, or H for help."
+				"AI assistant layer active. Press S for summary, I for image describe, C for chat, P for page content, X for screenshot, U for custom use cases, E for explain code, T for provider toggle, or H for help."
 			)
 		)
 
@@ -66,6 +67,10 @@ class AssistantLayerController:
 			else:
 				nvda_ui.message(_("Can't find this assistant layer script."))
 		finally:
+			if self._keep_active:
+				self._keep_active = False
+				self._layered_script_to_run = None
+				return
 			self.finish()
 
 	def finish(self) -> None:
@@ -73,6 +78,9 @@ class AssistantLayerController:
 		self._layered_script_to_run = None
 		self._clear_gesture_bindings()
 		self._restore_default_gestures()
+
+	def sustain(self) -> None:
+		self._keep_active = True
 
 	def script_error(self, gesture: Any):
 		nvda_ui.message(_("Can't find this assistant layer script."))

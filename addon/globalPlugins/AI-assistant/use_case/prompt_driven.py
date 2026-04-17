@@ -3,10 +3,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from logHandler import log
 from ..context.prompt import render_prompt
 from ..context.pipeline import ContextPipeline
 from ..context.types import ImageContext, PromptContext
-from ..core.messages import SummaryResponse
+from ..core.message_transforms import build_user_message
+from ..core.messages import LLMResponse, SummaryResponse
 from ..service.llm import LLMService
 from .base import UseCase
 from .types import UseCaseResult, UseCaseSpec
@@ -31,6 +33,7 @@ class PromptDrivenUseCase(UseCase):
 		emit: ContextEmitter = None,
 		**kwargs: object,
 	) -> UseCaseResult:
+		log.info("PromptDrivenUseCase start: %s prompt_key=%s llm_method=%s", self.spec.id, self.spec.prompt_key, self.spec.llm_method)
 		if emit is not None:
 			emit("collecting_context", f"Collecting context for {self.spec.id}...")
 
@@ -43,6 +46,7 @@ class PromptDrivenUseCase(UseCase):
 		if emit is not None:
 			emit("building_prompt", f"Building {self.spec.id} prompt...")
 		prompt = render_prompt(self.spec.prompt_key, prompt_context)
+		log.debug("PromptDrivenUseCase rendered prompt for %s (chars=%d)", self.spec.id, len(prompt))
 
 		response = self._dispatch_llm_method(llm_service, prompt_context, prompt, emit=emit)
 
@@ -57,6 +61,7 @@ class PromptDrivenUseCase(UseCase):
 				"model": response.model,
 				"prompt_key": self.spec.prompt_key,
 				"prompt_chars": len(prompt),
+				"is_html": self.spec.llm_method == "generate",
 			},
 		)
 
@@ -66,7 +71,7 @@ class PromptDrivenUseCase(UseCase):
 		prompt_context: PromptContext,
 		prompt: str,
 		emit: ContextEmitter = None,
-	) -> SummaryResponse:
+	) -> SummaryResponse | LLMResponse:
 		if self.spec.llm_method == "summarize":
 			if emit is not None:
 				emit("llm_request", "Generating summary...")
@@ -83,6 +88,13 @@ class PromptDrivenUseCase(UseCase):
 				image_base64 = prompt_context.image_base64 or ""
 			return llm_service.describe_image(image_base64=image_base64, prompt=prompt)
 
+		if self.spec.llm_method == "generate":
+			if emit is not None:
+				emit("llm_request", "Generating text response...")
+			message = build_user_message(text=prompt)
+			return llm_service.generate(messages=[message])
+
+		log.error("PromptDrivenUseCase unsupported llm_method for %s: %s", self.spec.id, self.spec.llm_method)
 		raise ValueError(
-			"PromptDrivenUseCase requires a valid llm_method: summarize or describe_image"
+			"PromptDrivenUseCase requires a valid llm_method: summarize, describe_image, or generate"
 		)

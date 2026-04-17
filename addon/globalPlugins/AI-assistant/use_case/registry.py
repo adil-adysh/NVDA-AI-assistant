@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from logHandler import log
+
 from ..config.settings import get_custom_use_case_definitions
 from .base import UseCase
 from .chat import (
@@ -17,13 +19,15 @@ from .types import ContextProfileList, UseCaseSpec
 
 
 def build_default_use_cases() -> tuple[UseCase, ...]:
-	return (
+	default_cases = (
 		SummaryUseCase(),
 		ImageDescriptionUseCase(),
 		OpenChatUseCase(),
 		OpenChatWithPageContentUseCase(),
 		OpenChatWithScreenshotUseCase(),
 	)
+	log.info("Loaded built-in use cases: %s", [use_case.spec.id for use_case in default_cases])
+	return default_cases
 
 
 def build_default_use_case_specs() -> tuple[UseCaseSpec, ...]:
@@ -37,6 +41,10 @@ def build_custom_use_cases() -> tuple[UseCase, ...]:
 def build_registered_use_cases() -> tuple[UseCase, ...]:
 	default_cases = build_default_use_cases()
 	custom_cases = build_custom_use_cases()
+	if custom_cases:
+		log.info("Loaded custom use cases: %s", [use_case.spec.id for use_case in custom_cases])
+	else:
+		log.info("No custom use cases loaded")
 	default_ids = {use_case.spec.id for use_case in default_cases}
 	for custom_case in custom_cases:
 		if custom_case.spec.id in default_ids:
@@ -46,12 +54,17 @@ def build_registered_use_cases() -> tuple[UseCase, ...]:
 
 def build_custom_use_case_specs() -> tuple[UseCaseSpec, ...]:
 	custom_definitions = get_custom_use_case_definitions()
+	if not custom_definitions:
+		log.debug("No custom use case definitions found in configuration")
+	else:
+		log.debug("Found custom use case definitions: %s", list(custom_definitions.keys()))
 	specs: list[UseCaseSpec] = []
 	for use_case_id, raw_definition in custom_definitions.items():
 		try:
 			specs.append(_build_custom_use_case_spec(use_case_id, raw_definition))
-		except ValueError:
-			continue
+			log.info("Registered custom use case: %s", use_case_id)
+		except ValueError as error:
+			log.warning("Skipping invalid custom use case '%s': %s", use_case_id, error)
 	return tuple(specs)
 
 
@@ -59,7 +72,7 @@ def _build_custom_use_case_spec(use_case_id: str, raw_definition: Any) -> UseCas
 	if not isinstance(raw_definition, dict):
 		raise ValueError("Custom use case definition must be a dict")
 
-	prompt_key = raw_definition.get("prompt_key")
+	prompt_key = raw_definition.get("prompt_key") or use_case_id
 	description = raw_definition.get("description")
 	context_profile = raw_definition.get("context_profile", ())
 	llm_method = raw_definition.get("llm_method")
@@ -71,7 +84,7 @@ def _build_custom_use_case_spec(use_case_id: str, raw_definition: Any) -> UseCas
 		raise ValueError(f"Custom use case {use_case_id} requires a prompt_key")
 	if not isinstance(description, str) or not description.strip():
 		raise ValueError(f"Custom use case {use_case_id} requires a description")
-	if not isinstance(llm_method, str) or llm_method.strip() not in ("summarize", "describe_image"):
+	if not isinstance(llm_method, str) or llm_method.strip().lower() not in ("summarize", "describe_image", "generate"):
 		raise ValueError(f"Custom use case {use_case_id} requires a valid llm_method")
 
 	return UseCaseSpec(
@@ -79,7 +92,7 @@ def _build_custom_use_case_spec(use_case_id: str, raw_definition: Any) -> UseCas
 		description=description.strip(),
 		context_profile=_normalize_context_profile(context_profile),
 		prompt_key=prompt_key.strip(),
-		llm_method=llm_method.strip(),
+		llm_method=llm_method.strip().lower(),
 		tools=(),
 		requires_input=requires_input,
 	)

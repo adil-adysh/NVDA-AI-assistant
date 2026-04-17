@@ -117,6 +117,20 @@ CHAT_WITH_IMAGE_CONTEXT_TEMPLATE = (
     "${text}\n"
 )
 
+EXPLAIN_CODE_TEMPLATE = (
+    "${system_prompt}\n"
+    "Goal: Explain the code snippet or code-related content clearly and simply for a developer.\n"
+    "\n"
+    "Rules:\n"
+    "* Describe what the code does and why it matters.\n"
+    "* Explain non-obvious implementation choices.\n"
+    "* Keep the explanation accessible to someone with basic programming knowledge.\n"
+    "* Do NOT change the code.\n"
+    "\n"
+    "Code context:\n"
+    "${text}\n"
+)
+
 
 def register_default_prompt(template: PromptTemplate) -> None:
     _DEFAULT_PROMPTS[(template.key, template.provider_name)] = template
@@ -167,5 +181,12 @@ register_default_prompt(
         key="chat_with_image_context",
         description="Default chat prompt template with image context.",
         template=CHAT_WITH_IMAGE_CONTEXT_TEMPLATE,
+    )
+)
+register_default_prompt(
+    PromptTemplate(
+        key="explain_code",
+        description="Default code explanation prompt template.",
+        template=EXPLAIN_CODE_TEMPLATE,
     )
 )

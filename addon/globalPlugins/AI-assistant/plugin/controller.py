@@ -73,9 +73,16 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._app.open_chat_with_screenshot()
 
 	@script(
+		description=_("Explains the current code snippet using the configured AI assistant."),
+	)
+	def script_explainCode(self, gesture: Any):
+		log.debug("Script explainCode invoked gesture=%s", gesture)
+		self._app.run_custom_use_case("explain_code")
+
+	@script(
 		description=_(
 			"Activate the AI assistant command layer. "
-			"Press S for summary, I for image describe, C for chat, H for help."
+			"Press S for summary, I for image describe, C for chat, P for page content, X for screenshot, U for custom use cases, E for explain code, T for provider toggle, H for help."
 		),
 		gesture="kb:NVDA+Shift+A",
 	)
@@ -85,6 +92,22 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			self.script_error(gesture)
 			return
 		self._app.activate_assistant_layer()
+
+	@script(
+		description=_("Lists available custom AI use cases."),
+	)
+	def script_listCustomUseCases(self, gesture: Any):
+		log.debug("Script listCustomUseCases invoked gesture=%s", gesture)
+		self._app.layer_mode.sustain()
+		self._app.list_custom_use_cases()
+
+	@script(
+		description=_("Activates a custom AI use case by pressing a number key while the assistant layer is active."),
+	)
+	def script_activateCustomUseCase(self, gesture: Any):
+		main_key = getattr(gesture, "mainKeyName", "")
+		log.debug("Script activateCustomUseCase invoked gesture=%s key=%s", gesture, main_key)
+		self._app.activate_custom_use_case_by_key(str(main_key))
 
 	@script(
 		description=_("Toggles the active AI provider between Ollama and Gemini."),

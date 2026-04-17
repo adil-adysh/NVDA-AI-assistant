@@ -4,6 +4,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from logHandler import log
+
 from ..context.pipeline import ContextPipeline
 from ..core.events import ProgressEvent, ProgressHandler
 from ..service import LLMService
@@ -31,7 +33,19 @@ class UseCaseEngine:
 		except KeyError as error:
 			raise ValueError(f"Unknown use case: {use_case_id}") from error
 
+	def get_custom_use_case_specs(self) -> tuple[UseCaseSpec, ...]:
+		from ..config.settings import get_custom_use_case_definitions
+
+		custom_definitions = get_custom_use_case_definitions()
+		specs: list[UseCaseSpec] = []
+		for use_case_id in custom_definitions.keys():
+			spec = self._specs.get(use_case_id)
+			if spec is not None:
+				specs.append(spec)
+		return tuple(specs)
+
 	def execute(self, use_case_id: str, progress: ProgressHandler | None = None, **kwargs: Any) -> UseCaseResult:
+		log.info("UseCaseEngine execute start: %s", use_case_id)
 		def emit(stage: str, message: str) -> None:
 			if progress is not None:
 				progress(ProgressEvent(stage=stage, message=message))
@@ -48,8 +62,10 @@ class UseCaseEngine:
 				**kwargs,
 			)
 		except Exception as error:
+			log.exception("UseCaseEngine failed executing %s", use_case_id)
 			emit("error", str(error))
 			raise
 
+		log.info("UseCaseEngine execute complete: %s success=%s", use_case_id, getattr(result, 'success', False))
 		emit("complete", result.message or f"{use_case_id} complete")
 		return result

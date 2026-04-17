@@ -51,6 +51,18 @@ class AIAssistantApplication:
 				("c", host.script_openChatWindow),
 				("p", host.script_openChatWithPageContent),
 				("x", host.script_openChatWithScreenshot),
+				("u", host.script_listCustomUseCases),
+				("1", host.script_activateCustomUseCase),
+				("2", host.script_activateCustomUseCase),
+				("3", host.script_activateCustomUseCase),
+				("4", host.script_activateCustomUseCase),
+				("5", host.script_activateCustomUseCase),
+				("6", host.script_activateCustomUseCase),
+				("7", host.script_activateCustomUseCase),
+				("8", host.script_activateCustomUseCase),
+				("9", host.script_activateCustomUseCase),
+				("0", host.script_activateCustomUseCase),
+				("e", host.script_explainCode),
 				("t", host.script_toggleAIProvider),
 				("h", host.script_assistantLayerHelp),
 			),
@@ -131,6 +143,60 @@ class AIAssistantApplication:
 			),
 		)
 
+	def run_custom_use_case(self, use_case_id: str, title: str | None = None) -> None:
+		spec = self._services.use_case_engine.get_spec(use_case_id)
+		self.background.run_use_case_in_background(
+			use_case_id,
+			title=title or spec.description,
+			render_result=lambda result: self.presenter.present_use_case_result(
+				result,
+				title=title or spec.description,
+			),
+		)
+
+	def _get_custom_use_case_specs(self) -> tuple[UseCaseSpec, ...]:
+		return self._services.use_case_engine.get_custom_use_case_specs()
+
+	def list_custom_use_cases(self) -> None:
+		specs = self._get_custom_use_case_specs()
+		if not specs:
+			nvda_ui.message(_("No custom AI use cases are defined."))
+			return
+
+		entries: list[str] = []
+		for index, spec in enumerate(specs, start=1):
+			key = "0" if index == 10 else str(index)
+			entries.append(f"{key}. {spec.description} ({spec.id})")
+		message_text = _(
+			"Custom AI use cases:\n"
+		) + "\n".join(entries)
+		if len(specs) > 10:
+			message_text += _("\nOnly the first 10 custom use cases are shown.")
+		message_text += _("\nPress the digit key for the use case you want to run.")
+		nvda_ui.message(message_text)
+
+	def activate_custom_use_case_by_key(self, key: str) -> None:
+		specs = self._get_custom_use_case_specs()
+		if not specs:
+			nvda_ui.message(_("No custom AI use cases are defined."))
+			return
+
+		if key == "0":
+			index = 9
+		else:
+			try:
+				index = int(key) - 1
+			except ValueError:
+				index = -1
+
+		if index < 0 or index >= len(specs):
+			nvda_ui.message(_("Invalid custom use case selection."))
+			return
+
+		spec = specs[index]
+		nvda_ui.message(_(f"Running custom use case: {spec.description}."))
+		self.run_custom_use_case(spec.id)
+
 	def activate_assistant_layer(self) -> None:
 		self.layer_mode.activate()
 
@@ -150,7 +216,7 @@ class AIAssistantApplication:
 	def show_assistant_layer_help(self) -> None:
 		nvda_ui.message(
 			_(
-				"Assistant layer commands: S for summary, I for image describe, C for chat, P for page content, X for screenshot, T for provider toggle, H for help. Press the key after activating the layer with NVDA+Shift+A."
+				"Assistant layer commands: S for summary, I for image describe, C for chat, P for page content, X for screenshot, U for custom use cases, 1-0 for custom use case selection, E for explain code, T for provider toggle, H for help. Press the key after activating the layer with NVDA+Shift+A."
 			)
 		)
 

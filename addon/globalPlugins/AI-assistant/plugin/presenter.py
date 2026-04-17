@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Any, cast
 
 import gui
+import markdown
 from logHandler import log
 
 from ..config.state import ProviderState
@@ -87,6 +88,24 @@ class UseCasePresenter:
 			return
 
 		browseable_title = nvda_ui.format_browseable_title(title, get_provider_state())
+		if is_html and isinstance(output_text, str) and output_text.strip():
+			try:
+				output_text = markdown.markdown(
+					output_text,
+					output_format="html5",
+					extensions=["extra", "smarty", "sane_lists"],
+				)
+			except Exception:
+				log.exception("Error rendering markdown for use case result")
+			nvda_ui.browseable_message(
+				output_text,
+				title=browseable_title,
+				is_html=True,
+				close_button=True,
+				copy_button=True,
+			)
+			return
+
 		nvda_ui.browseable_message(
 			output_text,
 			title=browseable_title,
