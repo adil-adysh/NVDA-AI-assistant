@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from ..context.types import ContextProfileList, PromptContext
+
+LLMMethod = Literal["summarize", "describe_image"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,6 +15,7 @@ class UseCaseSpec:
 	description: str
 	context_profile: ContextProfileList
 	prompt_key: str
+	llm_method: LLMMethod | None = None
 	tools: tuple[str, ...] = ()
 	requires_input: bool = False
 

@@ -17,6 +17,7 @@ from ..service.chat import ChatCoordinator
 from ..service.llm import ProviderLLMService
 from ..tools import ToolDefinition, ToolExecutor, ToolRegistry
 from ..use_case.engine import UseCaseEngine
+from ..use_case.registry import build_registered_use_cases
 from .types import PluginServices
 
 
@@ -50,6 +51,7 @@ def build_plugin_services() -> PluginServices:
 	use_case_engine = UseCaseEngine(
 		llm_service=llm_service,
 		context_pipeline=context_pipeline,
+		use_cases=build_registered_use_cases(),
 )
 	return PluginServices(
 		provider=provider,

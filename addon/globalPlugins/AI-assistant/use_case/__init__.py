@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from .catalog import build_default_use_case_specs
 from .engine import UseCaseEngine
-from .registry import build_default_use_cases
+from .registry import build_default_use_cases, build_registered_use_cases
 from .types import UseCaseResult, UseCaseSpec
 
 __all__ = [
@@ -12,4 +12,5 @@ __all__ = [
 	"UseCaseSpec",
 	"build_default_use_case_specs",
 	"build_default_use_cases",
+	"build_registered_use_cases",
 ]

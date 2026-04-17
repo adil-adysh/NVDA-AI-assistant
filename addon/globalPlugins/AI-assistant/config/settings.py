@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 _config_store = YamlConfigStore()
 _PROMPT_TEMPLATES_KEY = "promptTemplates"
+_USE_CASES_KEY = "useCases"
 
 
 def _get_raw_setting(key: str, default: Any) -> Any:
@@ -471,3 +472,35 @@ def remove_prompt_template_override(promptKey: str) -> None:
 	if str(promptKey) in raw_templates:
 		del raw_templates[str(promptKey)]
 	_set_value(_PROMPT_TEMPLATES_KEY, raw_templates, notify=True)
+
+
+def get_custom_use_case_definitions() -> dict[str, dict[str, Any]]:
+	raw_use_cases = _get_raw_setting(_USE_CASES_KEY, {})
+	if not isinstance(raw_use_cases, dict):
+		return {}
+
+	valid_use_cases: dict[str, dict[str, Any]] = {}
+	for use_case_id, definition in raw_use_cases.items():
+		if not isinstance(use_case_id, str):
+			continue
+		if not isinstance(definition, dict):
+			continue
+		valid_use_cases[use_case_id] = definition
+	return valid_use_cases
+
+
+def set_custom_use_case_definition(use_case_id: str, definition: dict[str, Any]) -> None:
+	raw_use_cases = _get_raw_setting(_USE_CASES_KEY, {})
+	if not isinstance(raw_use_cases, dict):
+		raw_use_cases = {}
+	raw_use_cases[str(use_case_id)] = definition
+	_set_value(_USE_CASES_KEY, raw_use_cases, notify=True)
+
+
+def remove_custom_use_case_definition(use_case_id: str) -> None:
+	raw_use_cases = _get_raw_setting(_USE_CASES_KEY, {})
+	if not isinstance(raw_use_cases, dict):
+		return
+	if str(use_case_id) in raw_use_cases:
+		del raw_use_cases[str(use_case_id)]
+	_set_value(_USE_CASES_KEY, raw_use_cases, notify=True)
