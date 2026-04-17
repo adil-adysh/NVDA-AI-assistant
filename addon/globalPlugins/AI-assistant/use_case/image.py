@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from ..context.pipeline import ContextPipeline
-from ..context.prompts import build_image_description_prompt
+from ..context.prompt import render_prompt
 from ..context.types import IMAGE, ImageContext, PromptContext
 from ..service.llm import LLMService
 from .base import UseCase
@@ -41,7 +41,7 @@ class ImageDescriptionUseCase(UseCase):
 
 		if emit is not None:
 			emit("building_prompt", "Building image description prompt...")
-		prompt = build_image_description_prompt(image_context)
+		prompt = render_prompt(self.spec.prompt_key, prompt_context)
 		if emit is not None:
 			emit("llm_request", "Generating image description...")
 		response = llm_service.describe_image(

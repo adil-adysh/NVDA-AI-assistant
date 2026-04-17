@@ -18,21 +18,21 @@ addon_info = AddonInfo(
 	# Add-on summary/title, usually the user visible name of the add-on
 	# Translators: Summary/title for this add-on
 	# to be shown on installation and add-on information found in add-on store
-	addon_summary=_("AI assistant"),
+	addon_summary=_("AI Assistant"),
 	# Add-on description
 	# Translators: Long description to be shown for this add-on on add-on information found in add-on store
 	addon_description=_(
-		"""NVDA AI assistant helps NVDA users by using AI to simplify complex information, summarize content, and provide contextual guidance for tasks that are otherwise hard to access."""
+		"""AI Assistant brings AI-powered summaries, chat, and screen descriptions into NVDA. It helps users explore pages, application content, and screenshots without leaving the screen reader."""
 	),
 	# version
 	addon_version="0.6.0",
 	# Brief changelog for this version
 	# Translators: what's new content for this add-on version to be shown in the add-on store
 	addon_changelog=_(
-		"""added fixes for chat ui and improved error handling when gemini API key is invalid or missing"""
+		"""Improved chat UI, error handling, and provider validation."""
 	),
 	# Author(s)
-	addon_author="adil shaikh <ah.shaikh97@gmail.com>",
+	addon_author="Adil Shaikh <ah.shaikh97@gmail.com>",
 	# URL for the add-on documentation support
 	addon_url="https://github.com/adil-adysh/NVDA-AI-assistant",
 	# URL for the add-on repository where the source code can be found
@@ -48,9 +48,9 @@ addon_info = AddonInfo(
 	# Do not change unless you know what you are doing!
 	addon_updateChannel=None,
 	# Add-on license such as GPL 2
-	addon_license=None,
-	# URL for the license document the ad-on is licensed under
-	addon_licenseURL=None,
+	addon_license="GPL 2",
+	# URL for the license document the add-on is licensed under
+	addon_licenseURL="https://www.gnu.org/licenses/old-licenses/gpl-2.0.html",
 )
 
 # Define the python files that are the sources of your add-on.

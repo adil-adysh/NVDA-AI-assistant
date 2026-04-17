@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 
 _config_store = YamlConfigStore()
+_PROMPT_TEMPLATES_KEY = "promptTemplates"
 
 
 def _get_raw_setting(key: str, default: Any) -> Any:
@@ -444,3 +445,29 @@ def set_request_metrics_logging_enabled(enabled: bool) -> None:
 
 def set_request_metrics_log_path(path: str) -> None:
 	_set_value("requestMetricsLogPath", str(path).strip())
+
+
+def get_prompt_template_override(promptKey: str) -> str | None:
+	raw_templates = _get_raw_setting(_PROMPT_TEMPLATES_KEY, {})
+	if not isinstance(raw_templates, dict):
+		return None
+
+	template = raw_templates.get(str(promptKey))
+	return template if isinstance(template, str) and template.strip() else None
+
+
+def set_prompt_template_override(promptKey: str, templateText: str) -> None:
+	raw_templates = _get_raw_setting(_PROMPT_TEMPLATES_KEY, {})
+	if not isinstance(raw_templates, dict):
+		raw_templates = {}
+	raw_templates[str(promptKey)] = str(templateText)
+	_set_value(_PROMPT_TEMPLATES_KEY, raw_templates, notify=True)
+
+
+def remove_prompt_template_override(promptKey: str) -> None:
+	raw_templates = _get_raw_setting(_PROMPT_TEMPLATES_KEY, {})
+	if not isinstance(raw_templates, dict):
+		return
+	if str(promptKey) in raw_templates:
+		del raw_templates[str(promptKey)]
+	_set_value(_PROMPT_TEMPLATES_KEY, raw_templates, notify=True)

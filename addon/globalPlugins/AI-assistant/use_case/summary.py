@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from ..context.pipeline import ContextPipeline
-from ..context.prompts import build_page_summary_prompt
+from ..context.prompt import render_prompt
 from ..context.types import APP, PAGE, PromptContext
 from ..service.llm import LLMService
 from .base import UseCase
@@ -41,9 +41,9 @@ class SummaryUseCase(UseCase):
 
 		if emit is not None:
 			emit("building_prompt", "Building summary prompt...")
-		prompt = build_page_summary_prompt(page_context)
 		if emit is not None:
 			emit("llm_request", "Generating summary...")
+		prompt = render_prompt(self.spec.prompt_key, prompt_context)
 		response = llm_service.summarize(prompt)
 
 		return UseCaseResult(
