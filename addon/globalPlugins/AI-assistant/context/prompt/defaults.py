@@ -131,6 +131,12 @@ EXPLAIN_CODE_TEMPLATE = (
     "${text}\n"
 )
 
+PAGE_SUMMARY_KEY = "page_summary"
+IMAGE_DESCRIPTION_KEY = "image_description"
+CHAT_KEY = "chat"
+CHAT_WITH_PAGE_CONTEXT_KEY = "chat_with_page_context"
+CHAT_WITH_IMAGE_CONTEXT_KEY = "chat_with_image_context"
+
 
 def register_default_prompt(template: PromptTemplate) -> None:
     _DEFAULT_PROMPTS[(template.key, template.provider_name)] = template
@@ -150,42 +156,42 @@ def build_system_prompt_for_nvda_assistant() -> str:
 
 register_default_prompt(
     PromptTemplate(
-        key="page_summary",
+        key=PAGE_SUMMARY_KEY,
         description="Default page summary prompt template.",
         template=PAGE_SUMMARY_TEMPLATE,
     )
 )
 register_default_prompt(
     PromptTemplate(
-        key="image_description",
+        key=IMAGE_DESCRIPTION_KEY,
         description="Default image description prompt template.",
         template=IMAGE_DESCRIPTION_TEMPLATE,
     )
 )
 register_default_prompt(
     PromptTemplate(
-        key="chat",
+        key=CHAT_KEY,
         description="Default blank chat prompt template.",
         template=CHAT_TEMPLATE,
     )
 )
 register_default_prompt(
     PromptTemplate(
-        key="chat_with_page_context",
+        key=CHAT_WITH_PAGE_CONTEXT_KEY,
         description="Default chat prompt template with page context.",
         template=CHAT_WITH_PAGE_CONTEXT_TEMPLATE,
     )
 )
 register_default_prompt(
     PromptTemplate(
-        key="chat_with_image_context",
+        key=CHAT_WITH_IMAGE_CONTEXT_KEY,
         description="Default chat prompt template with image context.",
         template=CHAT_WITH_IMAGE_CONTEXT_TEMPLATE,
     )
 )
 register_default_prompt(
     PromptTemplate(
-        key="explain_code",
+        key=EXPLAIN_CODE_KEY,
         description="Default code explanation prompt template.",
         template=EXPLAIN_CODE_TEMPLATE,
     )

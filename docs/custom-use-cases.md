@@ -32,12 +32,12 @@ aiAssistant:
       description: "Summarize the current page in simple language."
       llm_method: summarize
       context_profile: ["page"]
-      prompt_template_key: page_summary
+      builtin_prompt_name: page_summary
 
     explainCode:
       description: "Explain a code snippet or selected code using the built-in code explanation prompt."
       llm_method: generate
-      prompt_template_key: explain_code
+      builtin_prompt_name: explain_code
 
     customHelp:
       description: "Analyze the current page and suggest the next best action."
@@ -56,17 +56,16 @@ aiAssistant:
 - `description` (required): a short text label shown in the custom use case list.
 - `llm_method` (required): one of `summarize`, `describe_image`, or `generate`.
 - `prompt_template` (optional): an inline prompt string for this use case.
-- `prompt_template_key` (optional): a named prompt template to render.
-- `prompt_key` (optional, legacy): a legacy alias for `prompt_template_key`.
+- `builtin_prompt_name` (optional): the name of a built-in prompt template to render.
 - `context_profile` (optional): choose one or more context profiles, for example `app`, `page`, or `image`.
 - `requires_input` (optional): set `true` if the use case conceptually needs user input.
 
 ## Prompt template behavior
 
-A custom use case must provide either `prompt_template` or `prompt_template_key`.
+Custom use cases must provide exactly one of `prompt_template` or `builtin_prompt_name`.
 
-- `prompt_template` lets you write a custom prompt directly in the config.
-- `prompt_template_key` reuses a named prompt template from the add-on.
+- `prompt_template` is used as raw prompt text.
+- `builtin_prompt_name` is resolved against the built-in prompt registry and rendered before the request is sent.
 
 Built-in prompt template keys include:
 

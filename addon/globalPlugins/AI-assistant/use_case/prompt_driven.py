@@ -34,9 +34,9 @@ class PromptDrivenUseCase(UseCase):
 		**kwargs: object,
 	) -> UseCaseResult:
 		log.info(
-			"PromptDrivenUseCase start: %s prompt_template_key=%s llm_method=%s",
+			"PromptDrivenUseCase start: %s prompt_template=%s llm_method=%s",
 			self.spec.id,
-			self.spec.prompt_template_key,
+			self.spec.prompt_template,
 			self.spec.llm_method,
 		)
 		if emit is not None:
@@ -45,20 +45,26 @@ class PromptDrivenUseCase(UseCase):
 		prompt_context = self.collect_prompt_context(context_pipeline, emit=emit)
 		if prompt_context is None:
 			prompt_context = PromptContext(use_case_id=self.spec.id, metadata={})
-		elif self.spec.prompt_template_key is not None:
-			prompt_context.metadata.setdefault("prompt_key", self.spec.prompt_template_key)
 
 		if emit is not None:
 			emit("building_prompt", f"Building {self.spec.id} prompt...")
-		if self.spec.prompt_template is not None:
-			prompt = self.spec.prompt_template
-			prompt_source = "template"
+		if self.spec.prompt_template is None and self.spec.builtin_prompt_name is None:
+			raise ValueError("PromptDrivenUseCase requires a prompt_template or builtin_prompt_name")
+
+		if self.spec.builtin_prompt_name is not None:
+			prompt = render_prompt(self.spec.builtin_prompt_name, prompt_context)
+			prompt_source = "builtin"
+			prompt_name = self.spec.builtin_prompt_name
 		else:
-			if self.spec.prompt_template_key is None:
-				raise ValueError("PromptDrivenUseCase requires a prompt_template or prompt_template_key")
-			prompt = render_prompt(self.spec.prompt_template_key, prompt_context)
-			prompt_source = "key"
-		log.debug("PromptDrivenUseCase rendered prompt for %s (source=%s chars=%d)", self.spec.id, prompt_source, len(prompt))
+			prompt = self.spec.prompt_template
+			prompt_source = "inline"
+			prompt_name = None
+		log.debug(
+			"PromptDrivenUseCase rendered prompt for %s (source=%s chars=%d)",
+			self.spec.id,
+			prompt_source,
+			len(prompt),
+		)
 
 		response = self._dispatch_llm_method(llm_service, prompt_context, prompt, emit=emit)
 
@@ -72,11 +78,13 @@ class PromptDrivenUseCase(UseCase):
 			metadata={
 				"output_text": response.text,
 				"model": response.model,
-				"prompt_template_key": self.spec.prompt_template_key,
+				"prompt_template": self.spec.prompt_template,
+				"builtin_prompt_name": self.spec.builtin_prompt_name,
 				"prompt_chars": len(prompt),
 				"prompt_source": prompt_source,
+				"prompt_name": prompt_name,
 			},
-	)
+		)
 
 	def _dispatch_llm_method(
 		self,

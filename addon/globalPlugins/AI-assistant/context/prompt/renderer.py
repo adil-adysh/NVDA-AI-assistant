@@ -22,7 +22,7 @@ def _build_render_values(prompt_context: PromptContext) -> dict[str, str]:
 
     return {
         "system_prompt": build_system_prompt_for_nvda_assistant(),
-        "prompt_key": str(prompt_context.metadata.get("prompt_key", "")),
+        "prompt_name": str(prompt_context.metadata.get("prompt_name", "")),
         "text": prompt_context.text or "",
         "page_title": page_context.title if page_context is not None else "",
         "app_title": page_context.app_title if page_context is not None else "",

@@ -17,10 +17,12 @@ from .extractors import (
 from .pipeline import ContextPipeline
 from .protocols import ContextCollector, ContextFragment
 from .prompt import (
-	build_chat_messages,
-	build_image_description_prompt,
-	build_page_summary_prompt,
 	build_system_prompt_for_nvda_assistant,
+	get_prompt_template,
+	prompt_template_exists,
+	render_prompt,
+	render_prompt_template,
+	register_user_prompt_override,
 )
 from .types import ImageContext, PageContext, PageSnapshot, PromptContext
 
@@ -30,10 +32,12 @@ __all__ = [
 	"ContextPipeline",
 	"BrowserAwarePageExtractor",
 	"BrowserCandidateProvider",
-	"build_chat_messages",
-	"build_image_description_prompt",
-	"build_page_summary_prompt",
 	"build_system_prompt_for_nvda_assistant",
+	"get_prompt_template",
+	"prompt_template_exists",
+	"render_prompt",
+	"render_prompt_template",
+	"register_user_prompt_override",
 	"CandidateProvider",
 	"ExtractionContext",
 	"GenericCandidateProvider",

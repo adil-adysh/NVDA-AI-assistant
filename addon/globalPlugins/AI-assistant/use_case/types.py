@@ -16,7 +16,7 @@ class UseCaseSpec:
 	description: str
 	context_profile: ContextProfileList
 	prompt_template: str | None = None
-	prompt_template_key: str | None = None
+	builtin_prompt_name: str | None = None
 	llm_method: LLMMethod | None = None
 	tools: tuple[str, ...] = ()
 	requires_input: bool = False

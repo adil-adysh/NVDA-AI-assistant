@@ -4,6 +4,11 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from ..context.pipeline import ContextPipeline
+from ..context.prompt.defaults import (
+	CHAT_KEY,
+	CHAT_WITH_IMAGE_CONTEXT_KEY,
+	CHAT_WITH_PAGE_CONTEXT_KEY,
+)
 from ..context.types import APP, IMAGE, PAGE, PageContext, PromptContext
 from ..service.llm import LLMService
 from .base import UseCase
@@ -17,7 +22,7 @@ class OpenChatUseCase(UseCase):
 			id="open_chat",
 			description="Open a blank chat session.",
 			context_profile=(),
-			prompt_template_key="chat",
+			builtin_prompt_name=CHAT_KEY,
 			tools=(),
 			requires_input=False,
 		)
@@ -39,7 +44,7 @@ class OpenChatUseCase(UseCase):
 				facts={},
 				text=kwargs.get("initial_text"),
 				image_base64=kwargs.get("initial_image_base64"),
-				metadata={"prompt_key": self.spec.prompt_template_key},
+				metadata={"builtin_prompt_name": self.spec.builtin_prompt_name},
 			),
 		)
 
@@ -51,7 +56,7 @@ class OpenChatWithPageContentUseCase(UseCase):
 			id="open_chat_with_page_content",
 			description="Open chat with the current page content preloaded.",
 			context_profile=(APP, PAGE),
-			prompt_template_key="chat_with_page_context",
+			builtin_prompt_name=CHAT_WITH_PAGE_CONTEXT_KEY,
 			tools=(),
 			requires_input=True,
 		)
@@ -90,7 +95,6 @@ class OpenChatWithPageContentUseCase(UseCase):
 			initial_text=page_content,
 			message="Chat window ready",
 			prompt_context=prompt_context,
-			metadata={"prompt_key": self.spec.prompt_template_key},
 		)
 
 
@@ -101,7 +105,7 @@ class OpenChatWithScreenshotUseCase(UseCase):
 			id="open_chat_with_screenshot",
 			description="Open chat with a screenshot attached.",
 			context_profile=(IMAGE,),
-			prompt_template_key="chat_with_image_context",
+			builtin_prompt_name=CHAT_WITH_IMAGE_CONTEXT_KEY,
 			tools=(),
 			requires_input=True,
 		)
@@ -132,5 +136,4 @@ class OpenChatWithScreenshotUseCase(UseCase):
 			initial_image_base64=image_base64,
 			message="Chat window ready",
 			prompt_context=prompt_context,
-			metadata={"prompt_key": self.spec.prompt_template_key},
 		)
