@@ -16,7 +16,7 @@ from .extractors import (
 )
 from .pipeline import ContextPipeline
 from .protocols import ContextCollector, ContextFragment
-from .prompts import (
+from .prompt import (
 	build_chat_messages,
 	build_image_description_prompt,
 	build_page_summary_prompt,
