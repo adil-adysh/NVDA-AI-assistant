@@ -73,22 +73,24 @@ class UseCasePresenter:
 
 	def present_use_case_result(self, use_case_result: Any, title: str) -> None:
 		output_text = None
-		is_html = False
+		output_format = None
 		if isinstance(use_case_result, dict):
 			output_text = use_case_result.get("output_text")
-			is_html = bool(use_case_result.get("is_html"))
+			output_format = use_case_result.get("output_format")
 		else:
+			output_format = getattr(use_case_result, "output_format", None)
 			metadata = getattr(use_case_result, "metadata", None)
 			if isinstance(metadata, dict):
 				output_text = metadata.get("output_text")
-				is_html = bool(metadata.get("is_html"))
+				if output_format is None:
+					output_format = metadata.get("output_format")
 
 		if not isinstance(output_text, str) or not output_text.strip():
 			nvda_ui.message(_("No result to display."))
 			return
 
 		browseable_title = nvda_ui.format_browseable_title(title, get_provider_state())
-		if is_html and isinstance(output_text, str) and output_text.strip():
+		if output_format == "markdown":
 			try:
 				output_text = markdown.markdown(
 					output_text,
@@ -106,6 +108,7 @@ class UseCasePresenter:
 			)
 			return
 
+		is_html = output_format == "html"
 		nvda_ui.browseable_message(
 			output_text,
 			title=browseable_title,

@@ -44,28 +44,21 @@ class AIAssistantApplication:
 			use_case_engine=self._services.use_case_engine,
 			progress_handler=self.presenter.progress_handler,
 		)
+		layer_bindings: list[tuple[str, Callable[[Any], None]]] = [
+			("s", host.script_summarizeCurrentPage),
+			("i", host.script_describeCurrentWindow),
+			("c", host.script_openChatWindow),
+			("p", host.script_openChatWithPageContent),
+			("x", host.script_openChatWithScreenshot),
+			("u", host.script_listCustomUseCases),
+			("t", host.script_toggleAIProvider),
+			("h", host.script_assistantLayerHelp),
+		]
+		for digit in range(1, 10):
+			layer_bindings.append((str(digit), host.script_activateCustomUseCase))
+		layer_bindings.append(("0", host.script_activateCustomUseCase))
 		self.layer_mode = AssistantLayerController(
-			bindings=(
-				("s", host.script_summarizeCurrentPage),
-				("i", host.script_describeCurrentWindow),
-				("c", host.script_openChatWindow),
-				("p", host.script_openChatWithPageContent),
-				("x", host.script_openChatWithScreenshot),
-				("u", host.script_listCustomUseCases),
-				("1", host.script_activateCustomUseCase),
-				("2", host.script_activateCustomUseCase),
-				("3", host.script_activateCustomUseCase),
-				("4", host.script_activateCustomUseCase),
-				("5", host.script_activateCustomUseCase),
-				("6", host.script_activateCustomUseCase),
-				("7", host.script_activateCustomUseCase),
-				("8", host.script_activateCustomUseCase),
-				("9", host.script_activateCustomUseCase),
-				("0", host.script_activateCustomUseCase),
-				("e", host.script_explainCode),
-				("t", host.script_toggleAIProvider),
-				("h", host.script_assistantLayerHelp),
-			),
+			bindings=tuple(layer_bindings),
 			bind_gesture=host.bindGesture,
 			clear_gesture_bindings=host.clearGestureBindings,
 			restore_default_gestures=host._restore_default_gesture_bindings,
@@ -216,7 +209,7 @@ class AIAssistantApplication:
 	def show_assistant_layer_help(self) -> None:
 		nvda_ui.message(
 			_(
-				"Assistant layer commands: S for summary, I for image describe, C for chat, P for page content, X for screenshot, U for custom use cases, 1-0 for custom use case selection, E for explain code, T for provider toggle, H for help. Press the key after activating the layer with NVDA+Shift+A."
+				"Assistant layer commands: S for summary, I for image describe, C for chat, P for page content, X for screenshot, U for custom use cases, 1-0 for custom use case selection, T for provider toggle, H for help. Press the key after activating the layer with NVDA+Shift+A."
 			)
 		)
 

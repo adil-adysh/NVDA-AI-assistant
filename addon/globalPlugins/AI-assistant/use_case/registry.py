@@ -6,6 +6,7 @@ from typing import Any
 from logHandler import log
 
 from ..config.settings import get_custom_use_case_definitions
+from ..context.prompt.registry import prompt_template_exists
 from .base import UseCase
 from .chat import (
 	OpenChatUseCase,
@@ -72,7 +73,24 @@ def _build_custom_use_case_spec(use_case_id: str, raw_definition: Any) -> UseCas
 	if not isinstance(raw_definition, dict):
 		raise ValueError("Custom use case definition must be a dict")
 
-	prompt_key = raw_definition.get("prompt_key") or use_case_id
+	prompt_template = raw_definition.get("prompt_template")
+	if isinstance(prompt_template, str):
+		prompt_template = prompt_template.strip()
+	else:
+		prompt_template = None
+
+	prompt_key = raw_definition.get("prompt_key")
+	if isinstance(prompt_key, str):
+		prompt_key = prompt_key.strip()
+	else:
+		prompt_key = None
+
+	prompt_template_key = raw_definition.get("prompt_template_key")
+	if isinstance(prompt_template_key, str):
+		prompt_template_key = prompt_template_key.strip()
+	else:
+		prompt_template_key = None
+
 	description = raw_definition.get("description")
 	context_profile = raw_definition.get("context_profile", ())
 	llm_method = raw_definition.get("llm_method")
@@ -80,18 +98,27 @@ def _build_custom_use_case_spec(use_case_id: str, raw_definition: Any) -> UseCas
 
 	if not isinstance(use_case_id, str) or not use_case_id.strip():
 		raise ValueError("Custom use case id must be a non-empty string")
-	if not isinstance(prompt_key, str) or not prompt_key.strip():
-		raise ValueError(f"Custom use case {use_case_id} requires a prompt_key")
 	if not isinstance(description, str) or not description.strip():
 		raise ValueError(f"Custom use case {use_case_id} requires a description")
 	if not isinstance(llm_method, str) or llm_method.strip().lower() not in ("summarize", "describe_image", "generate"):
 		raise ValueError(f"Custom use case {use_case_id} requires a valid llm_method")
 
+	if prompt_template is None:
+		if prompt_template_key is None:
+			prompt_template_key = prompt_key
+		if prompt_template_key is None:
+			prompt_template_key = use_case_id
+		if not isinstance(prompt_template_key, str) or not prompt_template_key.strip():
+			raise ValueError(f"Custom use case {use_case_id} requires either prompt_template or prompt_template_key")
+		if not prompt_template_exists(prompt_template_key):
+			raise ValueError(f"Custom use case {use_case_id} uses unknown prompt_template_key: {prompt_template_key}")
+
 	return UseCaseSpec(
 		id=use_case_id,
 		description=description.strip(),
 		context_profile=_normalize_context_profile(context_profile),
-		prompt_key=prompt_key.strip(),
+		prompt_template=prompt_template,
+		prompt_template_key=prompt_template_key,
 		llm_method=llm_method.strip().lower(),
 		tools=(),
 		requires_input=requires_input,

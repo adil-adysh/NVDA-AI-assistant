@@ -13,7 +13,7 @@ class SummaryUseCase(PromptDrivenUseCase):
 			id="summary",
 			description="Summarize the current page content.",
 			context_profile=(APP, PAGE),
-			prompt_key="page_summary",
+			prompt_template_key="page_summary",
 			llm_method="summarize",
 			tools=(),
 			requires_input=False,

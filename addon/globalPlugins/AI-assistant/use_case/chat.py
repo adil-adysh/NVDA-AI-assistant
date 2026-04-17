@@ -17,7 +17,7 @@ class OpenChatUseCase(UseCase):
 			id="open_chat",
 			description="Open a blank chat session.",
 			context_profile=(),
-			prompt_key="chat",
+			prompt_template_key="chat",
 			tools=(),
 			requires_input=False,
 		)
@@ -39,7 +39,7 @@ class OpenChatUseCase(UseCase):
 				facts={},
 				text=kwargs.get("initial_text"),
 				image_base64=kwargs.get("initial_image_base64"),
-				metadata={"prompt_key": self.spec.prompt_key},
+				metadata={"prompt_key": self.spec.prompt_template_key},
 			),
 		)
 
@@ -51,7 +51,7 @@ class OpenChatWithPageContentUseCase(UseCase):
 			id="open_chat_with_page_content",
 			description="Open chat with the current page content preloaded.",
 			context_profile=(APP, PAGE),
-			prompt_key="chat_with_page_context",
+			prompt_template_key="chat_with_page_context",
 			tools=(),
 			requires_input=True,
 		)
@@ -90,7 +90,7 @@ class OpenChatWithPageContentUseCase(UseCase):
 			initial_text=page_content,
 			message="Chat window ready",
 			prompt_context=prompt_context,
-			metadata={"prompt_key": self.spec.prompt_key},
+			metadata={"prompt_key": self.spec.prompt_template_key},
 		)
 
 
@@ -101,7 +101,7 @@ class OpenChatWithScreenshotUseCase(UseCase):
 			id="open_chat_with_screenshot",
 			description="Open chat with a screenshot attached.",
 			context_profile=(IMAGE,),
-			prompt_key="chat_with_image_context",
+			prompt_template_key="chat_with_image_context",
 			tools=(),
 			requires_input=True,
 		)
@@ -132,5 +132,5 @@ class OpenChatWithScreenshotUseCase(UseCase):
 			initial_image_base64=image_base64,
 			message="Chat window ready",
 			prompt_context=prompt_context,
-			metadata={"prompt_key": self.spec.prompt_key},
+			metadata={"prompt_key": self.spec.prompt_template_key},
 		)

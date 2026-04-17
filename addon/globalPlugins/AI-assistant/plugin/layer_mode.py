@@ -45,7 +45,7 @@ class AssistantLayerController:
 		self._active = True
 		nvda_ui.message(
 			_(
-				"AI assistant layer active. Press S for summary, I for image describe, C for chat, P for page content, X for screenshot, U for custom use cases, E for explain code, T for provider toggle, or H for help."
+				"AI assistant layer active. Press S for summary, I for image describe, C for chat, P for page content, X for screenshot, U for custom use cases, T for provider toggle, or H for help."
 			)
 		)
 

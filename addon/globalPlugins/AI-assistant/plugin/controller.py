@@ -73,16 +73,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._app.open_chat_with_screenshot()
 
 	@script(
-		description=_("Explains the current code snippet using the configured AI assistant."),
-	)
-	def script_explainCode(self, gesture: Any):
-		log.debug("Script explainCode invoked gesture=%s", gesture)
-		self._app.run_custom_use_case("explain_code")
-
-	@script(
 		description=_(
 			"Activate the AI assistant command layer. "
-			"Press S for summary, I for image describe, C for chat, P for page content, X for screenshot, U for custom use cases, E for explain code, T for provider toggle, H for help."
+			"Press S for summary, I for image describe, C for chat, P for page content, X for screenshot, U for custom use cases, T for provider toggle, H for help."
 		),
 		gesture="kb:NVDA+Shift+A",
 	)

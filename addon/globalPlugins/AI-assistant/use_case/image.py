@@ -13,7 +13,7 @@ class ImageDescriptionUseCase(PromptDrivenUseCase):
 			id="describe_image",
 			description="Describe the current foreground window screenshot.",
 			context_profile=(IMAGE,),
-			prompt_key="image_description",
+			prompt_template_key="image_description",
 			llm_method="describe_image",
 			tools=(),
 			requires_input=False,

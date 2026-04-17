@@ -11,7 +11,7 @@ from ..core.message_transforms import build_user_message
 from ..core.messages import LLMResponse, SummaryResponse
 from ..service.llm import LLMService
 from .base import UseCase
-from .types import UseCaseResult, UseCaseSpec
+from .types import OutputFormat, UseCaseResult, UseCaseSpec
 
 ContextEmitter = Callable[[str, str], None] | None
 
@@ -33,20 +33,32 @@ class PromptDrivenUseCase(UseCase):
 		emit: ContextEmitter = None,
 		**kwargs: object,
 	) -> UseCaseResult:
-		log.info("PromptDrivenUseCase start: %s prompt_key=%s llm_method=%s", self.spec.id, self.spec.prompt_key, self.spec.llm_method)
+		log.info(
+			"PromptDrivenUseCase start: %s prompt_template_key=%s llm_method=%s",
+			self.spec.id,
+			self.spec.prompt_template_key,
+			self.spec.llm_method,
+		)
 		if emit is not None:
 			emit("collecting_context", f"Collecting context for {self.spec.id}...")
 
 		prompt_context = self.collect_prompt_context(context_pipeline, emit=emit)
 		if prompt_context is None:
 			prompt_context = PromptContext(use_case_id=self.spec.id, metadata={})
-		else:
-			prompt_context.metadata.setdefault("prompt_key", self.spec.prompt_key)
+		elif self.spec.prompt_template_key is not None:
+			prompt_context.metadata.setdefault("prompt_key", self.spec.prompt_template_key)
 
 		if emit is not None:
 			emit("building_prompt", f"Building {self.spec.id} prompt...")
-		prompt = render_prompt(self.spec.prompt_key, prompt_context)
-		log.debug("PromptDrivenUseCase rendered prompt for %s (chars=%d)", self.spec.id, len(prompt))
+		if self.spec.prompt_template is not None:
+			prompt = self.spec.prompt_template
+			prompt_source = "template"
+		else:
+			if self.spec.prompt_template_key is None:
+				raise ValueError("PromptDrivenUseCase requires a prompt_template or prompt_template_key")
+			prompt = render_prompt(self.spec.prompt_template_key, prompt_context)
+			prompt_source = "key"
+		log.debug("PromptDrivenUseCase rendered prompt for %s (source=%s chars=%d)", self.spec.id, prompt_source, len(prompt))
 
 		response = self._dispatch_llm_method(llm_service, prompt_context, prompt, emit=emit)
 
@@ -56,14 +68,15 @@ class PromptDrivenUseCase(UseCase):
 			initial_text=prompt_context.text,
 			initial_image_base64=prompt_context.image_base64,
 			prompt_context=prompt_context,
+			output_format="markdown" if self.spec.llm_method == "generate" else "text",
 			metadata={
 				"output_text": response.text,
 				"model": response.model,
-				"prompt_key": self.spec.prompt_key,
+				"prompt_template_key": self.spec.prompt_template_key,
 				"prompt_chars": len(prompt),
-				"is_html": self.spec.llm_method == "generate",
+				"prompt_source": prompt_source,
 			},
-		)
+	)
 
 	def _dispatch_llm_method(
 		self,
