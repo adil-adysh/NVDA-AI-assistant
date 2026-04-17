@@ -34,11 +34,6 @@ aiAssistant:
       context_profile: ["page"]
       builtin_prompt_name: page_summary
 
-    explainCode:
-      description: "Explain a code snippet or selected code using the built-in code explanation prompt."
-      llm_method: generate
-      builtin_prompt_name: explain_code
-
     customHelp:
       description: "Analyze the current page and suggest the next best action."
       llm_method: generate
@@ -74,9 +69,6 @@ Built-in prompt template keys include:
 - `chat`
 - `chat_with_page_context`
 - `chat_with_image_context`
-- `explain_code`
-
-The `explain_code` template is included as a reusable prompt key, but code explanation itself must be defined as a custom use case in `useCases:`.
 
 ## Prompt variables
 
@@ -110,9 +102,9 @@ Example:
 ```yaml
 aiAssistant:
   promptTemplates:
-    explain_code: |
+    page_summary: |
       ${system_prompt}
-      Explain the following code block clearly for a developer who is new to the project.
+      Summarize the current page content clearly and concisely for an assistive user.
       ${text}
 ```
 

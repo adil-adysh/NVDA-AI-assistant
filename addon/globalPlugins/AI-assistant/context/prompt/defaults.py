@@ -117,20 +117,6 @@ CHAT_WITH_IMAGE_CONTEXT_TEMPLATE = (
     "${text}\n"
 )
 
-EXPLAIN_CODE_TEMPLATE = (
-    "${system_prompt}\n"
-    "Goal: Explain the code snippet or code-related content clearly and simply for a developer.\n"
-    "\n"
-    "Rules:\n"
-    "* Describe what the code does and why it matters.\n"
-    "* Explain non-obvious implementation choices.\n"
-    "* Keep the explanation accessible to someone with basic programming knowledge.\n"
-    "* Do NOT change the code.\n"
-    "\n"
-    "Code context:\n"
-    "${text}\n"
-)
-
 PAGE_SUMMARY_KEY = "page_summary"
 IMAGE_DESCRIPTION_KEY = "image_description"
 CHAT_KEY = "chat"
@@ -187,12 +173,5 @@ register_default_prompt(
         key=CHAT_WITH_IMAGE_CONTEXT_KEY,
         description="Default chat prompt template with image context.",
         template=CHAT_WITH_IMAGE_CONTEXT_TEMPLATE,
-    )
-)
-register_default_prompt(
-    PromptTemplate(
-        key=EXPLAIN_CODE_KEY,
-        description="Default code explanation prompt template.",
-        template=EXPLAIN_CODE_TEMPLATE,
     )
 )
