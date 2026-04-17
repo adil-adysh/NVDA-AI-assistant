@@ -11,6 +11,7 @@ from ..observability.reporter import FileMetricsReporter
 from ..providers.provider_proxy import ProviderProxy
 from ..service.chat import ChatCoordinator
 from ..service.llm import ProviderLLMService
+from ..service.nvda_context import NVDAContextService
 from ..tools import ToolExecutor, ToolRegistry
 from ..use_case.engine import UseCaseEngine
 
@@ -27,4 +28,5 @@ class PluginServices:
 	tool_executor: ToolExecutor
 	llm_service: ProviderLLMService
 	chat_coordinator: ChatCoordinator
+	nvda_context_service: NVDAContextService
 	use_case_engine: UseCaseEngine

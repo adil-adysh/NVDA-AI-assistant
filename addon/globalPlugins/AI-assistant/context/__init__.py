@@ -24,7 +24,15 @@ from .prompt import (
 	render_prompt_template,
 	register_user_prompt_override,
 )
-from .types import ImageContext, PageContext, PageSnapshot, PromptContext
+from .types import (
+	ContentSnapshot,
+	ExcelSnapshotMetadata,
+	ImageContext,
+	PageContext,
+	PageSnapshot,
+	PromptContext,
+	SnapshotType,
+)
 
 __all__ = [
 	"ContextCollector",
@@ -39,16 +47,19 @@ __all__ = [
 	"render_prompt_template",
 	"register_user_prompt_override",
 	"CandidateProvider",
+	"ContentSnapshot",
+	"ExcelSnapshotMetadata",
 	"ExtractionContext",
 	"GenericCandidateProvider",
 	"ImageContext",
 	"ImageContextCollector",
 	"PageContext",
 	"PageSnapshot",
+	"PromptContext",
+	"SnapshotType",
 	"PageStructureCollector",
 	"PageTextCollector",
 	"PageExtractionError",
-	"PromptContext",
 	"TerminalCandidateProvider",
 	"TextEditorCandidateProvider",
 	"TextAppCandidateProvider",

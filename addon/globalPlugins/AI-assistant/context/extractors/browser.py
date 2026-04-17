@@ -5,16 +5,15 @@ import hashlib
 import re
 from collections.abc import Sequence
 
-import api
 from logHandler import log
-from textInfos import POSITION_ALL
 
 try:
 	import treeInterceptorHandler
 except Exception:  # pragma: no cover
 	treeInterceptorHandler = None
 
-from ...context.types import PageSnapshot
+from ...context.types import PageSnapshot, SnapshotType
+from .base import BasePageExtractor, PageExtractionError
 from .candidates import CandidateProvider, ExtractionContext, buildDefaultCandidateProviders
 
 MAX_PAGE_TEXT_CHARS = 120000
@@ -27,7 +26,7 @@ class PageExtractionError(RuntimeError):
 	pass
 
 
-class BrowserAwarePageExtractor:
+class BrowserAwarePageExtractor(BasePageExtractor):
 	_BROWSER_APP_NAMES = {
 		"chrome",
 		"msedge",
@@ -52,6 +51,10 @@ class BrowserAwarePageExtractor:
 		log.debug("BrowserAwarePageExtractor.extract: starting browser page extraction")
 		self._seenTextSignatures.clear()
 		context = self._buildContext()
+		if self._isExcelContext(context):
+			excelSnapshot = self._buildExcelSnapshot(context.focus, context)
+			if excelSnapshot is not None:
+				return excelSnapshot
 		browserInterceptor = self._resolveBrowserTreeInterceptor(context)
 		bestSnapshot = None
 		bestScore = -1
@@ -384,6 +387,7 @@ class BrowserAwarePageExtractor:
 			len(landmarks),
 		)
 		return PageSnapshot(
+			snapshot_type=SnapshotType.PAGE,
 			title=self._extractTitle(obj, context),
 			appTitle=self._extractAppTitle(context),
 			text=trimmedText,
@@ -392,6 +396,54 @@ class BrowserAwarePageExtractor:
 			links=links,
 			buttons=buttons,
 			landmarks=landmarks,
+		)
+
+	def _isExcelContext(self, context: ExtractionContext) -> bool:
+		if context.appName == "excel":
+			return True
+		focus = context.focus
+		return focus is not None and getattr(focus, "excelCellInfo", None) is not None
+
+	def _buildExcelSnapshot(self, obj: object | None, context: ExtractionContext) -> PageSnapshot | None:
+		if obj is None:
+			return None
+		cell_info = getattr(obj, "excelCellInfo", None)
+		if cell_info is None:
+			return None
+
+		address = getattr(cell_info, "address", None)
+		text = getattr(cell_info, "text", None)
+		formula = getattr(cell_info, "formula", None)
+		if not isinstance(text, str) or not text.strip():
+			text = self._extractText(obj)
+		if not isinstance(text, str):
+			text = ""
+		if isinstance(formula, str) and formula.strip() and formula.strip() != text.strip():
+			text = f"{text} (formula: {formula.strip()})" if text.strip() else formula.strip()
+
+		text = text.strip()
+		if not text:
+			return None
+
+		trimmedText, truncated = self._trimText(text)
+		title_parts: list[str] = []
+		window_title = getattr(obj, "windowText", None)
+		if isinstance(window_title, str) and window_title.strip():
+			title_parts.append(window_title.strip())
+		if isinstance(address, str) and address.strip():
+			title_parts.append(address.strip())
+		title = " ".join(title_parts) if title_parts else self._extractTitle(obj, context)
+
+		return PageSnapshot(
+			snapshot_type=SnapshotType.EXCEL,
+			title=title or "Excel",
+			appTitle=self._extractAppTitle(context),
+			text=trimmedText,
+			truncated=truncated,
+			headings=(),
+			links=(),
+			buttons=(),
+			landmarks=(),
 		)
 
 	def _snapshotScore(self, snapshot: PageSnapshot | None) -> int:
@@ -422,6 +474,7 @@ class BrowserAwarePageExtractor:
 
 		headings, links, buttons, landmarks = self._extractStructuredInfo(obj)
 		snapshot = PageSnapshot(
+			snapshot_type=SnapshotType.PAGE,
 			title=self._extractTitle(obj, context),
 			appTitle=self._extractAppTitle(context),
 			text=trimmedText,

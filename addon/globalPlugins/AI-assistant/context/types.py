@@ -2,7 +2,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from typing import Any, Final, Literal, TypeAlias
+
+
+class SnapshotType(Enum):
+	GENERIC = auto()
+	PAGE = auto()
+	EXCEL = auto()
+	IMAGE = auto()
 
 
 ContextProfile = Literal["app", "page", "image"]
@@ -13,7 +21,8 @@ ContextProfileList: TypeAlias = tuple[ContextProfile, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class PageSnapshot:
+class ContentSnapshot:
+	snapshot_type: SnapshotType
 	title: str
 	appTitle: str
 	text: str
@@ -22,6 +31,24 @@ class PageSnapshot:
 	links: tuple[str, ...]
 	buttons: tuple[str, ...]
 	landmarks: tuple[str, ...]
+	metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class ExcelSnapshotMetadata:
+	workbook: str | None = None
+	worksheet: str | None = None
+	cell_address: str | None = None
+	range_address: str | None = None
+	table_name: str | None = None
+	formula: str | None = None
+	cell_type: str | None = None
+	note: str | None = None
+	row_header: str | None = None
+	column_header: str | None = None
+
+
+PageSnapshot = ContentSnapshot
 
 
 class ContextCollectionError(RuntimeError):
@@ -91,7 +118,7 @@ def build_page_facts_from_facts(facts: dict[str, Any]) -> PageFacts | None:
 	snapshot = facts.get("page_snapshot")
 	page_text = facts.get("page_text")
 	if (
-		not isinstance(snapshot, PageSnapshot)
+		not isinstance(snapshot, ContentSnapshot)
 		and not isinstance(page_text, str)
 		and not any(
 			key in facts
@@ -117,7 +144,7 @@ def build_page_facts_from_facts(facts: dict[str, Any]) -> PageFacts | None:
 	landmarks: tuple[str, ...] = ()
 	text: str | None = None
 
-	if isinstance(snapshot, PageSnapshot):
+	if isinstance(snapshot, ContentSnapshot):
 		title = snapshot.title
 		app_title = snapshot.appTitle
 		truncated = snapshot.truncated
@@ -157,7 +184,7 @@ def build_page_facts_from_facts(facts: dict[str, Any]) -> PageFacts | None:
 		links=links,
 		buttons=buttons,
 		landmarks=landmarks,
-		snapshot=snapshot if isinstance(snapshot, PageSnapshot) else None,
+		snapshot=snapshot if isinstance(snapshot, ContentSnapshot) else None,
 	)
 
 
