@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 from ..context.pipeline import ContextPipeline
 from ..context.prompts import build_page_summary_prompt
-from ..context.types import APP, PAGE, PromptContext
+from ..context.types import APP, PAGE, PageContext, PromptContext
 from ..service.llm import LLMService
 from .base import UseCase
 from .types import UseCaseResult, UseCaseSpec
@@ -30,22 +30,27 @@ class SummaryUseCase(UseCase):
 		emit: Callable[[str, str], None] | None = None,
 		**kwargs: object,
 	) -> UseCaseResult:
-		if emit is not None:
-			emit("collecting_context", "Collecting page content...")
-		prompt_context = self.collect_prompt_context(context_pipeline, emit=emit)
-		if prompt_context is None:
-			raise ValueError("Unable to collect page context")
+		return self.execute_prompted_use_case(
+			context_pipeline=context_pipeline,
+			llm_service=llm_service,
+			build_prompt=lambda prompt_context: build_page_summary_prompt(self._get_page_context(prompt_context)),
+			llm_call=lambda prompt, prompt_context: llm_service.summarize(prompt),
+			build_result=self._build_result,
+			emit=emit,
+			collecting_message="Collecting page content...",
+			building_prompt_message="Building summary prompt...",
+			llm_request_message="Generating summary...",
+		)
+
+	def _get_page_context(self, prompt_context: PromptContext) -> PageContext:
 		page_context = prompt_context.page_context
 		if page_context is None:
 			raise ValueError("Unable to collect page context")
+		return page_context
 
-		if emit is not None:
-			emit("building_prompt", "Building summary prompt...")
-		prompt = build_page_summary_prompt(page_context)
-		if emit is not None:
-			emit("llm_request", "Generating summary...")
-		response = llm_service.summarize(prompt)
-
+	def _build_result(self, prompt_context: PromptContext, response: object, prompt: str) -> UseCaseResult:
+		page_context = self._get_page_context(prompt_context)
+		html_output = self.markdown_to_html(response.text)
 		return UseCaseResult(
 			success=True,
 			message="Summary ready",
@@ -60,5 +65,10 @@ class SummaryUseCase(UseCase):
 					"prompt_chars": len(prompt),
 				},
 			),
-			metadata={"output_text": response.text, "model": response.model, "prompt_key": self.spec.prompt_key},
+			metadata={
+				"output_text": html_output,
+				"is_html": True,
+				"model": response.model,
+				"prompt_key": self.spec.prompt_key,
+			},
 		)
