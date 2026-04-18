@@ -145,9 +145,6 @@ class ChatDialog(wx.Dialog):
                 title = f"{title} — {provider_label}"
         self.SetTitle(title)
 
-    def refresh_provider_title(self) -> None:
-        self._refresh_provider_title()
-
     def on_input_key_down(self, event: Any) -> None:
         if event.ControlDown() and event.KeyCode == wx.WXK_RETURN:
             self.on_send(event)
@@ -248,9 +245,6 @@ class ChatDialog(wx.Dialog):
         self.clearButton.Enable(enabled)
         self.closeButton.Enable(enabled)
         self.inputCtrl.Enable(enabled)
-
-    def _append_local_history(self, role: str, content: str, tool_name: str | None = None, image_attached: bool = False) -> None:
-        self._refresh_history()
 
     def _refresh_history(self) -> None:
         messages = self._coordinator.get_history()

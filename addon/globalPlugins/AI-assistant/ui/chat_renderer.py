@@ -9,16 +9,13 @@ from ..core.messages import ChatMessage
 
 
 class ChatHtmlRenderer:
-	HTML_TEMPLATE = """<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-body { font-family: Arial, sans-serif; padding: 12px; line-height: 1.5; background: #ffffff; color: #111; }
-#chat { margin: 0; padding: 0; }
-.msg { margin-bottom: 18px; }
+	COMMON_CSS = """body { font-family: Arial, sans-serif; padding: 12px; line-height: 1.5; background: #ffffff; color: #111; }
 h4 { font-size: 1rem; font-weight: bold; margin: 0 0 8px 0; }
 .bubble { background: #f7f7f7; border-radius: 10px; padding: 12px; border: 1px solid #ddd; }
+"""
+
+	HISTORY_CSS = """#chat { margin: 0; padding: 0; }
+.msg { margin-bottom: 18px; }
 .msg.user .bubble { border-left: 4px solid #0078d7; }
 .msg.assistant .bubble { border-left: 4px solid #333; }
 .content { white-space: pre-wrap; word-wrap: break-word; }
@@ -29,32 +26,16 @@ table { border-collapse: collapse; width: 100%; margin-top: 10px; }
 td, th { border: 1px solid #999; padding: 6px 10px; }
 a { color: #0066cc; text-decoration: none; }
 a:hover { text-decoration: underline; }
-</style>
-</head>
-<body>
-<div id="chat" role="log" aria-live="polite"></div>
-</body>
-</html>
+"""
+
+	LAST_TURN_CSS = """.section { margin-bottom: 18px; }
 """
 
 	@classmethod
 	def build_history_page(cls, messages: list[ChatMessage]) -> str:
-		rows: list[str] = []
-		for msg in messages:
-			role = msg.role if msg.role in {"user", "assistant", "system", "tool"} else "assistant"
-			label = "User" if role == "user" else "Assistant" if role == "assistant" else msg.role.capitalize()
-			content = msg.content or ""
-			if role == "tool":
-				label = f"Tool/{msg.tool_name or 'tool'}"
-			rows.append(
-				f"<div class='msg {role}'><h4>{cls._escape_html(label)}</h4>"
-				f"<div class='bubble content'>{cls._render_message_html(content)}</div></div>"
-			)
-		html = cls.HTML_TEMPLATE.replace(
-			"<div id=\"chat\" role=\"log\" aria-live=\"polite\"></div>",
-			"<div id=\"chat\" role=\"log\" aria-live=\"polite\">" + "".join(rows) + "</div>",
-		)
-		return html
+		rows = [cls._build_history_entry(msg) for msg in messages]
+		body = f"<div id=\"chat\" role=\"log\" aria-live=\"polite\">{"".join(rows)}</div>"
+		return cls._wrap_html(body, cls.HISTORY_CSS)
 
 	@classmethod
 	def build_last_turn_html(
@@ -65,29 +46,40 @@ a:hover { text-decoration: underline; }
 	) -> str:
 		user_html = cls._render_message_html(user_message)
 		assistant_html = cls._render_message_html(assistant_message)
-		thinking_html = cls._render_message_html(thinking_trace or "") if thinking_trace else ""
-		result = [
-			"<!DOCTYPE html>",
-			"<html><head><meta charset=\"utf-8\"><style>",
-			"body{font-family:Arial,sans-serif;padding:16px;line-height:1.6;color:#111;}",
-			".section{margin-bottom:18px;}",
-			"h4{font-size:1rem;font-weight:bold;margin:0 0 8px 0;}",
-			".bubble{background:#f7f7f7;border-radius:10px;padding:12px;border:1px solid #ddd;}",
-			"</style></head><body>",
+		results = [
 			"<div class=\"section\"><h4>User query</h4>",
 			f"<div class=\"bubble\">{user_html}</div></div>",
 		]
 		if thinking_trace:
-			result.extend([
+			thinking_html = cls._render_message_html(thinking_trace)
+			results.extend([
 				"<div class=\"section\"><h4>Thinking trace</h4>",
 				f"<div class=\"bubble\">{thinking_html}</div></div>",
 			])
-		result.extend([
+		results.extend([
 			"<div class=\"section\"><h4>Assistant response</h4>",
 			f"<div class=\"bubble\">{assistant_html}</div></div>",
-			"</body></html>",
 		])
-		return "".join(result)
+		return cls._wrap_html("".join(results), cls.LAST_TURN_CSS)
+
+	@classmethod
+	def _build_history_entry(cls, msg: ChatMessage) -> str:
+		role = msg.role if msg.role in {"user", "assistant", "system", "tool"} else "assistant"
+		label = "User" if role == "user" else "Assistant" if role == "assistant" else msg.role.capitalize()
+		if role == "tool":
+			label = f"Tool/{msg.tool_name or 'tool'}"
+		content = msg.content or ""
+		return (
+			f"<div class='msg {role}'><h4>{cls._escape_html(label)}</h4>"
+			f"<div class='bubble content'>{cls._render_message_html(content)}</div></div>"
+		)
+
+	@classmethod
+	def _wrap_html(cls, body: str, extra_css: str = "") -> str:
+		return (
+			f"<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>"
+			f"{cls.COMMON_CSS}{extra_css}</style></head><body>{body}</body></html>"
+		)
 
 	@classmethod
 	def _render_message_html(cls, content: str) -> str:
@@ -95,8 +87,16 @@ a:hover { text-decoration: underline; }
 			return ""
 		return markdown.markdown(
 			content,
-			extensions=["extra", "sane_lists", "smarty"],
-			output_format="html5",
+			extensions=[
+				"extra",
+				"sane_lists",
+				"smarty",
+				"codehilite",
+				"toc",
+				"nl2br",
+				"admonition",
+			],
+			output_format="html",
 		)
 
 	@staticmethod

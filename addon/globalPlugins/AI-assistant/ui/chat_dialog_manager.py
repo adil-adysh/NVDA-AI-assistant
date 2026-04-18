@@ -52,10 +52,6 @@ def open_chat_dialog(
 		gui.mainFrame.postPopup()
 
 
-def get_current_dialog() -> ChatDialog | None:
-	return _chat_dialog_instance
-
-
 def update_provider_state(provider_state: ProviderState | None = None) -> None:
 	if provider_state is None:
 		provider_state = get_provider_state()
