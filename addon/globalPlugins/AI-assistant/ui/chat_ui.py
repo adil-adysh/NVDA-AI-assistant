@@ -1,21 +1,19 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from html import escape as html_escape
 from logHandler import log
 import threading
+from collections.abc import Callable
 from typing import Any
 
-import markdown
 import wx
 
 from . import nvda_ui
+from .chat_renderer import ChatHtmlRenderer
 from ..config.settings import get_ollama_think, set_ollama_think
 from ..config.state import ProviderState
 from ..service import ChatCoordinator
 from ..tools import ToolRegistry
-
-chatDialogInstance = None
 
 
 class ChatDialog(wx.Dialog):
@@ -27,12 +25,14 @@ class ChatDialog(wx.Dialog):
         provider_state: ProviderState,
         initial_text: str | None = None,
         initial_image_base64: str | None = None,
+        destroy_callback: Callable[["ChatDialog"], None] | None = None,
     ) -> None:
         super().__init__(parent, title=_("AI Chat"), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self._coordinator = coordinator
         self._tool_registry = tool_registry
         self._provider_state = provider_state
         self._attached_image_base64 = initial_image_base64
+        self._destroy_callback = destroy_callback
         self._build_ui()
         self._refresh_provider_title()
         self._refresh_ollama_think_checkbox()
@@ -65,34 +65,6 @@ class ChatDialog(wx.Dialog):
         is_ollama = self._provider_state.provider.strip().lower() == "ollama"
         self.thinkCheckbox.Show(is_ollama)
         self.Layout()
-
-    HTML_TEMPLATE = """<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-body { font-family: Arial, sans-serif; padding: 12px; line-height: 1.5; background: #ffffff; color: #111; }
-#chat { margin: 0; padding: 0; }
-.msg { margin-bottom: 18px; }
-h4 { font-size: 1rem; font-weight: bold; margin: 0 0 8px 0; }
-.bubble { background: #f7f7f7; border-radius: 10px; padding: 12px; border: 1px solid #ddd; }
-.msg.user .bubble { border-left: 4px solid #0078d7; }
-.msg.assistant .bubble { border-left: 4px solid #333; }
-.content { white-space: pre-wrap; word-wrap: break-word; }
-pre { background: #eee; padding: 10px; border-radius: 4px; overflow-x: auto; }
-code { background: #f2f2f2; padding: 2px 4px; border-radius: 4px; }
-blockquote { border-left: 4px solid #ccc; margin: 12px 0; padding-left: 12px; color: #555; }
-table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-td, th { border: 1px solid #999; padding: 6px 10px; }
-a { color: #0066cc; text-decoration: none; }
-a:hover { text-decoration: underline; }
-</style>
-</head>
-<body>
-<div id="chat" role="log" aria-live="polite"></div>
-</body>
-</html>
-"""
 
     def _build_ui(self) -> None:
         mainSizer = wx.BoxSizer(wx.VERTICAL)
@@ -158,32 +130,8 @@ a:hover { text-decoration: underline; }
         self.Bind(wx.EVT_WINDOW_DESTROY, self.onDestroy)
 
     def _build_history_page(self, messages: list[Any]) -> str:
-        rows: list[str] = []
-        for msg in messages:
-            role = msg.role if msg.role in {"user", "assistant", "system", "tool"} else "assistant"
-            label = "User" if role == "user" else "Assistant" if role == "assistant" else msg.role.capitalize()
-            content = msg.content or ""
-            if role == "tool":
-                label = f"Tool/{msg.tool_name or 'tool'}"
-            rows.append(
-                f"<div class='msg {role}'><h4>{self._escape_html(label)}</h4>"
-                f"<div class='bubble content'>{self._render_message_html(content)}</div></div>"
-            )
-        html = self.HTML_TEMPLATE.replace("<div id=\"chat\" role=\"log\" aria-live=\"polite\"></div>", "<div id=\"chat\" role=\"log\" aria-live=\"polite\">" + "".join(rows) + "</div>")
-        return html
+        return ChatHtmlRenderer.build_history_page(messages)
 
-    def _render_message_html(self, content: str) -> str:
-        if not content:
-            return ""
-
-        return markdown.markdown(
-            content,
-            extensions=["extra", "sane_lists", "smarty"],
-            output_format="html5",
-        )
-
-    def _escape_html(self, text: str) -> str:
-        return html_escape(text)
 
     def _refresh_provider_title(self) -> None:
         provider = self._provider_state.provider.strip()
@@ -237,8 +185,11 @@ a:hover { text-decoration: underline; }
         self.Destroy()
 
     def onDestroy(self, evt: Any) -> None:
-        global chatDialogInstance
-        chatDialogInstance = None
+        if getattr(self, "_destroy_callback", None):
+            try:
+                self._destroy_callback(self)
+            except Exception:
+                log.exception("Error clearing chat dialog instance")
         evt.Skip()
 
     def _send_message(
@@ -329,31 +280,7 @@ a:hover { text-decoration: underline; }
         )
 
     def _build_last_turn_html(self, user_message: str, assistant_message: str, thinking_trace: str | None = None) -> str:
-        user_html = self._render_message_html(user_message)
-        assistant_html = self._render_message_html(assistant_message)
-        thinking_html = self._render_message_html(thinking_trace or "") if thinking_trace else ""
-        result = [
-            "<!DOCTYPE html>",
-            "<html><head><meta charset=\"utf-8\"><style>",
-            "body{font-family:Arial,sans-serif;padding:16px;line-height:1.6;color:#111;}",
-            ".section{margin-bottom:18px;}",
-            "h4{font-size:1rem;font-weight:bold;margin:0 0 8px 0;}",
-            ".bubble{background:#f7f7f7;border-radius:10px;padding:12px;border:1px solid #ddd;}",
-            "</style></head><body>",
-            "<div class=\"section\"><h4>User query</h4>",
-            f"<div class=\"bubble\">{user_html}</div></div>",
-        ]
-        if thinking_trace:
-            result.extend([
-                "<div class=\"section\"><h4>Thinking trace</h4>",
-                f"<div class=\"bubble\">{thinking_html}</div></div>",
-            ])
-        result.extend([
-            "<div class=\"section\"><h4>Assistant response</h4>",
-            f"<div class=\"bubble\">{assistant_html}</div></div>",
-            "</body></html>",
-        ])
-        return "".join(result)
+        return ChatHtmlRenderer.build_last_turn_html(user_message, assistant_message, thinking_trace)
 
     def on_show_history(self, event: Any) -> None:
         self._show_history()

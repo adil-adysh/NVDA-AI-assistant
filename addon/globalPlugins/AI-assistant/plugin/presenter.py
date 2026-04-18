@@ -14,7 +14,7 @@ from ..core.events import ProgressEvent
 from ..service.chat import ChatCoordinator
 from ..tools import ToolRegistry
 from ..config.settings import get_provider_state
-from ..ui import chat_ui, nvda_ui
+from ..ui import chat_dialog_manager, nvda_ui
 
 
 def _translate(message: str) -> str:
@@ -34,39 +34,18 @@ class UseCasePresenter:
 		initial_text: str | None = None,
 		initial_image_base64: str | None = None,
 	) -> None:
-		if chat_ui.chatDialogInstance:
-			try:
-				chat_ui.chatDialogInstance.update_provider_state(get_provider_state())
-				chat_ui.chatDialogInstance.Raise()
-				chat_ui.chatDialogInstance.set_initial_state(initial_text, initial_image_base64)
-			except Exception:
-				log.exception("Error reusing chat dialog")
-			return
-
-		gui.mainFrame.prePopup()
-		parent = getattr(gui, "mainFrame", None)
-		chat_ui.chatDialogInstance = chat_ui.ChatDialog(
-			parent,
+		chat_dialog_manager.open_chat_dialog(
 			coordinator=self._chat_coordinator,
 			tool_registry=self._tool_registry,
-			provider_state=get_provider_state(),
 			initial_text=initial_text,
 			initial_image_base64=initial_image_base64,
 		)
-		try:
-			chat_ui.chatDialogInstance.Show()
-		except Exception:
-			chat_ui.chatDialogInstance = None
-			raise
-		finally:
-			gui.mainFrame.postPopup()
 
 	def update_provider_state(self, provider_state: ProviderState | None = None) -> None:
 		try:
 			if provider_state is None:
 				provider_state = get_provider_state()
-			if chat_ui.chatDialogInstance:
-				chat_ui.chatDialogInstance.update_provider_state(provider_state)
+			chat_dialog_manager.update_provider_state(provider_state)
 		except Exception:
 			log.exception("Error updating chat dialog title after provider state changed")
 
