@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from html import escape as html_escape
 
+from .mathml import convert_math_delimiters_to_mathml
+
 
 def render_markdown_to_html(text: str) -> str:
     """Convert markdown text to HTML using the shared extension set."""
@@ -13,6 +15,8 @@ def render_markdown_to_html(text: str) -> str:
         import markdown
     except ImportError:
         return html_escape(text)
+
+    text = convert_math_delimiters_to_mathml(text)
 
     base_extensions = [
         "extra",

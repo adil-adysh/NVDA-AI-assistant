@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
@@ -10,6 +11,8 @@ from ..context.types import PromptContext
 from ..service.llm import LLMService
 from ..utils.markdown import render_markdown_to_html
 from .types import UseCaseResult, UseCaseSpec
+
+logger = logging.getLogger(__name__)
 
 ContextEmitter = Callable[[str, str], None] | None
 
@@ -62,6 +65,10 @@ class UseCase(ABC):
 		if emit is not None:
 			emit("llm_request", llm_request_message)
 		response = llm_call(prompt, prompt_context)
+
+		response_text = getattr(response, "text", None)
+		if response_text is not None:
+			logger.debug("UseCase %s response.text=%s", self.spec.id, response_text)
 
 		return build_result(prompt_context, response, prompt)
 

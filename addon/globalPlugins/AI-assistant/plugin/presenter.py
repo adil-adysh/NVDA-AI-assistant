@@ -15,6 +15,7 @@ from ..service.chat import ChatCoordinator
 from ..tools import ToolRegistry
 from ..config.settings import get_provider_state
 from ..ui import chat_dialog_manager, nvda_ui
+from ..utils.mathml import contains_mathml
 
 
 def _translate(message: str) -> str:
@@ -66,13 +67,23 @@ class UseCasePresenter:
 			return
 
 		browseable_title = nvda_ui.format_browseable_title(title, get_provider_state())
-		nvda_ui.browseable_message(
-			output_text,
-			title=browseable_title,
-			is_html=is_html,
-			close_button=True,
-			copy_button=True,
-		)
+		if is_html and contains_mathml(output_text):
+			nvda_ui.browseable_message(
+				output_text,
+				title=browseable_title,
+				is_html=is_html,
+				close_button=True,
+				copy_button=True,
+				sanitize_html_func=lambda html: html,
+			)
+		else:
+			nvda_ui.browseable_message(
+				output_text,
+				title=browseable_title,
+				is_html=is_html,
+				close_button=True,
+				copy_button=True,
+			)
 
 	def progress_handler(self, event: ProgressEvent) -> None:
 		if event.stage == "error":
