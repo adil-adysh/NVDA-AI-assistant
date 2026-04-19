@@ -33,7 +33,7 @@ a:hover { text-decoration: underline; }
 	@classmethod
 	def build_history_page(cls, messages: list[ChatMessage]) -> str:
 		rows = [cls._build_history_entry(msg) for msg in messages]
-		body = f"<div id=\"chat\" role=\"log\" aria-live=\"polite\">{"".join(rows)}</div>"
+		body = f"<div id=\"chat\" role=\"log\" aria-live=\"polite\">{''.join(rows)}</div>"
 		return cls._wrap_html(body, cls.HISTORY_CSS)
 
 	@classmethod
