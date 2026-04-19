@@ -29,6 +29,10 @@ def build_page_summary_prompt(context: PageContext) -> str:
 	links = _format_list(context.links)
 	buttons = _format_list(context.buttons)
 	landmarks = _format_list(context.landmarks)
+	inputs = _format_list(context.inputs)
+	comboboxes = _format_list(context.comboboxes)
+	checkboxes = _format_list(context.checkboxes)
+	radios = _format_list(context.radios)
 	truncated_notice = "yes" if context.truncated else "no"
 
 	return (
@@ -53,19 +57,30 @@ def build_page_summary_prompt(context: PageContext) -> str:
 		f"Headings: {len(context.headings)}\n"
 		f"Links: {len(context.links)}\n"
 		f"Buttons: {len(context.buttons)}\n"
-		f"Landmarks: {len(context.landmarks)}\n\n"
+		f"Landmarks: {len(context.landmarks)}\n"
+		f"Inputs: {len(context.inputs)}\n"
+		f"Combo boxes: {len(context.comboboxes)}\n"
+		f"Checkboxes: {len(context.checkboxes)}\n"
+		f"Radios: {len(context.radios)}\n\n"
 		"Headings:\n"
 		f"{headings}\n\n"
 		"Landmarks:\n"
 		f"{landmarks}\n\n"
 		"Links:\n"
 		f"{links}\n\n"
-			"Buttons:\n"
+		"Buttons:\n"
 		f"{buttons}\n\n"
+		"Inputs:\n"
+		f"{inputs}\n\n"
+		"Combo boxes:\n"
+		f"{comboboxes}\n\n"
+		"Checkboxes:\n"
+		f"{checkboxes}\n\n"
+		"Radio buttons:\n"
+		f"{radios}\n\n"
 		"Content:\n"
 		f"{context.text}"
 	)
-
 
 def build_image_description_prompt(context: ImageContext) -> str:
 	"""Build a prompt for describing a captured foreground window image."""

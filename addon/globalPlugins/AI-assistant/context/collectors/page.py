@@ -66,6 +66,10 @@ class PageStructureCollector:
 				"page_links": snapshot.links,
 				"page_buttons": snapshot.buttons,
 				"page_landmarks": snapshot.landmarks,
+				"page_inputs": snapshot.inputs,
+				"page_comboboxes": snapshot.comboboxes,
+				"page_checkboxes": snapshot.checkboxes,
+				"page_radios": snapshot.radios,
 			},
 			metadata={
 				"use_case_id": input.use_case_id,

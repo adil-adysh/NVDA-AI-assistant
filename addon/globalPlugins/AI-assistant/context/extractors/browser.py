@@ -6,6 +6,7 @@ import re
 from collections.abc import Sequence
 
 import api
+import controlTypes
 from logHandler import log
 from textInfos import POSITION_ALL
 
@@ -371,7 +372,7 @@ class BrowserAwarePageExtractor:
 				return None
 			self._seenTextSignatures.add(textSignature)
 
-		headings, links, buttons, landmarks = self._extractStructuredInfo(obj)
+		headings, links, buttons, landmarks, inputs, comboboxes, checkboxes, radios = self._extractStructuredInfo(obj)
 
 		log.debug(
 			f"Browser Assistant: selected source={sourceName} candidate={type(obj).__module__}.{type(obj).__name__}"
@@ -392,12 +393,25 @@ class BrowserAwarePageExtractor:
 			links=links,
 			buttons=buttons,
 			landmarks=landmarks,
+			inputs=inputs,
+			comboboxes=comboboxes,
+			checkboxes=checkboxes,
+			radios=radios,
 		)
 
 	def _snapshotScore(self, snapshot: PageSnapshot | None) -> int:
 		if snapshot is None:
 			return -1
-		return len(snapshot.headings) + len(snapshot.links) + len(snapshot.buttons) + len(snapshot.landmarks)
+		return (
+			len(snapshot.headings)
+			+ len(snapshot.links)
+			+ len(snapshot.buttons)
+			+ len(snapshot.landmarks)
+			+ len(snapshot.inputs)
+			+ len(snapshot.comboboxes) * 2
+			+ len(snapshot.checkboxes)
+			+ len(snapshot.radios)
+		)
 
 	def _bestEffortSnapshot(
 		self,
@@ -420,7 +434,7 @@ class BrowserAwarePageExtractor:
 		if textSignature in self._seenTextSignatures:
 			return currentBest, currentScore
 
-		headings, links, buttons, landmarks = self._extractStructuredInfo(obj)
+		headings, links, buttons, landmarks, inputs, comboboxes, checkboxes, radios = self._extractStructuredInfo(obj)
 		snapshot = PageSnapshot(
 			title=self._extractTitle(obj, context),
 			appTitle=self._extractAppTitle(context),
@@ -430,6 +444,10 @@ class BrowserAwarePageExtractor:
 			links=links,
 			buttons=buttons,
 			landmarks=landmarks,
+			inputs=inputs,
+			comboboxes=comboboxes,
+			checkboxes=checkboxes,
+			radios=radios,
 		)
 		score = self._candidateScore(obj, context, snapshot, sourceName, browserInterceptor)
 		score += min(len(trimmedText), 500) // 25
@@ -471,6 +489,11 @@ class BrowserAwarePageExtractor:
 
 		if len(snapshot.links) > 30 and len(snapshot.headings) <= 1 and textLength < 2000:
 			score -= 20
+
+		score += len(snapshot.inputs)
+		score += len(snapshot.comboboxes) * 2
+		score += len(snapshot.checkboxes)
+		score += len(snapshot.radios)
 
 		if context.focus is obj:
 			score += 5
@@ -582,11 +605,272 @@ class BrowserAwarePageExtractor:
 				yield target
 
 	def _extractStructuredInfo(self, obj: object):
+		textInfo = self._makeTextInfo(obj)
+		if textInfo is None:
+			return (), (), (), ()
+
+		fields = self._makeTextWithFields(textInfo)
+		if not fields:
+			return (), (), (), ()
+
+		headings, links, buttons, landmarks, inputs, comboboxes, checkboxes, radios = self._parseTextFields(fields)
+		return tuple(headings), tuple(links), tuple(buttons), tuple(landmarks), tuple(inputs), tuple(comboboxes), tuple(checkboxes), tuple(radios)
+
+	def _makeTextInfo(self, obj: object):
+		if not hasattr(obj, "makeTextInfo"):
+			return None
+		try:
+			return obj.makeTextInfo(POSITION_ALL)
+		except Exception:
+			return None
+
+	def _makeTextWithFields(self, textInfo: object):
+		if textInfo is None:
+			return ()
+		try:
+			fields = getattr(textInfo, "getTextWithFields", None)
+			if callable(fields):
+				return fields() or ()
+			return ()
+		except Exception:
+			return ()
+
+	def _parseTextFields(self, fields: object):
 		headings = []
 		links = []
 		buttons = []
 		landmarks = []
-		return tuple(headings), tuple(links), tuple(buttons), tuple(landmarks)
+		inputs = []
+		comboboxes = []
+		checkboxes = []
+		radios = []
+		stack: list[dict[str, object]] = []
+
+		for item in fields:
+			if isinstance(item, str):
+				if stack:
+					stack[-1]["text"].append(item)
+				continue
+
+			command = getattr(item, "command", None)
+			field = getattr(item, "field", None)
+			if command == "controlStart" and field is not None:
+				if self._isHiddenField(field):
+					continue
+				stack.append(
+					{
+						"field": field,
+						"text": [],
+					}
+				)
+			elif command == "controlEnd" and stack:
+				frame = stack.pop()
+				label = self._normalizeCandidateText(" ".join(frame["text"]))
+				if not label:
+					label = self._explicitFieldName(frame["field"])
+				if label:
+					if self._isHeadingField(frame["field"]):
+						level = self._headingLevel(frame["field"])
+						headings.append((level, label))
+					elif self._isButtonField(frame["field"]):
+						buttons.append(label)
+					elif self._isComboBoxField(frame["field"]):
+						comboboxes.append(label)
+					elif self._isCheckBoxField(frame["field"]):
+						checkboxes.append(label)
+					elif self._isRadioField(frame["field"]):
+						radios.append(label)
+					elif self._isInputField(frame["field"]):
+						inputs.append(label)
+					elif self._isLinkField(frame["field"]):
+						links.append(label)
+					elif self._isLandmarkField(frame["field"]):
+						landmarks.append(label)
+				if stack and label:
+					stack[-1]["text"].append(label)
+
+		return (
+			self._dedupe_headings(headings),
+			self._dedupe_strings(links),
+			self._dedupe_strings(buttons),
+			self._dedupe_strings(landmarks),
+			self._dedupe_strings(inputs),
+			self._dedupe_strings(comboboxes),
+			self._dedupe_strings(checkboxes),
+			self._dedupe_strings(radios),
+		)
+
+	def _normalizeCandidateText(self, text: str) -> str:
+		text = re.sub(r"\s+", " ", text or "")
+		return text.strip()
+
+	def _explicitFieldName(self, field: object) -> str:
+		if field is None:
+			return ""
+		value = self._fieldValue(field, "IAccessible2::attribute_explicit-name")
+		if value:
+			return self._normalizeCandidateText(str(value))
+		value = self._fieldValue(field, "name")
+		if value:
+			return self._normalizeCandidateText(str(value))
+		value = self._fieldValue(field, "IAccessible2::attribute_name-from")
+		if value:
+			return self._normalizeCandidateText(str(value))
+		return ""
+
+	def _fieldValue(self, field: object, key: str) -> object | None:
+		try:
+			return field.get(key)
+		except Exception:
+			return None
+
+	def _headingLevel(self, field: object) -> int | None:
+		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
+		if isinstance(tag, str):
+			tag = tag.strip().lower()
+			if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+				return int(tag[1])
+		return None
+
+	def _isHeadingField(self, field: object) -> bool:
+		role = self._numericFieldRole(field)
+		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
+		xml_role = self._fieldValue(field, "IAccessible2::attribute_xml-roles")
+		return (
+			role == controlTypes.Role.HEADING.value
+			or isinstance(tag, str) and tag.strip().lower() in ("h1", "h2", "h3", "h4", "h5", "h6")
+			or isinstance(xml_role, str) and "heading" in xml_role.strip().lower()
+		)
+
+	def _isButtonField(self, field: object) -> bool:
+		role = self._numericFieldRole(field)
+		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
+		xml_role = self._fieldValue(field, "IAccessible2::attribute_xml-roles")
+		return (
+			role in {
+				controlTypes.Role.BUTTON.value,
+				controlTypes.Role.MENUBUTTON.value,
+				controlTypes.Role.TOGGLEBUTTON.value,
+			}
+			or isinstance(xml_role, str) and "button" in xml_role.strip().lower()
+			or isinstance(tag, str) and tag.strip().lower() == "button"
+		)
+
+	def _isLinkField(self, field: object) -> bool:
+		role = self._numericFieldRole(field)
+		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
+		xml_role = self._fieldValue(field, "IAccessible2::attribute_xml-roles")
+		return (
+			role == controlTypes.Role.LINK.value
+			or isinstance(xml_role, str) and "link" in xml_role.strip().lower()
+			or isinstance(tag, str) and tag.strip().lower() == "a"
+		)
+
+	def _isComboBoxField(self, field: object) -> bool:
+		role = self._numericFieldRole(field)
+		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
+		xml_role = self._fieldValue(field, "IAccessible2::attribute_xml-roles")
+		return (
+			role == controlTypes.Role.COMBOBOX.value if hasattr(controlTypes.Role, 'COMBOBOX') else False
+			or isinstance(xml_role, str) and "combobox" in xml_role.strip().lower()
+			or isinstance(tag, str) and tag.strip().lower() in {"select", "combobox"}
+		)
+
+	def _isCheckBoxField(self, field: object) -> bool:
+		role = self._numericFieldRole(field)
+		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
+		xml_role = self._fieldValue(field, "IAccessible2::attribute_xml-roles")
+		return (
+			role == controlTypes.Role.CHECKBOX.value if hasattr(controlTypes.Role, 'CHECKBOX') else False
+			or isinstance(xml_role, str) and "checkbox" in xml_role.strip().lower()
+			or isinstance(tag, str) and tag.strip().lower() == "checkbox"
+		)
+
+	def _isRadioField(self, field: object) -> bool:
+		role = self._numericFieldRole(field)
+		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
+		xml_role = self._fieldValue(field, "IAccessible2::attribute_xml-roles")
+		return (
+			role == controlTypes.Role.RADIO.value if hasattr(controlTypes.Role, 'RADIO') else False
+			or isinstance(xml_role, str) and "radio" in xml_role.strip().lower()
+			or isinstance(tag, str) and tag.strip().lower() == "radio"
+		)
+
+	def _isInputField(self, field: object) -> bool:
+		role = self._numericFieldRole(field)
+		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
+		xml_role = self._fieldValue(field, "IAccessible2::attribute_xml-roles")
+		return (
+			role == controlTypes.Role.TEXT.value if hasattr(controlTypes.Role, 'TEXT') else False
+			or isinstance(xml_role, str)
+			and any(token in xml_role.strip().lower() for token in ("textbox", "searchbox", "spinbutton", "text"))
+			or isinstance(tag, str)
+			and tag.strip().lower() in {"input", "textarea", "textbox", "search"}
+		)
+
+	def _isLandmarkField(self, field: object) -> bool:
+		role = self._numericFieldRole(field)
+		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
+		xml_role = self._fieldValue(field, "IAccessible2::attribute_xml-roles")
+		landmark = self._fieldValue(field, "landmark")
+		if isinstance(xml_role, str) and xml_role.strip().lower() in {
+			"banner",
+			"complementary",
+			"contentinfo",
+			"form",
+			"main",
+			"navigation",
+			"search",
+		}:
+			return True
+		if isinstance(tag, str) and tag.strip().lower() in {
+			"main",
+			"nav",
+			"banner",
+			"complementary",
+			"contentinfo",
+			"search",
+		}:
+			return True
+		if landmark is not None:
+			return True
+		return False
+
+	def _numericFieldRole(self, field: object) -> int | None:
+		role = self._fieldValue(field, "role")
+		if isinstance(role, controlTypes.Role):
+			return role.value
+		if isinstance(role, int):
+			return role
+		if isinstance(role, str) and role.isdigit():
+			return int(role)
+		return None
+
+	def _isHiddenField(self, field: object) -> bool:
+		hidden = self._fieldValue(field, "isHidden")
+		if hidden is True:
+			return True
+		if isinstance(hidden, str) and hidden.strip() in {"1", "true", "yes"}:
+			return True
+		return False
+
+	def _dedupe_strings(self, items: list[str]) -> tuple[str, ...]:
+		seen: set[str] = set()
+		unique: list[str] = []
+		for item in items:
+			if item and item not in seen:
+				seen.add(item)
+				unique.append(item)
+		return tuple(unique)
+
+	def _dedupe_headings(self, headings: list[tuple[int | None, str]]) -> tuple[tuple[int | None, str], ...]:
+		seen: set[tuple[int | None, str]] = set()
+		unique: list[tuple[int | None, str]] = []
+		for heading in headings:
+			if heading not in seen:
+				seen.add(heading)
+				unique.append(heading)
+		return tuple(unique)
 
 	def _extractTitle(self, obj: object, context: ExtractionContext) -> str:
 		for attr in ("name", "title", "description"):

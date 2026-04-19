@@ -22,6 +22,10 @@ class PageSnapshot:
 	links: tuple[str, ...]
 	buttons: tuple[str, ...]
 	landmarks: tuple[str, ...]
+	inputs: tuple[str, ...]
+	comboboxes: tuple[str, ...]
+	checkboxes: tuple[str, ...]
+	radios: tuple[str, ...]
 
 
 class ContextCollectionError(RuntimeError):
@@ -38,6 +42,10 @@ class PageContext:
 	links: tuple[str, ...]
 	buttons: tuple[str, ...]
 	landmarks: tuple[str, ...]
+	inputs: tuple[str, ...]
+	comboboxes: tuple[str, ...]
+	checkboxes: tuple[str, ...]
+	radios: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +123,10 @@ def build_page_facts_from_facts(facts: dict[str, Any]) -> PageFacts | None:
 	links: tuple[str, ...] = ()
 	buttons: tuple[str, ...] = ()
 	landmarks: tuple[str, ...] = ()
+	inputs: tuple[str, ...] = ()
+	comboboxes: tuple[str, ...] = ()
+	checkboxes: tuple[str, ...] = ()
+	radios: tuple[str, ...] = ()
 	text: str | None = None
 
 	if isinstance(snapshot, PageSnapshot):
@@ -125,6 +137,10 @@ def build_page_facts_from_facts(facts: dict[str, Any]) -> PageFacts | None:
 		links = snapshot.links
 		buttons = snapshot.buttons
 		landmarks = snapshot.landmarks
+		inputs = snapshot.inputs
+		comboboxes = snapshot.comboboxes
+		checkboxes = snapshot.checkboxes
+		radios = snapshot.radios
 		text = snapshot.text
 
 	if isinstance(page_text, str):
@@ -144,6 +160,14 @@ def build_page_facts_from_facts(facts: dict[str, Any]) -> PageFacts | None:
 		buttons = _normalize_str_tuple(facts.get("page_buttons"))
 	if not landmarks:
 		landmarks = _normalize_str_tuple(facts.get("page_landmarks"))
+	if not inputs:
+		inputs = _normalize_str_tuple(facts.get("page_inputs"))
+	if not comboboxes:
+		comboboxes = _normalize_str_tuple(facts.get("page_comboboxes"))
+	if not checkboxes:
+		checkboxes = _normalize_str_tuple(facts.get("page_checkboxes"))
+	if not radios:
+		radios = _normalize_str_tuple(facts.get("page_radios"))
 
 	if text is None:
 		return None
@@ -157,6 +181,10 @@ def build_page_facts_from_facts(facts: dict[str, Any]) -> PageFacts | None:
 		links=links,
 		buttons=buttons,
 		landmarks=landmarks,
+		inputs=inputs,
+		comboboxes=comboboxes,
+		checkboxes=checkboxes,
+		radios=radios,
 		snapshot=snapshot if isinstance(snapshot, PageSnapshot) else None,
 	)
 
@@ -177,6 +205,10 @@ def build_page_context_from_facts(page_facts: PageFacts | None) -> PageContext |
 		links=page_facts.links,
 		buttons=page_facts.buttons,
 		landmarks=page_facts.landmarks,
+		inputs=page_facts.inputs,
+		comboboxes=page_facts.comboboxes,
+		checkboxes=page_facts.checkboxes,
+		radios=page_facts.radios,
 	)
 
 
