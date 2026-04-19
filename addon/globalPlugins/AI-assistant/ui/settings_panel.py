@@ -27,6 +27,7 @@ from ..config.settings import (
     get_retry_backoff_seconds,
     get_streaming_enabled,
     get_timeout_seconds,
+    get_streaming_tone_enabled,
     save,
     set_generate_presence_penalty,
     set_generate_top_k,
@@ -45,6 +46,7 @@ from ..config.settings import (
     set_request_metrics_log_path,
     set_request_metrics_logging_enabled,
     set_streaming_enabled,
+    set_streaming_tone_enabled,
     set_timeout_seconds,
 )
 from ..providers.config import GeminiConfig, OllamaConfig
@@ -183,8 +185,12 @@ class AIAssistantSettingsPanel(SettingsPanel):
         self.progressCheckbox = groupHelper.addItem(
             wx.CheckBox(self, label=_("Announce progress"))
         )
+        self.streamingToneCheckbox = groupHelper.addItem(
+            wx.CheckBox(self, label=_("Enable streaming tone feedback"))
+        )
         self.streamingCheckbox.Value = get_streaming_enabled()
         self.progressCheckbox.Value = get_progress_enabled()
+        self.streamingToneCheckbox.Value = get_streaming_tone_enabled()
         return groupSizer
 
     def _build_ollama_expert_settings(self, parentHelper, config: OllamaConfig):
@@ -399,6 +405,7 @@ class AIAssistantSettingsPanel(SettingsPanel):
         set_image_quality(imageQuality)
         set_request_metrics_logging_enabled(requestMetricsLoggingEnabled)
         set_request_metrics_log_path(requestMetricsLogPath)
+        set_streaming_tone_enabled(self.streamingToneCheckbox.Value)
 
         save()
 

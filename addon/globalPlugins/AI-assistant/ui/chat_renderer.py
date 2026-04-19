@@ -9,7 +9,7 @@ from ..utils.markdown import render_markdown_to_html
 
 class ChatHtmlRenderer:
 	COMMON_CSS = """body { font-family: Arial, sans-serif; padding: 12px; line-height: 1.5; background: #ffffff; color: #111; }
-h4 { font-size: 1rem; font-weight: bold; margin: 0 0 8px 0; }
+h6.section-heading { font-size: 1rem; font-weight: bold; margin: 0 0 8px 0; }
 .bubble { background: #f7f7f7; border-radius: 10px; padding: 12px; border: 1px solid #ddd; }
 """
 
@@ -46,17 +46,17 @@ a:hover { text-decoration: underline; }
 		user_html = cls._render_message_html(user_message)
 		assistant_html = cls._render_message_html(assistant_message)
 		results = [
-			"<div class=\"section\"><h4>User query</h4>",
+			"<div class=\"section\"><h6 class=\"section-heading\">User query</h6>",
 			f"<div class=\"bubble\">{user_html}</div></div>",
 		]
 		if thinking_trace:
 			thinking_html = cls._render_message_html(thinking_trace)
 			results.extend([
-				"<div class=\"section\"><h4>Thinking trace</h4>",
+				"<div class=\"section\"><h6 class=\"section-heading\">Thinking trace</h6>",
 				f"<div class=\"bubble\">{thinking_html}</div></div>",
 			])
 		results.extend([
-			"<div class=\"section\"><h4>Assistant response</h4>",
+			"<div class=\"section\"><h6 class=\"section-heading\">Assistant response</h6>",
 			f"<div class=\"bubble\">{assistant_html}</div></div>",
 		])
 		return cls._wrap_html("".join(results), cls.LAST_TURN_CSS)
@@ -69,7 +69,7 @@ a:hover { text-decoration: underline; }
 			label = f"Tool/{msg.tool_name or 'tool'}"
 		content = msg.content or ""
 		return (
-			f"<div class='msg {role}'><h4>{cls._escape_html(label)}</h4>"
+			f"<div class='msg {role}'><h6 class='section-heading'>{cls._escape_html(label)}</h6>"
 			f"<div class='bubble content'>{cls._render_message_html(content)}</div></div>"
 		)
 

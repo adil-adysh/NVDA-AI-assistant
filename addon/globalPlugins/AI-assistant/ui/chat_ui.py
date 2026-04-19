@@ -236,6 +236,10 @@ class ChatDialog(wx.Dialog):
 
     def _on_progress(self, partial_text: str, generated_chars: int) -> None:
         wx.CallAfter(self._set_status, _(f"Receiving response ({generated_chars} chars)..."))
+        try:
+            nvda_ui.play_streaming_tone()
+        except Exception:
+            log.exception("Error playing streaming progress tone")
 
     def _set_status(self, text: str) -> None:
         self.statusLabel.Label = text

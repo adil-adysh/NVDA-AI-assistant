@@ -220,6 +220,20 @@ def get_streaming_enabled() -> bool:
 	return is_streaming_enabled()
 
 
+def is_streaming_tone_enabled() -> bool:
+	"""Return whether streaming tone feedback is enabled."""
+	return _read_bool("enableStreamingTone", defaults.DEFAULT_ENABLE_STREAMING_TONE)
+
+
+def get_streaming_tone_enabled() -> bool:
+	"""Return whether streaming tone feedback is enabled."""
+	return is_streaming_tone_enabled()
+
+
+def set_streaming_tone_enabled(value: bool) -> None:
+	_set_value("enableStreamingTone", bool(value))
+
+
 def is_progress_enabled() -> bool:
 	"""Return whether progress announcements are enabled."""
 	return _read_bool("enableProgressAnnouncements", defaults.DEFAULT_ENABLE_PROGRESS_ANNOUNCEMENTS)
