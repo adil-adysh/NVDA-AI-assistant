@@ -14,7 +14,6 @@ from ..config.settings import get_ollama_think, set_ollama_think
 from ..config.state import ProviderState
 from ..service import ChatCoordinator
 from ..tools import ToolRegistry
-from ..utils.mathml import contains_mathml
 
 
 class ChatDialog(wx.Dialog):
@@ -255,28 +254,24 @@ class ChatDialog(wx.Dialog):
         if not getattr(self, "_history_html", None):
             self._refresh_history()
         title = nvda_ui.format_browseable_title(_("AI Chat History"), self._provider_state)
-        kwargs = {
-            "title": title,
-            "is_html": True,
-            "close_button": True,
-            "copy_button": True,
-        }
-        if contains_mathml(self._history_html):
-            kwargs["sanitize_html_func"] = lambda html: html
-        nvda_ui.browseable_message(self._history_html, **kwargs)
+        nvda_ui.browseable_message(
+            self._history_html,
+            title=title,
+            is_html=True,
+            close_button=True,
+            copy_button=True,
+        )
 
     def _display_last_turn(self, user_message: str, assistant_message: str, thinking_trace: str | None = None) -> None:
         html = self._build_last_turn_html(user_message, assistant_message, thinking_trace)
         title = nvda_ui.format_browseable_title(_("Response Preview"), self._provider_state)
-        kwargs = {
-            "title": title,
-            "is_html": True,
-            "close_button": True,
-            "copy_button": True,
-        }
-        if contains_mathml(html):
-            kwargs["sanitize_html_func"] = lambda html: html
-        nvda_ui.browseable_message(html, **kwargs)
+        nvda_ui.browseable_message(
+            html,
+            title=title,
+            is_html=True,
+            close_button=True,
+            copy_button=True,
+        )
 
     def _build_last_turn_html(self, user_message: str, assistant_message: str, thinking_trace: str | None = None) -> str:
         return ChatHtmlRenderer.build_last_turn_html(user_message, assistant_message, thinking_trace)

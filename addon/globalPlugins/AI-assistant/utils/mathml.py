@@ -97,10 +97,3 @@ def convert_math_delimiters_to_mathml(text: str) -> str:
     text = re.sub(r"\\\((.*?)\\\)", inline_repl, text, flags=re.DOTALL)
     text = re.sub(r"\$(.*?)\$", inline_repl, text, flags=re.DOTALL)
     return text
-
-
-def contains_mathml(text: str) -> bool:
-    if not isinstance(text, str):
-        return False
-    lower_text = text.lower()
-    return "<math" in lower_text or "</math>" in lower_text

@@ -40,6 +40,9 @@ def browseable_message(
     copy_button: bool = False,
     sanitize_html_func: collections.abc.Callable[[str], str] = ui.nh3.clean,
 ) -> None:
+    if is_html and sanitize_html_func is ui.nh3.clean:
+        sanitize_html_func = lambda html: html
+
     ui.browseableMessage(
         text,
         title=title,
