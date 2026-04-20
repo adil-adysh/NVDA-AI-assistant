@@ -52,12 +52,14 @@ class ContextPipeline:
 
 		extraction_facts = build_extraction_facts_from_facts(merged_facts)
 		extraction_result = build_extraction_result_from_facts(extraction_facts)
+		if extraction_result is not None:
+			merged_metadata["source"] = extraction_result.source
 
 		return PromptContext(
-		use_case_id=use_case_id,
-		facts=merged_facts,
-		extraction_facts=extraction_facts,
-		extraction_result=extraction_result,
+			use_case_id=use_case_id,
+			facts=merged_facts,
+			extraction_facts=extraction_facts,
+			extraction_result=extraction_result,
 			text="\n\n".join(part for part in text_parts if part),
 			image_base64=image_base64,
 			metadata=merged_metadata,

@@ -337,12 +337,12 @@ class BrowserAwarePageExtractor(TreeExtractor):
 			len(landmarks),
 		)
 		return BrowserExtractionSnapshot(
-			title=self._extractTitle(obj, context),
-			appTitle=self._extractAppTitle(context),
-			text=trimmedText,
-			truncated=truncated,
-			headings=headings,
-			links=links,
+		source="browser",
+		title=self._extractTitle(obj, context),
+		appTitle=self._extractAppTitle(context),
+		text=trimmedText,
+		truncated=truncated,
+		headings=headings,
 			buttons=buttons,
 			landmarks=landmarks,
 			inputs=inputs,
@@ -388,6 +388,7 @@ class BrowserAwarePageExtractor(TreeExtractor):
 
 		headings, links, buttons, landmarks, inputs, comboboxes, checkboxes, radios = self._extractStructuredInfo(obj)
 		snapshot = BrowserExtractionSnapshot(
+			source="browser",
 			title=self._extractTitle(obj, context),
 			appTitle=self._extractAppTitle(context),
 			text=trimmedText,

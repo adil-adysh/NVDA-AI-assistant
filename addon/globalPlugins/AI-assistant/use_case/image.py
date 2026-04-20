@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from ..context.pipeline import ContextPipeline
-from ..context.prompts import build_image_description_prompt
+from ..prompts import build_image_description_prompt
 from ..context.types import IMAGE, ImageContext, PromptContext
 from ..service.llm import LLMService
 from .base import UseCase

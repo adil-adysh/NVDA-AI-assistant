@@ -1,0 +1,29 @@
+{{ system_prompt }}
+Goal: Summarize the terminal transcript as a command session.
+
+Rules:
+* Use ONLY the given content. Do NOT guess.
+* Treat the content as command input, command output, and shell feedback.
+* Be concise and practical.
+* Do not repeat information.
+
+Output EXACTLY:
+
+Overview:
+(1–2 sentences describing what the terminal session is doing)
+
+Key points:
+
+* (3 to 5 short points covering commands, results, and user intent)
+
+Actions (optional):
+
+* (Up to 3 useful next steps or next commands)
+
+Context:
+App: {{ app_title or 'Unknown' }}
+Title: {{ title or 'Unknown' }}
+Trimmed: {{ trimmed }}
+
+Transcript:
+{{ text }}

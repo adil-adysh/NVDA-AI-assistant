@@ -12,7 +12,7 @@ from .base import TreeExtractor
 from .text_extractor import TextExtractor
 from .candidate_base import CandidateProvider, CandidateExtractionContext
 from .candidates import buildGenericCandidateProviders
-from ...context.types import ExtractionSnapshot
+from ...context.types import ExtractionSnapshot, GENERIC, TERMINAL, PromptSource
 
 MAX_PAGE_TEXT_CHARS = 120000
 MIN_PAGE_TEXT_CHARS = 120
@@ -106,6 +106,7 @@ class GenericPageExtractor(TreeExtractor):
 		truncated: bool,
 	):
 		return ExtractionSnapshot(
+			source=self._prompt_source(sourceName),
 			title=self._extractTitle(obj, context),
 			appTitle=self._extractAppTitle(context),
 			text=trimmedText,
@@ -130,6 +131,7 @@ class GenericPageExtractor(TreeExtractor):
 		if textSignature in self._seenTextSignatures:
 			return currentBest, currentScore
 		snapshot = ExtractionSnapshot(
+			source=self._prompt_source(sourceName),
 			title=self._extractTitle(obj, context),
 			appTitle=self._extractAppTitle(context),
 			text=trimmedText,
@@ -139,6 +141,9 @@ class GenericPageExtractor(TreeExtractor):
 		if score > currentScore:
 			return snapshot, score
 		return currentBest, currentScore
+
+	def _prompt_source(self, sourceName: str) -> PromptSource:
+		return TERMINAL if sourceName == "terminal" else GENERIC
 
 	def _candidateScore(
 		self,

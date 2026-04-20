@@ -22,7 +22,15 @@ from .prompts import (
 	build_extraction_summary_prompt,
 	build_system_prompt_for_nvda_assistant,
 )
-from .types import ImageContext, ExtractionFacts, ExtractionResult, ExtractionStructure, PromptContext, ExtractionSnapshot
+from .types import (
+	ImageContext,
+	ExtractionFacts,
+	ExtractionResult,
+	ExtractionStructure,
+	PromptContext,
+	ExtractionSnapshot,
+	PromptSource,
+)
 
 __all__ = [
 	"ContextCollector",
@@ -44,6 +52,7 @@ __all__ = [
 	"ExtractionStructure",
 	"ExtractionSnapshot",
 	"PromptContext",
+	"PromptSource",
 	"ExtractionStructureCollector",
 	"ExtractionTextCollector",
 	"PageExtractionError",

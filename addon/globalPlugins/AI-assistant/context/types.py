@@ -11,6 +11,12 @@ PAGE: Final[ContextProfile] = "page"
 IMAGE: Final[ContextProfile] = "image"
 ContextProfileList: TypeAlias = tuple[ContextProfile, ...]
 
+PromptSource = Literal["browser", "terminal", "generic", "image"]
+BROWSER: Final[PromptSource] = "browser"
+TERMINAL: Final[PromptSource] = "terminal"
+GENERIC: Final[PromptSource] = "generic"
+IMAGE_SOURCE: Final[PromptSource] = "image"
+
 
 @dataclass(frozen=True, slots=True)
 class ExtractionSnapshot:
@@ -18,6 +24,7 @@ class ExtractionSnapshot:
 	appTitle: str
 	text: str
 	truncated: bool
+	source: PromptSource = GENERIC
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +61,7 @@ class ExtractionResult:
 	app_title: str
 	text: str
 	truncated: bool
+	source: PromptSource = GENERIC
 	structure: ExtractionStructure | None = None
 
 
@@ -212,11 +220,16 @@ def build_extraction_result_from_facts(extraction_facts: ExtractionFacts | None)
 	if extraction_facts.text is None:
 		return None
 
+	source = GENERIC
+	if extraction_facts.snapshot is not None:
+		source = extraction_facts.snapshot.source
+
 	return ExtractionResult(
 		title=extraction_facts.title or "",
 		app_title=extraction_facts.app_title or "",
 		text=extraction_facts.text,
 		truncated=extraction_facts.truncated if extraction_facts.truncated is not None else False,
+		source=source,
 		structure=extraction_facts.structure,
 	)
 

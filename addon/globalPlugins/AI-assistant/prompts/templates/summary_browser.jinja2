@@ -1,0 +1,82 @@
+{{ system_prompt }}
+Goal: Summarize the current browser page contents, paying attention to structure and navigation.
+
+Rules:
+* Use ONLY the given content. Do NOT guess.
+* Be concise and practical.
+* Do not repeat information.
+* Mention the page purpose, main headings, links, buttons, and landmarks when present.
+
+Output EXACTLY:
+
+Overview:
+(1–2 sentences about page purpose)
+
+Key points:
+
+* (3 to 5 short points that matter to the user)
+
+Page structure summary:
+(Short description of layout/navigation)
+
+Actions (optional):
+
+* (Up to 3 useful next steps)
+
+Context:
+App: {{ app_title or 'Unknown' }}
+Title: {{ title or 'Unknown' }}
+Trimmed: {{ trimmed }}
+
+Counts:
+Headings: {{ headings|length }}
+Links: {{ links|length }}
+Buttons: {{ buttons|length }}
+Landmarks: {{ landmarks|length }}
+Inputs: {{ inputs|length }}
+Combo boxes: {{ comboboxes|length }}
+Checkboxes: {{ checkboxes|length }}
+Radios: {{ radios|length }}
+
+Headings:
+{% if headings %}{% for heading in headings %}- {{ 'H' ~ heading[0] if heading[0] is not none else '' }}{{ heading[0] is not none and ': ' or '' }}{{ heading[1] }}
+{% endfor %}{% else %}- None
+{% endif %}
+
+Landmarks:
+{% if landmarks %}{% for item in landmarks %}- {{ item }}
+{% endfor %}{% else %}- None
+{% endif %}
+
+Links:
+{% if links %}{% for item in links %}- {{ item }}
+{% endfor %}{% else %}- None
+{% endif %}
+
+Buttons:
+{% if buttons %}{% for item in buttons %}- {{ item }}
+{% endfor %}{% else %}- None
+{% endif %}
+
+Inputs:
+{% if inputs %}{% for item in inputs %}- {{ item }}
+{% endfor %}{% else %}- None
+{% endif %}
+
+Combo boxes:
+{% if comboboxes %}{% for item in comboboxes %}- {{ item }}
+{% endfor %}{% else %}- None
+{% endif %}
+
+Checkboxes:
+{% if checkboxes %}{% for item in checkboxes %}- {{ item }}
+{% endfor %}{% else %}- None
+{% endif %}
+
+Radio buttons:
+{% if radios %}{% for item in radios %}- {{ item }}
+{% endfor %}{% else %}- None
+{% endif %}
+
+Content:
+{{ text }}
