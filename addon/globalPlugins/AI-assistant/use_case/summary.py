@@ -4,8 +4,8 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from ..context.pipeline import ContextPipeline
-from ..context.prompts import build_page_summary_prompt
-from ..context.types import APP, PAGE, PageContext, PromptContext
+from ..context.prompts import build_extraction_summary_prompt
+from ..context.types import APP, PAGE, ExtractionResult, PromptContext
 from ..service.llm import LLMService
 from .base import UseCase
 from .types import UseCaseResult, UseCaseSpec
@@ -33,7 +33,7 @@ class SummaryUseCase(UseCase):
 		return self.execute_prompted_use_case(
 			context_pipeline=context_pipeline,
 			llm_service=llm_service,
-			build_prompt=lambda prompt_context: build_page_summary_prompt(self._get_page_context(prompt_context)),
+			build_prompt=lambda prompt_context: build_extraction_summary_prompt(self._get_extraction_result(prompt_context)),
 			llm_call=lambda prompt, prompt_context: llm_service.summarize(prompt),
 			build_result=self._build_result,
 			emit=emit,
@@ -42,24 +42,24 @@ class SummaryUseCase(UseCase):
 			llm_request_message="Generating summary...",
 		)
 
-	def _get_page_context(self, prompt_context: PromptContext) -> PageContext:
-		page_context = prompt_context.page_context
-		if page_context is None:
-			raise ValueError("Unable to collect page context")
-		return page_context
+	def _get_extraction_result(self, prompt_context: PromptContext) -> ExtractionResult:
+		extraction_result = prompt_context.extraction_result
+		if extraction_result is None:
+			raise ValueError("Unable to collect extraction result")
+		return extraction_result
 
 	def _build_result(self, prompt_context: PromptContext, response: object, prompt: str) -> UseCaseResult:
-		page_context = self._get_page_context(prompt_context)
+		extraction_result = self._get_extraction_result(prompt_context)
 		html_output = self.markdown_to_html(response.text)
 		return UseCaseResult(
 			success=True,
 			message="Summary ready",
-			initial_text=page_context.text,
+			initial_text=extraction_result.text,
 			prompt_context=PromptContext(
 				use_case_id=self.spec.id,
-				facts={"page_context": page_context},
-				page_context=page_context,
-				text=page_context.text,
+				facts={"extraction_result": extraction_result},
+				extraction_result=extraction_result,
+				text=extraction_result.text,
 				metadata={
 					"prompt_key": self.spec.prompt_key,
 					"prompt_chars": len(prompt),

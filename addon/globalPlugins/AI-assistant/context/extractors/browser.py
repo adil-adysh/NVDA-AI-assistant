@@ -8,15 +8,19 @@ from collections.abc import Sequence
 import api
 import controlTypes
 from logHandler import log
-from textInfos import POSITION_ALL
 
 try:
 	import treeInterceptorHandler
 except Exception:  # pragma: no cover
 	treeInterceptorHandler = None
 
-from ...context.types import PageSnapshot
-from .candidates import CandidateProvider, ExtractionContext, buildDefaultCandidateProviders
+from ...context.types import BrowserExtractionSnapshot
+from .base import TreeExtractor
+from .browser_candidates import BrowserCandidateProvider
+from .browser_field_parser import BrowserFieldParser
+from .browser_target_resolver import BrowserTargetResolver
+from .text_extractor import TextExtractor
+from .candidates import CandidateProvider, CandidateExtractionContext
 
 MAX_PAGE_TEXT_CHARS = 120000
 MIN_PAGE_TEXT_CHARS = 120
@@ -28,7 +32,7 @@ class PageExtractionError(RuntimeError):
 	pass
 
 
-class BrowserAwarePageExtractor:
+class BrowserAwarePageExtractor(TreeExtractor):
 	_BROWSER_APP_NAMES = {
 		"chrome",
 		"msedge",
@@ -47,13 +51,20 @@ class BrowserAwarePageExtractor:
 			len(candidateProviders or []),
 		)
 		self._seenTextSignatures: set[str] = set()
-		self._candidateProviders = tuple(candidateProviders or buildDefaultCandidateProviders())
+		self._candidateProviders = tuple(candidateProviders or (BrowserCandidateProvider(),))
+		self._target_resolver = BrowserTargetResolver()
+		self._text_extractor = TextExtractor()
+		self._field_parser = BrowserFieldParser()
+
+	def supports(self, context: CandidateExtractionContext) -> bool:
+		browser_target = self._target_resolver.resolve(context)
+		return browser_target is not None
 
 	def extract(self):
 		log.debug("BrowserAwarePageExtractor.extract: starting browser page extraction")
 		self._seenTextSignatures.clear()
 		context = self._buildContext()
-		browserInterceptor = self._resolveBrowserTreeInterceptor(context)
+		browserInterceptor = self._target_resolver.resolve(context)
 		bestSnapshot = None
 		bestScore = -1
 		bestEffortSnapshot = None
@@ -67,15 +78,16 @@ class BrowserAwarePageExtractor:
 
 		if browserInterceptor is not None:
 			log.debug("BrowserAwarePageExtractor.extract: evaluating browser treeInterceptor first")
-			snapshot = self._buildSnapshot(browserInterceptor, context, sourceName="browserTreeInterceptor")
+			browserRoot = self._browserRootFromInterceptor(browserInterceptor)
+			snapshot = self._buildSnapshot(browserRoot, context, sourceName="browserTreeInterceptor")
 			if snapshot is not None:
-				score = self._candidateScore(browserInterceptor, context, snapshot, "browserTreeInterceptor", browserInterceptor)
+				score = self._candidateScore(browserRoot, context, snapshot, "browserTreeInterceptor", browserInterceptor)
 				bestSnapshot = snapshot
 				bestScore = score
 				log.debug(f"Browser Assistant: browserTreeInterceptor candidate score={score}")
 			else:
 				bestEffortSnapshot, bestEffortScore = self._bestEffortSnapshot(
-					browserInterceptor,
+					browserRoot,
 					context,
 					sourceName="browserTreeInterceptor",
 					browserInterceptor=browserInterceptor,
@@ -175,7 +187,7 @@ class BrowserAwarePageExtractor:
 			"Unable to read enough text from the current page. Move focus into the document and try again."
 		)
 
-	def _buildContext(self) -> ExtractionContext:
+	def _buildContext(self) -> CandidateExtractionContext:
 		focus = self._getFocusObjectSafe()
 		focusTreeInterceptor = getattr(focus, "treeInterceptor", None) if focus is not None else None
 		focusAncestors = self._getFocusAncestorsSafe()
@@ -207,7 +219,7 @@ class BrowserAwarePageExtractor:
 			self._describeObject(focusTreeInterceptor),
 		)
 
-		return ExtractionContext(
+		return CandidateExtractionContext(
 			focus=focus,
 			focusTreeInterceptor=focusTreeInterceptor,
 			focusAncestors=focusAncestors,
@@ -243,7 +255,7 @@ class BrowserAwarePageExtractor:
 		except Exception:
 			return None
 
-	def _resolveBrowserTreeInterceptor(self, context: ExtractionContext):
+	def _resolveBrowserTreeInterceptor(self, context: CandidateExtractionContext):
 		if self._isUsableTreeInterceptor(context.focusTreeInterceptor):
 			log.debug("BrowserAwarePageExtractor._resolveBrowserTreeInterceptor: using focus treeInterceptor")
 			return context.focusTreeInterceptor
@@ -325,6 +337,12 @@ class BrowserAwarePageExtractor:
 		log.debug("BrowserAwarePageExtractor._resolveBrowserTreeInterceptor: no usable treeInterceptor found")
 		return None
 
+	def _browserRootFromInterceptor(self, interceptor: object) -> object:
+		root = getattr(interceptor, "rootNVDAObject", None)
+		if root is not None:
+			return root
+		return interceptor
+
 	def _isUsableTreeInterceptor(self, interceptor: object | None) -> bool:
 		if interceptor is None:
 			return False
@@ -350,7 +368,7 @@ class BrowserAwarePageExtractor:
 	def _buildSnapshot(
 		self,
 		obj: object,
-		context: ExtractionContext,
+		context: CandidateExtractionContext,
 		sourceName: str,
 		trimmedText: str | None = None,
 		truncated: bool | None = None,
@@ -384,7 +402,7 @@ class BrowserAwarePageExtractor:
 			len(buttons),
 			len(landmarks),
 		)
-		return PageSnapshot(
+		return BrowserExtractionSnapshot(
 			title=self._extractTitle(obj, context),
 			appTitle=self._extractAppTitle(context),
 			text=trimmedText,
@@ -399,7 +417,7 @@ class BrowserAwarePageExtractor:
 			radios=radios,
 		)
 
-	def _snapshotScore(self, snapshot: PageSnapshot | None) -> int:
+	def _snapshotScore(self, snapshot: BrowserExtractionSnapshot | None) -> int:
 		if snapshot is None:
 			return -1
 		return (
@@ -416,10 +434,10 @@ class BrowserAwarePageExtractor:
 	def _bestEffortSnapshot(
 		self,
 		obj: object,
-		context: ExtractionContext,
+		context: CandidateExtractionContext,
 		sourceName: str,
 		browserInterceptor: object | None,
-		currentBest: PageSnapshot | None,
+		currentBest: BrowserExtractionSnapshot | None,
 		currentScore: int,
 		normalizedText: str | None = None,
 	):
@@ -435,7 +453,7 @@ class BrowserAwarePageExtractor:
 			return currentBest, currentScore
 
 		headings, links, buttons, landmarks, inputs, comboboxes, checkboxes, radios = self._extractStructuredInfo(obj)
-		snapshot = PageSnapshot(
+		snapshot = BrowserExtractionSnapshot(
 			title=self._extractTitle(obj, context),
 			appTitle=self._extractAppTitle(context),
 			text=trimmedText,
@@ -461,8 +479,8 @@ class BrowserAwarePageExtractor:
 	def _candidateScore(
 		self,
 		obj: object,
-		context: ExtractionContext,
-		snapshot: PageSnapshot,
+		context: CandidateExtractionContext,
+		snapshot: BrowserExtractionSnapshot,
 		sourceName: str,
 		browserInterceptor: object | None,
 	) -> int:
@@ -503,7 +521,7 @@ class BrowserAwarePageExtractor:
 	def _shouldInspectCandidate(
 		self,
 		candidate: object,
-		context: ExtractionContext,
+		context: CandidateExtractionContext,
 		sourceName: str,
 		browserInterceptor: object | None,
 	) -> bool:
@@ -519,7 +537,7 @@ class BrowserAwarePageExtractor:
 			return True
 		return False
 
-	def _isBrowserContext(self, context: ExtractionContext) -> bool:
+	def _isBrowserContext(self, context: CandidateExtractionContext) -> bool:
 		return context.appName in self._BROWSER_APP_NAMES or self._isUsableTreeInterceptor(context.focusTreeInterceptor)
 
 	def _sharesBrowserDocument(self, obj: object, browserInterceptor: object | None) -> bool:
@@ -546,7 +564,7 @@ class BrowserAwarePageExtractor:
 			token in typeName for token in ("document", "web", "chromium")
 		)
 
-	def _hasMainContentLandmark(self, snapshot: PageSnapshot) -> bool:
+	def _hasMainContentLandmark(self, snapshot: BrowserExtractionSnapshot) -> bool:
 		for landmark in snapshot.landmarks:
 			normalized = landmark.strip().lower()
 			if any(token in normalized for token in ("main", "content", "article", "feed")):
@@ -554,45 +572,7 @@ class BrowserAwarePageExtractor:
 		return False
 
 	def _extractText(self, obj: object):
-		for target in self._extractionTargets(obj):
-			text = self._extractTextInfoText(target)
-			if text:
-				return text
-
-		fragments = []
-		for attr in ("name", "value", "description", "displayText"):
-			try:
-				value = getattr(obj, attr, None)
-			except Exception:
-				value = None
-			if isinstance(value, str) and value.strip():
-				fragments.append(value.strip())
-		return "\n".join(fragments)
-
-	def _extractTextInfoText(self, obj: object):
-		if not hasattr(obj, "makeTextInfo"):
-			return None
-		try:
-			textInfo = obj.makeTextInfo(POSITION_ALL)
-		except Exception:
-			return None
-		if textInfo is None:
-			return None
-		for method_name in ("getTextWithFields", "text"):
-			try:
-				value = getattr(textInfo, method_name, None)
-			except Exception:
-				value = None
-			if callable(value):
-				try:
-					result = value()
-					if isinstance(result, str) and result.strip():
-						return result
-				except Exception:
-					pass
-			elif isinstance(value, str) and value.strip():
-				return value
-		return None
+		return self._text_extractor.extract_text(obj) or ""
 
 	def _extractionTargets(self, obj: object):
 		yield obj
@@ -605,263 +585,8 @@ class BrowserAwarePageExtractor:
 				yield target
 
 	def _extractStructuredInfo(self, obj: object):
-		textInfo = self._makeTextInfo(obj)
-		if textInfo is None:
-			return (), (), (), ()
-
-		fields = self._makeTextWithFields(textInfo)
-		if not fields:
-			return (), (), (), ()
-
-		headings, links, buttons, landmarks, inputs, comboboxes, checkboxes, radios = self._parseTextFields(fields)
-		return tuple(headings), tuple(links), tuple(buttons), tuple(landmarks), tuple(inputs), tuple(comboboxes), tuple(checkboxes), tuple(radios)
-
-	def _makeTextInfo(self, obj: object):
-		if not hasattr(obj, "makeTextInfo"):
-			return None
-		try:
-			return obj.makeTextInfo(POSITION_ALL)
-		except Exception:
-			return None
-
-	def _makeTextWithFields(self, textInfo: object):
-		if textInfo is None:
-			return ()
-		try:
-			fields = getattr(textInfo, "getTextWithFields", None)
-			if callable(fields):
-				return fields() or ()
-			return ()
-		except Exception:
-			return ()
-
-	def _parseTextFields(self, fields: object):
-		headings = []
-		links = []
-		buttons = []
-		landmarks = []
-		inputs = []
-		comboboxes = []
-		checkboxes = []
-		radios = []
-		stack: list[dict[str, object]] = []
-
-		for item in fields:
-			if isinstance(item, str):
-				if stack:
-					stack[-1]["text"].append(item)
-				continue
-
-			command = getattr(item, "command", None)
-			field = getattr(item, "field", None)
-			if command == "controlStart" and field is not None:
-				if self._isHiddenField(field):
-					continue
-				stack.append(
-					{
-						"field": field,
-						"text": [],
-					}
-				)
-			elif command == "controlEnd" and stack:
-				frame = stack.pop()
-				label = self._normalizeCandidateText(" ".join(frame["text"]))
-				if not label:
-					label = self._explicitFieldName(frame["field"])
-				if label:
-					if self._isHeadingField(frame["field"]):
-						level = self._headingLevel(frame["field"])
-						headings.append((level, label))
-					elif self._isButtonField(frame["field"]):
-						buttons.append(label)
-					elif self._isComboBoxField(frame["field"]):
-						comboboxes.append(label)
-					elif self._isCheckBoxField(frame["field"]):
-						checkboxes.append(label)
-					elif self._isRadioField(frame["field"]):
-						radios.append(label)
-					elif self._isInputField(frame["field"]):
-						inputs.append(label)
-					elif self._isLinkField(frame["field"]):
-						links.append(label)
-					elif self._isLandmarkField(frame["field"]):
-						landmarks.append(label)
-				if stack and label:
-					stack[-1]["text"].append(label)
-
-		return (
-			self._dedupe_headings(headings),
-			self._dedupe_strings(links),
-			self._dedupe_strings(buttons),
-			self._dedupe_strings(landmarks),
-			self._dedupe_strings(inputs),
-			self._dedupe_strings(comboboxes),
-			self._dedupe_strings(checkboxes),
-			self._dedupe_strings(radios),
-		)
-
-	def _normalizeCandidateText(self, text: str) -> str:
-		text = re.sub(r"\s+", " ", text or "")
-		return text.strip()
-
-	def _explicitFieldName(self, field: object) -> str:
-		if field is None:
-			return ""
-		value = self._fieldValue(field, "IAccessible2::attribute_explicit-name")
-		if value:
-			return self._normalizeCandidateText(str(value))
-		value = self._fieldValue(field, "name")
-		if value:
-			return self._normalizeCandidateText(str(value))
-		value = self._fieldValue(field, "IAccessible2::attribute_name-from")
-		if value:
-			return self._normalizeCandidateText(str(value))
-		return ""
-
-	def _fieldValue(self, field: object, key: str) -> object | None:
-		try:
-			return field.get(key)
-		except Exception:
-			return None
-
-	def _headingLevel(self, field: object) -> int | None:
-		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
-		if isinstance(tag, str):
-			tag = tag.strip().lower()
-			if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
-				return int(tag[1])
-		return None
-
-	def _isHeadingField(self, field: object) -> bool:
-		role = self._numericFieldRole(field)
-		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
-		xml_role = self._fieldValue(field, "IAccessible2::attribute_xml-roles")
-		return (
-			role == controlTypes.Role.HEADING.value
-			or isinstance(tag, str) and tag.strip().lower() in ("h1", "h2", "h3", "h4", "h5", "h6")
-			or isinstance(xml_role, str) and "heading" in xml_role.strip().lower()
-		)
-
-	def _isButtonField(self, field: object) -> bool:
-		role = self._numericFieldRole(field)
-		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
-		xml_role = self._fieldValue(field, "IAccessible2::attribute_xml-roles")
-		return (
-			role in {
-				controlTypes.Role.BUTTON.value,
-				controlTypes.Role.MENUBUTTON.value,
-				controlTypes.Role.TOGGLEBUTTON.value,
-			}
-			or isinstance(xml_role, str) and "button" in xml_role.strip().lower()
-			or isinstance(tag, str) and tag.strip().lower() == "button"
-		)
-
-	def _isLinkField(self, field: object) -> bool:
-		role = self._numericFieldRole(field)
-		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
-		xml_role = self._fieldValue(field, "IAccessible2::attribute_xml-roles")
-		return (
-			role == controlTypes.Role.LINK.value
-			or isinstance(xml_role, str) and "link" in xml_role.strip().lower()
-			or isinstance(tag, str) and tag.strip().lower() == "a"
-		)
-
-	def _isComboBoxField(self, field: object) -> bool:
-		role = self._numericFieldRole(field)
-		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
-		xml_role = self._fieldValue(field, "IAccessible2::attribute_xml-roles")
-		return (
-			role == controlTypes.Role.COMBOBOX.value if hasattr(controlTypes.Role, 'COMBOBOX') else False
-			or isinstance(xml_role, str) and "combobox" in xml_role.strip().lower()
-			or isinstance(tag, str) and tag.strip().lower() in {"select", "combobox"}
-		)
-
-	def _isCheckBoxField(self, field: object) -> bool:
-		role = self._numericFieldRole(field)
-		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
-		xml_role = self._fieldValue(field, "IAccessible2::attribute_xml-roles")
-		return (
-			role == controlTypes.Role.CHECKBOX.value if hasattr(controlTypes.Role, 'CHECKBOX') else False
-			or isinstance(xml_role, str) and "checkbox" in xml_role.strip().lower()
-			or isinstance(tag, str) and tag.strip().lower() == "checkbox"
-		)
-
-	def _isRadioField(self, field: object) -> bool:
-		role = self._numericFieldRole(field)
-		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
-		xml_role = self._fieldValue(field, "IAccessible2::attribute_xml-roles")
-		return (
-			role == controlTypes.Role.RADIO.value if hasattr(controlTypes.Role, 'RADIO') else False
-			or isinstance(xml_role, str) and "radio" in xml_role.strip().lower()
-			or isinstance(tag, str) and tag.strip().lower() == "radio"
-		)
-
-	def _isInputField(self, field: object) -> bool:
-		role = self._numericFieldRole(field)
-		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
-		xml_role = self._fieldValue(field, "IAccessible2::attribute_xml-roles")
-		return (
-			role == controlTypes.Role.TEXT.value if hasattr(controlTypes.Role, 'TEXT') else False
-			or isinstance(xml_role, str)
-			and any(token in xml_role.strip().lower() for token in ("textbox", "searchbox", "spinbutton", "text"))
-			or isinstance(tag, str)
-			and tag.strip().lower() in {"input", "textarea", "textbox", "search"}
-		)
-
-	def _isLandmarkField(self, field: object) -> bool:
-		role = self._numericFieldRole(field)
-		tag = self._fieldValue(field, "IAccessible2::attribute_tag")
-		xml_role = self._fieldValue(field, "IAccessible2::attribute_xml-roles")
-		landmark = self._fieldValue(field, "landmark")
-		if isinstance(xml_role, str) and xml_role.strip().lower() in {
-			"banner",
-			"complementary",
-			"contentinfo",
-			"form",
-			"main",
-			"navigation",
-			"search",
-		}:
-			return True
-		if isinstance(tag, str) and tag.strip().lower() in {
-			"main",
-			"nav",
-			"banner",
-			"complementary",
-			"contentinfo",
-			"search",
-		}:
-			return True
-		if landmark is not None:
-			return True
-		return False
-
-	def _numericFieldRole(self, field: object) -> int | None:
-		role = self._fieldValue(field, "role")
-		if isinstance(role, controlTypes.Role):
-			return role.value
-		if isinstance(role, int):
-			return role
-		if isinstance(role, str) and role.isdigit():
-			return int(role)
-		return None
-
-	def _isHiddenField(self, field: object) -> bool:
-		hidden = self._fieldValue(field, "isHidden")
-		if hidden is True:
-			return True
-		if isinstance(hidden, str) and hidden.strip() in {"1", "true", "yes"}:
-			return True
-		return False
-
-	def _dedupe_strings(self, items: list[str]) -> tuple[str, ...]:
-		seen: set[str] = set()
-		unique: list[str] = []
-		for item in items:
-			if item and item not in seen:
-				seen.add(item)
-				unique.append(item)
-		return tuple(unique)
+		headings, links, buttons, landmarks, inputs, comboboxes, checkboxes, radios = self._field_parser.extract_structured_info(obj)
+		return headings, links, buttons, landmarks, inputs, comboboxes, checkboxes, radios
 
 	def _dedupe_headings(self, headings: list[tuple[int | None, str]]) -> tuple[tuple[int | None, str], ...]:
 		seen: set[tuple[int | None, str]] = set()
@@ -872,7 +597,7 @@ class BrowserAwarePageExtractor:
 				unique.append(heading)
 		return tuple(unique)
 
-	def _extractTitle(self, obj: object, context: ExtractionContext) -> str:
+	def _extractTitle(self, obj: object, context: CandidateExtractionContext) -> str:
 		for attr in ("name", "title", "description"):
 			try:
 				value = getattr(obj, attr, None)
@@ -890,7 +615,7 @@ class BrowserAwarePageExtractor:
 					return value.strip()
 		return ""
 
-	def _extractAppTitle(self, context: ExtractionContext) -> str:
+	def _extractAppTitle(self, context: CandidateExtractionContext) -> str:
 		if context.appName:
 			return context.appName
 		return ""
@@ -916,11 +641,11 @@ class BrowserAwarePageExtractor:
 			return "None"
 		return f"{type(obj).__module__}.{type(obj).__name__}"
 
-	def _describeSnapshot(self, snapshot: PageSnapshot | None) -> str:
+	def _describeSnapshot(self, snapshot: BrowserExtractionSnapshot | None) -> str:
 		if snapshot is None:
 			return "None"
 		return (
-			f"PageSnapshot(title={snapshot.title!r}, appTitle={snapshot.appTitle!r}, "
+			f"BrowserExtractionSnapshot(title={snapshot.title!r}, appTitle={snapshot.appTitle!r}, "
 			f"text_len={len(snapshot.text)}, truncated={snapshot.truncated}, "
 			f"headings={len(snapshot.headings)}, links={len(snapshot.links)}, "
 			f"buttons={len(snapshot.buttons)}, landmarks={len(snapshot.landmarks)})"

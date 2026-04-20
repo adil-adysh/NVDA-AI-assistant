@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .candidate_base import CandidateProvider, ExtractionContext
+from .candidate_base import CandidateProvider, CandidateExtractionContext
 
 
 class TextEditorCandidateProvider(CandidateProvider):
@@ -15,10 +15,10 @@ class TextEditorCandidateProvider(CandidateProvider):
 		"devenv",
 	}
 
-	def supports(self, context: ExtractionContext) -> bool:
+	def supports(self, context: CandidateExtractionContext) -> bool:
 		return context.appName in self._TEXT_EDITOR_APP_NAMES
 
-	def iterCandidates(self, context: ExtractionContext) -> Any:
+	def iterCandidates(self, context: CandidateExtractionContext) -> Any:
 		if context.focus is not None:
 			yield context.focus
 			parent = getattr(context.focus, "parent", None)

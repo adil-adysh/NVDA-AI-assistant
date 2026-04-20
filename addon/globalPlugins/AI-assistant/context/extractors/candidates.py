@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .browser_candidates import BrowserCandidateProvider
-from .candidate_base import CandidateProvider, ExtractionContext
+from .candidate_base import CandidateProvider, CandidateExtractionContext
 from .generic_candidates import GenericCandidateProvider
 from .terminal_candidates import TerminalCandidateProvider
 from .text_editor_candidates import TextEditorCandidateProvider
@@ -14,6 +14,14 @@ from .text_editor_candidates import TextEditorCandidateProvider
 def buildDefaultCandidateProviders() -> tuple[CandidateProvider, ...]:
 	return (
 		BrowserCandidateProvider(),
+		TextEditorCandidateProvider(),
+		TerminalCandidateProvider(),
+		GenericCandidateProvider(),
+	)
+
+
+def buildGenericCandidateProviders() -> tuple[CandidateProvider, ...]:
+	return (
 		TextEditorCandidateProvider(),
 		TerminalCandidateProvider(),
 		GenericCandidateProvider(),
@@ -29,10 +37,10 @@ class TextAppCandidateProvider(CandidateProvider):
 			TerminalCandidateProvider(),
 		)
 
-	def supports(self, context: ExtractionContext) -> bool:
+	def supports(self, context: CandidateExtractionContext) -> bool:
 		return any(provider.supports(context) for provider in self._providers)
 
-	def iterCandidates(self, context: ExtractionContext):
+	def iterCandidates(self, context: CandidateExtractionContext):
 		seen: set[int] = set()
 		for provider in self._providers:
 			for candidate in provider.iterCandidates(context):

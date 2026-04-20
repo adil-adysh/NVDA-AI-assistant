@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from .types import ContextProfileList, PageSnapshot
+from .types import ContextProfileList, ExtractionSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,7 +18,7 @@ class ContextFragment:
 @dataclass(frozen=True, slots=True)
 class CollectorInput:
 	use_case_id: str
-	page_snapshot: PageSnapshot | None = None
+	extraction_snapshot: ExtractionSnapshot | None = None
 
 
 class ContextCollector(Protocol):

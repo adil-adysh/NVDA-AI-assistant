@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from ..context.pipeline import ContextPipeline
-from ..context.types import APP, IMAGE, PAGE, PageContext, PromptContext
+from ..context.types import APP, IMAGE, PAGE, ExtractionResult, PromptContext
 from ..service.llm import LLMService
 from .base import UseCase
 from .types import UseCaseResult, UseCaseSpec
@@ -71,15 +71,15 @@ class OpenChatWithPageContentUseCase(UseCase):
 
 		page_content = kwargs.get("page_content")
 		if prompt_context is not None:
-			page_context = prompt_context.page_context
-			if isinstance(page_context, PageContext):
-				title = page_context.title or "Unknown"
-				app_title = page_context.app_title or "Unknown"
+			extraction_result = prompt_context.extraction_result
+			if extraction_result is not None:
+				title = extraction_result.title or "Unknown"
+				app_title = extraction_result.app_title or "Unknown"
 				page_content = (
 					"Page content:\n"
 					f"Title: {title}\n"
 					f"App: {app_title}\n\n"
-					f"{page_context.text}\n\n"
+					f"{extraction_result.text}\n\n"
 					"Question: "
 				)
 			elif page_content is None:

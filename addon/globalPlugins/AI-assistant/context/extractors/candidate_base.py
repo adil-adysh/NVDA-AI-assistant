@@ -7,7 +7,7 @@ from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
-class ExtractionContext:
+class CandidateExtractionContext:
 	focus: object | None
 	focusTreeInterceptor: object | None
 	focusAncestors: tuple[object, ...]
@@ -20,9 +20,9 @@ class CandidateProvider(ABC):
 	name: str = "unknown"
 
 	@abstractmethod
-	def supports(self, context: ExtractionContext) -> bool:
+	def supports(self, context: CandidateExtractionContext) -> bool:
 		raise NotImplementedError
 
 	@abstractmethod
-	def iterCandidates(self, context: ExtractionContext) -> Any:
+	def iterCandidates(self, context: CandidateExtractionContext) -> Any:
 		raise NotImplementedError

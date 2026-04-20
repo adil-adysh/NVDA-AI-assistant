@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from .types import ImageContext, PageContext
+from .types import ExtractionResult, ExtractionStructure, ImageContext
 
 
 def build_system_prompt_for_nvda_assistant() -> str:
@@ -23,16 +23,17 @@ def build_system_prompt_for_nvda_assistant() -> str:
 	)
 
 
-def build_page_summary_prompt(context: PageContext) -> str:
-	"""Build a page summary prompt from structured page context."""
-	headings = _format_headings(context.headings)
-	links = _format_list(context.links)
-	buttons = _format_list(context.buttons)
-	landmarks = _format_list(context.landmarks)
-	inputs = _format_list(context.inputs)
-	comboboxes = _format_list(context.comboboxes)
-	checkboxes = _format_list(context.checkboxes)
-	radios = _format_list(context.radios)
+def build_extraction_summary_prompt(context: ExtractionResult) -> str:
+	"""Build an extraction summary prompt from structured extraction result."""
+	structure = context.structure or ExtractionStructure()
+	headings = _format_headings(structure.headings)
+	links = _format_list(structure.links)
+	buttons = _format_list(structure.buttons)
+	landmarks = _format_list(structure.landmarks)
+	inputs = _format_list(structure.inputs)
+	comboboxes = _format_list(structure.comboboxes)
+	checkboxes = _format_list(structure.checkboxes)
+	radios = _format_list(structure.radios)
 	truncated_notice = "yes" if context.truncated else "no"
 
 	return (
@@ -54,14 +55,14 @@ def build_page_summary_prompt(context: PageContext) -> str:
 		f"Title: {context.title}\n"
 		f"Trimmed: {truncated_notice}\n\n"
 		"Counts:\n"
-		f"Headings: {len(context.headings)}\n"
-		f"Links: {len(context.links)}\n"
-		f"Buttons: {len(context.buttons)}\n"
-		f"Landmarks: {len(context.landmarks)}\n"
-		f"Inputs: {len(context.inputs)}\n"
-		f"Combo boxes: {len(context.comboboxes)}\n"
-		f"Checkboxes: {len(context.checkboxes)}\n"
-		f"Radios: {len(context.radios)}\n\n"
+		f"Headings: {len(structure.headings)}\n"
+		f"Links: {len(structure.links)}\n"
+		f"Buttons: {len(structure.buttons)}\n"
+		f"Landmarks: {len(structure.landmarks)}\n"
+		f"Inputs: {len(structure.inputs)}\n"
+		f"Combo boxes: {len(structure.comboboxes)}\n"
+		f"Checkboxes: {len(structure.checkboxes)}\n"
+		f"Radios: {len(structure.radios)}\n\n"
 		"Headings:\n"
 		f"{headings}\n\n"
 		"Landmarks:\n"

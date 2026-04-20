@@ -3,16 +3,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from .candidate_base import CandidateProvider, ExtractionContext
+from .candidate_base import CandidateProvider, CandidateExtractionContext
 
 
 class GenericCandidateProvider(CandidateProvider):
 	name = "generic"
 
-	def supports(self, context: ExtractionContext) -> bool:
+	def supports(self, context: CandidateExtractionContext) -> bool:
 		return True
 
-	def iterCandidates(self, context: ExtractionContext):
+	def iterCandidates(self, context: CandidateExtractionContext):
 		for candidate in (context.focus, context.navigator, context.foreground):
 			if candidate is not None:
 				yield candidate

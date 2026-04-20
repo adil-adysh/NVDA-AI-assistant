@@ -4,31 +4,31 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..extractors.browser import BrowserAwarePageExtractor
+from ..extractors.base import TreeExtractor
 from ...context.protocols import CollectorInput, ContextFragment
-from ...context.types import APP, ContextCollectionError, ContextProfileList, PAGE, PageSnapshot
+from ...context.types import APP, ContextCollectionError, ContextProfileList, PAGE, ExtractionSnapshot, ExtractionStructure
 
 
 @dataclass(frozen=True, slots=True)
-class PageTextCollector:
-	extractor: BrowserAwarePageExtractor | None = None
+class ExtractionTextCollector:
+	extractor: TreeExtractor | None = None
 
 	@property
 	def profiles(self) -> ContextProfileList:
 		return (APP, PAGE)
 
 	def collect(self, input: CollectorInput) -> ContextFragment:
-		if self.extractor is None:
-			raise ContextCollectionError("PageTextCollector requires an extractor")
+		if self.extractor is None and input.extraction_snapshot is None:
+			raise ContextCollectionError("ExtractionTextCollector requires an extraction snapshot or extractor")
 
-		snapshot = input.page_snapshot
-		if not isinstance(snapshot, PageSnapshot):
-			raise ContextCollectionError("PageTextCollector requires a page snapshot")
+		snapshot = input.extraction_snapshot
+		if not isinstance(snapshot, ExtractionSnapshot):
+			raise ContextCollectionError("ExtractionTextCollector requires an extraction snapshot")
 
 		return ContextFragment(
 			facts={
-				"page_text": snapshot.text,
-				"page_snapshot": snapshot,
+				"extraction_text": snapshot.text,
+				"extraction_snapshot": snapshot,
 			},
 			text=snapshot.text,
 			metadata={
@@ -41,35 +41,46 @@ class PageTextCollector:
 
 
 @dataclass(frozen=True, slots=True)
-class PageStructureCollector:
-	extractor: BrowserAwarePageExtractor | None = None
+class ExtractionStructureCollector:
+	extractor: TreeExtractor | None = None
 
 	@property
 	def profiles(self) -> ContextProfileList:
 		return (PAGE,)
 
 	def collect(self, input: CollectorInput) -> ContextFragment:
-		if self.extractor is None:
-			raise ContextCollectionError("PageStructureCollector requires an extractor")
+		if self.extractor is None and input.extraction_snapshot is None:
+			raise ContextCollectionError("ExtractionStructureCollector requires an extraction snapshot or extractor")
 
-		snapshot = input.page_snapshot
-		if not isinstance(snapshot, PageSnapshot):
-			raise ContextCollectionError("PageStructureCollector requires a page snapshot")
+		snapshot = input.extraction_snapshot
+		if not isinstance(snapshot, ExtractionSnapshot):
+			raise ContextCollectionError("ExtractionStructureCollector requires an extraction snapshot")
 
+		page_structure = ExtractionStructure(
+			headings=getattr(snapshot, "headings", ()),
+			links=getattr(snapshot, "links", ()),
+			buttons=getattr(snapshot, "buttons", ()),
+			landmarks=getattr(snapshot, "landmarks", ()),
+			inputs=getattr(snapshot, "inputs", ()),
+			comboboxes=getattr(snapshot, "comboboxes", ()),
+			checkboxes=getattr(snapshot, "checkboxes", ()),
+			radios=getattr(snapshot, "radios", ()),
+		)
 		return ContextFragment(
 			facts={
-				"page_snapshot": snapshot,
-				"page_title": snapshot.title,
-				"page_app_title": snapshot.appTitle,
-				"page_truncated": snapshot.truncated,
-				"page_headings": snapshot.headings,
-				"page_links": snapshot.links,
-				"page_buttons": snapshot.buttons,
-				"page_landmarks": snapshot.landmarks,
-				"page_inputs": snapshot.inputs,
-				"page_comboboxes": snapshot.comboboxes,
-				"page_checkboxes": snapshot.checkboxes,
-				"page_radios": snapshot.radios,
+				"extraction_snapshot": snapshot,
+				"extraction_title": snapshot.title,
+				"extraction_app_title": snapshot.appTitle,
+				"extraction_truncated": snapshot.truncated,
+				"extraction_structure": page_structure,
+				"extraction_headings": page_structure.headings,
+				"extraction_links": page_structure.links,
+				"extraction_buttons": page_structure.buttons,
+				"extraction_landmarks": page_structure.landmarks,
+				"extraction_inputs": page_structure.inputs,
+				"extraction_comboboxes": page_structure.comboboxes,
+				"extraction_checkboxes": page_structure.checkboxes,
+				"extraction_radios": page_structure.radios,
 			},
 			metadata={
 				"use_case_id": input.use_case_id,

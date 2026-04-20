@@ -13,7 +13,7 @@ try:
 except Exception:  # pragma: no cover
 	treeInterceptorHandler = None
 
-from .candidate_base import CandidateProvider, ExtractionContext
+from .candidate_base import CandidateProvider, CandidateExtractionContext
 
 
 class BrowserCandidateProvider(CandidateProvider):
@@ -27,7 +27,7 @@ class BrowserCandidateProvider(CandidateProvider):
 		"vivaldi",
 	}
 
-	def supports(self, context: ExtractionContext) -> bool:
+	def supports(self, context: CandidateExtractionContext) -> bool:
 		log.debug(
 			"BrowserCandidateProvider.supports: appName=%s focus=%s",
 			context.appName,
@@ -47,7 +47,7 @@ class BrowserCandidateProvider(CandidateProvider):
 		log.debug("BrowserCandidateProvider.supports: accepted via browser app name")
 		return context.focus is not None
 
-	def iterCandidates(self, context: ExtractionContext) -> Any:
+	def iterCandidates(self, context: CandidateExtractionContext) -> Any:
 		focus = context.focus
 		if focus is None:
 			log.debug("BrowserCandidateProvider.iterCandidates: no focus object")
@@ -64,10 +64,14 @@ class BrowserCandidateProvider(CandidateProvider):
 		if interceptor is not None:
 			log.debug("BrowserCandidateProvider.iterCandidates: yielding treeInterceptor=%s", self._describeObject(interceptor))
 			yield interceptor
-
-			root = getattr(interceptor, "rootNVDAObject", None)
-			if root is not None:
-				log.debug("BrowserCandidateProvider.iterCandidates: yielding interceptor root=%s", self._describeObject(root))
+			root = self._rootObjectFromTreeInterceptor(interceptor)
+			if root is not None and root is not interceptor:
+				log.debug(
+					"BrowserCandidateProvider.iterCandidates: yielding interceptor root=%s role=%s name=%s",
+					self._describeObject(root),
+					getattr(root, "role", None),
+					getattr(root, "name", None),
+				)
 				yield root
 
 			caretObj = self._caretObjectFromTreeInterceptor(interceptor)
@@ -83,7 +87,7 @@ class BrowserCandidateProvider(CandidateProvider):
 		log.debug("BrowserCandidateProvider.iterCandidates: yielding focus=%s", self._describeObject(focus))
 		yield focus
 
-	def _resolveTreeInterceptor(self, context: ExtractionContext) -> object | None:
+	def _resolveTreeInterceptor(self, context: CandidateExtractionContext) -> object | None:
 		direct = context.focusTreeInterceptor
 		if self._isUsableTreeInterceptor(direct):
 			log.debug("BrowserCandidateProvider._resolveTreeInterceptor: using focus treeInterceptor=%s", self._describeObject(direct))
@@ -100,7 +104,7 @@ class BrowserCandidateProvider(CandidateProvider):
 				log.debug("BrowserCandidateProvider._resolveTreeInterceptor: handler lookup failed", exc_info=True)
 				pass
 
-		for obj in context.focusAncestors:
+		for obj in reversed(context.focusAncestors):
 			interceptor = getattr(obj, "treeInterceptor", None)
 			if self._isUsableTreeInterceptor(interceptor):
 				log.debug("BrowserCandidateProvider._resolveTreeInterceptor: using focus ancestor=%s", self._describeObject(obj))
@@ -143,6 +147,12 @@ class BrowserCandidateProvider(CandidateProvider):
 		root = getattr(interceptor, "rootNVDAObject", None)
 		return root is not None
 
+	def _rootObjectFromTreeInterceptor(self, interceptor: object) -> object | None:
+		try:
+			return getattr(interceptor, "rootNVDAObject", None)
+		except Exception:
+			return None
+
 	def _caretObjectFromTreeInterceptor(self, interceptor: object) -> object | None:
 		try:
 			info = interceptor.makeTextInfo(POSITION_CARET)
@@ -155,7 +165,7 @@ class BrowserCandidateProvider(CandidateProvider):
 			candidate = None
 		return candidate
 
-	def _documentFromFocus(self, focus: object, context: ExtractionContext) -> object | None:
+	def _documentFromFocus(self, focus: object, context: CandidateExtractionContext) -> object | None:
 		log.debug("BrowserCandidateProvider._documentFromFocus: focus=%s", self._describeObject(focus))
 		try:
 			ancestors = list(api.getFocusAncestors())

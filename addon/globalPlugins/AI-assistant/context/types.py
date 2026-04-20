@@ -13,19 +13,35 @@ ContextProfileList: TypeAlias = tuple[ContextProfile, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class PageSnapshot:
+class ExtractionSnapshot:
 	title: str
 	appTitle: str
 	text: str
 	truncated: bool
-	headings: tuple[tuple[int | None, str], ...]
-	links: tuple[str, ...]
-	buttons: tuple[str, ...]
-	landmarks: tuple[str, ...]
-	inputs: tuple[str, ...]
-	comboboxes: tuple[str, ...]
-	checkboxes: tuple[str, ...]
-	radios: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class BrowserExtractionSnapshot(ExtractionSnapshot):
+	headings: tuple[tuple[int | None, str], ...] = ()
+	links: tuple[str, ...] = ()
+	buttons: tuple[str, ...] = ()
+	landmarks: tuple[str, ...] = ()
+	inputs: tuple[str, ...] = ()
+	comboboxes: tuple[str, ...] = ()
+	checkboxes: tuple[str, ...] = ()
+	radios: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractionStructure:
+	headings: tuple[tuple[int | None, str], ...] = ()
+	links: tuple[str, ...] = ()
+	buttons: tuple[str, ...] = ()
+	landmarks: tuple[str, ...] = ()
+	inputs: tuple[str, ...] = ()
+	comboboxes: tuple[str, ...] = ()
+	checkboxes: tuple[str, ...] = ()
+	radios: tuple[str, ...] = ()
 
 
 class ContextCollectionError(RuntimeError):
@@ -33,32 +49,22 @@ class ContextCollectionError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
-class PageContext:
+class ExtractionResult:
 	title: str
 	app_title: str
 	text: str
 	truncated: bool
-	headings: tuple[tuple[int | None, str], ...]
-	links: tuple[str, ...]
-	buttons: tuple[str, ...]
-	landmarks: tuple[str, ...]
-	inputs: tuple[str, ...]
-	comboboxes: tuple[str, ...]
-	checkboxes: tuple[str, ...]
-	radios: tuple[str, ...]
+	structure: ExtractionStructure | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class PageFacts:
+class ExtractionFacts:
 	title: str | None = None
 	app_title: str | None = None
 	text: str | None = None
 	truncated: bool | None = None
-	headings: tuple[tuple[int | None, str], ...] = ()
-	links: tuple[str, ...] = ()
-	buttons: tuple[str, ...] = ()
-	landmarks: tuple[str, ...] = ()
-	snapshot: PageSnapshot | None = None
+	structure: ExtractionStructure | None = None
+	snapshot: ExtractionSnapshot | None = None
 
 
 def _normalize_str(value: Any) -> str:
@@ -95,21 +101,28 @@ def _normalize_str_tuple(value: Any) -> tuple[str, ...]:
 	return value
 
 
-def build_page_facts_from_facts(facts: dict[str, Any]) -> PageFacts | None:
-	snapshot = facts.get("page_snapshot")
-	page_text = facts.get("page_text")
+def build_extraction_facts_from_facts(facts: dict[str, Any]) -> ExtractionFacts | None:
+	snapshot = facts.get("extraction_snapshot") if "extraction_snapshot" in facts else facts.get("page_snapshot")
+	page_text = facts.get("extraction_text") if "extraction_text" in facts else facts.get("page_text")
 	if (
-		not isinstance(snapshot, PageSnapshot)
+		not isinstance(snapshot, ExtractionSnapshot)
 		and not isinstance(page_text, str)
 		and not any(
 			key in facts
 			for key in (
+				"extraction_title",
 				"page_title",
+				"extraction_app_title",
 				"page_app_title",
+				"extraction_truncated",
 				"page_truncated",
+				"extraction_headings",
 				"page_headings",
+				"extraction_links",
 				"page_links",
+				"extraction_buttons",
 				"page_buttons",
+				"extraction_landmarks",
 				"page_landmarks",
 			)
 		)
@@ -129,19 +142,24 @@ def build_page_facts_from_facts(facts: dict[str, Any]) -> PageFacts | None:
 	radios: tuple[str, ...] = ()
 	text: str | None = None
 
-	if isinstance(snapshot, PageSnapshot):
+	structure: ExtractionStructure | None = None
+
+	if isinstance(snapshot, ExtractionSnapshot):
 		title = snapshot.title
 		app_title = snapshot.appTitle
 		truncated = snapshot.truncated
-		headings = snapshot.headings
-		links = snapshot.links
-		buttons = snapshot.buttons
-		landmarks = snapshot.landmarks
-		inputs = snapshot.inputs
-		comboboxes = snapshot.comboboxes
-		checkboxes = snapshot.checkboxes
-		radios = snapshot.radios
 		text = snapshot.text
+		if isinstance(snapshot, BrowserExtractionSnapshot):
+			structure = ExtractionStructure(
+				headings=snapshot.headings,
+				links=snapshot.links,
+				buttons=snapshot.buttons,
+				landmarks=snapshot.landmarks,
+				inputs=snapshot.inputs,
+				comboboxes=snapshot.comboboxes,
+				checkboxes=snapshot.checkboxes,
+				radios=snapshot.radios,
+			)
 
 	if isinstance(page_text, str):
 		text = page_text
@@ -152,63 +170,54 @@ def build_page_facts_from_facts(facts: dict[str, Any]) -> PageFacts | None:
 		app_title = _normalize_str(facts.get("page_app_title")) or None
 	if truncated is None:
 		truncated = _normalize_optional_bool(facts.get("page_truncated"))
-	if not headings:
-		headings = _normalize_headings(facts.get("page_headings"))
-	if not links:
-		links = _normalize_str_tuple(facts.get("page_links"))
-	if not buttons:
-		buttons = _normalize_str_tuple(facts.get("page_buttons"))
-	if not landmarks:
-		landmarks = _normalize_str_tuple(facts.get("page_landmarks"))
-	if not inputs:
-		inputs = _normalize_str_tuple(facts.get("page_inputs"))
-	if not comboboxes:
-		comboboxes = _normalize_str_tuple(facts.get("page_comboboxes"))
-	if not checkboxes:
-		checkboxes = _normalize_str_tuple(facts.get("page_checkboxes"))
-	if not radios:
-		radios = _normalize_str_tuple(facts.get("page_radios"))
+	page_structure = facts.get("extraction_structure") if "extraction_structure" in facts else facts.get("page_structure")
+	if page_structure is None:
+		headings = _normalize_headings(facts.get("extraction_headings") if "extraction_headings" in facts else facts.get("page_headings"))
+		links = _normalize_str_tuple(facts.get("extraction_links") if "extraction_links" in facts else facts.get("page_links"))
+		buttons = _normalize_str_tuple(facts.get("extraction_buttons") if "extraction_buttons" in facts else facts.get("page_buttons"))
+		landmarks = _normalize_str_tuple(facts.get("extraction_landmarks") if "extraction_landmarks" in facts else facts.get("page_landmarks"))
+		inputs = _normalize_str_tuple(facts.get("extraction_inputs") if "extraction_inputs" in facts else facts.get("page_inputs"))
+		comboboxes = _normalize_str_tuple(facts.get("extraction_comboboxes") if "extraction_comboboxes" in facts else facts.get("page_comboboxes"))
+		checkboxes = _normalize_str_tuple(facts.get("extraction_checkboxes") if "extraction_checkboxes" in facts else facts.get("page_checkboxes"))
+		radios = _normalize_str_tuple(facts.get("extraction_radios") if "extraction_radios" in facts else facts.get("page_radios"))
+		if any((headings, links, buttons, landmarks, inputs, comboboxes, checkboxes, radios)):
+			page_structure = ExtractionStructure(
+				headings=headings,
+				links=links,
+				buttons=buttons,
+				landmarks=landmarks,
+				inputs=inputs,
+				comboboxes=comboboxes,
+				checkboxes=checkboxes,
+				radios=radios,
+			)
 
 	if text is None:
 		return None
 
-	return PageFacts(
+	return ExtractionFacts(
 		title=title,
 		app_title=app_title,
 		text=text,
 		truncated=truncated,
-		headings=headings,
-		links=links,
-		buttons=buttons,
-		landmarks=landmarks,
-		inputs=inputs,
-		comboboxes=comboboxes,
-		checkboxes=checkboxes,
-		radios=radios,
-		snapshot=snapshot if isinstance(snapshot, PageSnapshot) else None,
+		structure=page_structure if isinstance(page_structure, ExtractionStructure) else None,
+		snapshot=snapshot if isinstance(snapshot, ExtractionSnapshot) else None,
 	)
 
 
-def build_page_context_from_facts(page_facts: PageFacts | None) -> PageContext | None:
-	if page_facts is None:
+def build_extraction_result_from_facts(extraction_facts: ExtractionFacts | None) -> ExtractionResult | None:
+	if extraction_facts is None:
 		return None
 
-	if page_facts.text is None:
+	if extraction_facts.text is None:
 		return None
 
-	return PageContext(
-		title=page_facts.title or "",
-		app_title=page_facts.app_title or "",
-		text=page_facts.text,
-		truncated=page_facts.truncated if page_facts.truncated is not None else False,
-		headings=page_facts.headings,
-		links=page_facts.links,
-		buttons=page_facts.buttons,
-		landmarks=page_facts.landmarks,
-		inputs=page_facts.inputs,
-		comboboxes=page_facts.comboboxes,
-		checkboxes=page_facts.checkboxes,
-		radios=page_facts.radios,
+	return ExtractionResult(
+		title=extraction_facts.title or "",
+		app_title=extraction_facts.app_title or "",
+		text=extraction_facts.text,
+		truncated=extraction_facts.truncated if extraction_facts.truncated is not None else False,
+		structure=extraction_facts.structure,
 	)
 
 
@@ -223,8 +232,8 @@ class ImageContext:
 class PromptContext:
 	use_case_id: str
 	facts: dict[str, Any] = field(default_factory=dict)
-	page_facts: PageFacts | None = None
-	page_context: PageContext | None = None
+	extraction_facts: ExtractionFacts | None = None
+	extraction_result: ExtractionResult | None = None
 	text: str | None = None
 	image_base64: str | None = None
 	metadata: dict[str, Any] = field(default_factory=dict)

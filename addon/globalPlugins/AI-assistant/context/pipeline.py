@@ -7,13 +7,13 @@ from .protocols import CollectorInput, ContextCollector, ContextFragment
 from .types import (
 	ContextCollectionError,
 	ContextProfileList,
-	PageContext,
-	PageFacts,
-	PageSnapshot,
+	ExtractionFacts,
+	ExtractionResult,
+	ExtractionSnapshot,
 	PAGE,
 	PromptContext,
-	build_page_context_from_facts,
-	build_page_facts_from_facts,
+	build_extraction_result_from_facts,
+	build_extraction_facts_from_facts,
 )
 
 T = TypeVar("T")
@@ -29,11 +29,11 @@ class ContextPipeline:
 		if not context_profile:
 			return PromptContext(use_case_id=use_case_id, metadata={"context_profile": context_profile})
 
-		shared_snapshot = self._resolve_shared_page_snapshot(context_profile, kwargs)
+		shared_snapshot = self._resolve_shared_extraction_snapshot(context_profile, kwargs)
 		if PAGE in context_profile and shared_snapshot is None:
 			raise ContextCollectionError("Unable to obtain page snapshot for page context")
 
-		collector_input = CollectorInput(use_case_id=use_case_id, page_snapshot=shared_snapshot)
+		collector_input = CollectorInput(use_case_id=use_case_id, extraction_snapshot=shared_snapshot)
 		merged_facts: dict[str, Any] = {}
 		merged_metadata: dict[str, Any] = {"context_profile": context_profile}
 		text_parts: list[str] = []
@@ -50,23 +50,25 @@ class ContextPipeline:
 			if fragment.image_base64 is not None:
 				image_base64 = fragment.image_base64
 
-		page_facts = build_page_facts_from_facts(merged_facts)
-		page_context = build_page_context_from_facts(page_facts)
+		extraction_facts = build_extraction_facts_from_facts(merged_facts)
+		extraction_result = build_extraction_result_from_facts(extraction_facts)
 
 		return PromptContext(
-			use_case_id=use_case_id,
-			facts=merged_facts,
-			page_facts=page_facts,
-			page_context=page_context,
+		use_case_id=use_case_id,
+		facts=merged_facts,
+		extraction_facts=extraction_facts,
+		extraction_result=extraction_result,
 			text="\n\n".join(part for part in text_parts if part),
 			image_base64=image_base64,
 			metadata=merged_metadata,
 		)
 
-	def _resolve_shared_page_snapshot(self, context_profile: ContextProfileList, kwargs: dict[str, Any]) -> PageSnapshot | None:
-		page_snapshot = kwargs.get("page_snapshot")
-		if isinstance(page_snapshot, PageSnapshot):
-			return page_snapshot
+	def _resolve_shared_extraction_snapshot(self, context_profile: ContextProfileList, kwargs: dict[str, Any]) -> ExtractionSnapshot | None:
+		extraction_snapshot = kwargs.get("extraction_snapshot")
+		if extraction_snapshot is None:
+			extraction_snapshot = kwargs.get("page_snapshot")
+		if isinstance(extraction_snapshot, ExtractionSnapshot):
+			return extraction_snapshot
 
 		for collector in self._collectors:
 			if not set(collector.profiles).intersection(context_profile):
@@ -78,6 +80,6 @@ class ContextPipeline:
 				snapshot = self._main_thread_executor(extractor.extract)
 			except Exception:
 				continue
-			if isinstance(snapshot, PageSnapshot):
+			if isinstance(snapshot, ExtractionSnapshot):
 				return snapshot
 		return None

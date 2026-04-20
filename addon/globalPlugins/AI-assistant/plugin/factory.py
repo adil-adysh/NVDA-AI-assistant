@@ -6,8 +6,10 @@ import builtins
 from typing import Callable, cast
 
 from ..context.collectors.image import ImageContextCollector
-from ..context.collectors.page import PageStructureCollector, PageTextCollector
+from ..context.collectors.page import ExtractionStructureCollector, ExtractionTextCollector
 from ..context.extractors.browser import BrowserAwarePageExtractor
+from ..context.extractors.generic_extractor import GenericPageExtractor
+from ..context.extractors.manager import ExtractionManager
 from ..context.pipeline import ContextPipeline
 from ..image.services import ImageCaptureService, ImageEncoder, ImagePreprocessor
 from ..observability.reporter import FileMetricsReporter
@@ -30,9 +32,11 @@ _ = cast(Callable[[str], str], getattr(builtins, "_", _translate))
 def build_plugin_services() -> PluginServices:
 	provider = ProviderProxy()
 	metrics_reporter = FileMetricsReporter()
-	page_extractor = BrowserAwarePageExtractor()
-	page_text_collector = PageTextCollector(extractor=page_extractor)
-	page_structure_collector = PageStructureCollector(extractor=page_extractor)
+	browser_extractor = BrowserAwarePageExtractor()
+	generic_extractor = GenericPageExtractor()
+	page_extractor = ExtractionManager((browser_extractor, generic_extractor))
+	page_text_collector = ExtractionTextCollector(extractor=page_extractor)
+	page_structure_collector = ExtractionStructureCollector(extractor=page_extractor)
 	image_context_collector = ImageContextCollector(
 		capture_service=ImageCaptureService(),
 		preprocessor=ImagePreprocessor(),
@@ -50,7 +54,7 @@ def build_plugin_services() -> PluginServices:
 	use_case_engine = UseCaseEngine(
 		llm_service=llm_service,
 		context_pipeline=context_pipeline,
-)
+	)
 	return PluginServices(
 		provider=provider,
 		metrics_reporter=metrics_reporter,
