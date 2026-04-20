@@ -26,7 +26,8 @@ class ExtractionManager(TreeExtractor):
 			try:
 				if not extractor.supports(context):
 					continue
-				extraction = extractor.extract()
+				log.debug("ExtractionManager.extract: invoking extractor=%s", type(extractor).__name__)
+				extraction = extractor.extract(context)
 				if extraction is not None:
 					return extraction
 			except PageExtractionError as error:

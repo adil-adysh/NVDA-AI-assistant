@@ -57,13 +57,14 @@ class BrowserAwarePageExtractor(TreeExtractor):
 		self._field_parser = BrowserFieldParser()
 
 	def supports(self, context: CandidateExtractionContext) -> bool:
+		if not self._isBrowserContext(context):
+			return False
 		browser_target = self._target_resolver.resolve(context)
 		return browser_target is not None
 
-	def extract(self):
+	def extract(self, context: CandidateExtractionContext):
 		log.debug("BrowserAwarePageExtractor.extract: starting browser page extraction")
 		self._seenTextSignatures.clear()
-		context = self._buildContext()
 		browserInterceptor = self._target_resolver.resolve(context)
 		bestSnapshot = None
 		bestScore = -1
@@ -187,73 +188,6 @@ class BrowserAwarePageExtractor(TreeExtractor):
 			"Unable to read enough text from the current page. Move focus into the document and try again."
 		)
 
-	def _buildContext(self) -> CandidateExtractionContext:
-		focus = self._getFocusObjectSafe()
-		focusTreeInterceptor = getattr(focus, "treeInterceptor", None) if focus is not None else None
-		focusAncestors = self._getFocusAncestorsSafe()
-		navigator = self._getNavigatorObjectSafe()
-		foreground = self._getForegroundObjectSafe()
-
-		log.debug(
-			"BrowserAwarePageExtractor._buildContext: focus=%s ancestors=%d navigator=%s foreground=%s",
-			self._describeObject(focus),
-			len(focusAncestors),
-			self._describeObject(navigator),
-			self._describeObject(foreground),
-		)
-
-		appName = None
-		appModule = getattr(focus, "appModule", None) if focus is not None else None
-		maybeName = getattr(appModule, "appName", None) if appModule is not None else None
-		if isinstance(maybeName, str) and maybeName.strip():
-			appName = maybeName.strip().lower()
-		elif foreground is not None:
-			foregroundModule = getattr(foreground, "appModule", None)
-			maybeName = getattr(foregroundModule, "appName", None) if foregroundModule is not None else None
-			if isinstance(maybeName, str) and maybeName.strip():
-				appName = maybeName.strip().lower()
-
-		log.debug(
-			"BrowserAwarePageExtractor._buildContext: appName=%s focusTreeInterceptor=%s",
-			appName,
-			self._describeObject(focusTreeInterceptor),
-		)
-
-		return CandidateExtractionContext(
-			focus=focus,
-			focusTreeInterceptor=focusTreeInterceptor,
-			focusAncestors=focusAncestors,
-			navigator=navigator,
-			foreground=foreground,
-			appName=appName,
-		)
-
-	def _getFocusObjectSafe(self) -> object | None:
-		try:
-			return api.getFocusObject()
-		except Exception:
-			return None
-
-	def _getFocusAncestorsSafe(self) -> tuple[object, ...]:
-		try:
-			ancestors = api.getFocusAncestors()
-		except Exception:
-			return ()
-		if ancestors is None:
-			return ()
-		return tuple(ancestors)
-
-	def _getNavigatorObjectSafe(self) -> object | None:
-		try:
-			return api.getNavigatorObject()
-		except Exception:
-			return None
-
-	def _getForegroundObjectSafe(self) -> object | None:
-		try:
-			return api.getForegroundObject()
-		except Exception:
-			return None
 
 	def _resolveBrowserTreeInterceptor(self, context: CandidateExtractionContext):
 		if self._isUsableTreeInterceptor(context.focusTreeInterceptor):
@@ -538,7 +472,17 @@ class BrowserAwarePageExtractor(TreeExtractor):
 		return False
 
 	def _isBrowserContext(self, context: CandidateExtractionContext) -> bool:
-		return context.appName in self._BROWSER_APP_NAMES or self._isUsableTreeInterceptor(context.focusTreeInterceptor)
+		if context.appName in self._BROWSER_APP_NAMES:
+			return True
+		if context.focus is not None and self._looksLikeDocumentObject(context.focus):
+			return True
+		if self._isUsableTreeInterceptor(context.focusTreeInterceptor):
+			return self._looksLikeBrowserInterceptor(context.focusTreeInterceptor)
+		return False
+
+	def _looksLikeBrowserInterceptor(self, interceptor: object) -> bool:
+		type_name = type(interceptor).__name__.lower()
+		return any(token in type_name for token in ("vbuf", "mshtml", "chrome", "chromium", "web", "browser"))
 
 	def _sharesBrowserDocument(self, obj: object, browserInterceptor: object | None) -> bool:
 		if browserInterceptor is None:

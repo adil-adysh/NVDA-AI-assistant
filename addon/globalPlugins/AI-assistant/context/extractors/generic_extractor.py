@@ -12,7 +12,6 @@ from .base import TreeExtractor
 from .text_extractor import TextExtractor
 from .candidate_base import CandidateProvider, CandidateExtractionContext
 from .candidates import buildGenericCandidateProviders
-from .context_builder import build_extraction_context
 from ...context.types import ExtractionSnapshot
 
 MAX_PAGE_TEXT_CHARS = 120000
@@ -29,9 +28,8 @@ class GenericPageExtractor(TreeExtractor):
 	def supports(self, context: CandidateExtractionContext) -> bool:
 		return any(provider.supports(context) for provider in self._candidateProviders)
 
-	def extract(self):
+	def extract(self, context: CandidateExtractionContext):
 		self._seenTextSignatures.clear()
-		context = build_extraction_context()
 		active_providers = [provider for provider in self._candidateProviders if provider.supports(context)]
 		best_snapshot = None
 		best_score = -1
