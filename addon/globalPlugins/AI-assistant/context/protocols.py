@@ -9,10 +9,35 @@ from .types import ContextProfileList, ExtractionSnapshot
 
 @dataclass(frozen=True, slots=True)
 class ContextFragment:
+	"""Base data fragment returned by a collector."""
 	facts: dict[str, Any] = field(default_factory=dict)
 	text: str | None = None
 	image_base64: str | None = None
 	metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class PageContextFragment(ContextFragment):
+	"""Collector output for page-like content."""
+	pass
+
+
+@dataclass(frozen=True, slots=True)
+class BrowserContextFragment(PageContextFragment):
+	"""Collector output for browser page extraction."""
+	pass
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalContextFragment(PageContextFragment):
+	"""Collector output for terminal/command transcript extraction."""
+	pass
+
+
+@dataclass(frozen=True, slots=True)
+class ImageContextFragment(ContextFragment):
+	"""Collector output for image-based extractions."""
+	pass
 
 
 @dataclass(frozen=True, slots=True)

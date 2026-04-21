@@ -45,6 +45,13 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._app.run_summary()
 
 	@script(
+		description=_("Summarizes page structure, including headings, links, and interactive elements."),
+	)
+	def script_summarizePageStructure(self, gesture: Any):
+		log.debug("Script summarizePageStructure invoked gesture=%s", gesture)
+		self._app.run_structure_summary()
+
+	@script(
 		description=_("Captures and describes the current foreground window using the selected AI provider."),
 	)
 	def script_describeCurrentWindow(self, gesture: Any):
@@ -75,7 +82,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	@script(
 		description=_(
 			"Activate the AI assistant command layer. "
-			"Press S for summary, I for image describe, C for chat, H for help."
+			"Press S for summary, O for structure summary, I for image describe, C for chat, H for help."
 		),
 		gesture="kb:NVDA+Shift+A",
 	)

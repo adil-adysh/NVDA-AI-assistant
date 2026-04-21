@@ -15,7 +15,7 @@ from .generic_extractor import GenericPageExtractor
 from .manager import ExtractionManager
 from .terminal_candidates import TerminalCandidateProvider
 from .text_editor_candidates import TextEditorCandidateProvider
-from .base import TreeExtractor
+from .base import Extractor, TreeExtractor
 
 __all__ = [
 	"BrowserAwarePageExtractor",
@@ -31,5 +31,6 @@ __all__ = [
 	"TextAppCandidateProvider",
 	"buildDefaultCandidateProviders",
 	"buildGenericCandidateProviders",
+	"Extractor",
 	"TreeExtractor",
 ]

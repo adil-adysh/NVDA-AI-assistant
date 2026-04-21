@@ -9,7 +9,9 @@ from .image import build_image_description_prompt
 from .summary import (
     build_browser_summary_prompt,
     build_extraction_summary_prompt,
+    build_extraction_structure_summary_prompt,
     build_generic_summary_prompt,
+    build_structure_summary_prompt,
     build_summary_prompt,
     build_terminal_summary_prompt,
 )
@@ -20,6 +22,8 @@ __all__ = [
     "build_image_description_prompt",
     "build_summary_prompt",
     "build_extraction_summary_prompt",
+    "build_extraction_structure_summary_prompt",
+    "build_structure_summary_prompt",
     "build_browser_summary_prompt",
     "build_terminal_summary_prompt",
     "build_generic_summary_prompt",

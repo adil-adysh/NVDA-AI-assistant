@@ -9,12 +9,14 @@ from .chat import (
 )
 from .image import ImageDescriptionUseCase
 from .summary import SummaryUseCase
+from .structure_summary import StructureSummaryUseCase
 from .types import UseCaseSpec
 
 
 def build_default_use_cases() -> tuple[UseCase, ...]:
 	return (
 		SummaryUseCase(),
+		StructureSummaryUseCase(),
 		ImageDescriptionUseCase(),
 		OpenChatUseCase(),
 		OpenChatWithPageContentUseCase(),

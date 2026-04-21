@@ -9,12 +9,37 @@ def build_extraction_summary_prompt(context: ExtractionResult) -> str:
     return build_summary_prompt(context)
 
 
+def build_extraction_structure_summary_prompt(context: ExtractionResult) -> str:
+    return build_structure_summary_prompt(context)
+
+
 def build_summary_prompt(context: ExtractionResult) -> str:
     if context.source == "browser":
         return build_browser_summary_prompt(context)
     if context.source == "terminal":
         return build_terminal_summary_prompt(context)
     return build_generic_summary_prompt(context)
+
+
+def build_structure_summary_prompt(context: ExtractionResult) -> str:
+    structure = context.structure
+    return render_prompt_template(
+        "structure_summary.jinja2",
+        system_prompt=build_system_prompt_for_nvda_assistant(),
+        app_title=context.app_title,
+        title=context.title,
+        source=context.source,
+        trimmed="yes" if context.truncated else "no",
+        headings=structure.headings if structure else (),
+        links=structure.links if structure else (),
+        buttons=structure.buttons if structure else (),
+        landmarks=structure.landmarks if structure else (),
+        inputs=structure.inputs if structure else (),
+        comboboxes=structure.comboboxes if structure else (),
+        checkboxes=structure.checkboxes if structure else (),
+        radios=structure.radios if structure else (),
+        text=context.text or "",
+    )
 
 
 def build_browser_summary_prompt(context: ExtractionResult) -> str:

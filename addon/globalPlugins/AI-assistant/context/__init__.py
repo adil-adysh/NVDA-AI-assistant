@@ -15,7 +15,14 @@ from .extractors import (
 	buildDefaultCandidateProviders,
 )
 from .pipeline import ContextPipeline
-from .protocols import ContextCollector, ContextFragment
+from .protocols import (
+	ContextCollector,
+	ContextFragment,
+	PageContextFragment,
+	BrowserContextFragment,
+	TerminalContextFragment,
+	ImageContextFragment,
+)
 from .prompts import (
 	build_chat_messages,
 	build_image_description_prompt,
@@ -35,6 +42,10 @@ from .types import (
 __all__ = [
 	"ContextCollector",
 	"ContextFragment",
+	"PageContextFragment",
+	"BrowserContextFragment",
+	"TerminalContextFragment",
+	"ImageContextFragment",
 	"ContextPipeline",
 	"BrowserAwarePageExtractor",
 	"BrowserCandidateProvider",

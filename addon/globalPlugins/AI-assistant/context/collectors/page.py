@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..extractors.base import TreeExtractor
-from ...context.protocols import CollectorInput, ContextFragment
+from ...context.protocols import CollectorInput, PageContextFragment
 from ...context.types import APP, ContextCollectionError, ContextProfileList, PAGE, ExtractionSnapshot, ExtractionStructure
 
 
@@ -17,7 +17,7 @@ class ExtractionTextCollector:
 	def profiles(self) -> ContextProfileList:
 		return (APP, PAGE)
 
-	def collect(self, input: CollectorInput) -> ContextFragment:
+	def collect(self, input: CollectorInput) -> PageContextFragment:
 		if self.extractor is None and input.extraction_snapshot is None:
 			raise ContextCollectionError("ExtractionTextCollector requires an extraction snapshot or extractor")
 
@@ -25,7 +25,7 @@ class ExtractionTextCollector:
 		if not isinstance(snapshot, ExtractionSnapshot):
 			raise ContextCollectionError("ExtractionTextCollector requires an extraction snapshot")
 
-		return ContextFragment(
+		return PageContextFragment(
 			facts={
 				"extraction_text": snapshot.text,
 				"extraction_snapshot": snapshot,
@@ -48,7 +48,7 @@ class ExtractionStructureCollector:
 	def profiles(self) -> ContextProfileList:
 		return (PAGE,)
 
-	def collect(self, input: CollectorInput) -> ContextFragment:
+	def collect(self, input: CollectorInput) -> PageContextFragment:
 		if self.extractor is None and input.extraction_snapshot is None:
 			raise ContextCollectionError("ExtractionStructureCollector requires an extraction snapshot or extractor")
 
@@ -66,7 +66,7 @@ class ExtractionStructureCollector:
 			checkboxes=getattr(snapshot, "checkboxes", ()),
 			radios=getattr(snapshot, "radios", ()),
 		)
-		return ContextFragment(
+		return PageContextFragment(
 			facts={
 				"extraction_snapshot": snapshot,
 				"extraction_title": snapshot.title,

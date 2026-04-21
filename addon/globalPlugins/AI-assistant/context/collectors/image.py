@@ -9,7 +9,7 @@ from typing import Any, cast
 import api
 from PIL import Image
 
-from ...context.protocols import CollectorInput, ContextFragment
+from ...context.protocols import CollectorInput, ImageContextFragment
 from ...context.types import ContextProfileList, IMAGE, ImageContext
 from ...image.services import ImageCaptureService, ImageEncoder, ImagePreprocessor
 from ...image.types import ImageFormat
@@ -26,7 +26,7 @@ class ImageContextCollector:
 	def profiles(self) -> ContextProfileList:
 		return (IMAGE,)
 
-	def collect(self, input: CollectorInput) -> ContextFragment:
+	def collect(self, input: CollectorInput) -> ImageContextFragment:
 		if self.capture_service is None or self.preprocessor is None or self.encoder is None:
 			raise ValueError("ImageContextCollector requires capture, preprocessor, and encoder services")
 
@@ -72,7 +72,7 @@ class ImageContextCollector:
 		with Image.open(BytesIO(processed_bytes)) as image:
 			width, height = image.size
 
-		return ContextFragment(
+		return ImageContextFragment(
 			facts={
 				"image_context": image_context,
 				"raw_image_bytes": len(raw_image_bytes),

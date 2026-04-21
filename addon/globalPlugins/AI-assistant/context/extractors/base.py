@@ -7,7 +7,7 @@ from .candidate_base import CandidateExtractionContext
 from ..types import ExtractionSnapshot
 
 
-class TreeExtractor(ABC):
+class Extractor(ABC):
 	@abstractmethod
 	def supports(self, context: CandidateExtractionContext) -> bool:
 		raise NotImplementedError
@@ -15,3 +15,8 @@ class TreeExtractor(ABC):
 	@abstractmethod
 	def extract(self, context: CandidateExtractionContext) -> ExtractionSnapshot | None:
 		raise NotImplementedError
+
+
+class TreeExtractor(Extractor):
+	"""Extractor specialized for tree-like candidate content."""
+	pass

@@ -47,6 +47,7 @@ class AIAssistantApplication:
 		self.layer_mode = AssistantLayerController(
 			bindings=(
 				("s", host.script_summarizeCurrentPage),
+				("o", host.script_summarizePageStructure),
 				("i", host.script_describeCurrentWindow),
 				("c", host.script_openChatWindow),
 				("p", host.script_openChatWithPageContent),
@@ -85,6 +86,13 @@ class AIAssistantApplication:
 			"summary",
 			title=_("Page summary"),
 			render_result=lambda result: self.presenter.present_use_case_result(result, title=_("Page summary")),
+		)
+
+	def run_structure_summary(self) -> None:
+		self.background.run_use_case_in_background(
+			"structure_summary",
+			title=_("Structure summary"),
+			render_result=lambda result: self.presenter.present_use_case_result(result, title=_("Structure summary")),
 		)
 
 	def describe_current_window(self) -> None:
@@ -150,7 +158,7 @@ class AIAssistantApplication:
 	def show_assistant_layer_help(self) -> None:
 		nvda_ui.message(
 			_(
-				"Assistant layer commands: S for summary, I for image describe, C for chat, P for page content, X for screenshot, T for provider toggle, H for help. Press the key after activating the layer with NVDA+Shift+A."
+				"Assistant layer commands: S for summary, O for structure summary, I for image describe, C for chat, P for page content, X for screenshot, T for provider toggle, H for help. Press the key after activating the layer with NVDA+Shift+A."
 			)
 		)
 
