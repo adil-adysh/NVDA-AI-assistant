@@ -9,7 +9,7 @@ from ..core.events import ProgressEvent, ProgressHandler
 from ..service import LLMService
 from .base import UseCase
 from .registry import build_default_use_cases
-from .types import UseCaseResult, UseCaseSpec
+from .types import UseCaseId, UseCaseResult, UseCaseSpec
 
 
 class UseCaseEngine:
@@ -25,13 +25,13 @@ class UseCaseEngine:
 		self._use_case_map = {use_case.spec.id: use_case for use_case in self._use_cases}
 		self._specs = {use_case.spec.id: use_case.spec for use_case in self._use_cases}
 
-	def get_spec(self, use_case_id: str) -> UseCaseSpec:
+	def get_spec(self, use_case_id: UseCaseId) -> UseCaseSpec:
 		try:
 			return self._specs[use_case_id]
 		except KeyError as error:
 			raise ValueError(f"Unknown use case: {use_case_id}") from error
 
-	def execute(self, use_case_id: str, progress: ProgressHandler | None = None, **kwargs: Any) -> UseCaseResult:
+	def execute(self, use_case_id: UseCaseId, progress: ProgressHandler | None = None, **kwargs: Any) -> UseCaseResult:
 		def emit(stage: str, message: str) -> None:
 			if progress is not None:
 				progress(ProgressEvent(stage=stage, message=message))

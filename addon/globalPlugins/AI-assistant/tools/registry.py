@@ -23,7 +23,7 @@ class ToolRegistry:
 			raise ValueError("Tool executor is required")
 		self._tools[name] = tool
 
-	def get_definitions(self) -> list[dict[str, Any]]:
+	def get_definitions(self) -> list[dict[str, object]]:
 		return [tool.to_dict() for tool in self._tools.values()]
 
 	def get_tool_names(self) -> list[str]:

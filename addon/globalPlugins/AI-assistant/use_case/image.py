@@ -58,6 +58,9 @@ class ImageDescriptionUseCase(UseCase):
 			success=True,
 			message="Image description ready",
 			initial_image_base64=image_context.image_base64,
+			output_text=response.text,
+			output_html=html_output,
+			is_browseable=True,
 			prompt_context=PromptContext(
 				use_case_id=self.spec.id,
 				facts={"image_context": image_context},
@@ -68,8 +71,6 @@ class ImageDescriptionUseCase(UseCase):
 				},
 			),
 			metadata={
-				"output_text": html_output,
-				"is_html": True,
 				"model": response.model,
 				"prompt_key": self.spec.prompt_key,
 			},

@@ -55,6 +55,9 @@ class StructureSummaryUseCase(UseCase):
 			success=True,
 			message="Structure summary ready",
 			initial_text=extraction_result.text,
+			output_text=response.text,
+			output_html=html_output,
+			is_browseable=True,
 			prompt_context=PromptContext(
 				use_case_id=self.spec.id,
 				facts={"extraction_result": extraction_result},
@@ -66,8 +69,6 @@ class StructureSummaryUseCase(UseCase):
 				},
 			),
 			metadata={
-				"output_text": html_output,
-				"is_html": True,
 				"model": response.model,
 				"prompt_key": self.spec.prompt_key,
 			},

@@ -14,6 +14,14 @@ from ..config.state import ProviderState, subscribe_provider_state_change, unsub
 from ..config.settings import get_provider, get_provider_state, set_provider
 from ..ui.settings_panel import AIAssistantSettingsPanel
 from ..ui import nvda_ui
+from ..use_case.types import (
+	DESCRIBE_IMAGE,
+	OPEN_CHAT,
+	OPEN_CHAT_WITH_PAGE_CONTENT,
+	OPEN_CHAT_WITH_SCREENSHOT,
+	STRUCTURE_SUMMARY,
+	SUMMARY,
+)
 from .background import BackgroundTaskRunner
 from .factory import build_plugin_services
 from .layer_mode import AssistantLayerController
@@ -83,21 +91,21 @@ class AIAssistantApplication:
 
 	def run_summary(self) -> None:
 		self.background.run_use_case_in_background(
-			"summary",
+			SUMMARY,
 			title=_("Page summary"),
 			render_result=lambda result: self.presenter.present_use_case_result(result, title=_("Page summary")),
 		)
 
 	def run_structure_summary(self) -> None:
 		self.background.run_use_case_in_background(
-			"structure_summary",
+			STRUCTURE_SUMMARY,
 			title=_("Structure summary"),
 			render_result=lambda result: self.presenter.present_use_case_result(result, title=_("Structure summary")),
 		)
 
 	def describe_current_window(self) -> None:
 		self.background.run_use_case_in_background(
-			"describe_image",
+			DESCRIBE_IMAGE,
 			title=_("Image description"),
 			render_result=lambda result: self.presenter.present_use_case_result(result, title=_("Image description")),
 		)
@@ -114,7 +122,7 @@ class AIAssistantApplication:
 
 	def open_chat(self) -> None:
 		self.background.run_use_case_in_background(
-			"open_chat",
+			OPEN_CHAT,
 			title=_("AI Chat"),
 			render_result=lambda result: self.open_chat_window(
 				initial_text=result.initial_text,
@@ -124,14 +132,14 @@ class AIAssistantApplication:
 
 	def open_chat_with_page_content(self) -> None:
 		self.background.run_use_case_in_background(
-			"open_chat_with_page_content",
+			OPEN_CHAT_WITH_PAGE_CONTENT,
 			title=_("AI Chat"),
 			render_result=lambda result: self.open_chat_window(initial_text=result.initial_text),
 		)
 
 	def open_chat_with_screenshot(self) -> None:
 		self.background.run_use_case_in_background(
-			"open_chat_with_screenshot",
+			OPEN_CHAT_WITH_SCREENSHOT,
 			title=_("AI Chat"),
 			render_result=lambda result: self.open_chat_window(
 				initial_text=result.initial_text,

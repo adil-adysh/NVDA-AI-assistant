@@ -51,17 +51,32 @@ class UseCasePresenter:
 
 	def present_use_case_result(self, use_case_result: Any, title: str) -> None:
 		output_text = None
+		output_html = None
 		is_html = False
+
 		if isinstance(use_case_result, dict):
 			output_text = use_case_result.get("output_text")
+			output_html = use_case_result.get("output_html")
 			is_html = bool(use_case_result.get("is_html"))
 		else:
 			metadata = getattr(use_case_result, "metadata", None)
-			if isinstance(metadata, dict):
-				output_text = metadata.get("output_text")
-				is_html = bool(metadata.get("is_html"))
+			output_text = getattr(use_case_result, "output_text", None)
+			output_html = getattr(use_case_result, "output_html", None)
+			if output_html is None and isinstance(metadata, dict):
+				output_text = output_text or metadata.get("output_text")
+				is_html = bool(getattr(use_case_result, "is_browseable", False) or metadata.get("is_html"))
+			else:
+				is_html = bool(getattr(use_case_result, "is_browseable", False))
+
+		if output_html is not None:
+			output_text = output_html
+			is_html = True
 
 		if not isinstance(output_text, str) or not output_text.strip():
+			error_message = getattr(use_case_result, "error_message", None)
+			if isinstance(error_message, str) and error_message.strip():
+				nvda_ui.message(error_message)
+				return
 			nvda_ui.message(_("No result to display."))
 			return
 

@@ -11,6 +11,9 @@ PAGE: Final[ContextProfile] = "page"
 IMAGE: Final[ContextProfile] = "image"
 ContextProfileList: TypeAlias = tuple[ContextProfile, ...]
 
+ContextFacts: TypeAlias = dict[str, object]
+PromptMetadata: TypeAlias = dict[str, object]
+
 PromptSource = Literal["browser", "terminal", "generic", "image"]
 BROWSER: Final[PromptSource] = "browser"
 TERMINAL: Final[PromptSource] = "terminal"
@@ -244,9 +247,9 @@ class ImageContext:
 @dataclass(frozen=True, slots=True)
 class PromptContext:
 	use_case_id: str
-	facts: dict[str, Any] = field(default_factory=dict)
+	facts: ContextFacts = field(default_factory=dict)
 	extraction_facts: ExtractionFacts | None = None
 	extraction_result: ExtractionResult | None = None
 	text: str | None = None
 	image_base64: str | None = None
-	metadata: dict[str, Any] = field(default_factory=dict)
+	metadata: PromptMetadata = field(default_factory=dict)

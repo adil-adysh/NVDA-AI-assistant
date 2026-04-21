@@ -6,12 +6,14 @@ from typing import Any, Callable, Sequence, TypeVar
 from .protocols import CollectorInput, ContextCollector, ContextFragment
 from .types import (
 	ContextCollectionError,
+	ContextFacts,
 	ContextProfileList,
 	ExtractionFacts,
 	ExtractionResult,
 	ExtractionSnapshot,
 	PAGE,
 	PromptContext,
+	PromptMetadata,
 	build_extraction_result_from_facts,
 	build_extraction_facts_from_facts,
 )
@@ -34,8 +36,8 @@ class ContextPipeline:
 			raise ContextCollectionError("Unable to obtain page snapshot for page context")
 
 		collector_input = CollectorInput(use_case_id=use_case_id, extraction_snapshot=shared_snapshot)
-		merged_facts: dict[str, Any] = {}
-		merged_metadata: dict[str, Any] = {"context_profile": context_profile}
+		merged_facts: ContextFacts = {}
+		merged_metadata: PromptMetadata = {"context_profile": context_profile}
 		text_parts: list[str] = []
 		image_base64: str | None = None
 

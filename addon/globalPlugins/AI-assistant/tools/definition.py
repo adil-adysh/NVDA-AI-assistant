@@ -5,18 +5,20 @@ from dataclasses import dataclass, field
 from collections.abc import Callable
 from typing import Any
 
-ToolExecutorCallable = Callable[[dict[str, Any]], str]
+ToolParameters = dict[str, object]
+ToolArguments = dict[str, object]
+ToolExecutorCallable = Callable[[ToolArguments], str]
 
 
 @dataclass(frozen=True, slots=True)
 class ToolDefinition:
 	name: str
 	description: str
-	parameters: dict[str, Any] = field(default_factory=dict)
+	parameters: ToolParameters = field(default_factory=dict)
 	required: list[str] = field(default_factory=list)
 	executor: ToolExecutorCallable | None = None
 
-	def to_dict(self) -> dict[str, Any]:
+	def to_dict(self) -> dict[str, object]:
 		return {
 			"type": "function",
 			"function": {

@@ -2,18 +2,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Protocol
 
 from .types import ContextProfileList, ExtractionSnapshot
+
+
+ContextFacts = dict[str, object]
+PromptMetadata = dict[str, object]
 
 
 @dataclass(frozen=True, slots=True)
 class ContextFragment:
 	"""Base data fragment returned by a collector."""
-	facts: dict[str, Any] = field(default_factory=dict)
+	facts: ContextFacts = field(default_factory=dict)
 	text: str | None = None
 	image_base64: str | None = None
-	metadata: dict[str, Any] = field(default_factory=dict)
+	metadata: PromptMetadata = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

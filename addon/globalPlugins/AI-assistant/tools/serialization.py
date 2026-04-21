@@ -4,10 +4,10 @@ from __future__ import annotations
 from typing import Any
 
 from ..core.canonical import Tool
-from ..core.tooling import ToolCall
+from ..core.tooling import ToolArguments, ToolCall
 
 
-def build_function_tool_definition(tool: Tool) -> dict[str, Any]:
+def build_function_tool_definition(tool: Tool) -> dict[str, object]:
 	return {
 		"type": "function",
 		"function": {

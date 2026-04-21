@@ -13,6 +13,7 @@ from ..providers.interfaces import LLMProviderError
 from ..service.llm import LLMService
 from ..ui import nvda_ui
 from ..use_case.engine import UseCaseEngine
+from ..use_case.types import UseCaseId
 
 
 def _translate(message: str) -> str:
@@ -49,7 +50,7 @@ class BackgroundTaskRunner:
 		)
 		thread.start()
 
-	def run_use_case_in_background(self, use_case_id: str, title: str, render_result: Callable[[Any], None]) -> None:
+	def run_use_case_in_background(self, use_case_id: UseCaseId, title: str, render_result: Callable[[Any], None]) -> None:
 		def worker() -> None:
 			try:
 				result = self._use_case_engine.execute(use_case_id, progress=self._progress_handler)
