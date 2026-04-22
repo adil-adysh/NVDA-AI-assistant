@@ -6,10 +6,11 @@ use windows::{
     core::{PCWSTR, Result, w},
     Win32::{
         Foundation::*,
-        UI::WindowsAndMessaging::GetClientRect,
+        UI::WindowsAndMessaging::{GetClientRect, PostMessageW, WM_CLOSE},
     },
 };
 
+use serde_json::Value;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use webview2_com::{
     AddScriptToExecuteOnDocumentCreatedCompletedHandler,
@@ -141,10 +142,6 @@ fn send_webview_message(webview: &ICoreWebView2, message: &str) -> Result<()> {
     result
 }
 
-fn current_controller() -> Option<ICoreWebView2Controller> {
-    WEBVIEW_CONTROLLER.with(|controller| controller.borrow().clone())
-}
-
 fn post_message_to_webview(controller: &ICoreWebView2Controller, message: &str) -> Result<()> {
     #[cfg(test)]
     {
@@ -158,6 +155,40 @@ fn post_message_to_webview(controller: &ICoreWebView2Controller, message: &str) 
 
     let webview = unsafe { controller.CoreWebView2()? };
     send_webview_message(&webview, message)
+}
+
+fn current_controller() -> Option<ICoreWebView2Controller> {
+    WEBVIEW_CONTROLLER.with(|controller| controller.borrow().clone())
+}
+
+fn handle_js_event(message: &str, hwnd: HWND) -> Result<()> {
+    let payload: Value = match serde_json::from_str(message) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("WebView JS event parse failed: {:?}", err);
+            return Ok(());
+        }
+    };
+
+    let schema = payload.get("schema").and_then(Value::as_str);
+    let message_type = payload.get("type").and_then(Value::as_str);
+    let event_name = payload
+        .get("event")
+        .and_then(Value::as_object)
+        .and_then(|event| event.get("name"))
+        .and_then(Value::as_str);
+
+    if schema != Some("nvda.ui_host") || message_type != Some("event") {
+        return Ok(());
+    }
+
+    if let Some("close_host") | Some("escape_pressed") = event_name {
+        unsafe {
+            let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+        }
+    }
+
+    Ok(())
 }
 
 pub fn resize_webview(hwnd: HWND) {
@@ -373,9 +404,8 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
 
                                     let message = message.to_string().unwrap_or_default();
                                     println!("JS -> host: {}", message);
-                                    match serde_json::from_str::<serde_json::Value>(&message) {
-                                        Ok(value) => println!("JS event payload: {}", value),
-                                        Err(error) => eprintln!("JS event parse failed: {:?}", error),
+                                    if let Err(err) = handle_js_event(&message, hwnd) {
+                                        eprintln!("Failed to handle JS event: {:?}", err);
                                     }
                                     Ok(())
                                 },
@@ -422,6 +452,7 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
                                         <button id="copy-text">Copy text</button>
                                         <button id="copy-html">Copy HTML</button>
                                         <button id="clear">Clear</button>
+                                        <button id="close-window">Close</button>
                                     </div>
                                     <script>
                                         const contentEl = document.getElementById('content');
@@ -531,6 +562,21 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
                                             });
                                         }
 
+                                        function requestCloseHost() {
+                                            window.__sendHostEvent({
+                                                schema: 'nvda.ui_host',
+                                                version: 2,
+                                                id: `web-ui-close-${Date.now()}`,
+                                                correlation_id: null,
+                                                source: 'web_ui',
+                                                type: 'event',
+                                                event: {
+                                                    name: 'close_host',
+                                                    payload: {},
+                                                },
+                                            });
+                                        }
+
                                         function copyToClipboard(text) {
                                             navigator.clipboard.writeText(text).then(() => {
                                                 statusEl.textContent = 'Copied to clipboard.';
@@ -546,6 +592,12 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
                                             contentEl.textContent = '';
                                             statusEl.textContent = 'Content cleared.';
                                         };
+                                        document.getElementById('close-window').onclick = () => requestCloseHost();
+                                        document.addEventListener('keydown', event => {
+                                            if (event.key === 'Escape') {
+                                                requestCloseHost();
+                                            }
+                                        });
                                     </script>
                                 </body>
                                 </html>
