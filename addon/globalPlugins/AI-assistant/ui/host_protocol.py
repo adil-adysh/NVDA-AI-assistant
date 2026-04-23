@@ -17,6 +17,14 @@ PROTOCOL_VERSION = 2
 SOURCE_NVDA_ADDON = "nvda_addon"
 VALID_RESPONSE_STATUSES = {"ack", "nack"}
 
+COMMAND_CHAT_SET_HISTORY = "chat_set_history"
+COMMAND_CHAT_APPEND = "chat_append"
+COMMAND_CHAT_UPDATE = "chat_update"
+
+EVENT_CHAT_SUBMITTED = "chat_submitted"
+EVENT_CHAT_ATTACHMENT_ADDED = "chat_attachment_added"
+EVENT_CHAT_CLOSED = "chat_closed"
+
 
 class HostUnavailableError(Exception):
 	"""Raised when the UI host is unavailable or cannot be reached."""
@@ -129,12 +137,49 @@ class HostResponse:
 class HostEvent:
 	event: str
 	payload: dict[str, Any]
-	request_id: str | None = None
+	id: str = field(default_factory=lambda: str(uuid4()))
+	correlation_id: str | None = None
+	schema: str = field(default=SCHEMA, init=False)
+	protocol_version: int = field(default=PROTOCOL_VERSION, init=False)
+	source: str = field(default=SOURCE_NVDA_ADDON, init=False)
 	type: str = field(default=EVENT_TYPE, init=False)
 
+	def to_dict(self) -> dict[str, Any]:
+		return {
+			"schema": self.schema,
+			"version": self.protocol_version,
+			"id": self.id,
+			"correlation_id": self.correlation_id,
+			"source": self.source,
+			"type": self.type,
+			"event": {
+				"name": self.event,
+				"payload": self.payload,
+			},
+		}
+
 	def to_json(self) -> str:
-		return json.dumps(
-			dataclasses.asdict(self),
-			ensure_ascii=False,
-			default=str,
+		return json.dumps(self.to_dict(), ensure_ascii=False, default=str)
+
+	@classmethod
+	def from_json(cls, value: str) -> "HostEvent":
+		data = json.loads(value)
+		if data.get("schema") != SCHEMA:
+			raise ValueError(f"Invalid HostEvent schema: {data.get('schema')}")
+		if data.get("type") != EVENT_TYPE:
+			raise ValueError(f"Invalid HostEvent type: {data.get('type')}")
+		protocol_version = data.get("version", PROTOCOL_VERSION)
+		if protocol_version != PROTOCOL_VERSION:
+			raise ValueError(f"Unsupported HostEvent protocol_version: {protocol_version}")
+		event = data.get("event") or {}
+		if not isinstance(event, dict) or "name" not in event:
+			raise ValueError("Invalid HostEvent event object")
+		payload = event.get("payload", {})
+		if not isinstance(payload, dict):
+			payload = {}
+		return cls(
+			event=event["name"],
+			payload=payload,
+			id=data.get("id", str(uuid4())),
+			correlation_id=data.get("correlation_id"),
 		)

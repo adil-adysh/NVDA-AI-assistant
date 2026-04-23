@@ -14,9 +14,11 @@ if str(MODULE_DIR) not in sys.path:
 from host_protocol import (  # type: ignore[import-not-found]
 	ACK_TYPE,
 	COMMAND_TYPE,
+	EVENT_CHAT_SUBMITTED,
 	PROTOCOL_VERSION,
 	SCHEMA,
 	HostCommand,
+	HostEvent,
 	HostResponse,
 )
 
@@ -32,6 +34,21 @@ class HostProtocolTests(unittest.TestCase):
 		self.assertEqual(parsed.type, COMMAND_TYPE)
 		self.assertEqual(parsed.protocol_version, PROTOCOL_VERSION)
 		self.assertEqual(parsed.payload["output_text"], "Hello")
+
+	def test_chat_set_history_command_roundtrip(self) -> None:
+		history_payload = {
+			"conversation_id": "abc",
+			"messages": [
+				{"id": "msg_1", "role": "user", "content": [{"type": "text", "text": "Hello"}], "timestamp": 1710000000}
+			],
+		}
+		command = HostCommand(name="chat_set_history", payload=history_payload)
+		payload = command.to_json()
+		parsed = HostCommand.from_json(payload)
+
+		self.assertEqual(parsed.name, "chat_set_history")
+		self.assertEqual(parsed.payload["conversation_id"], "abc")
+		self.assertEqual(parsed.payload["messages"][0]["role"], "user")
 
 	def test_host_command_rejects_unsupported_protocol_version(self) -> None:
 		payload = json.dumps(
@@ -73,6 +90,16 @@ class HostProtocolTests(unittest.TestCase):
 
 		with self.assertRaises(ValueError):
 			HostResponse.from_json(payload)
+
+	def test_host_event_roundtrip(self) -> None:
+		payload = {"conversation_id": "abc", "message": "Hello"}
+		event = HostEvent(event=EVENT_CHAT_SUBMITTED, payload=payload, correlation_id="req-1")
+		payload_json = event.to_json()
+		parsed = HostEvent.from_json(payload_json)
+
+		self.assertEqual(parsed.event, EVENT_CHAT_SUBMITTED)
+		self.assertEqual(parsed.payload["message"], "Hello")
+		self.assertEqual(parsed.correlation_id, "req-1")
 
 
 if __name__ == "__main__":

@@ -24,6 +24,53 @@ body {
     white-space: pre-wrap;
 }
 
+.chat-panel {
+    margin-top: 14px;
+    display: none;
+}
+
+#chat-input {
+    width: 100%;
+    min-height: 80px;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    resize: vertical;
+    font-size: 1rem;
+    box-sizing: border-box;
+}
+
+#chat-send {
+    margin-top: 8px;
+    padding: 10px 16px;
+}
+
+.chat-message {
+    margin-bottom: 10px;
+    padding: 10px;
+    border-radius: 8px;
+    background: #f2f4f7;
+}
+
+.chat-message.assistant {
+    background: #eaf3ff;
+}
+
+.chat-message.user {
+    background: #fff3cd;
+}
+
+.chat-message .role {
+    font-size: 0.85rem;
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+.chat-message .text {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 .toolbar {
     margin-top: 14px;
 }

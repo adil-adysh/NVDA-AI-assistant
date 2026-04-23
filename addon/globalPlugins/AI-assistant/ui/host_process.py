@@ -38,6 +38,7 @@ def _wait_for_host_pipe_ready(timeout_seconds: float = 5.0) -> None:
 		logger.debug("pywin32 unavailable; skipping host pipe readiness wait")
 		return
 
+	logger.debug("Waiting for UI host pipe readiness: %s (timeout=%ss)", _HOST_PIPE_NAME, timeout_seconds)
 	deadline = time.monotonic() + timeout_seconds
 	last_error: Exception | None = None
 	while time.monotonic() < deadline:

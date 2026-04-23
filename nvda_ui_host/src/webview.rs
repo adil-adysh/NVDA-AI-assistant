@@ -10,6 +10,7 @@ use windows::{
     },
 };
 
+use crate::logger;
 use serde_json::Value;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use webview2_com::{
@@ -19,6 +20,8 @@ use webview2_com::{
     NavigationCompletedEventHandler,
     WebMessageReceivedEventHandler,
 };
+
+use crate::ipc;
 
 static mut WEBVIEW_ENVIRONMENT: Option<ICoreWebView2Environment> = None;
 static mut WEBVIEW_CORE: Option<ICoreWebView2> = None;
@@ -100,31 +103,31 @@ pub(crate) fn test_controller_ready() -> bool {
 fn flush_pending_messages() {
     let mut queue = pending_messages().lock().unwrap();
     let count = queue.len();
-    eprintln!("flush_pending_messages called, queue size {}", count);
+    logger::info(&format!("FLUSH CALLED: queue_size={}", count));
 
     if let Some(controller) = current_controller() {
-        eprintln!("Flushing {} queued host messages", count);
+        logger::debug(&format!("Flushing {} queued host messages", count));
         for message in queue.drain(..) {
-            eprintln!("Flushing queued message: {}", message);
+            logger::debug(&format!("Flushing queued message: {}", message));
             if let Err(err) = post_message_to_webview(&controller, &message) {
-                eprintln!("Failed to flush queued host message: {:?}", err);
+                logger::error(&format!("Failed to flush queued host message: {:?}", err));
             }
         }
-        eprintln!("flush_pending_messages completed, queue drained");
+        logger::debug("flush_pending_messages completed, queue drained");
         return;
     }
-    eprintln!("flush_pending_messages: WebView controller not ready, queue size {}", count);
+    logger::info(&format!("flush_pending_messages: WebView controller not ready, queue size {}", count));
 
     #[cfg(test)]
     {
         if let Some(mutex) = POST_WEB_MESSAGE_OVERRIDE.get() {
             let guard = mutex.lock().unwrap();
             if let Some(override_fn) = *guard {
-                eprintln!("Flushing {} queued host messages via test override", count);
+                logger::debug(&format!("Flushing {} queued host messages via test override", count));
                 for message in queue.drain(..) {
-                    eprintln!("Flushing queued message: {}", message);
+                    logger::debug(&format!("Flushing queued message: {}", message));
                     if let Err(err) = override_fn(&message) {
-                        eprintln!("Failed to flush queued host message: {:?}", err);
+                        logger::error(&format!("Failed to flush queued host message: {:?}", err));
                     }
                 }
             }
@@ -136,13 +139,14 @@ fn send_webview_message(webview: &ICoreWebView2, message: &str) -> Result<()> {
     let mut wide: Vec<u16> = message.encode_utf16().collect();
     wide.push(0);
     let ptr = PCWSTR(wide.as_ptr());
-    println!("Rust: send_webview_message payload len={} message={}", message.len(), message);
+    logger::debug(&format!("Rust: send_webview_message payload len={} message={}", message.len(), message));
     let result = unsafe { webview.PostWebMessageAsString(ptr) };
-    println!("Rust: WebView send result: {:?}", result);
+    logger::debug(&format!("Rust: WebView send result: {:?}", result));
     result
 }
 
 fn post_message_to_webview(controller: &ICoreWebView2Controller, message: &str) -> Result<()> {
+    logger::debug("SENDING TO WEBVIEW");
     #[cfg(test)]
     {
         if let Some(mutex) = POST_WEB_MESSAGE_OVERRIDE.get() {
@@ -197,10 +201,11 @@ fn to_wide(s: &str) -> Vec<u16> {
 }
 
 fn handle_js_event(message: &str, hwnd: HWND) -> Result<()> {
+    logger::debug(&format!("WebView JS event received: {}", message));
     let payload: Value = match serde_json::from_str(message) {
         Ok(value) => value,
         Err(err) => {
-            eprintln!("WebView JS event parse failed: {:?}", err);
+            logger::error(&format!("WebView JS event parse failed: {:?}", err));
             return Ok(());
         }
     };
@@ -214,6 +219,7 @@ fn handle_js_event(message: &str, hwnd: HWND) -> Result<()> {
         .and_then(Value::as_str);
 
     if schema != Some("nvda.ui_host") || message_type != Some("event") {
+        logger::warn(&format!("WebView JS event ignored due to invalid schema/type: {:?}/{:?}", schema, message_type));
         return Ok(());
     }
 
@@ -221,6 +227,11 @@ fn handle_js_event(message: &str, hwnd: HWND) -> Result<()> {
         unsafe {
             let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
+        return Ok(());
+    }
+
+    if event_name.is_some() {
+        ipc::queue_ui_event(message.to_string());
     }
 
     Ok(())
@@ -237,24 +248,31 @@ pub fn resize_webview(hwnd: HWND) {
 }
 
 pub fn post_host_command(message: &str) -> Result<()> {
-    eprintln!("WebView post_host_command called, message length={} controller_ready={} message={}", message.len(), current_controller().is_some(), message);
+    let queue_len_before = pending_messages().lock().unwrap().len();
+    logger::debug(&format!(
+        "QUEUE MESSAGE: controller_ready={} queue_len_before={}",
+        current_controller().is_some(),
+        queue_len_before
+    ));
+    logger::info(&format!("WebView host command received: controller_ready={} length={} message_preview={}", current_controller().is_some(), message.len(), message.chars().take(120).collect::<String>()));
+    logger::debug(&format!("WebView post_host_command called, message length={} controller_ready={} message={}", message.len(), current_controller().is_some(), message));
     if let Some(controller) = current_controller() {
         match post_message_to_webview(&controller, message) {
             Ok(()) => {
-                eprintln!("WebView message sent immediately");
+                logger::debug("WebView message sent immediately");
                 return Ok(());
             }
             Err(err) => {
-                eprintln!("WebView send failed, queueing message: {:?}", err);
+                logger::warn(&format!("WebView send failed, queueing message: {:?}", err));
                 let mut queue = pending_messages().lock().unwrap();
                 queue.push(message.to_string());
-                eprintln!("WebView queue size after enqueue: {}", queue.len());
+                logger::debug(&format!("WebView queue size after enqueue: {}", queue.len()));
                 return Ok(());
             }
         }
     }
 
-    eprintln!("WebView controller not ready, queueing message");
+    logger::info("WebView controller not ready, queueing message");
     #[cfg(test)]
     {
         if test_controller_ready() {
@@ -351,19 +369,19 @@ mod tests {
 
 pub fn init_webview(hwnd: HWND) -> Result<()> {
     unsafe {
-        println!("Initializing WebView2...");
-        println!("WebView init_webview() starting environment creation");
+logger::info("Initializing WebView2...");
+                        logger::debug("WebView init_webview() starting environment creation");
 
         CreateCoreWebView2EnvironmentWithOptions(
             None,
             None,
             None,
             &CreateCoreWebView2EnvironmentCompletedHandler::create(Box::new(move |_hr: Result<()>, env: Option<ICoreWebView2Environment>| {
-                println!("Environment creation callback complete: hr={:?}", _hr);
-                println!("Environment created");
+                logger::debug(&format!("Environment creation callback complete: hr={:?}", _hr));
+                logger::info("Environment created");
 
                 let Some(env) = env else {
-                    eprintln!("WebView2 environment callback returned None");
+                    logger::error("WebView2 environment callback returned None");
                     return Ok(());
                 };
 
@@ -372,22 +390,23 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
                 env.CreateCoreWebView2Controller(
                     hwnd,
                     &CreateCoreWebView2ControllerCompletedHandler::create(Box::new(move |_hr: Result<()>, controller: Option<ICoreWebView2Controller>| {
-                        println!("Controller creation callback complete: hr={:?}", _hr);
-                        println!("Controller created");
+                        logger::debug(&format!("Controller creation callback complete: hr={:?}", _hr));
+                        logger::info("Controller created");
 
                         let Some(controller) = controller else {
-                            eprintln!("WebView2 controller callback returned None");
+                        logger::error("WebView2 environment callback returned None");
                             return Ok(());
                         };
 
                         WEBVIEW_CONTROLLER.with(|slot| {
                             *slot.borrow_mut() = Some(controller.clone());
                         });
+                        logger::info("WEBVIEW CONTROLLER SET");
 
                         let webview = match controller.CoreWebView2() {
                             Ok(webview) => webview,
                             Err(e) => {
-                                eprintln!("CoreWebView2 retrieval failed: {:?}", e);
+                                logger::error(&format!("CoreWebView2 retrieval failed: {:?}", e));
                                 return Ok(());
                             }
                         };
@@ -395,13 +414,13 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
                         WEBVIEW_CORE = Some(webview.clone());
 
                         controller.SetIsVisible(true).unwrap_or_else(|e| {
-                            eprintln!("SetIsVisible failed: {:?}", e);
+                            logger::warn(&format!("SetIsVisible failed: {:?}", e));
                         });
 
                         let mut rect = RECT::default();
                         let _ = GetClientRect(hwnd, &mut rect);
                         controller.SetBounds(rect).unwrap_or_else(|e| {
-                            eprintln!("SetBounds failed: {:?}", e);
+                            logger::warn(&format!("SetBounds failed: {:?}", e));
                         });
 
                         webview
@@ -418,7 +437,7 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
                                 ),
                             )
                             .unwrap_or_else(|e| {
-                                eprintln!("AddScriptToExecuteOnDocumentCreated failed: {:?}", e);
+                                logger::error(&format!("AddScriptToExecuteOnDocumentCreated failed: {:?}", e));
                             });
 
                         let mut token = 0i64;
@@ -427,54 +446,54 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
                                 move |_sender: Option<ICoreWebView2>,
                                       args: Option<ICoreWebView2WebMessageReceivedEventArgs>| {
                                     let Some(args) = args else {
-                                        eprintln!("WebMessageReceived args were None");
+                                        logger::error("WebMessageReceived args were None");
                                         return Ok(());
                                     };
 
                                     let mut message = windows::core::PWSTR::null();
                                     if let Err(e) = args.TryGetWebMessageAsString(&mut message) {
-                                        eprintln!("TryGetWebMessageAsString failed: {:?}", e);
+                                        logger::error(&format!("TryGetWebMessageAsString failed: {:?}", e));
                                         return Ok(());
                                     }
 
                                     let message = message.to_string().unwrap_or_default();
-                                    println!("JS -> host: {}", message);
+                                    logger::debug(&format!("JS -> host: {}", message));
                                     if let Err(err) = handle_js_event(&message, hwnd) {
-                                        eprintln!("Failed to handle JS event: {:?}", err);
+                                        logger::error(&format!("Failed to handle JS event: {:?}", err));
                                     }
                                     Ok(())
                                 },
                             )),
                             &mut token,
                         ) {
-                            eprintln!("add_WebMessageReceived failed: {:?}", e);
+                            logger::error(&format!("add_WebMessageReceived failed: {:?}", e));
                         }
 
                         let controller_clone = controller.clone();
                         let mut nav_token = 0i64;
                         if let Err(e) = webview.add_NavigationCompleted(
                             &NavigationCompletedEventHandler::create(Box::new(move |_sender: Option<ICoreWebView2>, _args: Option<ICoreWebView2NavigationCompletedEventArgs>| {
-                                println!("Navigation completed");
+                                logger::debug("Navigation completed");
                                 controller_clone.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC).ok();
                                 flush_pending_messages();
                                 Ok(())
                             })),
                             &mut nav_token,
                         ) {
-                            eprintln!("add_NavigationCompleted failed: {:?}", e);
+                            logger::error(&format!("add_NavigationCompleted failed: {:?}", e));
                         }
 
-                        println!("WebView fully initialized, loading embedded host page");
+                        logger::info("WebView fully initialized, loading embedded host page");
                         let html = build_embedded_html();
-                        println!("Loading embedded UI ({} bytes)", html.len());
+                        logger::debug(&format!("Loading embedded UI ({} bytes)", html.len()));
                         let html_wide = to_wide(&html);
                         let ptr = PCWSTR(html_wide.as_ptr());
                         if let Err(e) = webview.NavigateToString(ptr) {
-                            eprintln!("WebView NavigateToString failed: {:?}", e);
+                            logger::error(&format!("WebView NavigateToString failed: {:?}", e));
                         }
 
                         flush_pending_messages();
-                        println!("Navigation started");
+                        logger::info("Navigation started");
 
                         Ok(())
                     })),

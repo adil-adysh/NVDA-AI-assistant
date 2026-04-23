@@ -2,13 +2,16 @@ use std::io::Write;
 
 use windows::core::Result;
 
+use crate::logger;
 use crate::protocol::{self, AckStage, ParsedCommand, ProtocolError, ResponseMode};
 use crate::window;
 
 pub fn handle_raw_message(raw: &str, writer: &mut impl Write) -> Result<()> {
+    logger::debug(&format!("Host app received raw message: {}", raw));
     match protocol::parse_inbound_command(raw) {
         Ok(command) => handle_command(command, writer),
         Err(error) => {
+            logger::warn(&format!("Host app failed to parse inbound message: {:?}", error));
             let response_mode = infer_response_mode(raw);
             write_json_value(&protocol::build_error(response_mode, error.request_id.clone(), &error), writer)
         }
@@ -16,8 +19,9 @@ pub fn handle_raw_message(raw: &str, writer: &mut impl Write) -> Result<()> {
 }
 
 pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result<()> {
-    eprintln!("Host app handling message_id={} command={}", command.message_id, command.payload.as_legacy_action());
+    logger::debug(&format!("Host app handling message_id={} command={}", command.message_id, command.payload.as_legacy_action()));
     if matches!(command.payload, protocol::UiCommand::HealthCheck) {
+        logger::debug(&format!("Host app responding to health_check for message_id={}", command.message_id));
         return write_json_value(&protocol::build_ack(&command, AckStage::Accepted, None), writer);
     }
 
@@ -29,7 +33,8 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
 
     let webview_message = serde_json::to_string(&protocol::to_webview_envelope(&command))
         .map_err(|error| windows::core::Error::new(windows::core::HRESULT(0), error.to_string()))?;
-    eprintln!("Host app forwarding normalized command to UI thread: {}", webview_message);
+    logger::info(&format!("Host app forwarding normalized command to UI thread: message_id={} payload={}", command.message_id, command.payload.as_legacy_action()));
+    logger::debug(&format!("Host app normalized UI thread command: {}", webview_message));
     if let Err(dispatch_error) = window::post_host_command(webview_message) {
         let (kind, message) = match dispatch_error {
             window::DispatchError::QueueFull => (protocol::ProtocolErrorKind::QueueFull, "Host dispatch queue is full"),
@@ -43,7 +48,7 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
 }
 
 fn write_json_value(value: &serde_json::Value, writer: &mut impl Write) -> Result<()> {
-    eprintln!("Host app sending response: {}", value);
+    logger::debug(&format!("Host app sending response: {}", value));
     serde_json::to_writer(&mut *writer, value)
         .map_err(|error| windows::core::Error::new(windows::core::HRESULT(0), error.to_string()))?;
     writer

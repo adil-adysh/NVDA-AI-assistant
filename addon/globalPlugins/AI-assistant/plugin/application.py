@@ -95,6 +95,7 @@ class AIAssistantApplication:
 		self.presenter.update_provider_state(provider_state)
 
 	def run_summary(self) -> None:
+		log.debug("AIAssistantApplication.run_summary called")
 		self.background.run_use_case_in_background(
 			SUMMARY,
 			title=_("Page summary"),
@@ -102,6 +103,7 @@ class AIAssistantApplication:
 		)
 
 	def run_structure_summary(self) -> None:
+		log.debug("AIAssistantApplication.run_structure_summary called")
 		self.background.run_use_case_in_background(
 			STRUCTURE_SUMMARY,
 			title=_("Structure summary"),

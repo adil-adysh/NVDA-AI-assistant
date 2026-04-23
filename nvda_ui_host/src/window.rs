@@ -1,5 +1,5 @@
 use std::ptr::null;
-use std::sync::{mpsc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use windows::{
     core::{PCWSTR, Result, w},
     Win32::{
@@ -9,12 +9,13 @@ use windows::{
     },
 };
 
+use crate::logger;
+
 const WM_HOST_COMMAND: u32 = WM_APP + 1;
 const HOST_QUEUE_CAPACITY: usize = 128;
 
 static WINDOW_HANDLE: OnceLock<usize> = OnceLock::new();
-static HOST_COMMAND_SENDER: OnceLock<mpsc::SyncSender<String>> = OnceLock::new();
-static HOST_COMMAND_RECEIVER: OnceLock<Mutex<mpsc::Receiver<String>>> = OnceLock::new();
+static HOST_COMMAND_QUEUE: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DispatchError {
@@ -83,21 +84,25 @@ pub fn set_window_title(title: &str) {
 
 pub fn initialize_host_dispatch(hwnd: HWND) {
     set_window_handle(hwnd);
-    let (sender, receiver) = mpsc::sync_channel(HOST_QUEUE_CAPACITY);
-    let _ = HOST_COMMAND_SENDER.set(sender);
-    let _ = HOST_COMMAND_RECEIVER.set(Mutex::new(receiver));
+    let _ = HOST_COMMAND_QUEUE.set(Mutex::new(Vec::new()));
+    logger::info("Host dispatch queue initialized");
+}
+
+fn command_queue() -> &'static Mutex<Vec<String>> {
+    HOST_COMMAND_QUEUE.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 pub fn post_host_command(command: String) -> std::result::Result<(), DispatchError> {
-    let Some(sender) = HOST_COMMAND_SENDER.get() else {
-        return Err(DispatchError::NotInitialized);
-    };
     if let Some(hwnd_value) = WINDOW_HANDLE.get() {
-        match sender.try_send(command) {
-            Ok(()) => {}
-            Err(mpsc::TrySendError::Full(_)) => return Err(DispatchError::QueueFull),
-            Err(mpsc::TrySendError::Disconnected(_)) => return Err(DispatchError::QueueDisconnected),
+        let mut queue = command_queue().lock().map_err(|_| DispatchError::QueueDisconnected)?;
+        if queue.len() >= HOST_QUEUE_CAPACITY {
+            logger::warn("Host dispatch queue full when posting command");
+            return Err(DispatchError::QueueFull);
         }
+
+        queue.push(command.clone());
+        logger::info(&format!("Queued host command, queue size={} command={}...", queue.len(), command.chars().take(80).collect::<String>()));
+
         let hwnd = HWND(*hwnd_value as _);
         unsafe {
             let _ = PostMessageW(Some(hwnd), WM_HOST_COMMAND, WPARAM(0), LPARAM(0));
@@ -109,19 +114,21 @@ pub fn post_host_command(command: String) -> std::result::Result<(), DispatchErr
 }
 
 fn drain_host_commands() {
-    let Some(receiver_mutex) = HOST_COMMAND_RECEIVER.get() else {
-        return;
+    let messages = {
+        let mut queue = command_queue().lock().unwrap();
+        std::mem::take(&mut *queue)
     };
 
-    let receiver = receiver_mutex.lock().unwrap();
-    loop {
-        match receiver.try_recv() {
-            Ok(command) => {
-                if let Err(error) = crate::webview::post_host_command(command.as_str()) {
-                    eprintln!("Failed to post command to WebView on UI thread: {:?}", error);
-                }
-            }
-            Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => break,
+    if messages.is_empty() {
+        logger::debug("drain_host_commands called with empty queue");
+        return;
+    }
+
+    logger::info(&format!("Flushing {} queued host commands to WebView", messages.len()));
+    for command in messages {
+        logger::debug(&format!("Posting queued command to WebView: {}", command.chars().take(120).collect::<String>()));
+        if let Err(error) = crate::webview::post_host_command(command.as_str()) {
+            logger::error(&format!("Failed to post command to WebView on UI thread: {:?}", error));
         }
     }
 }
@@ -158,6 +165,7 @@ unsafe extern "system" fn wndproc(
             LRESULT(0)
         }
         WM_HOST_COMMAND => {
+            logger::debug("Window procedure received WM_HOST_COMMAND");
             let _ = wparam;
             let _ = lparam;
             drain_host_commands();

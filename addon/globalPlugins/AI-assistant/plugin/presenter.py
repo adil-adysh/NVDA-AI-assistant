@@ -53,6 +53,7 @@ class UseCasePresenter:
 			log.exception("Error updating chat dialog title after provider state changed")
 
 	def present_use_case_result(self, use_case_result: Any, title: str) -> None:
+		log.debug("UseCasePresenter.present_use_case_result called title=%s result_type=%s", title, type(use_case_result).__name__)
 		output_text = None
 		output_html = None
 		is_html = False
@@ -77,6 +78,7 @@ class UseCasePresenter:
 
 		if not isinstance(output_text, str) or not output_text.strip():
 			error_message = getattr(use_case_result, "error_message", None)
+			log.warning("UseCasePresenter received empty output_text; error_message=%s", error_message)
 			if isinstance(error_message, str) and error_message.strip():
 				nvda_ui.message(error_message)
 				return

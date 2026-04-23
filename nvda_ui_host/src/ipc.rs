@@ -4,6 +4,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::ptr::null_mut;
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -11,6 +12,7 @@ use windows::core::{PCWSTR, Result};
 use windows::Win32::Foundation::{GetLastError, HANDLE, INVALID_HANDLE_VALUE};
 
 use crate::app;
+use crate::logger;
 use crate::protocol::HostResponse;
 
 const PIPE_NAME: &str = r"\\.\pipe\nvda_ai_assistant_ui";
@@ -22,6 +24,25 @@ const PIPE_WAIT: u32 = 0x00000000;
 const PIPE_UNLIMITED_INSTANCES: u32 = 255;
 const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x00080000;
 const ERROR_PIPE_CONNECTED: u32 = 535;
+
+static UI_EVENT_SENDER: OnceLock<Mutex<Option<mpsc::Sender<String>>>> = OnceLock::new();
+
+fn ui_event_sender() -> &'static Mutex<Option<mpsc::Sender<String>>> {
+    UI_EVENT_SENDER.get_or_init(|| Mutex::new(None))
+}
+
+pub fn queue_ui_event(message: String) {
+    logger::debug(&format!("IPC queue_ui_event called with payload: {}", message));
+    let sender = ui_event_sender();
+    let guard = sender.lock().unwrap();
+    if let Some(tx) = guard.as_ref() {
+        if tx.send(message).is_err() {
+            logger::warn("IPC failed to send UI event; sender may be disconnected");
+        }
+    } else {
+        logger::warn("IPC queue_ui_event called with no active UI event sender");
+    }
+}
 
 #[link(name = "kernel32")]
 extern "system" {
@@ -67,55 +88,78 @@ fn create_pipe(name: &[u16]) -> Result<HANDLE> {
 
 pub fn start_pipe_listener() {
     let pipe_name = to_wide(PIPE_NAME);
-    eprintln!("IPC listener thread starting for pipe: {}", PIPE_NAME);
+    logger::info(&format!("IPC listener thread starting for pipe: {}", PIPE_NAME));
     thread::spawn(move || loop {
         match create_pipe(&pipe_name) {
             Ok(pipe_handle) => {
-                eprintln!("IPC created named pipe, waiting for client connection");
+                logger::info("IPC created named pipe, waiting for client connection");
                 let connected = unsafe { ConnectNamedPipe(pipe_handle, null_mut()) != 0 };
                 if !connected {
                     let error = unsafe { GetLastError() };
                     if error.0 != ERROR_PIPE_CONNECTED {
-                        eprintln!("IPC connect failed: {}", error.0);
+                        logger::warn(&format!("IPC connect failed: {}", error.0));
                         continue;
                     }
                 }
-                eprintln!("IPC client connected");
+                logger::info("IPC client connected");
 
                 let raw_handle = pipe_handle.0 as RawHandle;
                 let file = unsafe { File::from_raw_handle(raw_handle) };
                 let mut reader = BufReader::new(file.try_clone().unwrap());
-                let mut writer = file;
-                let mut line = String::new();
+                let writer = Arc::new(Mutex::new(file));
 
-                while let Ok(bytes_read) = reader.read_line(&mut line) {
+                let (event_tx, event_rx) = mpsc::channel::<String>();
+                {
+                    let mut sender_guard = ui_event_sender().lock().unwrap();
+                    *sender_guard = Some(event_tx);
+                }
+
+                let event_writer = writer.clone();
+                thread::spawn(move || {
+                    for message in event_rx {
+                        let mut writer_guard = event_writer.lock().unwrap();
+                        if let Err(err) = write_text(&message, &mut *writer_guard) {
+                            logger::error(&format!("IPC failed to write UI event: {:?}", err));
+                            break;
+                        }
+                    }
+                });
+
+                let mut reader_line = String::new();
+                while let Ok(bytes_read) = reader.read_line(&mut reader_line) {
                     if bytes_read == 0 {
                         break;
                     }
 
-                    let trimmed = line.trim_end();
+                    let trimmed = reader_line.trim_end();
                     if trimmed.is_empty() {
-                        line.clear();
+                        reader_line.clear();
                         continue;
                     }
 
-                    eprintln!("IPC raw request: {}", trimmed);
-                    if let Err(err) = app::handle_raw_message(trimmed, &mut writer) {
-                        eprintln!("Host app command error: {:?}", err);
+                    logger::debug(&format!("IPC raw request: {}", trimmed));
+                    let mut writer_guard = writer.lock().unwrap();
+                    if let Err(err) = app::handle_raw_message(trimmed, &mut *writer_guard) {
+                        logger::error(&format!("Host app command error: {:?}", err));
                         let response = HostResponse {
                             type_: "response".to_string(),
                             request_id: "".to_string(),
                             status: "nack".to_string(),
                             message: Some("Host application error".to_string()),
                         };
-                        let _ = write_response(&response, &mut writer);
+                        let _ = write_response(&response, &mut *writer_guard);
                     }
 
-                    line.clear();
+                    reader_line.clear();
+                }
+
+                {
+                    let mut sender_guard = ui_event_sender().lock().unwrap();
+                    *sender_guard = None;
                 }
             }
             Err(err) => {
-                eprintln!("IPC failed to create pipe: {:?}", err);
+                logger::error(&format!("IPC failed to create pipe: {:?}", err));
                 thread::sleep(Duration::from_secs(1));
             }
         }
@@ -124,7 +168,11 @@ pub fn start_pipe_listener() {
 
 fn write_response<W: Write>(response: &HostResponse, writer: &mut W) -> std::io::Result<()> {
     let text = serde_json::to_string(response)?;
-    eprintln!("IPC write_response: {}", text);
+    logger::debug(&format!("IPC write_response: {}", text));
+    write_text(&text, writer)
+}
+
+fn write_text<W: Write>(text: &str, writer: &mut W) -> std::io::Result<()> {
     writer.write_all(text.as_bytes())?;
     writer.write_all(b"\n")?;
     writer.flush()
