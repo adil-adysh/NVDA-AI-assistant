@@ -5,18 +5,19 @@ import logging
 from typing import Any, Callable
 from uuid import uuid4
 
-from .host_interface import UIHostRenderer
-
-logger = logging.getLogger(__name__)
+from .host_interface import HostTransport, UIHostRenderer
 from .host_process import start_host_if_needed
 from .host_protocol import (
-    EVENT_CHAT_SUBMITTED,
-    HostCommand,
-    HostEvent,
-    HostResponse,
-    HostUnavailableError,
+	EVENT_CHAT_SUBMITTED,
+	HostCommand,
+	HostEvent,
+	HostResponse,
+	HostUnavailableError,
 )
 from .host_transport import HostPipeTransport
+
+logger = logging.getLogger(__name__)
+HostCommandPayload = dict[str, Any]
 
 
 class HostRenderer(UIHostRenderer):
@@ -26,7 +27,7 @@ class HostRenderer(UIHostRenderer):
 		self._current_conversation_id: str | None = None
 		self._current_use_case_id: str | None = None
 		self._chat_submission_handler: Callable[[str, str | None], None] | None = None
-		self._transport = HostPipeTransport(self.PIPE_NAME, event_callback=self._on_host_event)
+		self._transport: HostTransport = HostPipeTransport(self.PIPE_NAME, event_callback=self._on_host_event)
 		self._host_ready = False
 
 	def render_display_result(
@@ -44,11 +45,8 @@ class HostRenderer(UIHostRenderer):
 		copy_html: str | None = None,
 		metadata: dict[str, Any] | None = None,
 	) -> None:
-		print("STEP 1: ENTER render_display")
-		print("STEP 2: transport =", self._transport)
-		print("STEP 3: transport is None?", self._transport is None)
 		logger.debug("HostRenderer.render_display_result called use_case_id=%s title=%s", use_case_id, title)
-		payload = {
+		payload: HostCommandPayload = {
 			"use_case_id": use_case_id,
 			"title": title,
 			"success": success,
@@ -79,7 +77,7 @@ class HostRenderer(UIHostRenderer):
 		if isinstance(metadata, dict):
 			conversation_id = metadata.get("conversation_id")
 		self._current_conversation_id = conversation_id or str(uuid4())
-		payload = {
+		payload: HostCommandPayload = {
 			"use_case_id": use_case_id,
 			"conversation_id": self._current_conversation_id,
 			"title": title,
@@ -109,7 +107,7 @@ class HostRenderer(UIHostRenderer):
 
 		try:
 			self._chat_submission_handler(message.strip(), conversation_id)
-		except Exception as error:
+		except Exception:
 			logger.exception("HostRenderer chat submission handler failed")
 
 	def chat_set_history(
@@ -119,7 +117,7 @@ class HostRenderer(UIHostRenderer):
 		messages: list[dict[str, Any]],
 		metadata: dict[str, Any] | None = None,
 	) -> None:
-		payload = {
+		payload: HostCommandPayload = {
 			"use_case_id": use_case_id,
 			"conversation_id": conversation_id,
 			"messages": messages,
@@ -134,7 +132,7 @@ class HostRenderer(UIHostRenderer):
 		message: dict[str, Any],
 		metadata: dict[str, Any] | None = None,
 	) -> None:
-		payload = {
+		payload: HostCommandPayload = {
 			"use_case_id": use_case_id,
 			"conversation_id": conversation_id,
 			"message": message,
@@ -151,7 +149,7 @@ class HostRenderer(UIHostRenderer):
 		status: str | None = None,
 		metadata: dict[str, Any] | None = None,
 	) -> None:
-		payload = {
+		payload: HostCommandPayload = {
 			"use_case_id": use_case_id,
 			"conversation_id": conversation_id,
 			"message_id": message_id,
@@ -162,18 +160,18 @@ class HostRenderer(UIHostRenderer):
 		self._send_command("chat_update", payload)
 
 	def show_error(self, error_message: str, details: str | None = None) -> None:
-		payload = {
+		payload: HostCommandPayload = {
 			"error_message": error_message,
 			"details": details,
 		}
 		self._send_command("show_error", payload)
 
 	def show_progress(self, message: str) -> None:
-		payload = {"stage": "progress", "message": message}
+		payload: HostCommandPayload = {"stage": "progress", "message": message}
 		self._send_command("update_progress", payload)
 
 	def close_window(self, reason: str | None = None) -> None:
-		payload = {"reason": reason}
+		payload: HostCommandPayload = {"reason": reason}
 		self._send_command("close_window", payload)
 
 	def is_available(self) -> bool:
@@ -186,14 +184,14 @@ class HostRenderer(UIHostRenderer):
 			logger.warning("HostRenderer is_available() probe failed")
 			return False
 
-	def _send_command(self, command_name: str, payload: dict[str, Any]) -> None:
+	def _send_command(self, command_name: str, payload: HostCommandPayload) -> None:
 		command = HostCommand(name=command_name, payload=payload)
-		message = command.to_json() + "\n"
-		print("ABOUT TO SEND COMMAND FROM HOST_RENDERER:", command_name, command.id)
+		message = command.to_bytes()
 		logger.debug("HostRenderer sending command name=%s message_id=%s payload=%s", command.name, command.id, payload)
 		self._ensure_host_running()
 		try:
-			self._write_pipe(message.encode("utf-8"))
+			response_bytes = self._transport.send(message)
+			self._process_response(response_bytes)
 		except HostUnavailableError:
 			raise
 		except Exception as error:
@@ -201,9 +199,8 @@ class HostRenderer(UIHostRenderer):
 
 	def _probe_host(self) -> None:
 		command = HostCommand(name="health_check", payload={})
-		message = command.to_json() + "\n"
 		logger.debug("HostRenderer probing host with health_check message_id=%s", command.id)
-		response_bytes = self._transport.send_and_receive(message.encode("utf-8"))
+		response_bytes = self._transport.send(command.to_bytes())
 		self._process_response(response_bytes)
 		logger.debug("HostRenderer host health_check succeeded message_id=%s", command.id)
 
@@ -219,30 +216,6 @@ class HostRenderer(UIHostRenderer):
 				logger.error("HostRenderer host health check failed: %s", error, exc_info=True)
 				raise HostUnavailableError(str(error)) from error
 			self._host_ready = True
-
-	def _write_pipe(self, message: bytes) -> None:
-		logger.debug(
-			"HostRenderer writing %d bytes to transport: %s",
-			len(message),
-			message[:200].decode('utf-8', errors='replace'),
-		)
-		print("STEP 4: CALLING transport.send")
-		try:
-			response_bytes = self._transport.send(message)
-			logger.debug("HostRenderer received %d response bytes from transport", len(response_bytes))
-			self._process_response(response_bytes)
-			logger.debug("HostRenderer successfully wrote pipe message")
-		except ImportError:
-			logger.debug("HostRenderer win32 library unavailable, using fallback pipe writer")
-			self._write_pipe_fallback(message)
-		except TimeoutError as error:
-			raise HostUnavailableError(str(error)) from error
-		except Exception as error:
-			winerror = getattr(error, "winerror", None)
-			if winerror in (2, 231):
-				logger.warning("HostRenderer pipe not ready yet (winerror=%s); retrying...", winerror, exc_info=True)
-			logger.error("HostRenderer transport error: %s", error, exc_info=True)
-			raise HostUnavailableError(str(error)) from error
 
 	def _process_response(self, response_bytes: bytes) -> None:
 		response_text = response_bytes.decode("utf-8", errors="replace").replace("\r", "").replace("\n", "").strip("\x00 ")

@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::sync::{Mutex, OnceLock};
-#[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
 use windows::{
     core::{PCWSTR, Result, w},
@@ -29,6 +28,7 @@ thread_local! {
     static WEBVIEW_CONTROLLER: RefCell<Option<ICoreWebView2Controller>> = const { RefCell::new(None) };
 }
 static PENDING_MESSAGES: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+static WEBVIEW_READY: OnceLock<AtomicBool> = OnceLock::new();
 
 #[cfg(test)]
 static POST_WEB_MESSAGE_OVERRIDE: OnceLock<Mutex<Option<fn(&str) -> Result<()>>>> = OnceLock::new();
@@ -39,6 +39,14 @@ static TEST_CONTROLLER_READY: OnceLock<AtomicBool> = OnceLock::new();
 
 fn pending_messages() -> &'static Mutex<Vec<String>> {
     PENDING_MESSAGES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn webview_ready_flag() -> &'static AtomicBool {
+    WEBVIEW_READY.get_or_init(|| AtomicBool::new(false))
+}
+
+fn set_webview_ready(value: bool) {
+    webview_ready_flag().store(value, Ordering::SeqCst);
 }
 
 #[cfg(test)]
@@ -105,7 +113,8 @@ fn flush_pending_messages() {
     let count = queue.len();
     logger::info(&format!("FLUSH CALLED: queue_size={}", count));
 
-    if let Some(controller) = current_controller() {
+    if webview_ready_flag().load(Ordering::SeqCst) {
+        if let Some(controller) = current_controller() {
         logger::debug(&format!("Flushing {} queued host messages", count));
         for message in queue.drain(..) {
             logger::debug(&format!("Flushing queued message: {}", message));
@@ -115,8 +124,9 @@ fn flush_pending_messages() {
         }
         logger::debug("flush_pending_messages completed, queue drained");
         return;
+        }
     }
-    logger::info(&format!("flush_pending_messages: WebView controller not ready, queue size {}", count));
+    logger::info(&format!("flush_pending_messages: WebView not ready, queue size {}", count));
 
     #[cfg(test)]
     {
@@ -250,13 +260,15 @@ pub fn resize_webview(hwnd: HWND) {
 pub fn post_host_command(message: &str) -> Result<()> {
     let queue_len_before = pending_messages().lock().unwrap().len();
     logger::debug(&format!(
-        "QUEUE MESSAGE: controller_ready={} queue_len_before={}",
+        "QUEUE MESSAGE: controller_ready={} webview_ready={} queue_len_before={}",
         current_controller().is_some(),
+        webview_ready_flag().load(Ordering::SeqCst),
         queue_len_before
     ));
-    logger::info(&format!("WebView host command received: controller_ready={} length={} message_preview={}", current_controller().is_some(), message.len(), message.chars().take(120).collect::<String>()));
-    logger::debug(&format!("WebView post_host_command called, message length={} controller_ready={} message={}", message.len(), current_controller().is_some(), message));
-    if let Some(controller) = current_controller() {
+    logger::info(&format!("WebView host command received: controller_ready={} webview_ready={} length={} message_preview={}", current_controller().is_some(), webview_ready_flag().load(Ordering::SeqCst), message.len(), message.chars().take(120).collect::<String>()));
+    logger::debug(&format!("WebView post_host_command called, message length={} controller_ready={} webview_ready={} message={}", message.len(), current_controller().is_some(), webview_ready_flag().load(Ordering::SeqCst), message));
+    if webview_ready_flag().load(Ordering::SeqCst) {
+        if let Some(controller) = current_controller() {
         match post_message_to_webview(&controller, message) {
             Ok(()) => {
                 logger::debug("WebView message sent immediately");
@@ -270,9 +282,10 @@ pub fn post_host_command(message: &str) -> Result<()> {
                 return Ok(());
             }
         }
+        }
     }
 
-    logger::info("WebView controller not ready, queueing message");
+    logger::info("WebView controller or navigation not ready, queueing message");
     #[cfg(test)]
     {
         if test_controller_ready() {
@@ -401,6 +414,7 @@ logger::info("Initializing WebView2...");
                         WEBVIEW_CONTROLLER.with(|slot| {
                             *slot.borrow_mut() = Some(controller.clone());
                         });
+                        set_webview_ready(false);
                         logger::info("WEBVIEW CONTROLLER SET");
 
                         let webview = match controller.CoreWebView2() {
@@ -474,6 +488,7 @@ logger::info("Initializing WebView2...");
                         if let Err(e) = webview.add_NavigationCompleted(
                             &NavigationCompletedEventHandler::create(Box::new(move |_sender: Option<ICoreWebView2>, _args: Option<ICoreWebView2NavigationCompletedEventArgs>| {
                                 logger::debug("Navigation completed");
+                                set_webview_ready(true);
                                 controller_clone.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC).ok();
                                 flush_pending_messages();
                                 Ok(())
@@ -491,8 +506,6 @@ logger::info("Initializing WebView2...");
                         if let Err(e) = webview.NavigateToString(ptr) {
                             logger::error(&format!("WebView NavigateToString failed: {:?}", e));
                         }
-
-                        flush_pending_messages();
                         logger::info("Navigation started");
 
                         Ok(())

@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import dataclasses
 import json
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 from uuid import uuid4
 
 COMMAND_TYPE = "command"
@@ -26,6 +25,11 @@ EVENT_CHAT_ATTACHMENT_ADDED = "chat_attachment_added"
 EVENT_CHAT_CLOSED = "chat_closed"
 
 
+class HostCommandPayload(TypedDict, total=False):
+	name: str
+	payload: dict[str, Any]
+
+
 class HostUnavailableError(Exception):
 	"""Raised when the UI host is unavailable or cannot be reached."""
 
@@ -43,6 +47,9 @@ class HostCommand:
 
 	def to_json(self) -> str:
 		return json.dumps(self.to_dict(), ensure_ascii=False, default=str)
+
+	def to_bytes(self) -> bytes:
+		return f"{self.to_json()}\n".encode("utf-8")
 
 	def to_dict(self) -> dict[str, Any]:
 		return {

@@ -29,6 +29,14 @@ function setStatus(message) {
     statusEl.textContent = message;
 }
 
+function setChatPanelVisible(visible) {
+    if (!chatPanelEl) {
+        return;
+    }
+
+    chatPanelEl.style.display = visible ? 'block' : 'none';
+}
+
 function escapeHtml(text) {
     return String(text)
         .replace(/&/g, '&amp;')
@@ -284,13 +292,23 @@ function setupWebViewBridge() {
     if (window.chrome?.webview?.addEventListener) {
         window.chrome.webview.addEventListener('message', event => {
             console.log('JS RECEIVED MESSAGE');
+            let envelope;
+
             try {
-                const envelope = JSON.parse(event.data);
-                handleHostEnvelope(envelope);
+                envelope = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
             } catch (err) {
                 setStatus('Unable to parse host message');
                 console.error('WebView host message parse error', err);
                 reportUiFailure(null, 'invalid_json');
+                return;
+            }
+
+            try {
+                handleHostEnvelope(envelope);
+            } catch (err) {
+                setStatus('Unable to apply host command');
+                console.error('WebView host message handling error', err, envelope);
+                reportUiFailure(envelope?.correlation_id || envelope?.id || null, 'handler_error');
             }
         });
     } else {

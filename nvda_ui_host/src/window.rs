@@ -47,7 +47,7 @@ pub fn create_window() -> Result<HWND> {
             Default::default(),
             class_name,
             w!("NVDA UI Host"),
-            WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             900,
@@ -57,8 +57,6 @@ pub fn create_window() -> Result<HWND> {
             Some(h_instance.into()),
             Some(null()),
         )?;
-
-        let _ = ShowWindow(hwnd, SW_SHOW);
 
         Ok(hwnd)
     }
@@ -125,6 +123,7 @@ fn drain_host_commands() {
     }
 
     logger::info(&format!("Flushing {} queued host commands to WebView", messages.len()));
+    show_and_focus_window();
     for command in messages {
         logger::debug(&format!("Posting queued command to WebView: {}", command.chars().take(120).collect::<String>()));
         if let Err(error) = crate::webview::post_host_command(command.as_str()) {
@@ -133,9 +132,15 @@ fn drain_host_commands() {
     }
 }
 
-pub unsafe fn focus_window(hwnd: HWND) -> HWND {
-    let _ = SetForegroundWindow(hwnd);
-    SetFocus(hwnd)
+pub fn show_and_focus_window() {
+    if let Some(hwnd_value) = WINDOW_HANDLE.get() {
+        let hwnd = HWND(*hwnd_value as _);
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_SHOW);
+            let _ = SetForegroundWindow(hwnd);
+            let _ = SetFocus(hwnd);
+        }
+    }
 }
 
 pub fn run_message_loop() {

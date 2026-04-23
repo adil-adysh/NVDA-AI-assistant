@@ -22,7 +22,6 @@ const PIPE_TYPE_MESSAGE: u32 = 0x00000004;
 const PIPE_READMODE_MESSAGE: u32 = 0x00000002;
 const PIPE_WAIT: u32 = 0x00000000;
 const PIPE_UNLIMITED_INSTANCES: u32 = 255;
-const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x00080000;
 const ERROR_PIPE_CONNECTED: u32 = 535;
 
 static UI_EVENT_SENDER: OnceLock<Mutex<Option<mpsc::Sender<String>>>> = OnceLock::new();
@@ -68,7 +67,7 @@ fn create_pipe(name: &[u16]) -> Result<HANDLE> {
     unsafe {
         let handle = CreateNamedPipeW(
             PCWSTR(name.as_ptr()),
-            PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
+            PIPE_ACCESS_DUPLEX,
             PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
             PIPE_UNLIMITED_INSTANCES,
             BUFFER_SIZE,

@@ -38,8 +38,7 @@ fn real_main() -> Result<()> {
         logger::info(&format!("Window created: {:?}", hwnd));
 
         window::initialize_host_dispatch(hwnd);
-        let prev_focus = window::focus_window(hwnd);
-        logger::info(&format!("Window focused, previous focus HWND = {:?}", prev_focus));
+        logger::info("Host window initialized in hidden state");
 
         webview::init_webview(hwnd)?;
         ipc::start_pipe_listener();

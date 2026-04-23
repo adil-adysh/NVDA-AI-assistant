@@ -2,7 +2,15 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Protocol
+
+
+class HostTransport(Protocol):
+	def send(self, message: bytes) -> bytes:
+		raise NotImplementedError
+
+	def send_and_receive(self, message: bytes) -> bytes:
+		raise NotImplementedError
 
 
 class UIHostRenderer(ABC):

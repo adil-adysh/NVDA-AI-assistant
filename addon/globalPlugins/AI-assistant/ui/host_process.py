@@ -3,15 +3,17 @@ from __future__ import annotations
 
 import logging
 import subprocess
-import time
 import threading
+import time
 from pathlib import Path
+from typing import Optional
 
 from .host_protocol import HostUnavailableError
 
 logger = logging.getLogger(__name__)
-_host_process: subprocess.Popen | None = None
-_host_logger_thread: threading.Thread | None = None
+_host_process: Optional[subprocess.Popen] = None
+_host_logger_thread: Optional[threading.Thread] = None
+_process_lock = threading.Lock()
 _HOST_PIPE_NAME = r"\\.\pipe\nvda_ai_assistant_ui"
 
 
@@ -42,8 +44,10 @@ def _wait_for_host_pipe_ready(timeout_seconds: float = 5.0) -> None:
 	deadline = time.monotonic() + timeout_seconds
 	last_error: Exception | None = None
 	while time.monotonic() < deadline:
-		if _host_process is not None and _host_process.poll() is not None:
-			raise HostUnavailableError(f"UI host exited during startup with code {_host_process.returncode}")
+		with _process_lock:
+			process = _host_process
+		if process is not None and process.poll() is not None:
+			raise HostUnavailableError(f"UI host exited during startup with code {process.returncode}")
 		try:
 			win32pipe.WaitNamedPipe(_HOST_PIPE_NAME, 250)
 			logger.info("UI host pipe is ready: %s", _HOST_PIPE_NAME)
@@ -59,58 +63,76 @@ def _wait_for_host_pipe_ready(timeout_seconds: float = 5.0) -> None:
 def start_host_if_needed() -> None:
 	global _host_process
 	global _host_logger_thread
-	if _host_process is not None and _host_process.poll() is None:
-		logger.debug("Reusing existing UI host process pid=%s", _host_process.pid)
-		return
+	process: subprocess.Popen | None = None
+	with _process_lock:
+		if _host_process is not None and _host_process.poll() is None:
+			logger.debug("Reusing existing UI host process pid=%s", _host_process.pid)
+			return
 
-	host_exe = get_host_executable_path()
-	logger.debug("Looking for UI host executable at %s", host_exe)
-	if not host_exe.exists():
-		raise HostUnavailableError(f"UI host executable not found: {host_exe}")
+		host_exe = get_host_executable_path()
+		logger.debug("Looking for UI host executable at %s", host_exe)
+		if not host_exe.exists():
+			raise HostUnavailableError(f"UI host executable not found: {host_exe}")
 
-	startupinfo = subprocess.STARTUPINFO()
-	startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-	startupinfo.wShowWindow = subprocess.SW_HIDE
+		startupinfo = subprocess.STARTUPINFO()
+		startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+		startupinfo.wShowWindow = subprocess.SW_HIDE
+
+		try:
+			process = subprocess.Popen(
+				[str(host_exe)],
+				cwd=str(host_exe.parent),
+				startupinfo=startupinfo,
+				creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+				stdout=subprocess.PIPE,
+				stderr=subprocess.STDOUT,
+				text=True,
+				bufsize=1,
+			)
+			_host_process = process
+			logger.info("Started UI host process pid=%s", process.pid)
+			if process.stdout is not None:
+				_host_logger_thread = threading.Thread(
+					target=_drain_host_output,
+					args=(process,),
+					name="ui_host_stdout_reader",
+					daemon=True,
+				)
+				_host_logger_thread.start()
+		except Exception as error:
+			raise HostUnavailableError(f"Unable to start UI host: {error}") from error
+
+	if process is None:
+		raise HostUnavailableError("UI host process failed to start")
 
 	try:
-		process = subprocess.Popen(
-			[str(host_exe)],
-			cwd=str(host_exe.parent),
-			startupinfo=startupinfo,
-			creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-			stdout=subprocess.PIPE,
-			stderr=subprocess.STDOUT,
-			text=True,
-			bufsize=1,
-		)
-		_host_process = process
-		logger.info("Started UI host process pid=%s", process.pid)
-		if process.stdout is not None:
-			_host_logger_thread = threading.Thread(
-				target=_drain_host_output,
-				args=(process,),
-				name="ui_host_stdout_reader",
-				daemon=True,
-			)
-			_host_logger_thread.start()
 		_wait_for_host_pipe_ready()
-	except Exception as error:
-		raise HostUnavailableError(f"Unable to start UI host: {error}") from error
+	except Exception:
+		with _process_lock:
+			if _host_process is process:
+				try:
+					if process.poll() is None:
+						process.terminate()
+				except Exception:
+					pass
+				_host_process = None
+		raise
 
 
 def stop_host() -> None:
 	global _host_process
-	if _host_process is None:
-		return
+	with _process_lock:
+		if _host_process is None:
+			return
 
-	try:
-		if _host_process.poll() is None:
-			_host_process.terminate()
-			_host_process.wait(timeout=5)
-	except Exception:
 		try:
-			_host_process.kill()
+			if _host_process.poll() is None:
+				_host_process.terminate()
+				_host_process.wait(timeout=5)
 		except Exception:
-			pass
-	finally:
-		_host_process = None
+			try:
+				_host_process.kill()
+			except Exception:
+				pass
+		finally:
+			_host_process = None
