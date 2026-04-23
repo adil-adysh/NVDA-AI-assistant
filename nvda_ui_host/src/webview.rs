@@ -161,6 +161,41 @@ fn current_controller() -> Option<ICoreWebView2Controller> {
     WEBVIEW_CONTROLLER.with(|controller| controller.borrow().clone())
 }
 
+const HOST_HTML: &str = include_str!("../assets/host.html");
+const HOST_JS: &str = include_str!("../assets/host.js");
+const HOST_CSS: &str = include_str!("../assets/host.css");
+
+fn build_embedded_html() -> String {
+    let mut html = HOST_HTML.to_string();
+
+    let style_block = format!("<style>{}</style>", HOST_CSS);
+    html = html.replace("<link rel=\"stylesheet\" href=\"host.css\" />", &style_block);
+    html = html.replace("<link rel=\"stylesheet\" href=\"host.css\"/>", &style_block);
+    html = html.replace("<link rel=\"stylesheet\" href=\"host.css\">", &style_block);
+
+    let script_block = format!("<script>{}</script>", HOST_JS);
+    html = html.replace("<script src=\"host.js\"></script>", &script_block);
+    html = html.replace("<script src=\"host.js\"></script >", &script_block);
+
+    if !html.contains("<style>") {
+        if let Some(index) = html.find("</head>") {
+            html.insert_str(index, &style_block);
+        }
+    }
+
+    if !html.contains("<script>") {
+        if let Some(index) = html.rfind("</body>") {
+            html.insert_str(index, &script_block);
+        }
+    }
+
+    html
+}
+
+fn to_wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(Some(0)).collect()
+}
+
 fn handle_js_event(message: &str, hwnd: HWND) -> Result<()> {
     let payload: Value = match serde_json::from_str(message) {
         Ok(value) => value,
@@ -429,181 +464,13 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
                             eprintln!("add_NavigationCompleted failed: {:?}", e);
                         }
 
-                        println!("WebView fully initialized, navigating initial HTML");
-                        if let Err(e) = webview.NavigateToString(
-                            w!(r#"
-                                <!DOCTYPE html>
-                                <html lang="en">
-                                <head>
-                                    <meta charset="UTF-8">
-                                    <title>NVDA UI Host</title>
-                                    <style>
-                                        body { font-family: Arial, sans-serif; margin: 0; padding: 16px; background: #f8f8f8; color: #111; }
-                                        #status { margin-bottom: 12px; padding: 10px; border-radius: 6px; background: #fff; border: 1px solid #ddd; }
-                                        #content { min-height: 220px; padding: 12px; border-radius: 6px; background: #fff; border: 1px solid #ddd; overflow-wrap: break-word; white-space: pre-wrap; }
-                                        .toolbar { margin-top: 14px; }
-                                        button { margin-right: 10px; padding: 8px 14px; font-size: 0.95rem; }
-                                    </style>
-                                </head>
-                                <body>
-                                    <div id="status">Waiting for host command...</div>
-                                    <div id="content">No content received yet.</div>
-                                    <div class="toolbar">
-                                        <button id="copy-text">Copy text</button>
-                                        <button id="copy-html">Copy HTML</button>
-                                        <button id="clear">Clear</button>
-                                        <button id="close-window">Close</button>
-                                    </div>
-                                    <script>
-                                        const contentEl = document.getElementById('content');
-                                        const statusEl = document.getElementById('status');
-                                        let copyText = '';
-                                        let copyHtml = '';
-
-                                        window.chrome.webview.addEventListener('message', event => {
-                                            console.log('WebView received host message:', event.data);
-                                            try {
-                                                const envelope = JSON.parse(event.data);
-                                                console.log('WebView parsed host envelope:', envelope);
-                                                handleHostEnvelope(envelope);
-                                            } catch (err) {
-                                                statusEl.textContent = 'Unable to parse host message';
-                                                console.error('WebView host message parse error', err);
-                                                reportUiFailure(null, 'invalid_json');
-                                            }
-                                        });
-
-                                        function handleHostEnvelope(envelope) {
-                                            if (!envelope || envelope.schema !== 'nvda.ui_host') {
-                                                statusEl.textContent = 'Unknown host schema';
-                                                reportUiFailure(envelope?.id ?? null, 'invalid_schema');
-                                                return;
-                                            }
-
-                                            if (envelope.version !== 2) {
-                                                statusEl.textContent = 'Unsupported host protocol version';
-                                                reportUiFailure(envelope.id, 'unsupported_version');
-                                                return;
-                                            }
-
-                                            if (envelope.type !== 'command' || !envelope.command?.name) {
-                                                statusEl.textContent = 'Unknown host message type';
-                                                reportUiFailure(envelope.id ?? null, 'unexpected_message_type');
-                                                return;
-                                            }
-
-                                            const commandId = envelope.correlation_id || envelope.id;
-                                            const payload = envelope.command.payload || {};
-                                            statusEl.textContent = 'Command: ' + envelope.command.name;
-
-                                            if (envelope.command.name === 'render_display') {
-                                                copyText = payload.copy_text || payload.output_text || '';
-                                                copyHtml = payload.copy_html || payload.output_html || '';
-                                                if (payload.output_html) {
-                                                    contentEl.innerHTML = payload.output_html;
-                                                } else if (payload.output_text) {
-                                                    contentEl.textContent = payload.output_text;
-                                                } else {
-                                                    contentEl.textContent = payload.message || 'No content available.';
-                                                }
-                                            } else if (envelope.command.name === 'open_chat') {
-                                                copyText = payload.initial_text || '';
-                                                copyHtml = '';
-                                                const title = payload.title || 'Chat';
-                                                contentEl.textContent = title + '\n\n' + (payload.initial_text || '');
-                                            } else if (envelope.command.name === 'show_error') {
-                                                contentEl.textContent = 'Error: ' + (payload.error_message || 'Unknown error');
-                                                copyText = payload.error_message || '';
-                                                copyHtml = '';
-                                            } else if (envelope.command.name === 'update_progress') {
-                                                contentEl.textContent = 'Progress: ' + (payload.message || '...');
-                                                copyText = payload.message || '';
-                                                copyHtml = '';
-                                            } else if (envelope.command.name === 'close_window') {
-                                                contentEl.textContent = 'Window closed by host command.';
-                                                copyText = '';
-                                                copyHtml = '';
-                                            } else {
-                                                contentEl.textContent = 'Unhandled command: ' + envelope.command.name;
-                                                reportUiFailure(commandId, 'unknown_command');
-                                                return;
-                                            }
-
-                                            reportUiApplied(commandId);
-                                        }
-
-                                        function reportUiApplied(commandId) {
-                                            window.__sendHostEvent({
-                                                schema: 'nvda.ui_host',
-                                                version: 2,
-                                                id: `web-ui-applied-${Date.now()}`,
-                                                correlation_id: commandId,
-                                                source: 'web_ui',
-                                                type: 'event',
-                                                event: {
-                                                    name: 'ui_applied',
-                                                    payload: { command_id: commandId },
-                                                },
-                                            });
-                                        }
-
-                                        function reportUiFailure(commandId, reason) {
-                                            window.__sendHostEvent({
-                                                schema: 'nvda.ui_host',
-                                                version: 2,
-                                                id: `web-ui-failed-${Date.now()}`,
-                                                correlation_id: commandId,
-                                                source: 'web_ui',
-                                                type: 'event',
-                                                event: {
-                                                    name: 'ui_failed',
-                                                    payload: { command_id: commandId, reason },
-                                                },
-                                            });
-                                        }
-
-                                        function requestCloseHost() {
-                                            window.__sendHostEvent({
-                                                schema: 'nvda.ui_host',
-                                                version: 2,
-                                                id: `web-ui-close-${Date.now()}`,
-                                                correlation_id: null,
-                                                source: 'web_ui',
-                                                type: 'event',
-                                                event: {
-                                                    name: 'close_host',
-                                                    payload: {},
-                                                },
-                                            });
-                                        }
-
-                                        function copyToClipboard(text) {
-                                            navigator.clipboard.writeText(text).then(() => {
-                                                statusEl.textContent = 'Copied to clipboard.';
-                                            }).catch(err => {
-                                                statusEl.textContent = 'Copy failed.';
-                                                console.error(err);
-                                            });
-                                        }
-
-                                        document.getElementById('copy-text').onclick = () => copyToClipboard(copyText || contentEl.textContent || '');
-                                        document.getElementById('copy-html').onclick = () => copyToClipboard(copyHtml || copyText || '');
-                                        document.getElementById('clear').onclick = () => {
-                                            contentEl.textContent = '';
-                                            statusEl.textContent = 'Content cleared.';
-                                        };
-                                        document.getElementById('close-window').onclick = () => requestCloseHost();
-                                        document.addEventListener('keydown', event => {
-                                            if (event.key === 'Escape') {
-                                                requestCloseHost();
-                                            }
-                                        });
-                                    </script>
-                                </body>
-                                </html>
-                            "#),
-                        ) {
-                            eprintln!("NavigateToString failed: {:?}", e);
+                        println!("WebView fully initialized, loading embedded host page");
+                        let html = build_embedded_html();
+                        println!("Loading embedded UI ({} bytes)", html.len());
+                        let html_wide = to_wide(&html);
+                        let ptr = PCWSTR(html_wide.as_ptr());
+                        if let Err(e) = webview.NavigateToString(ptr) {
+                            eprintln!("WebView NavigateToString failed: {:?}", e);
                         }
 
                         flush_pending_messages();

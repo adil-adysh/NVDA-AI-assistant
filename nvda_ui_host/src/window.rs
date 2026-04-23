@@ -1,7 +1,7 @@
 use std::ptr::null;
 use std::sync::{mpsc, Mutex, OnceLock};
 use windows::{
-    core::{Result, w},
+    core::{PCWSTR, Result, w},
     Win32::{
         Foundation::*,
         System::LibraryLoader::GetModuleHandleW,
@@ -65,6 +65,20 @@ pub fn create_window() -> Result<HWND> {
 
 pub fn set_window_handle(hwnd: HWND) {
     let _ = WINDOW_HANDLE.set(hwnd.0 as usize);
+}
+
+fn to_wide_string(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(Some(0)).collect()
+}
+
+pub fn set_window_title(title: &str) {
+    if let Some(hwnd_value) = WINDOW_HANDLE.get() {
+        let hwnd = HWND(*hwnd_value as _);
+        let wide = to_wide_string(title);
+        unsafe {
+            let _ = SetWindowTextW(hwnd, PCWSTR(wide.as_ptr()));
+        }
+    }
 }
 
 pub fn initialize_host_dispatch(hwnd: HWND) {

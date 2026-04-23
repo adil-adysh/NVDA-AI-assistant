@@ -21,6 +21,12 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
         return write_json_value(&protocol::build_ack(&command, AckStage::Accepted, None), writer);
     }
 
+    if let Some(title) = command.payload.payload().get("title").and_then(|value| value.as_str()) {
+        if !title.is_empty() {
+            window::set_window_title(title);
+        }
+    }
+
     let webview_message = serde_json::to_string(&protocol::to_webview_envelope(&command))
         .map_err(|error| windows::core::Error::new(windows::core::HRESULT(0), error.to_string()))?;
     eprintln!("Host app forwarding normalized command to UI thread: {}", webview_message);

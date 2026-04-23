@@ -69,6 +69,21 @@ def install_host_binary() -> None:
     print(f"Copied host binary to {DESTINATION}")
 
 
+def install_host_assets() -> None:
+    source_assets = HOST_DIR / "assets"
+    if not source_assets.exists():
+        raise FileNotFoundError(
+            f"Host asset directory not found: {source_assets}. "
+            "Create the assets and rebuild the host."
+        )
+
+    destination_assets = DESTINATION.parent / "assets"
+    if destination_assets.exists():
+        shutil.rmtree(destination_assets)
+    shutil.copytree(source_assets, destination_assets)
+    print(f"Copied host assets to {destination_assets}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build and install the NVDA UI host binary.")
     parser.add_argument("--debug", action="store_true", help="Build the host using cargo debug mode.")
@@ -79,6 +94,7 @@ def main() -> int:
         if not args.install_only:
             build_host(release=not args.debug)
         install_host_binary()
+        install_host_assets()
     except subprocess.CalledProcessError as error:
         print(f"Host build failed: {error}")
         return 1
