@@ -17,6 +17,7 @@ class ProviderConfig:
     generate_temperature: float
     generate_top_k: int
     generate_top_p: float
+    generate_max_tokens: int
 
 
 @dataclass(frozen=True)
@@ -32,3 +33,11 @@ class GeminiConfig(ProviderConfig):
     api_key: str
     api_token: str | None
     base_url: str
+
+
+@dataclass(frozen=True)
+class OpenAIConfig(ProviderConfig):
+    api_key: str
+    base_url: str
+    chat_path: str
+    organization: str | None

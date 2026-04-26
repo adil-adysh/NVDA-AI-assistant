@@ -152,7 +152,11 @@ class AIAssistantApplication:
 
 	def toggle_provider(self) -> None:
 		current_provider = get_provider()
-		target_provider = "gemini" if current_provider == "ollama" else "ollama"
+		providers = ["ollama", "gemini", "openai"]
+		if current_provider not in providers:
+			target_provider = "ollama"
+		else:
+			target_provider = providers[(providers.index(current_provider) + 1) % len(providers)]
 		try:
 			set_provider(target_provider)
 		except Exception as error:
