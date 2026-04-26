@@ -1,0 +1,2 @@
+cargo:rustc-link-search=native=D:\nvda-addons\NVDA-AI-assistant\nvda_ui_host\target\x86_64-pc-windows-msvc\release\build\webview2-com-sys-abc2f252fcf0f182\out\x64
+cargo:rustc-link-lib=advapi32

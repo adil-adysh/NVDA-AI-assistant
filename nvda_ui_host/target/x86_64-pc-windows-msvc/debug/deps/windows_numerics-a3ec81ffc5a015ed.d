@@ -1,0 +1,12 @@
+D:\webview-test\nvda_ui_host\target\x86_64-pc-windows-msvc\debug\deps\windows_numerics-a3ec81ffc5a015ed.d: D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\lib.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\bindings.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\matrix3x2.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\matrix4x4.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\vector2.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\vector3.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\vector4.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\../readme.md
+
+D:\webview-test\nvda_ui_host\target\x86_64-pc-windows-msvc\debug\deps\libwindows_numerics-a3ec81ffc5a015ed.rmeta: D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\lib.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\bindings.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\matrix3x2.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\matrix4x4.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\vector2.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\vector3.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\vector4.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\../readme.md
+
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\lib.rs:
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\bindings.rs:
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\matrix3x2.rs:
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\matrix4x4.rs:
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\vector2.rs:
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\vector3.rs:
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\vector4.rs:
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-numerics-0.3.1\src\../readme.md:

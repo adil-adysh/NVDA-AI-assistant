@@ -1,0 +1,14 @@
+D:\webview-test\nvda_ui_host\target\x86_64-pc-windows-msvc\debug\deps\windows_result-2ce879417968ddb8.d: D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\lib.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\bindings.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\com.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\strings.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\bstr.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\error.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\hresult.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\bool.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\../readme.md D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\../windows-result.natvis
+
+D:\webview-test\nvda_ui_host\target\x86_64-pc-windows-msvc\debug\deps\libwindows_result-2ce879417968ddb8.rmeta: D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\lib.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\bindings.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\com.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\strings.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\bstr.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\error.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\hresult.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\bool.rs D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\../readme.md D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\../windows-result.natvis
+
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\lib.rs:
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\bindings.rs:
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\com.rs:
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\strings.rs:
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\bstr.rs:
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\error.rs:
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\hresult.rs:
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\bool.rs:
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\../readme.md:
+D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.4.1\src\../windows-result.natvis:
