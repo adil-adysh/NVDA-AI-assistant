@@ -1,93 +1,104 @@
 # NVDA AI Assistant
 
-An experimental NVDA add-on that uses a local Ollama model or Google Gemini to summarize the current page and surface accessible context for NVDA users.
+A practical NVDA add-on that brings AI-driven summaries, chat, screenshot description, and page content interaction into the screen reader workflow.
+
+## Overview
+
+NVDA AI Assistant helps NVDA users understand web pages, applications, and visual content faster. It keeps you inside NVDA while adding a simple assistant layer for quick actions.
 
 ## What it does
 
-- Summarizes the current page content using a local Ollama LLM or Gemini.
-- Uses NVDA accessibility state to collect page headings, links, buttons, landmarks, and visible content.
-
-## Release status
-
-- Latest release: `v0.5.2`
-- Patch update includes Gemini streaming payload fixes, tool-call serialization alignment, and improved Gemini diagnostics.
-- Includes application context by reading the foreground object title from NVDA.
-- Captures the current foreground window as an image and describes it with the selected provider.
-- Supports an AI assistant command layer with a single main shortcut and in-layer commands.
-- Supports an AI chat dialog that can start with page content or screenshot context.
-- Announces model installation progress and summary progress through NVDA messages.
-
-## Key features
-
-- **Automatic model detection and install**: checks whether `gemma4:e2b` is installed and pulls it if needed.
-- **Accessible summary experience**: displays the final summary in an NVDA browseable message dialog.
-- **Context-aware prompt**: includes app title, page title, counts of headings/links/buttons/landmarks, and whether content was trimmed.
-- **Streaming progress feedback**: shows partial progress updates while generating the summary.
+- Summarizes the current page or active application content, including web browser pages and virtual page views.
+- Describes the current foreground window as an image.
+- Opens an AI chat window for questions and follow-up conversation.
+- Loads active page content into chat for more relevant answers.
+- Attaches screenshots to chat for screen-based interaction.
 
 ## Requirements
 
-- NVDA-compatible Python build setup for add-on development.
-- A local Ollama HTTP server running and reachable.
-- Recommended Ollama URL: `http://127.0.0.1:11434`.
+- NVDA installed and running.
+- One of the following:
+  - Ollama installed locally on Windows and running.
+  - A Gemini API key configured in the AI Assistant settings panel.
+- If you use Ollama, a local model downloaded for inference.
+- If you use Gemini, no local model is required.
 
-## Default behavior
+If you are using Ollama on Windows:
 
-- Active provider: `Ollama`
-- Ollama server URL: `http://127.0.0.1:11434`
-- Default Ollama model: `gemma4:e2b`
-- Default Gemini model: `gemini-flash-latest`
-- Main assistant keybind: `NVDA+Shift+A`
-- Layer commands: `S` for summary, `I` for image describe, `C` for chat, `P` for page content chat, `X` for screenshot chat, `H` for help
+- Install it with `winget install Ollama.Ollama`.
+- List installed models with `ollama ls`.
+- Download a model with `ollama pull gemma4:e4b` or `ollama pull ministral-3:3b`.
+- Start the Ollama service before using the add-on.
 
-## Download
+## Quick start
 
-Get the latest published add-on package from the GitHub releases page:
+1. Install NVDA and enable the AI Assistant add-on.
+2. Install Ollama on Windows with `winget install Ollama.Ollama`, then start the Ollama service; or set a Gemini API key in the AI Assistant settings panel.
+3. Download a local model for Ollama, such as `ollama pull gemma4:e4b` or `ollama pull ministral-3:3b`.
+4. Open the AI Assistant settings panel and choose your provider.
+5. Focus a page or application window in NVDA.
+6. Press NVDA+Shift+A and choose a command.
 
-- https://github.com/adil-adysh/NVDA-AI-assistant/releases
+## How to use it
 
-Download the newest `.nvda-addon` asset and install it in NVDA.
+- Press NVDA+Shift+A to activate the assistant layer.
+- Then press:
+  - S for summary
+  - I for image description
+  - C for chat
+  - P for page content chat
+  - X for screenshot chat
+  - T to toggle the active provider
+  - H for help
+- In the chat window, type a message and press Send or Ctrl+Enter.
+- Use the chat history button inside the chat window to review prior conversation turns.
 
 ## Configuration
 
-The add-on stores configuration in NVDA's add-on settings panel under the AI assistant settings.
+From the AI Assistant settings panel you can:
 
-- Choose the active provider: `Ollama` or `Gemini`.
-- For Ollama: configure the server URL, model name, keep-alive duration, and context window size.
-- For Gemini: configure the model name, API key, optional bearer token, and base URL.
-- Shared runtime settings include request timeout, streaming, progress announcements, retry count, and sampling parameters.
+- Choose the active provider.
+- Enable or disable streaming.
+- Enable or disable progress announcements.
+- Adjust request timeout and retry behavior.
+- Configure image size, format, and quality.
+- Enable optional think mode when your provider supports it.
 
-When using Gemini, the add-on can also fall back to the `GEMINI_API_KEY` or `GOOGLE_API_KEY` environment variables if no key is provided in the settings.
+## Hardware and model guidance
 
-## Usage
+For local inference, model size and hardware matter. A GPU gives better performance and lets you use larger models, while CPU-only systems work best with smaller models and will be slower.
 
-1. Start your local Ollama server.
-2. Install or make sure the configured model is available. The add-on will pull the model automatically if it is missing.
-3. Open NVDA and focus a page or application window.
-4. Press `NVDA+Shift+A` to activate the AI assistant layer.
-5. In the layer, press `S` for page summary, `I` for image description, `C` for chat, `P` to start chat with page content, `X` to start chat with a screenshot, or `H` for help.
-6. NVDA will announce progress and show the final text in a browseable message dialog or chat window.
+Recommended model choices:
 
-## Development
+- `ministral-3:3b` for moderate hardware. It supports completion, vision, and tool-based interactions, making it a solid local choice.
+- `gemma4:e2b` or `gemma4:e4b` for stronger systems with more memory. These models are better at richer chat and screen description, and `gemma4:e4b` also supports thinking-style responses.
+- `llama3.2:1b` for CPU-only inference, with lower output quality and simpler responses.
 
-- Add-on source code lives under `addon/globalPlugins/AI-assistant/`.
-- Build metadata is defined in `buildVars.py`.
-- Packaging and localization helpers are provided by the included `site_scons/` tooling.
-- Use `pyproject.toml` configuration for Ruff and Pyright checks.
+If you use a GPU, choose a larger model for better results. If you only have a CPU, choose a smaller model and expect simpler responses.
 
-### Useful commands
+You can inspect model capabilities from Ollama with:
 
-- Run Python syntax checks:
-  - `python -m py_compile addon/globalPlugins/AI-assistant/ollama_client.py`
-- Run Ruff linting:
-  - `python -m ruff check addon/globalPlugins/AI-assistant/`
-- Build the NVDA add-on package:
-  - `scons`
+- `ollama show gemma4:e4b`
+- `ollama show ministral-3:3b`
+
+This helps confirm the model supports the features you need.
+
+## Troubleshooting
+
+- If the assistant cannot connect, check your provider settings.
+- If a request fails, NVDA will announce the error and show a message.
+- If a model is missing, download it in Ollama or update your provider configuration.
+- Use the provider toggle from the assistant layer to switch providers quickly.
 
 ## Notes
 
-- The add-on currently uses the NVDA foreground object title (`windowText`) when available to identify the current application.
-- Image description uses a screenshot of the current foreground window and requires a vision-capable Ollama model.
-- If Ollama cannot be reached or the model pull fails, NVDA will report a descriptive error message.
+- Page summary works with browser content and virtual page views.
+- The add-on uses the current foreground window to identify the active application.
+- Image description captures the current screen and describes what is shown.
+
+## Open source and contributions
+
+This project is open source and welcomes issues, suggestions, and contributions. Open an issue or pull request on GitHub to contribute.
 
 ## License
 
