@@ -10,7 +10,13 @@ import wx
 
 from . import nvda_ui
 from .chat_renderer import ChatHtmlRenderer
-from ..config.settings import get_ollama_think, set_ollama_think
+from ..config.settings import (
+	get_ollama_think,
+	get_tool_calling_enabled,
+	set_ollama_think,
+	set_tool_calling_enabled,
+	save,
+)
 from ..config.state import ProviderState
 from ..service import ChatCoordinator
 from ..tools import ToolRegistry
@@ -64,6 +70,11 @@ class ChatDialog(wx.Dialog):
             set_ollama_think(self.thinkCheckbox.Value)
         event.Skip()
 
+    def on_tool_calling_toggled(self, event: Any) -> None:
+        set_tool_calling_enabled(self.toolCheckbox.Value)
+        save()
+        event.Skip()
+
     def _refresh_ollama_think_checkbox(self) -> None:
         is_ollama = self._provider_state.provider.strip().lower() == "ollama"
         self.thinkCheckbox.Show(is_ollama)
@@ -108,7 +119,8 @@ class ChatDialog(wx.Dialog):
         supported_tools = ", ".join(self._tool_registry.get_tool_names()) or _("none")
         # TRANSLATORS: Tooltip describing the model tool-calling option.
         self.toolCheckbox.SetToolTip(_("Allow the model to call available tools: {tools}." ).format(tools=supported_tools))
-        self.toolCheckbox.SetValue(True)
+        self.toolCheckbox.SetValue(get_tool_calling_enabled())
+        self.toolCheckbox.Bind(wx.EVT_CHECKBOX, self.on_tool_calling_toggled)
         mainSizer.Add(self.toolCheckbox, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
         # TRANSLATORS: Checkbox label for enabling Ollama think mode.

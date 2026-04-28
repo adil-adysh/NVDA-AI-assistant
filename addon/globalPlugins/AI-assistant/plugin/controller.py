@@ -21,7 +21,7 @@ _ = cast(Callable[[str], str], getattr(builtins, "_", _translate))
 
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
-	scriptCategory = _("Smart Browser Tools")
+	scriptCategory = _("AI assistant")
 
 	def __init__(self) -> None:
 		super().__init__()
@@ -94,7 +94,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._app.activate_assistant_layer()
 
 	@script(
-		description=_("Toggles the active AI provider between Ollama and Gemini."),
+		description=_("Toggles the active AI provider."),
 	)
 	def script_toggleAIProvider(self, gesture: Any):
 		log.debug("Script toggleAIProvider invoked gesture=%s", gesture)
