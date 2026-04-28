@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from ..config.settings import get_language
+from ...config.settings import get_language
 from ..protocols import CollectorInput, ContextCollector, ContextFragment
 from ..types import APP, IMAGE, PAGE
 
