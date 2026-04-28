@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+import languageHandler
 from . import defaults
 from .state import (
 	ProviderState,
@@ -112,8 +113,22 @@ def set_provider(provider: str) -> None:
 
 
 def get_language() -> str:
-	"""Return the selected prompt language."""
+	"""Return the stored prompt language setting.
+
+	This may be an explicit locale code or the automatic default value.
+	"""
 	return _read_string("language", defaults.DEFAULT_LANGUAGE).strip() or defaults.DEFAULT_LANGUAGE
+
+
+def get_effective_language() -> str:
+	"""Return the effective prompt language to use for prompt generation.
+
+	If the stored setting is unset or set to the auto default, use NVDA's current UI language.
+	"""
+	language_value = get_language()
+	if not language_value or language_value == defaults.DEFAULT_LANGUAGE:
+		language_value = languageHandler.getLanguage() or "en"
+	return language_value
 
 
 def set_language(language: str) -> None:

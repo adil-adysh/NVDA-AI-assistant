@@ -113,12 +113,26 @@ class AIAssistantSettingsPanel(SettingsPanel):
         helper.addItem(comboBox)
         return comboBox
 
-    def _get_supported_prompt_languages(self) -> list[str]:
+    def _get_supported_prompt_language_options(self) -> list[tuple[str, str]]:
         template_dir = Path(__file__).resolve().parents[1] / "prompts" / "templates"
+        # TRANSLATORS: Prompt language option that uses NVDA’s current UI language automatically.
+        options = [(defaults.DEFAULT_LANGUAGE, _("Automatic (use NVDA language)"))]
         if not template_dir.exists():
-            return [defaults.DEFAULT_LANGUAGE]
-        languages = [child.name for child in sorted(template_dir.iterdir()) if child.is_dir()]
-        return languages or [defaults.DEFAULT_LANGUAGE]
+            return options
+        options.extend((child.name, child.name) for child in sorted(template_dir.iterdir()) if child.is_dir())
+        return options
+
+    def _get_prompt_language_label(self, language: str) -> str:
+        for value, label in self._promptLanguageOptions:
+            if value == language:
+                return label
+        return language
+
+    def _get_prompt_language_value(self, label: str) -> str:
+        for value, option_label in self._promptLanguageOptions:
+            if option_label == label:
+                return value
+        return label
 
     def _build_ollama_settings(self, parentHelper, config: OllamaConfig):
         # TRANSLATORS: Section label for Ollama-specific settings.
@@ -202,11 +216,14 @@ class AIAssistantSettingsPanel(SettingsPanel):
             get_request_metrics_log_path(),
         )
         # TRANSLATORS: Label for the prompt language chooser.
+        self._promptLanguageOptions = self._get_supported_prompt_language_options()
+        languageLabels = [label for _, label in self._promptLanguageOptions]
+        currentLanguageLabel = self._get_prompt_language_label(get_language())
         self.promptLanguageChoice = self._add_labeled_combo_box(
             groupHelper,
             _("Prompt language:"),
-            self._get_supported_prompt_languages(),
-            get_language(),
+            languageLabels,
+            currentLanguageLabel,
         )
         # TRANSLATORS: Label for the image max side length setting.
         self.imageMaxSideEdit = self._add_labeled_text_ctrl(
@@ -482,11 +499,12 @@ class AIAssistantSettingsPanel(SettingsPanel):
         set_image_quality(imageQuality)
         set_request_metrics_logging_enabled(requestMetricsLoggingEnabled)
         set_request_metrics_log_path(requestMetricsLogPath)
-        set_language(
-            self.promptLanguageChoice.GetStringSelection()
-            if hasattr(self, "promptLanguageChoice")
-            else get_language()
-        )
+        if hasattr(self, "promptLanguageChoice"):
+            prompt_language_label = self.promptLanguageChoice.GetStringSelection()
+            prompt_language_value = self._get_prompt_language_value(prompt_language_label)
+        else:
+            prompt_language_value = get_language()
+        set_language(prompt_language_value)
         set_streaming_tone_enabled(self.streamingToneCheckbox.Value)
 
     def _selected_provider(self) -> str:
