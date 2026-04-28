@@ -17,7 +17,7 @@ from .state import (
 from .yaml_store import YamlConfigStore
 
 if TYPE_CHECKING:
-	from ..providers.config import GeminiConfig, OllamaConfig, ProviderConfig
+	from ..providers.config import GeminiConfig, OllamaConfig, OpenAIConfig, ProviderConfig
 
 
 _config_store = YamlConfigStore()
@@ -107,7 +107,7 @@ def get_provider() -> str:
 
 def set_provider(provider: str) -> None:
 	provider_value = str(provider or "").strip().lower()
-	if provider_value not in {"ollama", "gemini"}:
+	if provider_value not in {"ollama", "gemini", "openai"}:
 		raise ValueError(f"Unsupported provider: {provider}")
 	_set_value("provider", provider_value, notify=True)
 
@@ -166,6 +166,45 @@ def get_gemini_base_url() -> str:
 	return _read_string("geminiBaseUrl", defaults.DEFAULT_GEMINI_BASE_URL)
 
 
+def get_openai_model_name() -> str:
+	return _read_string("openaiModelName", defaults.DEFAULT_OPENAI_MODEL)
+
+
+def get_openai_api_key() -> str:
+	return _read_string("openaiApiKey", "")
+
+
+def get_openai_base_url() -> str:
+	return _read_string("openaiBaseUrl", defaults.DEFAULT_OPENAI_BASE_URL)
+
+
+def get_openai_chat_path() -> str:
+	return _read_string("openaiChatPath", defaults.DEFAULT_OPENAI_CHAT_PATH)
+
+
+def get_openai_config() -> "OpenAIConfig":
+	from ..providers.config import OpenAIConfig
+
+	return OpenAIConfig(
+		provider="openai",
+		model_name=get_openai_model_name(),
+		timeout_seconds=get_timeout_seconds(),
+		enable_streaming=is_streaming_enabled(),
+		enable_progress=is_progress_enabled(),
+		num_ctx=get_num_ctx(),
+		max_retries=get_max_retries(),
+		retry_backoff_seconds=get_retry_backoff_seconds(),
+		generate_temperature=get_generate_temperature(),
+		generate_top_k=get_generate_top_k(),
+		generate_top_p=get_generate_top_p(),
+		generate_max_tokens=get_generate_max_tokens(),
+		api_key=get_openai_api_key(),
+		base_url=get_openai_base_url(),
+		chat_path=get_openai_chat_path(),
+		organization=None,
+	)
+
+
 def get_ollama_config() -> "OllamaConfig":
 	from ..providers.config import OllamaConfig
 
@@ -181,6 +220,7 @@ def get_ollama_config() -> "OllamaConfig":
 		generate_temperature=get_generate_temperature(),
 		generate_top_k=get_generate_top_k(),
 		generate_top_p=get_generate_top_p(),
+		generate_max_tokens=get_generate_max_tokens(),
 		generate_presence_penalty=get_generate_presence_penalty(),
 		server_url=get_ollama_server_url(),
 		keep_alive=get_keep_alive(),
@@ -203,6 +243,7 @@ def get_gemini_config() -> "GeminiConfig":
 		generate_temperature=get_generate_temperature(),
 		generate_top_k=get_generate_top_k(),
 		generate_top_p=get_generate_top_p(),
+		generate_max_tokens=get_generate_max_tokens(),
 		api_key=get_gemini_api_key(),
 		api_token=get_gemini_api_token(),
 		base_url=get_gemini_base_url(),
@@ -210,8 +251,11 @@ def get_gemini_config() -> "GeminiConfig":
 
 
 def get_active_provider_config() -> "ProviderConfig":
-	if get_provider() == "gemini":
+	provider = get_provider()
+	if provider == "gemini":
 		return get_gemini_config()
+	if provider == "openai":
+		return get_openai_config()
 	return get_ollama_config()
 
 
@@ -303,6 +347,10 @@ def get_generate_top_p() -> float:
 	return _read_float("generateTopP", defaults.DEFAULT_GENERATE_TOP_P, minimum=0.0)
 
 
+def get_generate_max_tokens() -> int:
+	return _read_int("generateMaxTokens", defaults.DEFAULT_GENERATE_MAX_TOKENS, minimum=1)
+
+
 def get_generate_presence_penalty() -> float:
 	return _read_float("generatePresencePenalty", defaults.DEFAULT_GENERATE_PRESENCE_PENALTY)
 
@@ -377,6 +425,7 @@ def set_ollama_config(config: OllamaConfig) -> None:
 			"generateTemperature": config.generate_temperature,
 			"generateTopK": config.generate_top_k,
 			"generateTopP": config.generate_top_p,
+			"generateMaxTokens": config.generate_max_tokens,
 			"generatePresencePenalty": config.generate_presence_penalty,
 			"enableStreaming": config.enable_streaming,
 			"enableProgressAnnouncements": config.enable_progress,
@@ -401,6 +450,31 @@ def set_gemini_config(config: GeminiConfig) -> None:
 			"generateTemperature": config.generate_temperature,
 			"generateTopK": config.generate_top_k,
 			"generateTopP": config.generate_top_p,
+			"generateMaxTokens": config.generate_max_tokens,
+			"enableStreaming": config.enable_streaming,
+			"enableProgressAnnouncements": config.enable_progress,
+		},
+		notify=False,
+	)
+	_notify_provider_state_changed()
+
+
+def set_openai_config(config: OpenAIConfig) -> None:
+	_set_values(
+		{
+			"provider": config.provider,
+			"openaiModelName": config.model_name,
+			"openaiApiKey": config.api_key,
+			"openaiBaseUrl": config.base_url,
+			"openaiChatPath": config.chat_path,
+			"timeoutSeconds": config.timeout_seconds,
+			"numCtx": config.num_ctx,
+			"maxRetries": config.max_retries,
+			"retryBackoffSeconds": config.retry_backoff_seconds,
+			"generateTemperature": config.generate_temperature,
+			"generateTopK": config.generate_top_k,
+			"generateTopP": config.generate_top_p,
+			"generateMaxTokens": config.generate_max_tokens,
 			"enableStreaming": config.enable_streaming,
 			"enableProgressAnnouncements": config.enable_progress,
 		},
@@ -457,6 +531,10 @@ def set_generate_temperature(generateTemperature: float) -> None:
 
 def set_generate_top_k(generateTopK: int) -> None:
 	_set_value("generateTopK", int(generateTopK))
+
+
+def set_generate_max_tokens(generateMaxTokens: int) -> None:
+	_set_value("generateMaxTokens", int(generateMaxTokens))
 
 
 def set_generate_top_p(generateTopP: float) -> None:
