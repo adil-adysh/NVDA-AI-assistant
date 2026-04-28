@@ -9,6 +9,7 @@ from gui.settingsDialogs import SettingsPanel
 
 from ..config import defaults
 from ..config.settings import (
+    get_generate_max_tokens,
     get_generate_presence_penalty,
     get_generate_top_k,
     get_generate_top_p,
@@ -24,6 +25,7 @@ from ..config.settings import (
     get_progress_enabled,
     get_provider,
     get_ollama_config,
+    get_openai_config,
     get_request_metrics_log_path,
     get_request_metrics_logging_enabled,
     get_retry_backoff_seconds,
@@ -31,6 +33,7 @@ from ..config.settings import (
     get_timeout_seconds,
     get_streaming_tone_enabled,
     save,
+    set_generate_max_tokens,
     set_generate_presence_penalty,
     set_generate_top_k,
     set_generate_top_p,
@@ -46,13 +49,14 @@ from ..config.settings import (
     set_progress_enabled,
     set_provider,
     set_ollama_config,
+    set_openai_config,
     set_request_metrics_log_path,
     set_request_metrics_logging_enabled,
     set_streaming_enabled,
     set_streaming_tone_enabled,
     set_timeout_seconds,
 )
-from ..providers.config import GeminiConfig, OllamaConfig
+from ..providers.config import GeminiConfig, OllamaConfig, OpenAIConfig
 
 addonHandler.initTranslation()
 
@@ -67,9 +71,10 @@ class AIAssistantSettingsPanel(SettingsPanel):
         provider = get_provider()
         ollama_config = get_ollama_config()
         gemini_config = get_gemini_config()
+        openai_config = get_openai_config()
         # TRANSLATORS: Provider option label for Ollama.
         # TRANSLATORS: Provider option label for Gemini.
-        self._providerOptions = [("ollama", _("Ollama")), ("gemini", _("Gemini"))]
+        self._providerOptions = [("ollama", _("Ollama")), ("gemini", _("Gemini")), ("openai", _("OpenAI"))]
         providerChoices = [label for _, label in self._providerOptions]
         selectedProviderIndex = next(
             (index for index, (value, _) in enumerate(self._providerOptions) if value == provider),
@@ -88,6 +93,7 @@ class AIAssistantSettingsPanel(SettingsPanel):
 
         self.ollamaGroupSizer = self._build_ollama_settings(sHelper, ollama_config)
         self.geminiGroupSizer = self._build_gemini_settings(sHelper, gemini_config)
+        self.openaiGroupSizer = self._build_openai_settings(sHelper, openai_config)
         self.sharedGroupSizer = self._build_advanced_settings(sHelper)
         self.ollamaExpertGroupSizer = self._build_ollama_expert_settings(sHelper, ollama_config)
         self._build_expert_settings(sHelper)
@@ -191,6 +197,36 @@ class AIAssistantSettingsPanel(SettingsPanel):
             groupHelper,
             _("Gemini base URL:"),
             config.base_url or defaults.DEFAULT_GEMINI_BASE_URL,
+        )
+        return groupSizer
+
+    def _build_openai_settings(self, parentHelper, config: OpenAIConfig):
+        groupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("OpenAI Settings"))
+        groupHelper = parentHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=groupSizer))
+        self.openaiModelNameEdit = self._add_labeled_text_ctrl(
+            groupHelper,
+            _("OpenAI model name:"),
+            config.model_name or defaults.DEFAULT_OPENAI_MODEL,
+        )
+        self.openaiApiKeyEdit = self._add_labeled_text_ctrl(
+            groupHelper,
+            _("OpenAI API key:"),
+            config.api_key or "",
+        )
+        self.openaiBaseUrlEdit = self._add_labeled_text_ctrl(
+            groupHelper,
+            _("OpenAI base URL:"),
+            config.base_url or defaults.DEFAULT_OPENAI_BASE_URL,
+        )
+        self.openaiChatPathEdit = self._add_labeled_text_ctrl(
+            groupHelper,
+            _("OpenAI chat endpoint path:"),
+            config.chat_path or defaults.DEFAULT_OPENAI_CHAT_PATH,
+        )
+        self.openaiMaxTokensEdit = self._add_labeled_text_ctrl(
+            groupHelper,
+            _("OpenAI max tokens:"),
+            str(config.generate_max_tokens if config.generate_max_tokens is not None else defaults.DEFAULT_GENERATE_MAX_TOKENS),
         )
         return groupSizer
 
@@ -383,6 +419,8 @@ class AIAssistantSettingsPanel(SettingsPanel):
         if topP is None:
             return
 
+        maxTokens = get_generate_max_tokens()
+
         imageMaxSide = self._parse_int(
             self.imageMaxSideEdit,
             # TRANSLATORS: Error shown when image max side is invalid.
@@ -450,13 +488,14 @@ class AIAssistantSettingsPanel(SettingsPanel):
                 generate_temperature=temperature,
                 generate_top_k=topK,
                 generate_top_p=topP,
+                generate_max_tokens=maxTokens,
                 generate_presence_penalty=presencePenalty,
                 server_url=ollamaServerUrl,
                 keep_alive=ollamaKeepAlive,
                 think=self.ollamaThinkCheckbox.Value,
             )
             set_ollama_config(config)
-        else:
+        elif provider == "gemini":
             geminiModelName = self.geminiModelNameEdit.Value.strip()
             geminiApiKey = self.geminiApiKeyEdit.Value.strip()
             geminiApiToken = self.geminiApiTokenEdit.Value.strip()
@@ -488,11 +527,58 @@ class AIAssistantSettingsPanel(SettingsPanel):
                 generate_temperature=temperature,
                 generate_top_k=topK,
                 generate_top_p=topP,
+                generate_max_tokens=maxTokens,
                 api_key=geminiApiKey,
                 api_token=geminiApiToken or None,
                 base_url=geminiBaseUrl,
             )
             set_gemini_config(config)
+        else:
+            openaiModelName = self.openaiModelNameEdit.Value.strip()
+            openaiApiKey = self.openaiApiKeyEdit.Value.strip()
+            openaiBaseUrl = self.openaiBaseUrlEdit.Value.strip()
+            openaiChatPath = self.openaiChatPathEdit.Value.strip()
+
+            if not openaiModelName:
+                self._show_error(_("OpenAI model name cannot be empty"))
+                return
+            if not openaiApiKey:
+                self._show_error(_("OpenAI API key cannot be empty"))
+                return
+            if not openaiBaseUrl:
+                self._show_error(_("OpenAI base URL cannot be empty."))
+                return
+            if not openaiChatPath:
+                self._show_error(_("OpenAI chat endpoint path cannot be empty."))
+                return
+
+            openaiMaxTokens = self._parse_int(
+                self.openaiMaxTokensEdit,
+                _("OpenAI max tokens must be an integer of at least 1."),
+                minimum=1,
+            )
+            if openaiMaxTokens is None:
+                return
+
+            config = OpenAIConfig(
+                provider="openai",
+                model_name=openaiModelName,
+                timeout_seconds=timeoutSeconds,
+                enable_streaming=self.streamingCheckbox.Value,
+                enable_progress=self.progressCheckbox.Value,
+                num_ctx=get_num_ctx(),
+                max_retries=get_max_retries(),
+                retry_backoff_seconds=get_retry_backoff_seconds(),
+                generate_temperature=temperature,
+                generate_top_k=topK,
+                generate_top_p=topP,
+                generate_max_tokens=openaiMaxTokens,
+                api_key=openaiApiKey,
+                base_url=openaiBaseUrl,
+                chat_path=openaiChatPath,
+                organization=None,
+            )
+            set_openai_config(config)
 
         set_image_max_side(imageMaxSide)
         set_image_format(imageFormat)
@@ -519,17 +605,25 @@ class AIAssistantSettingsPanel(SettingsPanel):
     def _update_provider_field_state(self) -> None:
         provider = self._selected_provider()
         is_ollama = provider == "ollama"
+        is_gemini = provider == "gemini"
+        is_openai = provider == "openai"
 
         self.ollamaGroupSizer.ShowItems(is_ollama)
-        self.geminiGroupSizer.ShowItems(not is_ollama)
+        self.geminiGroupSizer.ShowItems(is_gemini)
+        self.openaiGroupSizer.ShowItems(is_openai)
         self.ollamaExpertGroupSizer.ShowItems(is_ollama)
 
         self.ollamaModelNameEdit.Enable(is_ollama)
         self.ollamaServerUrlEdit.Enable(is_ollama)
-        self.geminiModelNameEdit.Enable(not is_ollama)
-        self.geminiApiKeyEdit.Enable(not is_ollama)
-        self.geminiApiTokenEdit.Enable(not is_ollama)
-        self.geminiBaseUrlEdit.Enable(not is_ollama)
+        self.geminiModelNameEdit.Enable(is_gemini)
+        self.geminiApiKeyEdit.Enable(is_gemini)
+        self.geminiApiTokenEdit.Enable(is_gemini)
+        self.geminiBaseUrlEdit.Enable(is_gemini)
+        self.openaiModelNameEdit.Enable(is_openai)
+        self.openaiApiKeyEdit.Enable(is_openai)
+        self.openaiBaseUrlEdit.Enable(is_openai)
+        self.openaiChatPathEdit.Enable(is_openai)
+        self.openaiMaxTokensEdit.Enable(is_openai)
         self.presencePenaltyEdit.Enable(is_ollama)
         self.ollamaThinkCheckbox.Enable(is_ollama)
 

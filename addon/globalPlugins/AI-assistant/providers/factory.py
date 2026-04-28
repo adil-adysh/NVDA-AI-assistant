@@ -6,7 +6,7 @@ from typing import Type
 from ..config.settings import get_active_provider_config
 from .adapters.gemini import GeminiProvider
 from .adapters.ollama import OllamaProvider
-from .config import GeminiConfig, OllamaConfig, ProviderConfig
+from .config import GeminiConfig, OllamaConfig, OpenAIConfig, ProviderConfig
 from .interfaces import LLMProvider, LLMProviderError
 
 
@@ -33,6 +33,8 @@ class ProviderFactory:
 
 ProviderFactory.register_provider(GeminiConfig, GeminiProvider)
 ProviderFactory.register_provider(OllamaConfig, OllamaProvider)
+from .adapters.openai import OpenAIProvider
+ProviderFactory.register_provider(OpenAIConfig, OpenAIProvider)
 
 
 Provider = LLMProvider
