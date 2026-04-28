@@ -252,4 +252,5 @@ class PromptContext:
 	extraction_result: ExtractionResult | None = None
 	text: str | None = None
 	image_base64: str | None = None
+	language: str | None = None
 	metadata: PromptMetadata = field(default_factory=dict)

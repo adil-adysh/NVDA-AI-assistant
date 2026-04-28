@@ -33,7 +33,10 @@ class SummaryUseCase(UseCase):
 		return self.execute_prompted_use_case(
 			context_pipeline=context_pipeline,
 			llm_service=llm_service,
-			build_prompt=lambda prompt_context: build_extraction_summary_prompt(self._get_extraction_result(prompt_context)),
+			build_prompt=lambda prompt_context: build_extraction_summary_prompt(
+				self._get_extraction_result(prompt_context),
+				language=prompt_context.language,
+			),
 			llm_call=lambda prompt, prompt_context: llm_service.summarize(prompt),
 			build_result=self._build_result,
 			emit=emit,

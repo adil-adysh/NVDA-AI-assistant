@@ -33,7 +33,10 @@ class ImageDescriptionUseCase(UseCase):
 		return self.execute_prompted_use_case(
 			context_pipeline=context_pipeline,
 			llm_service=llm_service,
-			build_prompt=lambda prompt_context: build_image_description_prompt(self._get_image_context(prompt_context)),
+			build_prompt=lambda prompt_context: build_image_description_prompt(
+				self._get_image_context(prompt_context),
+				language=prompt_context.language,
+			),
 			llm_call=lambda prompt, prompt_context: llm_service.describe_image(
 				image_base64=self._get_image_context(prompt_context).image_base64 or "",
 				prompt=prompt,

@@ -6,6 +6,7 @@ import builtins
 from typing import Callable, cast
 
 from ..context.collectors.image import ImageContextCollector
+from ..context.collectors.language import LanguageContextCollector
 from ..context.collectors.page import ExtractionStructureCollector, ExtractionTextCollector
 from ..context.extractors.browser import BrowserAwarePageExtractor
 from ..context.extractors.generic_extractor import GenericPageExtractor
@@ -42,8 +43,9 @@ def build_plugin_services() -> PluginServices:
 		preprocessor=ImagePreprocessor(),
 		encoder=ImageEncoder(),
 	)
+	language_collector = LanguageContextCollector()
 	context_pipeline = ContextPipeline(
-		collectors=(page_text_collector, page_structure_collector, image_context_collector),
+		collectors=(page_text_collector, page_structure_collector, image_context_collector, language_collector),
 		main_thread_executor=nvda_ui.call,
 	)
 	tool_registry = ToolRegistry()

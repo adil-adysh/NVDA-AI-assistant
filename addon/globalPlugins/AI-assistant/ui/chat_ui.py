@@ -27,6 +27,7 @@ class ChatDialog(wx.Dialog):
         initial_image_base64: str | None = None,
         destroy_callback: Callable[["ChatDialog"], None] | None = None,
     ) -> None:
+        # TRANSLATORS: Dialog title for the AI Chat window.
         super().__init__(parent, title=_("AI Chat"), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self._coordinator = coordinator
         self._tool_registry = tool_registry
@@ -40,6 +41,7 @@ class ChatDialog(wx.Dialog):
         if initial_text:
             self.inputCtrl.SetValue(initial_text)
         if initial_image_base64:
+            # TRANSLATORS: Status text indicating an attached screenshot was included in the chat.
             self._set_status(_("Screenshot attached to the initial chat."))
         self.SetMinSize((640, 520))
         self.CenterOnScreen()
@@ -49,6 +51,7 @@ class ChatDialog(wx.Dialog):
             self.inputCtrl.SetValue(initial_text)
         self._attached_image_base64 = initial_image_base64
         if initial_image_base64:
+            # TRANSLATORS: Status text indicating an attached screenshot was included in the chat.
             self._set_status(_("Screenshot attached to the initial chat."))
 
     def update_provider_state(self, provider_state: ProviderState) -> None:
@@ -69,19 +72,23 @@ class ChatDialog(wx.Dialog):
     def _build_ui(self) -> None:
         mainSizer = wx.BoxSizer(wx.VERTICAL)
 
+        # TRANSLATORS: Header text for the AI Chat panel.
         headerLabel = wx.StaticText(self, label=_("AI Chat"))
         headerFont = headerLabel.Font
         headerFont = headerFont.Bold()
         headerLabel.SetFont(headerFont)
         mainSizer.Add(headerLabel, 0, wx.ALL | wx.EXPAND, 10)
 
+        # TRANSLATORS: Description shown above the conversation history area.
         historyLabel = wx.StaticText(self, label=_("Conversation history is displayed in browse mode."))
         mainSizer.Add(historyLabel, 0, wx.ALL | wx.EXPAND, 10)
 
+        # TRANSLATORS: Button label for viewing chat history.
         self.historyButton = wx.Button(self, label=_("Show history"))
         self.historyButton.Bind(wx.EVT_BUTTON, self.on_show_history)
         mainSizer.Add(self.historyButton, 0, wx.ALL, 10)
 
+        # TRANSLATORS: Label for the chat message input.
         inputLabel = wx.StaticText(self, label=_("Message:"))
         mainSizer.Add(inputLabel, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
 
@@ -91,16 +98,22 @@ class ChatDialog(wx.Dialog):
         )
         self.inputCtrl.SetMinSize((620, 120))
         self.inputCtrl.Bind(wx.EVT_KEY_DOWN, self.on_input_key_down)
+        # TRANSLATORS: Tooltip explaining how to send a chat message.
         self.inputCtrl.SetToolTip(_("Type a message. Press Ctrl+Enter to send or click Send."))
         mainSizer.Add(self.inputCtrl, 0, wx.ALL | wx.EXPAND, 10)
 
+        # TRANSLATORS: Checkbox label to enable tool calling.
         self.toolCheckbox = wx.CheckBox(self, label=_("Enable tool calling"))
+        # TRANSLATORS: Text shown when no tool names are available.
         supported_tools = ", ".join(self._tool_registry.get_tool_names()) or _("none")
+        # TRANSLATORS: Tooltip describing the model tool-calling option.
         self.toolCheckbox.SetToolTip(_("Allow the model to call available tools: {tools}." ).format(tools=supported_tools))
         self.toolCheckbox.SetValue(True)
         mainSizer.Add(self.toolCheckbox, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
+        # TRANSLATORS: Checkbox label for enabling Ollama think mode.
         self.thinkCheckbox = wx.CheckBox(self, label=_('Enable Ollama think mode'))
+        # TRANSLATORS: Tooltip describing Ollama think mode behavior.
         self.thinkCheckbox.SetToolTip(
             _('Send Ollama chat requests with think=true when Ollama is selected.')
         )
@@ -109,8 +122,11 @@ class ChatDialog(wx.Dialog):
         mainSizer.Add(self.thinkCheckbox, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
         buttonSizer = wx.BoxSizer(wx.HORIZONTAL)
+        # TRANSLATORS: Button label to send the current message.
         self.sendButton = wx.Button(self, label=_("Send"))
+        # TRANSLATORS: Button label to clear the current message and reset the chat.
         self.clearButton = wx.Button(self, label=_("Clear"))
+        # TRANSLATORS: Button label to close the dialog.
         self.closeButton = wx.Button(self, label=_("Close"))
 
         self.sendButton.Bind(wx.EVT_BUTTON, self.on_send)
@@ -136,6 +152,7 @@ class ChatDialog(wx.Dialog):
     def _refresh_provider_title(self) -> None:
         provider = self._provider_state.provider.strip()
         model_name = self._provider_state.model_name.strip()
+        # TRANSLATORS: Base title string for the AI Chat window.
         title = _("AI Chat")
         if provider:
             provider_label = provider.capitalize()
@@ -156,10 +173,12 @@ class ChatDialog(wx.Dialog):
         if not message and not self._attached_image_base64:
             return
 
+        # TRANSLATORS: Message announced when the chat request begins.
         nvda_ui.message(_("Sending message..."))
         tool_call_enabled = self.toolCheckbox.Value
         tools = self._get_tool_definitions() if tool_call_enabled else None
         image_base64 = self._attached_image_base64
+        # TRANSLATORS: Status text shown while the chat request is in flight.
         self._set_status(_("Sending..."))
         self._set_ui_enabled(False)
 
@@ -175,6 +194,7 @@ class ChatDialog(wx.Dialog):
         self._attached_image_base64 = None
         self.inputCtrl.Value = ""
         self._refresh_history()
+        # TRANSLATORS: Status text shown when the chat has been cleared and is ready again.
         self._set_status(_("Ready"))
         self._set_ui_enabled(True)
 
@@ -223,18 +243,22 @@ class ChatDialog(wx.Dialog):
             )
         except Exception as error:
             error_text = str(error)
+            # TRANSLATORS: Status text shown when a message fails to send.
             wx.CallAfter(self._set_status, _("Error sending message"))
+            # TRANSLATORS: Title for the error dialog shown when sending fails.
             wx.CallAfter(wx.MessageBox, error_text, _("AI Chat Error"), wx.OK | wx.ICON_ERROR)
         else:
             wx.CallAfter(self.inputCtrl.SetValue, "")
             wx.CallAfter(self._refresh_history)
             wx.CallAfter(self._display_last_turn, message, response_text, thinking_trace)
+            # TRANSLATORS: Status text shown after a successful send.
             wx.CallAfter(self._set_status, _("Ready"))
             self._attached_image_base64 = None
         finally:
             wx.CallAfter(self._set_ui_enabled, True)
 
     def _on_progress(self, partial_text: str, generated_chars: int) -> None:
+        # TRANSLATORS: Status text shown while receiving the model response.
         wx.CallAfter(self._set_status, _(f"Receiving response ({generated_chars} chars)..."))
         try:
             nvda_ui.play_streaming_tone()
@@ -257,6 +281,7 @@ class ChatDialog(wx.Dialog):
     def _show_history(self) -> None:
         if not getattr(self, "_history_html", None):
             self._refresh_history()
+        # TRANSLATORS: Title for the browseable chat history view.
         title = nvda_ui.format_browseable_title(_("AI Chat History"), self._provider_state)
         nvda_ui.browseable_message(
             self._history_html,
@@ -268,6 +293,7 @@ class ChatDialog(wx.Dialog):
 
     def _display_last_turn(self, user_message: str, assistant_message: str, thinking_trace: str | None = None) -> None:
         html = self._build_last_turn_html(user_message, assistant_message, thinking_trace)
+        # TRANSLATORS: Title for the browseable response preview view.
         title = nvda_ui.format_browseable_title(_("Response Preview"), self._provider_state)
         nvda_ui.browseable_message(
             html,

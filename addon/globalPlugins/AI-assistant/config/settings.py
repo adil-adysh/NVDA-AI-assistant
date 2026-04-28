@@ -111,6 +111,18 @@ def set_provider(provider: str) -> None:
 	_set_value("provider", provider_value, notify=True)
 
 
+def get_language() -> str:
+	"""Return the selected prompt language."""
+	return _read_string("language", defaults.DEFAULT_LANGUAGE).strip() or defaults.DEFAULT_LANGUAGE
+
+
+def set_language(language: str) -> None:
+	language_value = str(language or "").strip()
+	if not language_value:
+		language_value = defaults.DEFAULT_LANGUAGE
+	_set_value("language", language_value, notify=False)
+
+
 def get_ollama_model_name() -> str:
 	return _read_string("ollamaModelName", defaults.DEFAULT_OLLAMA_MODEL)
 

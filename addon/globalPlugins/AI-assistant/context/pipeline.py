@@ -57,6 +57,7 @@ class ContextPipeline:
 		if extraction_result is not None:
 			merged_metadata["source"] = extraction_result.source
 
+		language = merged_metadata.get("language")
 		return PromptContext(
 			use_case_id=use_case_id,
 			facts=merged_facts,
@@ -64,6 +65,7 @@ class ContextPipeline:
 			extraction_result=extraction_result,
 			text="\n\n".join(part for part in text_parts if part),
 			image_base64=image_base64,
+			language=str(language) if language is not None else None,
 			metadata=merged_metadata,
 		)
 

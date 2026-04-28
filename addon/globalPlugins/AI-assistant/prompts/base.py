@@ -15,28 +15,30 @@ JINJA_ENV = jinja2.Environment(
 )
 
 
-def render_prompt_template(template_name: str, **context: object) -> str:
-    template = JINJA_ENV.get_template(template_name)
+SYSTEM_PROMPT_TEMPLATE = "system_prompt.jinja2"
+
+
+def render_prompt_template(template_name: str, language: str | None = None, **context: object) -> str:
+    if language:
+        language_template_name = f"{language}/{template_name}"
+        try:
+            template = JINJA_ENV.get_template(language_template_name)
+        except jinja2.TemplateNotFound:
+            try:
+                template = JINJA_ENV.get_template(f"en/{template_name}")
+            except jinja2.TemplateNotFound:
+                template = JINJA_ENV.get_template(template_name)
+    else:
+        try:
+            template = JINJA_ENV.get_template(template_name)
+        except jinja2.TemplateNotFound:
+            template = JINJA_ENV.get_template(f"en/{template_name}")
     return template.render(**context)
 
 
-def build_system_prompt_for_nvda_assistant() -> str:
+def build_system_prompt_for_nvda_assistant(language: str | None = None) -> str:
     """Build the shared system prompt for the NVDA assistant."""
-    return (
-        "Role: NVDA accessibility assistant.\n"
-        "\n"
-        "Goal: Give a quick, useful understanding of the task or content.\n"
-        "\n"
-        "Rules:\n"
-        "* Use ONLY given content. Do NOT guess.\n"
-        "* Be concise and practical.\n"
-        "* Do not repeat information.\n"
-        "\n"
-        "Process:\n"
-        "1. Read the instructions carefully.\n"
-        "2. Use the available content to answer clearly.\n"
-        "3. Keep language simple and direct.\n"
-    )
+    return render_prompt_template(SYSTEM_PROMPT_TEMPLATE, language=language)
 
 
 def build_chat_messages(

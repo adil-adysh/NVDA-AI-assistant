@@ -5,27 +5,28 @@ from ..context.types import ExtractionResult
 from .base import build_system_prompt_for_nvda_assistant, render_prompt_template
 
 
-def build_extraction_summary_prompt(context: ExtractionResult) -> str:
-    return build_summary_prompt(context)
+def build_extraction_summary_prompt(context: ExtractionResult, language: str | None = None) -> str:
+    return build_summary_prompt(context, language=language)
 
 
-def build_extraction_structure_summary_prompt(context: ExtractionResult) -> str:
-    return build_structure_summary_prompt(context)
+def build_extraction_structure_summary_prompt(context: ExtractionResult, language: str | None = None) -> str:
+    return build_structure_summary_prompt(context, language=language)
 
 
-def build_summary_prompt(context: ExtractionResult) -> str:
+def build_summary_prompt(context: ExtractionResult, language: str | None = None) -> str:
     if context.source == "browser":
-        return build_browser_summary_prompt(context)
+        return build_browser_summary_prompt(context, language=language)
     if context.source == "terminal":
-        return build_terminal_summary_prompt(context)
-    return build_generic_summary_prompt(context)
+        return build_terminal_summary_prompt(context, language=language)
+    return build_generic_summary_prompt(context, language=language)
 
 
-def build_structure_summary_prompt(context: ExtractionResult) -> str:
+def build_structure_summary_prompt(context: ExtractionResult, language: str | None = None) -> str:
     structure = context.structure
     return render_prompt_template(
         "structure_summary.jinja2",
-        system_prompt=build_system_prompt_for_nvda_assistant(),
+        language=language,
+        system_prompt=build_system_prompt_for_nvda_assistant(language=language),
         app_title=context.app_title,
         title=context.title,
         source=context.source,
@@ -42,11 +43,12 @@ def build_structure_summary_prompt(context: ExtractionResult) -> str:
     )
 
 
-def build_browser_summary_prompt(context: ExtractionResult) -> str:
+def build_browser_summary_prompt(context: ExtractionResult, language: str | None = None) -> str:
     structure = context.structure
     return render_prompt_template(
         "summary_browser.jinja2",
-        system_prompt=build_system_prompt_for_nvda_assistant(),
+        language=language,
+        system_prompt=build_system_prompt_for_nvda_assistant(language=language),
         app_title=context.app_title,
         title=context.title,
         trimmed="yes" if context.truncated else "no",
@@ -62,10 +64,11 @@ def build_browser_summary_prompt(context: ExtractionResult) -> str:
     )
 
 
-def build_terminal_summary_prompt(context: ExtractionResult) -> str:
+def build_terminal_summary_prompt(context: ExtractionResult, language: str | None = None) -> str:
     return render_prompt_template(
         "summary_terminal.jinja2",
-        system_prompt=build_system_prompt_for_nvda_assistant(),
+        language=language,
+        system_prompt=build_system_prompt_for_nvda_assistant(language=language),
         app_title=context.app_title,
         title=context.title,
         trimmed="yes" if context.truncated else "no",
@@ -73,11 +76,12 @@ def build_terminal_summary_prompt(context: ExtractionResult) -> str:
     )
 
 
-def build_generic_summary_prompt(context: ExtractionResult) -> str:
+def build_generic_summary_prompt(context: ExtractionResult, language: str | None = None) -> str:
     structure = context.structure
     return render_prompt_template(
         "summary_generic.jinja2",
-        system_prompt=build_system_prompt_for_nvda_assistant(),
+        language=language,
+        system_prompt=build_system_prompt_for_nvda_assistant(language=language),
         app_title=context.app_title,
         title=context.title,
         trimmed="yes" if context.truncated else "no",
