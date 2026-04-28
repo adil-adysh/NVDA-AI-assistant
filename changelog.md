@@ -2,8 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
-## v0.5.7 - 2026-04-15
+## v0.7.2 - 2026-04-28
 
+
+### Fixes
+
+- Fix: bump add-on version to 0.7.2 and improve prompt language translation handling, including auto selection behavior.
 
 
 ### Features
@@ -339,5 +343,3 @@ All notable changes to this project will be documented in this file.
 ### Other
 
 - Initial commit with proto type to announce url
-
-

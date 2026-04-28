@@ -25,11 +25,11 @@ addon_info = AddonInfo(
 		"""NVDA AI assistant helps NVDA users by using AI to simplify complex information, summarize content, and provide contextual guidance for tasks that are otherwise hard to access."""
 	),
 	# version
-	addon_version="0.7.1",
+	addon_version="0.7.2",
 	# Brief changelog for this version
 	# Translators: what's new content for this add-on version to be shown in the add-on store
 	addon_changelog=_(
-		"""added fixes for chat ui and improved error handling when gemini API key is invalid or missing"""
+		""" improve prompt language translation support and automatic NVDA language fallback."""
 	),
 	# Author(s)
 	addon_author="adil shaikh <ah.shaikh97@gmail.com>",
