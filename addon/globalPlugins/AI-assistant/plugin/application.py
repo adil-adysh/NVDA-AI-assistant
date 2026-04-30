@@ -12,6 +12,7 @@ from logHandler import log
 
 from ..config.state import ProviderState, subscribe_provider_state_change, unsubscribe_provider_state_change
 from ..config.settings import get_provider, get_provider_state, set_provider
+from ..ui.host_process import stop_host
 from ..ui.settings_panel import AIAssistantSettingsPanel
 from ..ui import nvda_ui
 from ..use_case.types import (
@@ -84,12 +85,17 @@ class AIAssistantApplication:
 			self._services.provider.close()
 		except Exception:
 			log.exception("Error closing provider during terminate")
+		try:
+			stop_host()
+		except Exception:
+			log.exception("Error stopping UI host during terminate")
 		self._unregister_settings_panel()
 
 	def _on_provider_state_change(self, provider_state: ProviderState) -> None:
 		self.presenter.update_provider_state(provider_state)
 
 	def run_summary(self) -> None:
+		log.debug("AIAssistantApplication.run_summary called")
 		self.background.run_use_case_in_background(
 			SUMMARY,
 			title=_("Page summary"),
@@ -97,6 +103,7 @@ class AIAssistantApplication:
 		)
 
 	def run_structure_summary(self) -> None:
+		log.debug("AIAssistantApplication.run_structure_summary called")
 		self.background.run_use_case_in_background(
 			STRUCTURE_SUMMARY,
 			title=_("Structure summary"),

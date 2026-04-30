@@ -103,6 +103,22 @@ pythonFiles = expandGlobs(buildVars.pythonSources)
 for file in pythonFiles:
 	env.Depends(addon, file)
 
+# Build and include the Rust UI host executable in the add-on package.
+host_build_script = Path("scripts/build_host.py")
+host_target_path = addonDir / "globalPlugins" / "AI-assistant" / "ui_host" / "nvda_ui_host.exe"
+host_target_path.parent.mkdir(parents=True, exist_ok=True)
+
+build_cmd = f'"{sys.executable}" "{host_build_script}"'
+if env["dev"]:
+	build_cmd += " --debug"
+
+host_target = env.Command(
+	str(host_target_path),
+	str(host_build_script),
+	build_cmd,
+)
+env.Depends(addon, host_target)
+
 # Convert markdown files to html
 # We need at least doc in English and should enable the Help button for the add-on in Add-ons Manager
 if (cssFile := Path("style.css")).is_file():

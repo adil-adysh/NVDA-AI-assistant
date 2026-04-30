@@ -52,9 +52,11 @@ class BackgroundTaskRunner:
 
 	def run_use_case_in_background(self, use_case_id: UseCaseId, title: str, render_result: Callable[[Any], None]) -> None:
 		def worker() -> None:
+			log.debug("BackgroundTaskRunner worker starting use_case_id=%s title=%s", use_case_id, title)
 			try:
 				result = self._use_case_engine.execute(use_case_id, progress=self._progress_handler)
 			except Exception as error:
+				log.exception("BackgroundTaskRunner failed executing use case %s", use_case_id)
 				nvda_ui.queue(nvda_ui.message, _(f"Error: {error}"))
 				return
 
@@ -66,3 +68,4 @@ class BackgroundTaskRunner:
 			daemon=True,
 		)
 		thread.start()
+		log.debug("BackgroundTaskRunner started thread for use_case_id=%s title=%s", use_case_id, title)
