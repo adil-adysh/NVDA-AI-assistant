@@ -137,6 +137,7 @@ pub enum CommandName {
 	HealthCheck,
 	RenderDisplay,
 	OpenChat,
+	SyncSession,
 	ChatSetHistory,
 	ChatAppend,
 	ChatUpdate,
@@ -177,6 +178,7 @@ pub enum UiCommand {
 	HealthCheck,
 	RenderDisplay(Value),
 	OpenChat(Value),
+	SyncSession(Value),
 	ChatSetHistory(Value),
 	ChatAppend(Value),
 	ChatUpdate(Value),
@@ -191,6 +193,7 @@ impl UiCommand {
 			UiCommand::HealthCheck => CommandName::HealthCheck,
 			UiCommand::RenderDisplay(_) => CommandName::RenderDisplay,
 			UiCommand::OpenChat(_) => CommandName::OpenChat,
+			UiCommand::SyncSession(_) => CommandName::SyncSession,
 			UiCommand::ChatSetHistory(_) => CommandName::ChatSetHistory,
 			UiCommand::ChatAppend(_) => CommandName::ChatAppend,
 			UiCommand::ChatUpdate(_) => CommandName::ChatUpdate,
@@ -205,6 +208,7 @@ impl UiCommand {
 			UiCommand::HealthCheck => "health_check",
 			UiCommand::RenderDisplay(_) => "display_result",
 			UiCommand::OpenChat(_) => "open_chat",
+			UiCommand::SyncSession(_) => "sync_session",
 			UiCommand::ChatSetHistory(_) => "chat_set_history",
 			UiCommand::ChatAppend(_) => "chat_append",
 			UiCommand::ChatUpdate(_) => "chat_update",
@@ -219,6 +223,7 @@ impl UiCommand {
 			UiCommand::HealthCheck => Value::Object(Default::default()),
 			UiCommand::RenderDisplay(payload)
 			| UiCommand::OpenChat(payload)
+			| UiCommand::SyncSession(payload)
 			| UiCommand::ChatSetHistory(payload)
 			| UiCommand::ChatAppend(payload)
 			| UiCommand::ChatUpdate(payload)
@@ -233,6 +238,7 @@ impl UiCommand {
 			"health_check" => Ok(UiCommand::HealthCheck),
 			"display_result" => Ok(UiCommand::RenderDisplay(payload)),
 			"open_chat" => Ok(UiCommand::OpenChat(payload)),
+			"sync_session" => Ok(UiCommand::SyncSession(payload)),
 			"show_error" => Ok(UiCommand::ShowError(payload)),
 			"progress_update" => Ok(UiCommand::UpdateProgress(payload)),
 			"close_window" => Ok(UiCommand::CloseWindow(payload)),
@@ -249,6 +255,7 @@ impl UiCommand {
 			CommandName::HealthCheck => UiCommand::HealthCheck,
 			CommandName::RenderDisplay => UiCommand::RenderDisplay(payload),
 			CommandName::OpenChat => UiCommand::OpenChat(payload),
+			CommandName::SyncSession => UiCommand::SyncSession(payload),
 			CommandName::ChatSetHistory => UiCommand::ChatSetHistory(payload),
 			CommandName::ChatAppend => UiCommand::ChatAppend(payload),
 			CommandName::ChatUpdate => UiCommand::ChatUpdate(payload),
@@ -499,5 +506,17 @@ mod tests {
 		assert_eq!(parsed.message_id, "msg-1");
 		assert_eq!(parsed.response_mode, ResponseMode::V2);
 		assert_eq!(parsed.payload.command_name(), CommandName::OpenChat);
+	}
+
+	#[test]
+	fn parses_sync_session_v2_command() {
+		let parsed = parse_inbound_command(r#"{"schema":"nvda.ui_host","version":2,"id":"msg-sync","correlation_id":"conv-1","source":"nvda_addon","type":"command","command":{"name":"sync_session","payload":{"conversation_id":"conv-1","metadata":{"think_enabled":true}}}}"#)
+			.expect("parse sync_session command");
+
+		assert_eq!(parsed.message_id, "msg-sync");
+		assert_eq!(parsed.correlation_id.as_deref(), Some("conv-1"));
+		assert_eq!(parsed.response_mode, ResponseMode::V2);
+		assert_eq!(parsed.payload.command_name(), CommandName::SyncSession);
+		assert_eq!(parsed.payload.payload()["conversation_id"], "conv-1");
 	}
 }

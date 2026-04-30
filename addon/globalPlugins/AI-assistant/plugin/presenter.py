@@ -5,6 +5,7 @@ from __future__ import annotations
 import builtins
 from collections.abc import Callable
 from typing import Any, cast
+from uuid import uuid4
 
 import gui
 from logHandler import log
@@ -15,7 +16,8 @@ from ..service.chat import ChatCoordinator
 from ..tools import ToolRegistry
 from ..config.settings import get_provider_state
 from ..ui.adapter import ui_adapter
-from ..ui import chat_dialog_manager, nvda_ui
+from ..ui import nvda_ui
+from ..ui.session_state import build_session_state, merge_session_metadata
 
 
 def _translate(message: str) -> str:
@@ -29,28 +31,36 @@ class UseCasePresenter:
 	def __init__(self, chat_coordinator: ChatCoordinator, tool_registry: ToolRegistry) -> None:
 		self._chat_coordinator = chat_coordinator
 		self._tool_registry = tool_registry
+		self._active_conversation_id: str | None = None
+		ui_adapter.register_result_action_handler(self._handle_result_action)
+		ui_adapter.register_session_metadata_provider(self._build_chat_metadata)
 
 	def open_chat_window(
 		self,
 		initial_text: str | None = None,
 		initial_image_base64: str | None = None,
 	) -> None:
+		self._active_conversation_id = str(uuid4())
+		session_state = build_session_state(_, conversation_id=self._active_conversation_id)
 		ui_adapter.open_chat(
+			use_case_id=None,
 			title=_("AI Chat"),
 			initial_text=initial_text,
 			initial_image_base64=initial_image_base64,
 			coordinator=self._chat_coordinator,
 			tool_registry=self._tool_registry,
-			metadata=None,
+			metadata=session_state.to_metadata(),
 		)
 
 	def update_provider_state(self, provider_state: ProviderState | None = None) -> None:
 		try:
 			if provider_state is None:
 				provider_state = get_provider_state()
-			chat_dialog_manager.update_provider_state(provider_state)
+			ui_adapter.sync_session_state(
+				build_session_state(_, provider_state, conversation_id=self._active_conversation_id).to_metadata()
+			)
 		except Exception:
-			log.exception("Error updating chat dialog title after provider state changed")
+			log.exception("Error synchronizing WebView session state after provider change")
 
 	def present_use_case_result(self, use_case_result: Any, title: str) -> None:
 		log.debug("UseCasePresenter.present_use_case_result called title=%s result_type=%s", title, type(use_case_result).__name__)
@@ -72,11 +82,13 @@ class UseCasePresenter:
 			else:
 				is_html = bool(getattr(use_case_result, "is_browseable", False))
 
-		if output_html is not None:
-			output_text = output_html
+		if isinstance(output_html, str) and output_html.strip():
 			is_html = True
 
-		if not isinstance(output_text, str) or not output_text.strip():
+		has_output_text = isinstance(output_text, str) and bool(output_text.strip())
+		has_output_html = isinstance(output_html, str) and bool(output_html.strip())
+
+		if not has_output_text and not has_output_html:
 			error_message = getattr(use_case_result, "error_message", None)
 			log.warning("UseCasePresenter received empty output_text; error_message=%s", error_message)
 			if isinstance(error_message, str) and error_message.strip():
@@ -86,12 +98,18 @@ class UseCasePresenter:
 			return
 
 		browseable_title = nvda_ui.format_browseable_title(title, get_provider_state())
+		self._active_conversation_id = None
+		session_state = build_session_state(_)
 		use_case_id = None
 		prompt_context = getattr(use_case_result, "prompt_context", None)
 		if prompt_context is not None:
 			use_case_id = getattr(prompt_context, "use_case_id", None)
-		copy_text = output_text or output_html
-		copy_html = output_html if is_html else None
+		copy_text = output_text if has_output_text and not is_html else None
+		copy_markdown = output_text if has_output_text else None
+		metadata = merge_session_metadata(getattr(use_case_result, "metadata", None), session_state)
+		actions = self._build_result_actions(use_case_id, output_text, use_case_result)
+		if actions:
+			metadata["actions"] = actions
 		ui_adapter.render_display_result(
 			use_case_id=use_case_id,
 			title=browseable_title,
@@ -103,8 +121,8 @@ class UseCasePresenter:
 			close_button=True,
 			copy_button=True,
 			copy_text=copy_text,
-			copy_html=copy_html,
-			metadata=getattr(use_case_result, "metadata", None),
+			copy_markdown=copy_markdown,
+			metadata=metadata,
 		)
 
 	def progress_handler(self, event: ProgressEvent) -> None:
@@ -114,3 +132,30 @@ class UseCasePresenter:
 
 		if event.stage in {"start", "collecting_context", "building_prompt", "llm_request", "tool_execution", "complete"}:
 			nvda_ui.queue(nvda_ui.message, event.message)
+
+	def _build_chat_metadata(self) -> dict[str, Any]:
+		return build_session_state(_, conversation_id=self._active_conversation_id).to_metadata()
+
+	def _build_result_actions(self, use_case_id: str | None, output_text: str | None, use_case_result: Any) -> list[dict[str, Any]]:
+		if not isinstance(output_text, str) or not output_text.strip():
+			return []
+		if use_case_id not in {"summary", "structure_summary", "describe_image"}:
+			return []
+		return [{
+			"id": "open_chat",
+			"label": _("Open Chat"),
+			"kind": "open_chat",
+			"payload": {
+				"initial_text": output_text.strip(),
+				"initial_image_base64": getattr(use_case_result, "initial_image_base64", None),
+			},
+		}]
+
+	def _handle_result_action(self, action_id: str, payload: dict[str, Any] | None) -> None:
+		if action_id != "open_chat":
+			return
+		payload = payload or {}
+		self.open_chat_window(
+			initial_text=payload.get("initial_text") if isinstance(payload.get("initial_text"), str) else None,
+			initial_image_base64=payload.get("initial_image_base64") if isinstance(payload.get("initial_image_base64"), str) else None,
+		)

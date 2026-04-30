@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 _host_process: Optional[subprocess.Popen] = None
 _host_logger_thread: Optional[threading.Thread] = None
 _process_lock = threading.Lock()
-_HOST_PIPE_NAME = r"\\.\pipe\nvda_ai_assistant_ui"
+_HOST_COMMAND_PIPE_NAME = r"\\.\pipe\nvda_ai_assistant_ui_cmd"
 
 
 def get_host_executable_path() -> Path:
@@ -40,7 +40,7 @@ def _wait_for_host_pipe_ready(timeout_seconds: float = 5.0) -> None:
 		logger.debug("pywin32 unavailable; skipping host pipe readiness wait")
 		return
 
-	logger.debug("Waiting for UI host pipe readiness: %s (timeout=%ss)", _HOST_PIPE_NAME, timeout_seconds)
+	logger.debug("Waiting for UI host pipe readiness: %s (timeout=%ss)", _HOST_COMMAND_PIPE_NAME, timeout_seconds)
 	deadline = time.monotonic() + timeout_seconds
 	last_error: Exception | None = None
 	while time.monotonic() < deadline:
@@ -49,8 +49,8 @@ def _wait_for_host_pipe_ready(timeout_seconds: float = 5.0) -> None:
 		if process is not None and process.poll() is not None:
 			raise HostUnavailableError(f"UI host exited during startup with code {process.returncode}")
 		try:
-			win32pipe.WaitNamedPipe(_HOST_PIPE_NAME, 250)
-			logger.info("UI host pipe is ready: %s", _HOST_PIPE_NAME)
+			win32pipe.WaitNamedPipe(_HOST_COMMAND_PIPE_NAME, 250)
+			logger.info("UI host pipe is ready: %s", _HOST_COMMAND_PIPE_NAME)
 			return
 		except Exception as error:
 			last_error = error

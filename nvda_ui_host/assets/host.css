@@ -6,6 +6,41 @@ body {
     color: #111;
 }
 
+.session-controls {
+    display: flex;
+    gap: 12px;
+    align-items: end;
+    margin-bottom: 12px;
+    padding: 12px;
+    border-radius: 6px;
+    background: #fff;
+    border: 1px solid #ddd;
+    flex-wrap: wrap;
+}
+
+.field-group,
+.toggle-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 0.92rem;
+}
+
+.toggle-group {
+    flex-direction: row;
+    align-items: center;
+    padding-bottom: 8px;
+}
+
+#provider-select,
+#model-input {
+    min-width: 180px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    font-size: 0.95rem;
+}
+
 #status {
     margin-bottom: 12px;
     padding: 10px;
@@ -27,6 +62,36 @@ body {
 .chat-panel {
     margin-top: 14px;
     display: none;
+}
+
+.composer-toolbar {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.attachment-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.attachment-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: #eef3f8;
+    border: 1px solid #c8d5e3;
+    font-size: 0.88rem;
+}
+
+.attachment-chip button {
+    margin-right: 0;
+    padding: 2px 8px;
+    font-size: 0.8rem;
 }
 
 #chat-input {
@@ -66,9 +131,75 @@ body {
     margin-bottom: 6px;
 }
 
+.chat-message-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.chat-message-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.chat-message-actions button {
+    margin-right: 0;
+    padding: 4px 8px;
+    font-size: 0.82rem;
+}
+
 .chat-message .text {
     white-space: pre-wrap;
     word-break: break-word;
+}
+
+.chat-message .text table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0;
+}
+
+.chat-message .text th,
+.chat-message .text td {
+    border: 1px solid #c8d5e3;
+    padding: 6px 8px;
+    text-align: left;
+    vertical-align: top;
+}
+
+.chat-message .text thead {
+    background: #eef3f8;
+}
+
+.content-block {
+    margin-bottom: 12px;
+}
+
+.thinking-block {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px solid #cdd7e1;
+    border-radius: 8px;
+    background: #f7fafc;
+}
+
+.thinking-block summary {
+    cursor: pointer;
+    font-weight: 700;
+}
+
+.result-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+}
+
+.result-actions button {
+    margin-right: 0;
 }
 
 .toolbar {
