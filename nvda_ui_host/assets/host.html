@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NVDA UI Host</title>
+    <link rel="stylesheet" href="host.css" />
+</head>
+<body>
+    <div id="status">Waiting for host command...</div>
+    <div id="content">No content received yet.</div>
+    <div id="chat-panel" class="chat-panel" style="display:none;">
+        <textarea id="chat-input" placeholder="Type your message..." rows="3"></textarea>
+        <button id="chat-send">Send</button>
+    </div>
+    <div class="toolbar">
+        <button id="copy-text">Copy text</button>
+        <button id="copy-html">Copy HTML</button>
+        <button id="clear">Clear</button>
+        <button id="close-window">Close</button>
+    </div>
+    <script src="host.js"></script>
+</body>
+</html>
