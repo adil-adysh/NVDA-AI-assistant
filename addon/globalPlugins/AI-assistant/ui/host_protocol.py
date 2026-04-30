@@ -23,6 +23,10 @@ COMMAND_CHAT_UPDATE = "chat_update"
 EVENT_CHAT_SUBMITTED = "chat_submitted"
 EVENT_CHAT_ATTACHMENT_ADDED = "chat_attachment_added"
 EVENT_CHAT_CLOSED = "chat_closed"
+EVENT_UI_ACTION_INVOKED = "ui_action_invoked"
+EVENT_PROVIDER_SELECTED = "provider_selected"
+EVENT_MODEL_SELECTED = "model_selected"
+EVENT_THINK_MODE_TOGGLED = "think_mode_toggled"
 
 
 class HostCommandPayload(TypedDict, total=False):

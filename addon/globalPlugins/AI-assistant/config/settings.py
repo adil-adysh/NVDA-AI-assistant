@@ -484,8 +484,11 @@ def set_openai_config(config: OpenAIConfig) -> None:
 
 
 def set_model_name(modelName: str) -> None:
-	if get_provider() == "gemini":
+	provider = get_provider()
+	if provider == "gemini":
 		set_gemini_model_name(modelName)
+	elif provider == "openai":
+		_set_value("openaiModelName", str(modelName).strip(), notify=True)
 	else:
 		set_ollama_model_name(modelName)
 

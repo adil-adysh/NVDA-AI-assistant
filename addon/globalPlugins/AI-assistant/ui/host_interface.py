@@ -27,7 +27,7 @@ class UIHostRenderer(ABC):
 		close_button: bool = True,
 		copy_button: bool = True,
 		copy_text: str | None = None,
-		copy_html: str | None = None,
+		copy_markdown: str | None = None,
 		metadata: dict[str, Any] | None = None,
 	) -> None:
 		raise NotImplementedError
@@ -43,6 +43,10 @@ class UIHostRenderer(ABC):
 		tool_registry: Any | None = None,
 		metadata: dict[str, Any] | None = None,
 	) -> None:
+		raise NotImplementedError
+
+	@abstractmethod
+	def sync_session_state(self, metadata: dict[str, Any] | None = None) -> None:
 		raise NotImplementedError
 
 	@abstractmethod

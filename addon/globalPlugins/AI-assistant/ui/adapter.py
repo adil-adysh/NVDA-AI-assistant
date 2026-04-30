@@ -5,22 +5,32 @@ import queue
 import threading
 from collections.abc import Callable
 from typing import Any
+from uuid import uuid4
 
 from logHandler import log
+
+from ..config.settings import save, set_model_name, set_ollama_think, set_provider
 from . import nvda_ui
 from .host_renderer import HostRenderer, HostUnavailableError
-from .native_renderer import NativeRenderer
 
 
 class UIAdapter:
 	def __init__(self) -> None:
-		self._native_renderer = NativeRenderer()
 		self._host_renderer = HostRenderer()
 		self._host_available = True
+		self._result_action_handler: Callable[[str, dict[str, Any] | None], None] | None = None
+		self._session_metadata_provider: Callable[[], dict[str, Any]] | None = None
+		self._pending_session_metadata: dict[str, Any] | None = None
 		self._command_queue: queue.Queue[tuple[Callable[[], None], Callable[[], None]]] = queue.Queue()
 		self._running = True
 		self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
 		self._worker_thread.start()
+
+	def register_result_action_handler(self, handler: Callable[[str, dict[str, Any] | None], None]) -> None:
+		self._result_action_handler = handler
+
+	def register_session_metadata_provider(self, provider: Callable[[], dict[str, Any]]) -> None:
+		self._session_metadata_provider = provider
 
 	def _worker_loop(self) -> None:
 		log.debug("UIAdapter worker thread started")
@@ -36,12 +46,12 @@ class UIAdapter:
 				except HostUnavailableError:
 					log.warning("WORKER ERROR: HostUnavailableError")
 					log.warning("UIAdapter host command failed because host is unavailable")
-					self._host_available = False
+					self._mark_host_unavailable()
 					nvda_ui.queue(fallback)
 				except Exception as error:
 					log.warning("WORKER ERROR: %s", error)
 					log.exception("UIAdapter host command threw unexpected exception")
-					self._host_available = False
+					self._mark_host_unavailable()
 					nvda_ui.queue(fallback)
 				finally:
 					self._command_queue.task_done()
@@ -55,6 +65,24 @@ class UIAdapter:
 		log.debug("UIAdapter dispatching host command; host_available=%s", self._host_available)
 		self._command_queue.put((command, fallback))
 
+	def _dispatch_primary_host_command(self, command: Callable[[], None], fallback: Callable[[], None]) -> None:
+		if not self._host_available:
+			log.info("UIAdapter retrying WebView host for a primary UI action")
+			self._host_available = True
+
+		def command_with_session_sync() -> None:
+			command()
+			self._flush_pending_session_state()
+
+		self._dispatch_host_command(command_with_session_sync, fallback)
+
+	def _mark_host_unavailable(self) -> None:
+		self._host_available = False
+
+	def _notify_host_unavailable(self) -> None:
+		message = self._get_localized_strings().get("host_unavailable_message", "AI WebView host is unavailable.")
+		nvda_ui.message(message)
+
 	def render_display_result(
 		self,
 		use_case_id: str | None,
@@ -67,55 +95,27 @@ class UIAdapter:
 		close_button: bool = True,
 		copy_button: bool = True,
 		copy_text: str | None = None,
-		copy_html: str | None = None,
+		copy_markdown: str | None = None,
 		metadata: dict[str, Any] | None = None,
 	) -> None:
-		if self._host_available:
-			self._dispatch_host_command(
-				lambda: self._host_renderer.render_display_result(
-					use_case_id=use_case_id,
-					title=title,
-					output_text=output_text,
-					output_html=output_html,
-					is_html=is_html,
-					success=success,
-					message=message,
-					close_button=close_button,
-					copy_button=copy_button,
-					copy_text=copy_text,
-					copy_html=copy_html,
-					metadata=metadata,
-				),
-				lambda: self._native_renderer.render_display_result(
-					use_case_id=use_case_id,
-					title=title,
-					output_text=output_text,
-					output_html=output_html,
-					is_html=is_html,
-					success=success,
-					message=message,
-					close_button=close_button,
-					copy_button=copy_button,
-					copy_text=copy_text,
-					copy_html=copy_html,
-					metadata=metadata,
-				),
-			)
-			return
-
-		self._native_renderer.render_display_result(
-			use_case_id=use_case_id,
-			title=title,
-			output_text=output_text,
-			output_html=output_html,
-			is_html=is_html,
-			success=success,
-			message=message,
-			close_button=close_button,
-			copy_button=copy_button,
-			copy_text=copy_text,
-			copy_html=copy_html,
-			metadata=metadata,
+		self._remember_session_metadata(metadata)
+		self._host_renderer.register_ui_action_handler(self._handle_host_ui_action)
+		self._dispatch_primary_host_command(
+			lambda: self._host_renderer.render_display_result(
+				use_case_id=use_case_id,
+				title=title,
+				output_text=output_text,
+				output_html=output_html,
+				is_html=is_html,
+				success=success,
+				message=message,
+				close_button=close_button,
+				copy_button=copy_button,
+				copy_text=copy_text,
+				copy_markdown=copy_markdown,
+				metadata=metadata,
+			),
+			self._notify_host_unavailable,
 		)
 
 	def open_chat(
@@ -128,106 +128,224 @@ class UIAdapter:
 		tool_registry: Any | None = None,
 		metadata: dict[str, Any] | None = None,
 	) -> None:
-		if self._host_available:
-			if coordinator is not None:
-				def handle_chat_submission(message: str, conversation_id: str | None) -> None:
-					threading.Thread(
-						target=self._handle_host_chat_submission,
-						args=(message, conversation_id, coordinator),
-						daemon=True,
-					).start()
-				self._host_renderer.register_chat_submission_handler(handle_chat_submission)
+		self._remember_session_metadata(metadata)
+		if coordinator is not None:
+			def handle_chat_submission(message: str, conversation_id: str | None, event_payload: dict[str, Any] | None) -> None:
+				threading.Thread(
+					target=self._handle_host_chat_submission,
+					args=(message, conversation_id, coordinator, event_payload),
+					daemon=True,
+				).start()
+			self._host_renderer.register_chat_submission_handler(handle_chat_submission)
+		self._host_renderer.register_provider_selection_handler(self._handle_provider_selection)
+		self._host_renderer.register_model_selection_handler(self._handle_model_selection)
+		self._host_renderer.register_think_mode_handler(self._handle_think_mode_toggle)
 
-			self._dispatch_host_command(
-				lambda: self._host_renderer.open_chat(
-					use_case_id=use_case_id,
-					title=title,
-					initial_text=initial_text,
-					initial_image_base64=initial_image_base64,
-					coordinator=coordinator,
-					tool_registry=tool_registry,
-					metadata=metadata,
-				),
-				lambda: self._native_renderer.open_chat(
-					use_case_id=use_case_id,
-					title=title,
-					initial_text=initial_text,
-					initial_image_base64=initial_image_base64,
-					coordinator=coordinator,
-					tool_registry=tool_registry,
-					metadata=metadata,
-				),
-			)
-			return
-
-		self._native_renderer.open_chat(
-			use_case_id=use_case_id,
-			title=title,
-			initial_text=initial_text,
-			initial_image_base64=initial_image_base64,
-			coordinator=coordinator,
-			tool_registry=tool_registry,
-			metadata=metadata,
+		self._dispatch_primary_host_command(
+			lambda: self._host_renderer.open_chat(
+				use_case_id=use_case_id,
+				title=title,
+				initial_text=initial_text,
+				initial_image_base64=initial_image_base64,
+				coordinator=coordinator,
+				tool_registry=tool_registry,
+				metadata=metadata,
+			),
+			self._notify_host_unavailable,
 		)
 
-	def _handle_host_chat_submission(self, message: str, conversation_id: str | None, coordinator: Any) -> None:
+	def sync_session_state(self, metadata: dict[str, Any] | None = None) -> None:
+		self._remember_session_metadata(metadata)
+		if not self._host_available:
+			return
+		self._dispatch_host_command(
+			lambda: self._send_session_state(metadata),
+			lambda: None,
+		)
+
+	def _remember_session_metadata(self, metadata: dict[str, Any] | None) -> None:
+		if isinstance(metadata, dict):
+			self._pending_session_metadata = dict(metadata)
+
+	def _send_session_state(self, metadata: dict[str, Any] | None = None) -> None:
+		effective_metadata = metadata if isinstance(metadata, dict) else self._pending_session_metadata
+		self._host_renderer.sync_session_state(metadata=effective_metadata)
+		if effective_metadata is not None:
+			self._pending_session_metadata = None
+
+	def _flush_pending_session_state(self) -> None:
+		if self._pending_session_metadata is None:
+			return
+		self._send_session_state()
+
+	def _handle_host_chat_submission(
+		self,
+		message: str,
+		conversation_id: str | None,
+		coordinator: Any,
+		event_payload: dict[str, Any] | None = None,
+	) -> None:
 		conversation_id = conversation_id or None
 		use_case_id = None
-		# Append the user message to the UI immediately.
+		localized_strings = self._get_localized_strings()
+		image_base64, file_context = self._extract_attachment_context(event_payload, localized_strings)
+		message_text = message
+		if file_context:
+			message_text = f"{message_text}\n\n{file_context}".strip()
+		if not message_text and image_base64 is None:
+			return
+
+		user_content: list[dict[str, Any]] = []
+		if message_text:
+			user_content.append({"type": "text", "text": message_text})
+		if image_base64:
+			user_content.append(
+				{
+					"type": "text",
+					"text": localized_strings.get("image_attachment_notice", "[Image attachment included]"),
+				}
+			)
 		self._host_renderer.chat_append(
 			use_case_id,
 			conversation_id or "",
 			{
-				"id": f"user-{message[:8]}",
+				"id": self._new_message_id("user"),
 				"role": "user",
-				"content": [{"type": "text", "text": message}],
+				"content": user_content,
 			},
 		)
 		try:
-			response = coordinator.send_message(text=message)
+			response = coordinator.send_message(text=message_text or None, image_base64=image_base64)
 			assistant_text = getattr(response, "text", None)
+			thinking_trace = None
+			raw = getattr(response, "raw", None)
+			if raw is not None:
+				metadata = getattr(raw, "metadata", None)
+				if isinstance(metadata, dict):
+					thinking_trace = metadata.get("thinking_trace")
 			if isinstance(assistant_text, str) and assistant_text.strip():
+				assistant_content: list[dict[str, Any]] = [{"type": "text", "text": assistant_text.strip()}]
+				if isinstance(thinking_trace, str) and thinking_trace.strip():
+					assistant_content.append(
+						{
+							"type": "thinking",
+							"text": thinking_trace.strip(),
+							"summary": localized_strings.get("thinking_trace_label", "Thinking trace"),
+							"collapsed": True,
+						}
+					)
 				self._host_renderer.chat_append(
 					use_case_id,
 					conversation_id or "",
 					{
-						"id": f"assistant-{message[:8]}",
+						"id": self._new_message_id("assistant"),
 						"role": "assistant",
-						"content": [{"type": "text", "text": assistant_text.strip()}],
+						"content": assistant_content,
 					},
 				)
 		except Exception as error:
-			self._host_renderer.show_error("Chat submission failed", details=str(error))
+			title = localized_strings.get("chat_submission_failed_title", "Chat submission failed")
+			self._host_renderer.show_error(title, details=str(error))
+
+	def _extract_attachment_context(
+		self,
+		event_payload: dict[str, Any] | None,
+		localized_strings: dict[str, str],
+	) -> tuple[str | None, str]:
+		attachments = event_payload.get("attachments") if isinstance(event_payload, dict) else None
+		if not isinstance(attachments, list):
+			return None, ""
+
+		image_base64 = None
+		file_sections: list[str] = []
+		attached_file_label = localized_strings.get("attached_file_label", "Attached file")
+		for attachment in attachments:
+			if not isinstance(attachment, dict):
+				continue
+			kind = attachment.get("kind")
+			name = str(attachment.get("name") or "attachment")
+			if kind == "image" and image_base64 is None:
+				candidate = attachment.get("image_base64")
+				if isinstance(candidate, str) and candidate.strip():
+					image_base64 = candidate.strip()
+				continue
+			if kind == "file":
+				text = attachment.get("text")
+				if isinstance(text, str) and text.strip():
+					file_sections.append(f"{attached_file_label}: {name}\n{text.strip()}")
+
+		return image_base64, "\n\n".join(file_sections)
+
+	def _handle_host_ui_action(self, action_id: str, payload: dict[str, Any] | None) -> None:
+		if self._result_action_handler is None:
+			log.debug("UIAdapter received host UI action without a registered handler: %s", action_id)
+			return
+		try:
+			self._result_action_handler(action_id, payload)
+		except Exception:
+			log.exception("UIAdapter result action handler failed")
+
+	def _handle_provider_selection(self, provider: str) -> None:
+		set_provider(provider)
+		save()
+		self.sync_session_state(metadata=self._build_sync_metadata())
+
+	def _handle_model_selection(self, provider: str | None, model: str) -> None:
+		if provider:
+			set_provider(provider)
+		set_model_name(model)
+		save()
+		self.sync_session_state(metadata=self._build_sync_metadata())
+
+	def _handle_think_mode_toggle(self, enabled: bool) -> None:
+		set_ollama_think(enabled)
+		save()
+		self.sync_session_state(metadata=self._build_sync_metadata())
+
+	def _build_sync_metadata(self) -> dict[str, Any] | None:
+		if self._session_metadata_provider is None:
+			return None
+		return self._session_metadata_provider()
+
+	def _get_localized_strings(self) -> dict[str, str]:
+		metadata = self._build_sync_metadata() or {}
+		localized_strings = metadata.get("localized_strings")
+		if isinstance(localized_strings, dict):
+			return {str(key): str(value) for key, value in localized_strings.items()}
+		return {}
+
+	def _new_message_id(self, prefix: str) -> str:
+		return f"{prefix}-{uuid4().hex}"
 
 	def show_error(self, error_message: str, details: str | None = None) -> None:
 		if self._host_available:
 			self._dispatch_host_command(
 				lambda: self._host_renderer.show_error(error_message, details=details),
-				lambda: self._native_renderer.show_error(error_message, details=details),
+				lambda: nvda_ui.message(error_message),
 			)
 			return
 
-		self._native_renderer.show_error(error_message, details=details)
+		nvda_ui.message(error_message)
 
 	def show_progress(self, message: str) -> None:
 		if self._host_available:
 			self._dispatch_host_command(
 				lambda: self._host_renderer.show_progress(message),
-				lambda: self._native_renderer.show_progress(message),
+				lambda: nvda_ui.queue(nvda_ui.message, message),
 			)
 			return
 
-		self._native_renderer.show_progress(message)
+		nvda_ui.queue(nvda_ui.message, message)
 
 	def close_window(self, reason: str | None = None) -> None:
 		if self._host_available:
 			self._dispatch_host_command(
 				lambda: self._host_renderer.close_window(reason),
-				lambda: self._native_renderer.close_window(reason),
+				lambda: None,
 			)
 			return
 
-		self._native_renderer.close_window(reason)
+		return
 
 
 ui_adapter = UIAdapter()

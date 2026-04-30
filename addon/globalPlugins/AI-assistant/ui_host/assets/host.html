@@ -8,15 +8,35 @@
     <link rel="stylesheet" href="host.css" />
 </head>
 <body>
+    <div id="session-controls" class="session-controls">
+        <label class="field-group" for="provider-select">
+            <span id="provider-label">Provider</span>
+            <select id="provider-select"></select>
+        </label>
+        <label class="field-group" for="model-input">
+            <span id="model-label">Model</span>
+            <input id="model-input" list="model-options" type="text" />
+            <datalist id="model-options"></datalist>
+        </label>
+        <label class="toggle-group" for="think-toggle">
+            <input id="think-toggle" type="checkbox" />
+            <span id="think-mode-label">Think mode</span>
+        </label>
+    </div>
     <div id="status">Waiting for host command...</div>
     <div id="content">No content received yet.</div>
     <div id="chat-panel" class="chat-panel" style="display:none;">
+        <div class="composer-toolbar">
+            <button id="attach-files" type="button">Attach</button>
+            <input id="file-input" type="file" multiple hidden />
+        </div>
+        <div id="attachment-strip" class="attachment-strip"></div>
         <textarea id="chat-input" placeholder="Type your message..." rows="3"></textarea>
         <button id="chat-send">Send</button>
     </div>
     <div class="toolbar">
         <button id="copy-text">Copy text</button>
-        <button id="copy-html">Copy HTML</button>
+        <button id="copy-markdown">Copy markdown</button>
         <button id="clear">Clear</button>
         <button id="close-window">Close</button>
     </div>
