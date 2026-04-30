@@ -10,6 +10,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 HOST_DIR = ROOT / "nvda_ui_host"
 DESTINATION = ROOT / "addon" / "globalPlugins" / "AI-assistant" / "ui_host" / "nvda_ui_host.exe"
+NPM_EXECUTABLE = "npm.cmd" if os.name == "nt" else "npm"
+
+
+def build_webui() -> None:
+    package_json = HOST_DIR / "package.json"
+    if not package_json.exists():
+        return
+
+    node_modules = HOST_DIR / "node_modules"
+    if not node_modules.exists():
+        print("Installing NVDA UI host WebView dependencies: npm ci")
+        subprocess.run([NPM_EXECUTABLE, "ci"], cwd=HOST_DIR, check=True)
+
+    print("Building NVDA UI host WebView assets: npm run build:webui")
+    subprocess.run([NPM_EXECUTABLE, "run", "build:webui"], cwd=HOST_DIR, check=True)
 
 
 def find_target_exe() -> Path:
@@ -56,9 +71,12 @@ def build_host(release: bool = True) -> None:
     subprocess.run(args, cwd=HOST_DIR, env=env, check=True)
 
 
-def install_host_binary() -> None:
+def install_host_binary(*, allow_existing_install: bool = False) -> None:
     target_exe = find_target_exe()
     if not target_exe.exists():
+        if allow_existing_install and DESTINATION.exists():
+            print(f"Using existing installed host binary at {DESTINATION}")
+            return
         raise FileNotFoundError(
             f"Host executable not found: {target_exe}. "
             "Run this script after building the Rust host."
@@ -91,9 +109,10 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
+        build_webui()
         if not args.install_only:
             build_host(release=not args.debug)
-        install_host_binary()
+        install_host_binary(allow_existing_install=args.install_only)
         install_host_assets()
     except subprocess.CalledProcessError as error:
         print(f"Host build failed: {error}")

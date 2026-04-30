@@ -45,6 +45,7 @@ manifest.ini
 # =========================
 
 **/target/
+**/node_modules/
 
 # Keep Cargo.lock (important for your binary project)
 

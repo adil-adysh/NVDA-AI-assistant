@@ -1,0 +1,11 @@
+{
+  "name": "nvda-ui-host-webui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:webui": "esbuild webui/main.js --bundle --platform=browser --format=iife --outfile=assets/host.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.3"
+  }
+}
