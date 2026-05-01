@@ -1,5 +1,9 @@
 import {
+    closeWindowButtonEl,
     chatInputEl,
+    clearButtonEl,
+    copyMarkdownButtonEl,
+    copyTextButtonEl,
     modelInputEl,
     modelOptionsEl,
     providerSelectEl,
@@ -7,7 +11,7 @@ import {
 } from './dom.js';
 import { t, applyLocalizedStrings } from './localization.js';
 import { appState } from './state.js';
-import { ensureSendHostEvent, setStatus } from './utils.js';
+import { ensureSendHostEvent, focusChatComposer, focusContentRegion, isTextEntryTarget, queueFocus, setStatus } from './utils.js';
 import {
     appendChatMessage,
     clearChat,
@@ -192,23 +196,27 @@ function handleErrorCommand(payload) {
     const errorMessage = payload.error_message || t('no_content', 'No content available.');
     const details = typeof payload.details === 'string' ? payload.details.trim() : '';
     const fullMessage = details ? `${errorMessage}\n\n${details}` : errorMessage;
-    setDisplayText(`${t('error_prefix', 'Error')}: ${fullMessage}`);
+    setDisplayText(`${t('error_prefix', 'Error')}: ${fullMessage}`, 'status');
     appState.copyText = fullMessage;
     appState.copyMarkdown = fullMessage;
+    setStatus(`${t('error_prefix', 'Error')}: ${errorMessage}`);
 }
 
 function handleProgressCommand(payload) {
     clearChat();
-    setDisplayText(`${t('progress_prefix', 'Progress')}: ${payload.message || t('progress_default_message', 'Working...')}`);
+    const progressMessage = payload.message || t('progress_default_message', 'Working...');
+    setDisplayText(`${t('progress_prefix', 'Progress')}: ${progressMessage}`, 'content');
     appState.copyText = payload.message || '';
     appState.copyMarkdown = payload.message || '';
+    setStatus(`${t('progress_prefix', 'Progress')}: ${progressMessage}`);
 }
 
 function handleCloseWindowCommand() {
     clearChat();
-    setDisplayText(t('window_closed_message', 'Window closed by host command.'));
+    setDisplayText(t('window_closed_message', 'Window closed by host command.'), 'status');
     appState.copyText = '';
     appState.copyMarkdown = '';
+    setStatus(t('window_closed_message', 'Window closed by host command.'));
 }
 
 export function handleHostEnvelope(envelope) {
@@ -246,7 +254,8 @@ export function handleHostEnvelope(envelope) {
             resetChatState();
             resetDisplayState();
             appState.copyText = payload.copy_text || payload.output_text || '';
-            appState.copyMarkdown = payload.copy_markdown || payload.output_text || '';
+            appState.copyMarkdown = payload.copy_markdown || '';
+            queueFocus((payload?.actions || payload?.metadata?.actions || []).length ? 'first-result-action' : 'content');
             renderDisplayPayload(payload);
             break;
         case 'open_chat':
@@ -281,6 +290,65 @@ export function handleHostEnvelope(envelope) {
     }
 
     reportUiApplied(commandId);
+}
+
+export function handleGlobalShortcut(event) {
+    if (event.key === 'Escape') {
+        requestCloseHost();
+        return;
+    }
+
+    if (!(event.altKey && event.shiftKey) || event.repeat) {
+        return;
+    }
+
+    const shortcut = event.key.toLowerCase();
+    const activeTarget = document.activeElement;
+    if (isTextEntryTarget(activeTarget) && shortcut !== 'i' && shortcut !== 's') {
+        return;
+    }
+
+    switch (shortcut) {
+        case 't':
+            event.preventDefault();
+            copyTextButtonEl?.click();
+            break;
+        case 'm':
+            event.preventDefault();
+            copyMarkdownButtonEl?.click();
+            break;
+        case 'r':
+            event.preventDefault();
+            clearButtonEl?.click();
+            break;
+        case 'l':
+            event.preventDefault();
+            focusContentRegion();
+            break;
+        case 'i':
+            if (appState.viewState.mode !== 'chat') {
+                return;
+            }
+            event.preventDefault();
+            focusChatComposer();
+            break;
+        case 'a':
+            if (appState.viewState.mode !== 'chat') {
+                return;
+            }
+            event.preventDefault();
+            document.getElementById('attach-files')?.click();
+            break;
+        case 's':
+            if (appState.viewState.mode !== 'chat') {
+                return;
+            }
+            event.preventDefault();
+            submitChatMessage();
+            break;
+        default:
+            break;
+    }
 }
 
 export function setupWebViewBridge() {

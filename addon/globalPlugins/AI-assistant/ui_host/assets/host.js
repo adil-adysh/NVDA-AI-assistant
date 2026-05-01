@@ -15,6 +15,10 @@
   var providerLabelEl = document.getElementById("provider-label");
   var modelLabelEl = document.getElementById("model-label");
   var thinkModeLabelEl = document.getElementById("think-mode-label");
+  var copyTextButtonEl = document.getElementById("copy-text");
+  var copyMarkdownButtonEl = document.getElementById("copy-markdown");
+  var clearButtonEl = document.getElementById("clear");
+  var closeWindowButtonEl = document.getElementById("close-window");
 
   // webui/state.js
   var appState = {
@@ -68,7 +72,9 @@
       progress_default_message: "Working...",
       command_prefix: "Command",
       unhandled_command_prefix: "Unhandled command",
-      result_action_fallback_label: "Action"
+      result_action_fallback_label: "Action",
+      assistant_heading: "Assistant response",
+      user_heading: "User prompt"
     },
     chatState: {
       active: false,
@@ -82,19 +88,12 @@
       actions: []
     },
     viewState: {
-      mode: "display"
+      mode: "display",
+      pendingFocus: null
     }
   };
 
   // webui/localization.js
-  function getToolbarRefs() {
-    return {
-      copyTextButton: document.getElementById("copy-text"),
-      copyMarkdownButton: document.getElementById("copy-markdown"),
-      clearButton: document.getElementById("clear"),
-      closeButton: document.getElementById("close-window")
-    };
-  }
   function t(key, fallback = "") {
     return appState.localizedStrings[key] || fallback;
   }
@@ -122,18 +121,17 @@
     if (chatInputEl) {
       chatInputEl.placeholder = t("chat_placeholder", "Type your message...");
     }
-    const { copyTextButton, copyMarkdownButton, clearButton, closeButton } = getToolbarRefs();
-    if (copyTextButton) {
-      copyTextButton.textContent = t("copy_text_button", "Copy text");
+    if (copyTextButtonEl) {
+      copyTextButtonEl.textContent = t("copy_text_button", "Copy text");
     }
-    if (copyMarkdownButton) {
-      copyMarkdownButton.textContent = t("copy_markdown_button", "Copy markdown");
+    if (copyMarkdownButtonEl) {
+      copyMarkdownButtonEl.textContent = t("copy_markdown_button", "Copy markdown");
     }
-    if (clearButton) {
-      clearButton.textContent = t("clear_button", "Clear");
+    if (clearButtonEl) {
+      clearButtonEl.textContent = t("clear_button", "Clear");
     }
-    if (closeButton) {
-      closeButton.textContent = t("close_button", "Close");
+    if (closeWindowButtonEl) {
+      closeWindowButtonEl.textContent = t("close_button", "Close");
     }
   }
 
@@ -168,6 +166,52 @@
       setStatus(appState.localizedStrings.copy_failed_status || "Copy failed.");
       console.error(error);
     });
+  }
+  function isTextEntryTarget(target) {
+    return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable === true;
+  }
+  function queueFocus(target) {
+    appState.viewState.pendingFocus = target;
+  }
+  function focusElement(element) {
+    if (!(element instanceof HTMLElement)) {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      element.focus({ preventScroll: false });
+    });
+  }
+  function focusPendingTarget() {
+    const target = appState.viewState.pendingFocus;
+    appState.viewState.pendingFocus = null;
+    if (target === "status") {
+      focusElement(statusEl);
+      return;
+    }
+    if (target === "composer") {
+      if (chatPanelEl?.style.display !== "none" && chatInputEl instanceof HTMLElement) {
+        focusElement(chatInputEl);
+        return;
+      }
+    }
+    if (target === "first-result-action") {
+      const actionButton = contentEl.querySelector("[data-action-id]");
+      if (actionButton instanceof HTMLElement) {
+        focusElement(actionButton);
+        return;
+      }
+    }
+    if (target === "content") {
+      focusElement(contentEl);
+    }
+  }
+  function focusContentRegion() {
+    queueFocus("content");
+    focusPendingTarget();
+  }
+  function focusChatComposer() {
+    queueFocus("composer");
+    focusPendingTarget();
   }
 
   // webui/attachments.js
@@ -237,6 +281,7 @@
   function removeAttachment(attachmentId) {
     appState.chatState.attachments = appState.chatState.attachments.filter((item) => item.id !== attachmentId);
     renderAttachments();
+    focusChatComposer();
   }
   function createAttachmentId(file) {
     return `attachment-${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${file.name}`;
@@ -299,11 +344,13 @@
       try {
         const attachment = await loadAttachment(file);
         upsertAttachment(attachment);
+        setStatus(`${t("attach_button", "Attach")}: ${file.name}`);
       } catch (error) {
         console.error(error);
         setStatus(`${t("attach_failed_status", "Unable to attach file.")} ${file.name}`.trim());
       }
     }
+    focusChatComposer();
   }
 
   // webui/rendering.js
@@ -391,7 +438,7 @@ ${text}` : "";
   function getCurrentPlainText() {
     if (appState.chatState.active) {
       return appState.chatState.messages.map((message) => {
-        const role = String(message.role || "assistant");
+        const role = formatRoleLabel(message.role || "assistant");
         const text = extractTextFromBlocks(message.content);
         return text ? `${role}: ${text}` : "";
       }).filter(Boolean).join("\n\n");
@@ -406,9 +453,32 @@ ${text}` : "";
   }
   function getCurrentCopyMarkdown() {
     if (appState.viewState.mode === "chat") {
-      return "";
+      return buildChatMarkdownTranscript() || getCurrentPlainText();
     }
-    return appState.copyMarkdown || appState.copyText || getCurrentPlainText() || contentEl.textContent || "";
+    return appState.copyMarkdown || extractMarkdownFromBlocks(appState.displayState.blocks) || appState.copyText || getCurrentPlainText() || contentEl.textContent || "";
+  }
+  function formatRoleLabel(role) {
+    const value = String(role || "assistant").trim().toLowerCase();
+    if (value === "user") {
+      return t("user_heading", "User prompt");
+    }
+    if (value === "assistant") {
+      return t("assistant_heading", "Assistant response");
+    }
+    return value ? `${value.charAt(0).toUpperCase()}${value.slice(1)}` : t("assistant_heading", "Assistant response");
+  }
+  function buildChatMarkdownTranscript() {
+    return appState.chatState.messages.map((message, index) => {
+      if (!message) {
+        return "";
+      }
+      const roleLabel = formatRoleLabel(message.role || "assistant");
+      const heading = index % 2 === 0 ? "#####" : "######";
+      const body = extractMarkdownFromBlocks(message.content);
+      return body ? `${heading} ${roleLabel}
+
+${body}` : `${heading} ${roleLabel}`;
+    }).filter(Boolean).join("\n\n");
   }
   function createActionsHtml(actions) {
     if (!Array.isArray(actions) || actions.length === 0) {
@@ -471,16 +541,21 @@ ${text}` : "";
     return `<div class="chat-message-actions">${actions.join("")}</div>`;
   }
   function createChatMessageHtml(message) {
-    const role = message.role || "user";
+    const role = String(message.role || "user").trim().toLowerCase() || "user";
+    const roleLabel = formatRoleLabel(role);
     const actions = createChatMessageActionsHtml(message);
+    const headingTag = role === "assistant" ? "h5" : "h6";
     return `
-        <div class="chat-message ${escapeHtml(role)}" data-message-id="${escapeHtml(message.id || "")}">
+        <article class="chat-message ${escapeHtml(role)}" data-message-id="${escapeHtml(message.id || "")}" aria-label="${escapeHtml(roleLabel)}">
             <div class="chat-message-header">
-                <div class="role">${escapeHtml(role)}</div>
+                <div class="chat-message-title-group">
+                    <${headingTag} class="role">${escapeHtml(roleLabel)}</${headingTag}>
+                    <p class="message-subtitle">${escapeHtml(role === "assistant" ? "Response" : "Prompt")}</p>
+                </div>
                 ${actions}
             </div>
             <div class="text">${renderBlocksHtml(message.content)}</div>
-        </div>
+        </article>
     `;
   }
   function escapeMarkdownCell(text) {
@@ -520,7 +595,11 @@ ${text}` : "";
     if (!message) {
       return;
     }
-    copyToClipboard(extractMarkdownFromBlocks(message.content));
+    const roleLabel = formatRoleLabel(message.role || "assistant");
+    const markdown = `##### ${roleLabel}
+
+${extractMarkdownFromBlocks(message.content)}`.trim();
+    copyToClipboard(markdown);
   }
   function copyMessageTable(messageId) {
     const messageEl = Array.from(contentEl.querySelectorAll(".chat-message")).find((element) => element instanceof HTMLElement && element.dataset.messageId === messageId);
@@ -531,17 +610,21 @@ ${text}` : "";
     }
     copyToClipboard(tableElementToMarkdown(tableEl));
   }
-  function renderDisplayState() {
+  function renderDisplayState(focusTarget = null) {
     appState.viewState.mode = "display";
+    if (focusTarget) {
+      queueFocus(focusTarget);
+    }
     renderCurrentView();
   }
-  function setDisplayText(text) {
+  function setDisplayText(text, focusTarget = null) {
     appState.displayState.blocks = text ? [{ type: "text", text }] : [];
     appState.displayState.actions = [];
-    renderDisplayState();
+    renderDisplayState(focusTarget);
   }
   function renderChatState() {
     appState.viewState.mode = "chat";
+    queueFocus("composer");
     renderCurrentView();
     scrollChatToBottom();
   }
@@ -551,11 +634,13 @@ ${text}` : "";
       contentEl.innerHTML = html || t("no_chat_messages", "No chat messages available.");
       setChatPanelVisible(true);
       renderAttachments();
+      focusPendingTarget();
       return;
     }
     contentEl.innerHTML = `${renderBlocksHtml(appState.displayState.blocks)}${createActionsHtml(appState.displayState.actions)}`;
     setChatPanelVisible(false);
     renderAttachments();
+    focusPendingTarget();
   }
   function renderChatHistory(payload) {
     appState.chatState.active = true;
@@ -613,7 +698,7 @@ ${text}` : "";
   function clearChat() {
     resetChatState();
     resetDisplayState();
-    renderDisplayState();
+    renderDisplayState("content");
   }
   function scrollChatToBottom() {
     contentEl.scrollTop = contentEl.scrollHeight;
@@ -779,21 +864,25 @@ ${text}` : "";
     const fullMessage = details ? `${errorMessage}
 
 ${details}` : errorMessage;
-    setDisplayText(`${t("error_prefix", "Error")}: ${fullMessage}`);
+    setDisplayText(`${t("error_prefix", "Error")}: ${fullMessage}`, "status");
     appState.copyText = fullMessage;
     appState.copyMarkdown = fullMessage;
+    setStatus(`${t("error_prefix", "Error")}: ${errorMessage}`);
   }
   function handleProgressCommand(payload) {
     clearChat();
-    setDisplayText(`${t("progress_prefix", "Progress")}: ${payload.message || t("progress_default_message", "Working...")}`);
+    const progressMessage = payload.message || t("progress_default_message", "Working...");
+    setDisplayText(`${t("progress_prefix", "Progress")}: ${progressMessage}`, "content");
     appState.copyText = payload.message || "";
     appState.copyMarkdown = payload.message || "";
+    setStatus(`${t("progress_prefix", "Progress")}: ${progressMessage}`);
   }
   function handleCloseWindowCommand() {
     clearChat();
-    setDisplayText(t("window_closed_message", "Window closed by host command."));
+    setDisplayText(t("window_closed_message", "Window closed by host command."), "status");
     appState.copyText = "";
     appState.copyMarkdown = "";
+    setStatus(t("window_closed_message", "Window closed by host command."));
   }
   function handleHostEnvelope(envelope) {
     if (!envelope || envelope.schema !== "nvda.ui_host") {
@@ -825,7 +914,8 @@ ${details}` : errorMessage;
         resetChatState();
         resetDisplayState();
         appState.copyText = payload.copy_text || payload.output_text || "";
-        appState.copyMarkdown = payload.copy_markdown || payload.output_text || "";
+        appState.copyMarkdown = payload.copy_markdown || "";
+        queueFocus((payload?.actions || payload?.metadata?.actions || []).length ? "first-result-action" : "content");
         renderDisplayPayload(payload);
         break;
       case "open_chat":
@@ -859,6 +949,61 @@ ${details}` : errorMessage;
         return;
     }
     reportUiApplied(commandId);
+  }
+  function handleGlobalShortcut(event) {
+    if (event.key === "Escape") {
+      requestCloseHost();
+      return;
+    }
+    if (!(event.altKey && event.shiftKey) || event.repeat) {
+      return;
+    }
+    const shortcut = event.key.toLowerCase();
+    const activeTarget = document.activeElement;
+    if (isTextEntryTarget(activeTarget) && shortcut !== "i" && shortcut !== "s") {
+      return;
+    }
+    switch (shortcut) {
+      case "t":
+        event.preventDefault();
+        copyTextButtonEl?.click();
+        break;
+      case "m":
+        event.preventDefault();
+        copyMarkdownButtonEl?.click();
+        break;
+      case "r":
+        event.preventDefault();
+        clearButtonEl?.click();
+        break;
+      case "l":
+        event.preventDefault();
+        focusContentRegion();
+        break;
+      case "i":
+        if (appState.viewState.mode !== "chat") {
+          return;
+        }
+        event.preventDefault();
+        focusChatComposer();
+        break;
+      case "a":
+        if (appState.viewState.mode !== "chat") {
+          return;
+        }
+        event.preventDefault();
+        document.getElementById("attach-files")?.click();
+        break;
+      case "s":
+        if (appState.viewState.mode !== "chat") {
+          return;
+        }
+        event.preventDefault();
+        submitChatMessage();
+        break;
+      default:
+        break;
+    }
   }
   function setupWebViewBridge() {
     ensureSendHostEvent();
@@ -935,18 +1080,14 @@ ${details}` : errorMessage;
       removeAttachment(attachmentId);
     }
   });
-  document.getElementById("copy-text").onclick = () => copyToClipboard(getCurrentCopyText());
-  document.getElementById("copy-markdown").onclick = () => copyToClipboard(getCurrentCopyMarkdown());
-  document.getElementById("clear").onclick = () => {
+  copyTextButtonEl.onclick = () => copyToClipboard(getCurrentCopyText());
+  copyMarkdownButtonEl.onclick = () => copyToClipboard(getCurrentCopyMarkdown());
+  clearButtonEl.onclick = () => {
     clearChat();
     setStatus(appState.localizedStrings.content_cleared_status || "Content cleared.");
   };
-  document.getElementById("close-window").onclick = () => requestCloseHost();
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      requestCloseHost();
-    }
-  });
+  closeWindowButtonEl.onclick = () => requestCloseHost();
+  document.addEventListener("keydown", handleGlobalShortcut);
   setupWebViewBridge();
   applyLocalizedStrings({ localized_strings: appState.localizedStrings });
 })();

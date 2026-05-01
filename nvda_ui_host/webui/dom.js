@@ -13,3 +13,7 @@ export const thinkToggleEl = document.getElementById('think-toggle');
 export const providerLabelEl = document.getElementById('provider-label');
 export const modelLabelEl = document.getElementById('model-label');
 export const thinkModeLabelEl = document.getElementById('think-mode-label');
+export const copyTextButtonEl = document.getElementById('copy-text');
+export const copyMarkdownButtonEl = document.getElementById('copy-markdown');
+export const clearButtonEl = document.getElementById('clear');
+export const closeWindowButtonEl = document.getElementById('close-window');

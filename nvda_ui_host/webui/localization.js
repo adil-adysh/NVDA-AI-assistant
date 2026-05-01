@@ -2,20 +2,15 @@ import {
     attachFilesEl,
     chatInputEl,
     chatSendEl,
+    clearButtonEl,
+    closeWindowButtonEl,
+    copyMarkdownButtonEl,
+    copyTextButtonEl,
     modelLabelEl,
     providerLabelEl,
     thinkModeLabelEl,
 } from './dom.js';
 import { appState } from './state.js';
-
-function getToolbarRefs() {
-    return {
-        copyTextButton: document.getElementById('copy-text'),
-        copyMarkdownButton: document.getElementById('copy-markdown'),
-        clearButton: document.getElementById('clear'),
-        closeButton: document.getElementById('close-window'),
-    };
-}
 
 export function t(key, fallback = '') {
     return appState.localizedStrings[key] || fallback;
@@ -47,17 +42,16 @@ export function applyLocalizedStrings(payload) {
         chatInputEl.placeholder = t('chat_placeholder', 'Type your message...');
     }
 
-    const { copyTextButton, copyMarkdownButton, clearButton, closeButton } = getToolbarRefs();
-    if (copyTextButton) {
-        copyTextButton.textContent = t('copy_text_button', 'Copy text');
+    if (copyTextButtonEl) {
+        copyTextButtonEl.textContent = t('copy_text_button', 'Copy text');
     }
-    if (copyMarkdownButton) {
-        copyMarkdownButton.textContent = t('copy_markdown_button', 'Copy markdown');
+    if (copyMarkdownButtonEl) {
+        copyMarkdownButtonEl.textContent = t('copy_markdown_button', 'Copy markdown');
     }
-    if (clearButton) {
-        clearButton.textContent = t('clear_button', 'Clear');
+    if (clearButtonEl) {
+        clearButtonEl.textContent = t('clear_button', 'Clear');
     }
-    if (closeButton) {
-        closeButton.textContent = t('close_button', 'Close');
+    if (closeWindowButtonEl) {
+        closeWindowButtonEl.textContent = t('close_button', 'Close');
     }
 }

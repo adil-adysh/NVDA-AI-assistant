@@ -1,7 +1,7 @@
 import { attachmentStripEl, fileInputEl } from './dom.js';
 import { t } from './localization.js';
 import { appState } from './state.js';
-import { escapeHtml, setStatus } from './utils.js';
+import { escapeHtml, focusChatComposer, setStatus } from './utils.js';
 
 const TEXT_FILE_EXTENSIONS = new Set([
     'txt', 'md', 'markdown', 'json', 'yaml', 'yml', 'csv', 'tsv', 'py', 'js', 'ts', 'tsx', 'jsx', 'html', 'htm', 'xml', 'css', 'scss', 'less', 'java', 'c', 'cpp', 'h', 'hpp', 'rs', 'go', 'rb', 'php', 'sql', 'log',
@@ -47,6 +47,7 @@ export function upsertAttachment(attachment) {
 export function removeAttachment(attachmentId) {
     appState.chatState.attachments = appState.chatState.attachments.filter(item => item.id !== attachmentId);
     renderAttachments();
+    focusChatComposer();
 }
 
 function createAttachmentId(file) {
@@ -118,9 +119,12 @@ export async function handleFileSelection(event) {
         try {
             const attachment = await loadAttachment(file);
             upsertAttachment(attachment);
+            setStatus(`${t('attach_button', 'Attach')}: ${file.name}`);
         } catch (error) {
             console.error(error);
             setStatus(`${t('attach_failed_status', 'Unable to attach file.')} ${file.name}`.trim());
         }
     }
+
+    focusChatComposer();
 }

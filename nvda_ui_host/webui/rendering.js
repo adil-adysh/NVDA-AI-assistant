@@ -2,7 +2,7 @@ import { contentEl } from './dom.js';
 import { clearPendingAttachments, renderAttachments, upsertAttachment } from './attachments.js';
 import { t } from './localization.js';
 import { appState } from './state.js';
-import { copyToClipboard, escapeHtml, setChatPanelVisible, setStatus } from './utils.js';
+import { copyToClipboard, escapeHtml, focusPendingTarget, queueFocus, setChatPanelVisible, setStatus } from './utils.js';
 
 export function normalizeContentBlocks(content) {
     if (Array.isArray(content)) {
@@ -106,7 +106,7 @@ export function getCurrentPlainText() {
     if (appState.chatState.active) {
         return appState.chatState.messages
             .map(message => {
-                const role = String(message.role || 'assistant');
+                const role = formatRoleLabel(message.role || 'assistant');
                 const text = extractTextFromBlocks(message.content);
                 return text ? `${role}: ${text}` : '';
             })
@@ -127,10 +127,33 @@ export function getCurrentCopyText() {
 
 export function getCurrentCopyMarkdown() {
     if (appState.viewState.mode === 'chat') {
-        return '';
+        return buildChatMarkdownTranscript() || getCurrentPlainText();
     }
 
-    return appState.copyMarkdown || appState.copyText || getCurrentPlainText() || contentEl.textContent || '';
+    return appState.copyMarkdown || extractMarkdownFromBlocks(appState.displayState.blocks) || appState.copyText || getCurrentPlainText() || contentEl.textContent || '';
+}
+
+function formatRoleLabel(role) {
+    const value = String(role || 'assistant').trim().toLowerCase();
+    if (value === 'user') {
+        return t('user_heading', 'User prompt');
+    }
+    if (value === 'assistant') {
+        return t('assistant_heading', 'Assistant response');
+    }
+    return value ? `${value.charAt(0).toUpperCase()}${value.slice(1)}` : t('assistant_heading', 'Assistant response');
+}
+
+function buildChatMarkdownTranscript() {
+    return appState.chatState.messages.map((message, index) => {
+        if (!message) {
+            return '';
+        }
+        const roleLabel = formatRoleLabel(message.role || 'assistant');
+        const heading = index % 2 === 0 ? '#####' : '######';
+        const body = extractMarkdownFromBlocks(message.content);
+        return body ? `${heading} ${roleLabel}\n\n${body}` : `${heading} ${roleLabel}`;
+    }).filter(Boolean).join('\n\n');
 }
 
 function createActionsHtml(actions) {
@@ -206,17 +229,22 @@ function createChatMessageActionsHtml(message) {
 }
 
 function createChatMessageHtml(message) {
-    const role = message.role || 'user';
+    const role = String(message.role || 'user').trim().toLowerCase() || 'user';
+    const roleLabel = formatRoleLabel(role);
     const actions = createChatMessageActionsHtml(message);
+    const headingTag = role === 'assistant' ? 'h5' : 'h6';
 
     return `
-        <div class="chat-message ${escapeHtml(role)}" data-message-id="${escapeHtml(message.id || '')}">
+        <article class="chat-message ${escapeHtml(role)}" data-message-id="${escapeHtml(message.id || '')}" aria-label="${escapeHtml(roleLabel)}">
             <div class="chat-message-header">
-                <div class="role">${escapeHtml(role)}</div>
+                <div class="chat-message-title-group">
+                    <${headingTag} class="role">${escapeHtml(roleLabel)}</${headingTag}>
+                    <p class="message-subtitle">${escapeHtml(role === 'assistant' ? 'Response' : 'Prompt')}</p>
+                </div>
                 ${actions}
             </div>
             <div class="text">${renderBlocksHtml(message.content)}</div>
-        </div>
+        </article>
     `;
 }
 
@@ -269,7 +297,9 @@ export function copyMessageMarkdown(messageId) {
     if (!message) {
         return;
     }
-    copyToClipboard(extractMarkdownFromBlocks(message.content));
+    const roleLabel = formatRoleLabel(message.role || 'assistant');
+    const markdown = `##### ${roleLabel}\n\n${extractMarkdownFromBlocks(message.content)}`.trim();
+    copyToClipboard(markdown);
 }
 
 export function copyMessageTable(messageId) {
@@ -283,19 +313,23 @@ export function copyMessageTable(messageId) {
     copyToClipboard(tableElementToMarkdown(tableEl));
 }
 
-export function renderDisplayState() {
+export function renderDisplayState(focusTarget = null) {
     appState.viewState.mode = 'display';
+    if (focusTarget) {
+        queueFocus(focusTarget);
+    }
     renderCurrentView();
 }
 
-export function setDisplayText(text) {
+export function setDisplayText(text, focusTarget = null) {
     appState.displayState.blocks = text ? [{ type: 'text', text }] : [];
     appState.displayState.actions = [];
-    renderDisplayState();
+    renderDisplayState(focusTarget);
 }
 
 export function renderChatState() {
     appState.viewState.mode = 'chat';
+    queueFocus('composer');
     renderCurrentView();
     scrollChatToBottom();
 }
@@ -306,12 +340,14 @@ export function renderCurrentView() {
         contentEl.innerHTML = html || t('no_chat_messages', 'No chat messages available.');
         setChatPanelVisible(true);
         renderAttachments();
+        focusPendingTarget();
         return;
     }
 
     contentEl.innerHTML = `${renderBlocksHtml(appState.displayState.blocks)}${createActionsHtml(appState.displayState.actions)}`;
     setChatPanelVisible(false);
     renderAttachments();
+    focusPendingTarget();
 }
 
 export function renderChatHistory(payload) {
@@ -385,7 +421,7 @@ export function resetDisplayState() {
 export function clearChat() {
     resetChatState();
     resetDisplayState();
-    renderDisplayState();
+    renderDisplayState('content');
 }
 
 export function scrollChatToBottom() {

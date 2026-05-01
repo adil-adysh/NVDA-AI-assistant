@@ -50,6 +50,8 @@ export const appState = {
         command_prefix: 'Command',
         unhandled_command_prefix: 'Unhandled command',
         result_action_fallback_label: 'Action',
+        assistant_heading: 'Assistant response',
+        user_heading: 'User prompt',
     },
     chatState: {
         active: false,
@@ -64,5 +66,6 @@ export const appState = {
     },
     viewState: {
         mode: 'display',
+        pendingFocus: null,
     },
 };
