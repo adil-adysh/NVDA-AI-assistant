@@ -3,6 +3,10 @@ import {
     attachFilesEl,
     chatInputEl,
     chatSendEl,
+    clearButtonEl,
+    closeWindowButtonEl,
+    copyMarkdownButtonEl,
+    copyTextButtonEl,
     contentEl,
     fileInputEl,
     modelInputEl,
@@ -12,6 +16,7 @@ import {
 import { handleFileSelection, removeAttachment } from './attachments.js';
 import {
     handleHostEnvelope,
+    handleGlobalShortcut,
     handleResultActionClick,
     requestCloseHost,
     setupWebViewBridge,
@@ -88,18 +93,14 @@ attachmentStripEl?.addEventListener('click', event => {
     }
 });
 
-document.getElementById('copy-text').onclick = () => copyToClipboard(getCurrentCopyText());
-document.getElementById('copy-markdown').onclick = () => copyToClipboard(getCurrentCopyMarkdown());
-document.getElementById('clear').onclick = () => {
+copyTextButtonEl.onclick = () => copyToClipboard(getCurrentCopyText());
+copyMarkdownButtonEl.onclick = () => copyToClipboard(getCurrentCopyMarkdown());
+clearButtonEl.onclick = () => {
     clearChat();
     setStatus(appState.localizedStrings.content_cleared_status || 'Content cleared.');
 };
-document.getElementById('close-window').onclick = () => requestCloseHost();
-document.addEventListener('keydown', event => {
-    if (event.key === 'Escape') {
-        requestCloseHost();
-    }
-});
+closeWindowButtonEl.onclick = () => requestCloseHost();
+document.addEventListener('keydown', handleGlobalShortcut);
 
 setupWebViewBridge();
 applyLocalizedStrings({ localized_strings: appState.localizedStrings });
