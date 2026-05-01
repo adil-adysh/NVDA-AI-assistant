@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import base64
 import json
+from collections.abc import Iterable
 from typing import Any
 
 from ...core.canonical import Message, Tool
@@ -10,7 +12,7 @@ from ...core.tooling import ToolCall
 from ...tools import build_function_tool_definition, normalize_tool_calls
 from ...openai import OpenAIClient, OpenAIClientError
 from ..config import OpenAIConfig
-from ..interfaces import LLMProvider, LLMProviderError, PartialCallback, ProgressCallback
+from ..interfaces import LLMProvider, LLMProviderError, PartialCallback, ProgressCallback, ProviderModelInfo, SamplingDefaults
 
 
 class OpenAIProvider(LLMProvider):
@@ -30,10 +32,10 @@ class OpenAIProvider(LLMProvider):
         return "openai"
 
     def supports_streaming(self) -> bool:
-        return False
+        return self._capabilities_for_model(self._resolve_model()).supports("streaming")
 
     def supports_image_description(self) -> bool:
-        return False
+        return self._capabilities_for_model(self._resolve_model()).supports("image_input")
 
     def _wrap_exception(self, error: Exception) -> LLMProviderError:
         if isinstance(error, LLMProviderError):
@@ -46,9 +48,100 @@ class OpenAIProvider(LLMProvider):
             raise LLMProviderError("OpenAI model name is required.")
         return model.strip()
 
+    def list_models(self) -> tuple[ProviderModelInfo, ...]:
+        try:
+            response = self._client.list_models()
+        except OpenAIClientError as error:
+            if self._should_fallback_to_configured_model(error):
+                return (self._capabilities_for_model(self._resolve_model()),)
+            raise self._wrap_exception(error) from error
+
+        models = response.get("data")
+        if not isinstance(models, list):
+            return ()
+
+        return tuple(
+            self._normalize_model_info(item)
+            for item in models
+            if isinstance(item, dict) and str(item.get("id", "")).strip()
+        )
+
+    def get_model_info(self, model_name: str | None = None) -> ProviderModelInfo | None:
+        resolved_model = (model_name or self._resolve_model()).strip()
+        if not resolved_model:
+            return None
+        try:
+            response = self._client.get_model(resolved_model)
+        except OpenAIClientError as error:
+            if self._should_fallback_to_configured_model(error):
+                return self._capabilities_for_model(resolved_model)
+            raise self._wrap_exception(error) from error
+        return self._normalize_model_info(response)
+
+    def _should_fallback_to_configured_model(self, error: OpenAIClientError) -> bool:
+        if getattr(error, "status_code", None) != 404:
+            return False
+        path = str(getattr(error, "path", "") or "")
+        return "/models" in path
+
+    def _capabilities_for_model(self, model_name: str) -> ProviderModelInfo:
+        return self._normalize_model_info({"id": model_name})
+
+    def _normalize_model_info(self, data: dict[str, Any]) -> ProviderModelInfo:
+        model_id = str(data.get("id", "")).strip()
+        lowered = model_id.lower()
+        capabilities: set[str] = set()
+        sampling_defaults = SamplingDefaults(temperature=1.0, top_p=1.0)
+
+        if lowered:
+            capabilities.add("streaming")
+
+        if any(token in lowered for token in ("gpt", "chatgpt", "o1", "o3")):
+            capabilities.update(("chat", "completion", "tools", "text_input", "text_output"))
+
+        if lowered.startswith(("gpt-5", "o1", "o3")):
+            capabilities.add("thinking")
+
+        if lowered.startswith(("gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-5", "o1", "o3")):
+            capabilities.add("image_input")
+
+        if lowered.startswith(("gpt-audio", "gpt-realtime")):
+            capabilities.update(("audio_input", "audio_output"))
+
+        if lowered.startswith("gpt-realtime"):
+            capabilities.add("realtime")
+
+        if lowered.startswith("gpt-image"):
+            capabilities.add("image_output")
+
+        if lowered.endswith(("transcribe", "transcription")):
+            capabilities.update(("audio_input",))
+
+        return ProviderModelInfo(
+            id=model_id,
+            provider=self.provider_name(),
+            display_name=model_id or None,
+            owned_by=str(data.get("owned_by", "")).strip() or None,
+            created=data.get("created") if isinstance(data.get("created"), int) else None,
+            capabilities=tuple(sorted(capabilities)),
+            sampling_defaults=sampling_defaults,
+            raw=data,
+        )
+
     def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
         model = self._resolve_model()
         try:
+            if stream_handler is not None:
+                text, _, _ = self._stream_chat_completion(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant that summarizes text concisely."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    stream_handler=stream_handler,
+                )
+                return SummaryResponse(text=text, model=model, provider=self.provider_name())
+
             response = self._client.create_chat_completion(
                 model=model,
                 messages=[
@@ -57,7 +150,6 @@ class OpenAIProvider(LLMProvider):
                 ],
                 temperature=self._config.generate_temperature,
                 top_p=self._config.generate_top_p,
-                top_k=self._config.generate_top_k,
                 max_tokens=self._config.generate_max_tokens,
             )
         except OpenAIClientError as error:
@@ -72,34 +164,89 @@ class OpenAIProvider(LLMProvider):
         prompt: str,
         stream_handler: PartialCallback | None = None,
     ) -> SummaryResponse:
-        raise LLMProviderError("Image description is not supported by the OpenAI provider.")
+        model = self._resolve_model()
+        if not self._capabilities_for_model(model).supports("image_input"):
+            raise LLMProviderError(f"OpenAI model {model} does not advertise image input support.")
+
+        message = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+                },
+            ],
+        }
+
+        try:
+            if stream_handler is not None:
+                text, _, _ = self._stream_chat_completion(
+                    model=model,
+                    messages=[message],
+                    stream_handler=stream_handler,
+                )
+                return SummaryResponse(text=text, model=model, provider=self.provider_name())
+
+            response = self._client.create_chat_completion(
+                model=model,
+                messages=[message],
+                temperature=self._config.generate_temperature,
+                top_p=self._config.generate_top_p,
+                max_tokens=self._config.generate_max_tokens,
+            )
+        except OpenAIClientError as error:
+            raise self._wrap_exception(error) from error
+
+        choice = self._parse_choice(response)
+        return SummaryResponse(text=choice.get("content", "") or "", model=model, provider=self.provider_name())
 
     def _convert_message(self, message: Message) -> dict[str, Any]:
-        content_parts: list[str] = []
+        text_parts: list[str] = []
+        content_parts: list[dict[str, Any]] = []
         for part in message.parts:
             if part.type == "text" and part.text is not None:
-                content_parts.append(part.text)
+                text_parts.append(part.text)
+                content_parts.append({"type": "text", "text": part.text})
             elif part.type == "tool_result":
                 if part.tool_result is not None:
-                    content_parts.append(json.dumps(part.tool_result))
+                    text = json.dumps(part.tool_result)
                 elif part.text is not None:
-                    content_parts.append(part.text)
+                    text = part.text
+                else:
+                    text = ""
+                text_parts.append(text)
+                content_parts.append({"type": "text", "text": text})
             elif part.type == "image":
-                content_parts.append("[IMAGE ATTACHED]")
+                if part.image is not None:
+                    image_base64 = base64.b64encode(part.image).decode("ascii")
+                    content_parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+                        }
+                    )
+                    text_parts.append("[IMAGE ATTACHED]")
             elif part.type == "tool_call":
-                content_parts.append(
-                    f"[tool call: {part.tool_name or 'unknown'} arguments={json.dumps(part.tool_args or {})}]"
-                )
+                rendered = f"[tool call: {part.tool_name or 'unknown'} arguments={json.dumps(part.tool_args or {})}]"
+                text_parts.append(rendered)
+                content_parts.append({"type": "text", "text": rendered})
+
+        if message.role == "tool":
+            return {
+                "role": message.role,
+                "content": "\n".join(text_parts) if text_parts else "",
+            }
 
         return {
             "role": message.role,
-            "content": "\n".join(content_parts) if content_parts else "",
+            "content": content_parts if any(part.get("type") == "image_url" for part in content_parts) else "\n".join(text_parts),
         }
 
-    def _build_function_definitions(self, tools: list[Tool] | None) -> list[dict[str, Any]] | None:
+    def _build_tool_definitions(self, tools: list[Tool] | None) -> list[dict[str, Any]] | None:
         if not tools:
             return None
-        return [build_function_tool_definition(tool)["function"] for tool in tools]
+        return [build_function_tool_definition(tool) for tool in tools]
 
     def _parse_choice(self, response: dict[str, Any]) -> dict[str, Any]:
         choices = response.get("choices")
@@ -114,19 +261,100 @@ class OpenAIProvider(LLMProvider):
         return {}
 
     def _extract_tool_calls(self, choice: dict[str, Any]) -> list[ToolCall] | None:
+        tool_calls = choice.get("tool_calls")
+        if isinstance(tool_calls, list):
+            return normalize_tool_calls(tool_calls)
+
         function_call = choice.get("function_call")
         if isinstance(function_call, dict):
-            return normalize_tool_calls(
-                [
-                    {
-                        "functionCall": {
-                            "name": function_call.get("name", ""),
-                            "args": function_call.get("arguments", {}),
-                        }
-                    }
-                ]
-            )
+            return normalize_tool_calls([{"function": function_call}])
         return None
+
+    def _stream_chat_completion(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        stream_handler: PartialCallback,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> tuple[str, list[ToolCall] | None, list[dict[str, Any]]]:
+        accumulated_text = ""
+        chunks: list[dict[str, Any]] = []
+        streamed_tool_calls: dict[int, dict[str, Any]] = {}
+
+        for chunk in self._client.stream_chat_completion(
+            model=model,
+            messages=messages,
+            temperature=self._config.generate_temperature,
+            top_p=self._config.generate_top_p,
+            max_tokens=self._config.generate_max_tokens,
+            tools=tools,
+        ):
+            chunks.append(chunk)
+            choices = chunk.get("choices")
+            if not isinstance(choices, list):
+                continue
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                delta = choice.get("delta")
+                if not isinstance(delta, dict):
+                    continue
+
+                content = delta.get("content")
+                if isinstance(content, str) and content:
+                    accumulated_text = f"{accumulated_text}{content}"
+                    stream_handler(accumulated_text, len(accumulated_text))
+
+                self._merge_streamed_tool_calls(streamed_tool_calls, delta.get("tool_calls"))
+
+                function_call = delta.get("function_call")
+                if isinstance(function_call, dict):
+                    self._merge_streamed_tool_calls(
+                        streamed_tool_calls,
+                        [
+                            {
+                                "index": 0,
+                                "function": function_call,
+                            }
+                        ],
+                    )
+
+        normalized_tool_calls = normalize_tool_calls(
+            [streamed_tool_calls[index] for index in sorted(streamed_tool_calls)]
+        )
+        return accumulated_text, normalized_tool_calls, chunks
+
+    def _merge_streamed_tool_calls(
+        self,
+        streamed_tool_calls: dict[int, dict[str, Any]],
+        payload: Any,
+    ) -> None:
+        if not isinstance(payload, list):
+            return
+
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            index = item.get("index")
+            if not isinstance(index, int):
+                continue
+            target = streamed_tool_calls.setdefault(index, {"type": "function", "function": {"name": "", "arguments": ""}})
+            if isinstance(item.get("id"), str):
+                target["id"] = item["id"]
+            if isinstance(item.get("type"), str):
+                target["type"] = item["type"]
+
+            function_payload = item.get("function")
+            if not isinstance(function_payload, dict):
+                continue
+
+            target_function = target.setdefault("function", {})
+            if isinstance(function_payload.get("name"), str):
+                target_function["name"] = f"{target_function.get('name', '')}{function_payload['name']}"
+            if isinstance(function_payload.get("arguments"), str):
+                target_function["arguments"] = (
+                    f"{target_function.get('arguments', '')}{function_payload['arguments']}"
+                )
 
     def _handle_chat(
         self,
@@ -139,14 +367,28 @@ class OpenAIProvider(LLMProvider):
 
         payload_messages = [self._convert_message(message) for message in messages]
         try:
+            if stream_handler is not None:
+                text, tool_calls, chunks = self._stream_chat_completion(
+                    model=self._resolve_model(),
+                    messages=payload_messages,
+                    stream_handler=stream_handler,
+                    tools=self._build_tool_definitions(tools),
+                )
+                return LLMResponse(
+                    text=text,
+                    model=self._resolve_model(),
+                    raw={"chunks": chunks, "stream": True},
+                    metrics=None,
+                    tool_calls=tool_calls,
+                )
+
             response = self._client.create_chat_completion(
                 model=self._resolve_model(),
                 messages=payload_messages,
                 temperature=self._config.generate_temperature,
                 top_p=self._config.generate_top_p,
-                top_k=self._config.generate_top_k,
                 max_tokens=self._config.generate_max_tokens,
-                functions=self._build_function_definitions(tools),
+                tools=self._build_tool_definitions(tools),
             )
         except OpenAIClientError as error:
             raise self._wrap_exception(error) from error

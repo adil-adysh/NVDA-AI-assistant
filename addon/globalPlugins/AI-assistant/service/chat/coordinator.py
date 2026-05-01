@@ -13,6 +13,7 @@ from ...core.message_transforms import build_user_message
 from ...core.messages import ChatMessage, LLMResponse
 from ...core.events import ProgressHandler
 from ..llm import ProviderLLMService
+from ...providers.interfaces import ProviderModelInfo
 from ...observability.reporter import MetricsReporter
 from .projector import project_chat_history
 from .session import ConversationSession
@@ -90,6 +91,12 @@ class ChatCoordinator(BaseCoordinator):
 		with self._session_lock:
 			self._session.reset()
 			self._session_generation += 1
+
+	def list_models(self) -> tuple[ProviderModelInfo, ...]:
+		return self._llm_service.list_models()
+
+	def get_model_info(self, model_name: str | None = None) -> ProviderModelInfo | None:
+		return self._llm_service.get_model_info(model_name=model_name)
 
 	def _begin_transaction(self, staged_messages: tuple[Message, ...]) -> tuple[ChatTurnTransaction, int]:
 		with self._session_lock:

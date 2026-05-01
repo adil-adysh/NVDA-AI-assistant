@@ -7,6 +7,7 @@ export const attachFilesEl = document.getElementById('attach-files');
 export const fileInputEl = document.getElementById('file-input');
 export const attachmentStripEl = document.getElementById('attachment-strip');
 export const providerSelectEl = document.getElementById('provider-select');
+export const modelSelectEl = document.getElementById('model-select');
 export const modelInputEl = document.getElementById('model-input');
 export const modelOptionsEl = document.getElementById('model-options');
 export const thinkToggleEl = document.getElementById('think-toggle');

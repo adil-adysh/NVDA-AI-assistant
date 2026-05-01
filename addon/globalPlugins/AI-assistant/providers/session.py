@@ -8,7 +8,7 @@ from ..core.canonical import Message, Tool
 from ..core.messages import LLMResponse, SummaryResponse
 from ..config.settings import get_active_provider_config
 from .config import ProviderConfig
-from .interfaces import LLMProvider, PartialCallback, ProgressCallback
+from .interfaces import LLMProvider, PartialCallback, ProgressCallback, ProviderModelInfo
 from .factory import ProviderFactory
 
 
@@ -39,6 +39,12 @@ class ProviderSession:
 
 	def supports_image_description(self) -> bool:
 		return self._provider.supports_image_description()
+
+	def list_models(self) -> tuple[ProviderModelInfo, ...]:
+		return self._provider.list_models()
+
+	def get_model_info(self, model_name: str | None = None) -> ProviderModelInfo | None:
+		return self._provider.get_model_info(model_name=model_name)
 
 	def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
 		return self._provider.summarize(prompt, stream_handler=stream_handler)

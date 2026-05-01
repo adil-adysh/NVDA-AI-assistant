@@ -8,7 +8,7 @@ from ..core.events import ProgressEvent, ProgressHandler
 from ..core.canonical import Message, Tool
 from ..core.message_transforms import build_assistant_message, build_tool_result_message
 from ..core.messages import LLMResponse, SummaryResponse, ToolExecutionResult
-from ..providers.interfaces import LLMProvider, PartialCallback, ProgressCallback
+from ..providers.interfaces import LLMProvider, PartialCallback, ProgressCallback, ProviderModelInfo
 from ..tools import ToolExecutor
 from .chat.types import ConversationTurnResult
 
@@ -21,6 +21,12 @@ class LLMService(Protocol):
 		...
 
 	def supports_image_description(self) -> bool:
+		...
+
+	def list_models(self) -> tuple[ProviderModelInfo, ...]:
+		...
+
+	def get_model_info(self, model_name: str | None = None) -> ProviderModelInfo | None:
 		...
 
 	def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
@@ -65,6 +71,12 @@ class ProviderLLMService:
 
 	def supports_image_description(self) -> bool:
 		return self._provider.supports_image_description()
+
+	def list_models(self) -> tuple[ProviderModelInfo, ...]:
+		return self._provider.list_models()
+
+	def get_model_info(self, model_name: str | None = None) -> ProviderModelInfo | None:
+		return self._provider.get_model_info(model_name=model_name)
 
 	def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
 		return self._provider.summarize(prompt, stream_handler=stream_handler)

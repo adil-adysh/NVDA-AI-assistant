@@ -6,6 +6,7 @@ import {
     copyTextButtonEl,
     modelInputEl,
     modelOptionsEl,
+    modelSelectEl,
     providerSelectEl,
     thinkToggleEl,
 } from './dom.js';
@@ -53,9 +54,23 @@ function renderControlState(payload) {
         providerSelectEl.value = appState.controlState.selectedProvider;
     }
 
+    const modelOptionsMarkup = appState.controlState.availableModels
+        .map(model => {
+            const value = String(model);
+            return `<option value="${value}">${value}</option>`;
+        })
+        .join('');
     modelOptionsEl.innerHTML = appState.controlState.availableModels
         .map(model => `<option value="${String(model)}"></option>`)
         .join('');
+    modelSelectEl.innerHTML = modelOptionsMarkup || `<option value="">${appState.controlState.selectedModel || ''}</option>`;
+    if (appState.controlState.selectedModel) {
+        const existingOption = appState.controlState.availableModels.some(model => String(model) === appState.controlState.selectedModel);
+        if (!existingOption) {
+            modelSelectEl.innerHTML = `${modelSelectEl.innerHTML}<option value="${appState.controlState.selectedModel}">${appState.controlState.selectedModel}</option>`;
+        }
+        modelSelectEl.value = appState.controlState.selectedModel;
+    }
     modelInputEl.value = appState.controlState.selectedModel;
     thinkToggleEl.checked = appState.controlState.thinkEnabled;
 }
@@ -127,6 +142,15 @@ export function submitModelSelection() {
         provider: providerSelectEl.value.trim() || null,
         model,
     });
+}
+
+export function submitModelSelectSelection() {
+    const model = modelSelectEl.value.trim();
+    if (!model) {
+        return;
+    }
+    modelInputEl.value = model;
+    submitModelSelection();
 }
 
 export function submitThinkModeToggle() {

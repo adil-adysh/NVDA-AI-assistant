@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from dataclasses import dataclass, field
 from typing import Any, TypedDict
 
 
@@ -89,6 +90,46 @@ class OllamaShowResponse(TypedDict, total=False):
     template: str
     details: dict[str, Any]
     model_info: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class OllamaModelMetadata:
+    name: str
+    details: dict[str, Any] = field(default_factory=dict)
+    model_info: dict[str, Any] = field(default_factory=dict)
+    parameter_defaults: dict[str, str] = field(default_factory=dict)
+    modelfile: str = ""
+    template: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    @staticmethod
+    def from_show_response(name: str, response: OllamaShowResponse | None = None) -> "OllamaModelMetadata":
+        payload = dict(response or {})
+        parameters = OllamaModelMetadata._parse_parameter_defaults(str(payload.get("parameters", "")))
+        details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+        model_info = payload.get("model_info") if isinstance(payload.get("model_info"), dict) else {}
+        return OllamaModelMetadata(
+            name=str(name or "").strip(),
+            details=dict(details),
+            model_info=dict(model_info),
+            parameter_defaults=parameters,
+            modelfile=str(payload.get("modelfile", "") or ""),
+            template=str(payload.get("template", "") or ""),
+            raw=payload,
+        )
+
+    @staticmethod
+    def _parse_parameter_defaults(parameters: str) -> dict[str, str]:
+        parsed: dict[str, str] = {}
+        for raw_line in parameters.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            key, _, value = line.partition(" ")
+            if not key or not value:
+                continue
+            parsed[key.strip()] = value.strip()
+        return parsed
 
 
 class OllamaErrorResponse(TypedDict, total=False):
