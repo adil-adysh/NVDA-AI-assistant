@@ -30,19 +30,13 @@
 </script>
 
 {#if appState.view.mode === 'chat'}
-    <section id="chat-panel" class="workspace-card chat-panel" aria-labelledby="chat-heading">
-        <div class="section-header">
-            <h2 id="chat-heading" class="section-title">Chat Composer</h2>
-            <div class="composer-toolbar">
-                <button id="attach-files" type="button" aria-keyshortcuts="Alt+Shift+A" onclick={() => fileInputElement?.click()}>{t('attach_button', 'Attach')}</button>
-                <input id="file-input" bind:this={fileInputElement} type="file" multiple hidden onchange={handleInputFiles} />
-            </div>
-        </div>
+    <section id="chat-panel" class="workspace-card chat-panel" aria-label={t('chat_heading', 'Chat')}>
+        <input id="file-input" bind:this={fileInputElement} type="file" multiple hidden onchange={handleInputFiles} />
 
         <AttachmentStrip />
 
         <label class="composer-field" for="chat-input">
-            <span class="composer-label">Message</span>
+            <span class="composer-label">{t('message_label', 'Message')}</span>
             <textarea
                 id="chat-input"
                 bind:this={composerElement}
@@ -54,6 +48,10 @@
                 onfocus={focusChatComposer}
             ></textarea>
         </label>
+
+        <div class="composer-toolbar">
+            <button id="attach-files" type="button" aria-keyshortcuts="Alt+Shift+A" onclick={() => fileInputElement?.click()}>{t('attach_button', 'Attach')}</button>
+        </div>
 
         <button id="chat-send" type="button" aria-keyshortcuts="Enter,Alt+Shift+S" onclick={() => submitChatMessage(fileInputElement)}>{t('send_button', 'Send')}</button>
     </section>

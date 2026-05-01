@@ -31,6 +31,7 @@ class UISessionMetadata(TypedDict, total=False):
 	available_models: list[str]
 	localized_strings: dict[str, str]
 	think_enabled: bool
+	status_message: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +65,21 @@ def build_localized_strings(translate: Translator) -> dict[str, str]:
 		"provider_label": translate("Provider"),
 		"model_label": translate("Model"),
 		"think_mode_label": translate("Think mode"),
+		"app_brand": translate("NVDA AI Assistant"),
+		"app_title": translate("Response Workspace"),
+		"content_heading": translate("Content"),
+		"status_heading": translate("Status"),
+		"chat_heading": translate("Chat"),
+		"message_label": translate("Message"),
+		"response_subtitle": translate("Response"),
+		"prompt_subtitle": translate("Prompt"),
+		"assistant_heading": translate("Assistant response"),
+		"user_heading": translate("User prompt"),
+		"session_controls_label": translate("Session controls"),
+		"content_actions_label": translate("Content actions"),
+		"result_actions_label": translate("Result actions"),
+		"message_actions_label": translate("Message actions"),
+		"pending_attachments_label": translate("Pending attachments"),
 		"attach_button": translate("Attach"),
 		"send_button": translate("Send"),
 		"copy_text_button": translate("Copy text"),
@@ -104,6 +120,10 @@ def build_localized_strings(translate: Translator) -> dict[str, str]:
 		"host_unavailable_message": translate("AI WebView host is unavailable."),
 		"chat_submission_failed_title": translate("Chat submission failed"),
 		"attached_file_label": translate("Attached file"),
+		"provider_switching_status": translate("Switching provider..."),
+		"model_switching_status": translate("Updating model..."),
+		"think_mode_updating_status": translate("Updating think mode..."),
+		"control_update_failed_status": translate("Unable to update session controls."),
 	}
 
 

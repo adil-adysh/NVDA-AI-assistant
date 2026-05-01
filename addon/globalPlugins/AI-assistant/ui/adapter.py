@@ -14,6 +14,7 @@ from .host_lifecycle import HostLifecycleService, HostLifecycleState
 from . import nvda_ui
 from .host_renderer import HostRenderer, HostUnavailableError
 from .view_models import ChatWindowViewModel, DisplayResultViewModel
+from ..utils.markdown import render_markdown_to_html
 
 
 class UIAdapter:
@@ -144,8 +145,10 @@ class UIAdapter:
 		view_model: ChatWindowViewModel,
 		coordinator: Any | None = None,
 		tool_registry: Any | None = None,
+		history_messages: list[dict[str, Any]] | None = None,
 	) -> None:
 		metadata = dict(view_model.metadata)
+		conversation_id = metadata.get("conversation_id") if isinstance(metadata.get("conversation_id"), str) else None
 		self._remember_session_metadata(metadata)
 		if coordinator is not None:
 			def handle_chat_submission(message: str, conversation_id: str | None, event_payload: dict[str, Any] | None) -> None:
@@ -171,6 +174,16 @@ class UIAdapter:
 			),
 			self._notify_host_unavailable,
 		)
+		if history_messages and conversation_id and self._host_lifecycle.should_dispatch_background_command():
+			self._dispatch_host_command(
+				lambda: self._host_renderer.chat_set_history(
+					view_model.use_case_id,
+					conversation_id,
+					history_messages,
+					metadata=metadata,
+				),
+				lambda: None,
+			)
 
 	def open_chat(
 		self,
@@ -241,8 +254,10 @@ class UIAdapter:
 		if image_base64:
 			user_content.append(
 				{
-					"type": "text",
-					"text": localized_strings.get("image_attachment_notice", "[Image attachment included]"),
+					"type": "image",
+					"image_base64": image_base64,
+					"mime_type": "image/png",
+					"alt": localized_strings.get("image_attachment_notice", "[Image attachment included]"),
 				}
 			)
 		self._host_renderer.chat_append(
@@ -256,10 +271,14 @@ class UIAdapter:
 		)
 		assistant_message_id = self._new_message_id("assistant")
 		streaming_started = False
+		streaming_chunks: list[str] = []
 
 		def update_streaming_message(partial_text: str, _generated_chars: int) -> None:
 			nonlocal streaming_started
-			content = [{"type": "text", "text": partial_text}] if partial_text else []
+			if partial_text:
+				streaming_chunks.append(partial_text)
+			accumulated_text = "".join(streaming_chunks)
+			content = [{"type": "text", "text": accumulated_text}] if accumulated_text else []
 			if not streaming_started:
 				streaming_started = True
 				self._host_renderer.chat_append(
@@ -294,22 +313,18 @@ class UIAdapter:
 				if isinstance(metadata, dict):
 					thinking_trace = metadata.get("thinking_trace")
 			if isinstance(assistant_text, str) and assistant_text.strip():
-				assistant_content: list[dict[str, Any]] = [{"type": "text", "text": assistant_text.strip()}]
-				if isinstance(thinking_trace, str) and thinking_trace.strip():
-					assistant_content.append(
-						{
-							"type": "thinking",
-							"text": thinking_trace.strip(),
-							"summary": localized_strings.get("thinking_trace_label", "Thinking trace"),
-							"collapsed": True,
-						}
-					)
+				assistant_content = self._build_assistant_content_blocks(
+					assistant_text,
+					localized_strings,
+					thinking_trace=thinking_trace if isinstance(thinking_trace, str) else None,
+				)
 				if streaming_started:
 					self._host_renderer.chat_update(
 						use_case_id,
 						conversation_id or "",
 						assistant_message_id,
 						assistant_content,
+						metadata={"focus_target": "composer"},
 					)
 				else:
 					self._host_renderer.chat_append(
@@ -320,10 +335,36 @@ class UIAdapter:
 							"role": "assistant",
 							"content": assistant_content,
 						},
+						metadata={"focus_target": "composer"},
 					)
 		except Exception as error:
 			title = localized_strings.get("chat_submission_failed_title", "Chat submission failed")
 			self._host_renderer.show_error(title, details=str(error))
+
+	def _build_assistant_content_blocks(
+		self,
+		assistant_text: str,
+		localized_strings: dict[str, str],
+		thinking_trace: str | None = None,
+	) -> list[dict[str, Any]]:
+		content: list[dict[str, Any]] = []
+		normalized_text = assistant_text.strip()
+		if normalized_text:
+			rendered_html = render_markdown_to_html(normalized_text).strip()
+			if rendered_html:
+				content.append({"type": "html", "html": rendered_html})
+			else:
+				content.append({"type": "text", "text": normalized_text})
+		if isinstance(thinking_trace, str) and thinking_trace.strip():
+			content.append(
+				{
+					"type": "thinking",
+					"text": thinking_trace.strip(),
+					"summary": localized_strings.get("thinking_trace_label", "Thinking trace"),
+					"collapsed": True,
+				}
+			)
+		return content
 
 	def _extract_attachment_context(
 		self,
@@ -364,21 +405,45 @@ class UIAdapter:
 			log.exception("UIAdapter result action handler failed")
 
 	def _handle_provider_selection(self, provider: str) -> None:
-		set_provider(provider)
-		save()
-		self.sync_session_state(metadata=self._build_sync_metadata())
+		self._apply_control_change(lambda: self._set_provider_and_save(provider))
 
 	def _handle_model_selection(self, provider: str | None, model: str) -> None:
+		self._apply_control_change(lambda: self._set_model_and_save(provider, model))
+
+	def _handle_think_mode_toggle(self, enabled: bool) -> None:
+		self._apply_control_change(lambda: self._set_think_mode_and_save(enabled))
+
+	def _set_provider_and_save(self, provider: str) -> None:
+		set_provider(provider)
+		save()
+
+	def _set_model_and_save(self, provider: str | None, model: str) -> None:
 		if provider:
 			set_provider(provider)
 		set_model_name(model)
 		save()
-		self.sync_session_state(metadata=self._build_sync_metadata())
 
-	def _handle_think_mode_toggle(self, enabled: bool) -> None:
+	def _set_think_mode_and_save(self, enabled: bool) -> None:
 		set_ollama_think(enabled)
 		save()
-		self.sync_session_state(metadata=self._build_sync_metadata())
+
+	def _apply_control_change(self, operation: Callable[[], None]) -> None:
+		try:
+			operation()
+		except Exception as error:
+			log.exception("UIAdapter control update failed")
+			localized_strings = self._get_localized_strings()
+			message = str(error).strip() or localized_strings.get(
+				"control_update_failed_status",
+				"Unable to update session controls.",
+			)
+			nvda_ui.message(message)
+			self.sync_session_state(metadata=self._build_status_sync_metadata(message))
+
+	def _build_status_sync_metadata(self, status_message: str) -> dict[str, Any] | None:
+		metadata = dict(self._build_sync_metadata() or {})
+		metadata["status_message"] = status_message
+		return metadata
 
 	def _build_sync_metadata(self) -> dict[str, Any] | None:
 		if self._session_metadata_provider is None:

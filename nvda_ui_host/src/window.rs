@@ -130,7 +130,6 @@ fn drain_host_commands() {
     }
 
     logger::info(&format!("Flushing {} queued host commands to WebView", messages.len()));
-    show_and_focus_window();
     for command in messages {
         logger::debug(&format!("Posting queued command to WebView: {}", command.chars().take(120).collect::<String>()));
         if let Err(error) = crate::webview::post_host_command(command.as_str()) {

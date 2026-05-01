@@ -11,7 +11,7 @@ import gui
 from logHandler import log
 
 from ..config.state import ProviderState, subscribe_provider_state_change, unsubscribe_provider_state_change
-from ..config.settings import get_provider, get_provider_state, set_provider
+from ..config.settings import get_provider, get_provider_state, save, set_provider
 from ..ui.host_process import stop_host
 from ..ui.settings_panel import AIAssistantSettingsPanel
 from ..ui import nvda_ui
@@ -44,6 +44,7 @@ class AIAssistantApplication:
 		log.debug("Browser Assistant plugin initializing")
 		self._host = host
 		self._services = build_plugin_services()
+		self._last_provider_state = get_provider_state()
 		self.presenter = UseCasePresenter(
 			chat_coordinator=self._services.chat_coordinator,
 			tool_registry=self._services.tool_registry,
@@ -92,7 +93,11 @@ class AIAssistantApplication:
 		self._unregister_settings_panel()
 
 	def _on_provider_state_change(self, provider_state: ProviderState) -> None:
+		previous_state = self._last_provider_state
+		self._last_provider_state = provider_state
 		self.presenter.update_provider_state(provider_state)
+		if provider_state != previous_state:
+			self.background.start_model_preload()
 
 	def run_summary(self) -> None:
 		log.debug("AIAssistantApplication.run_summary called")
@@ -166,13 +171,12 @@ class AIAssistantApplication:
 			target_provider = providers[(providers.index(current_provider) + 1) % len(providers)]
 		try:
 			set_provider(target_provider)
+			save()
 		except Exception as error:
 			nvda_ui.message(str(error))
 			return
 
 		nvda_ui.message(_(f"AI provider switched to {target_provider.capitalize()}."))
-		self.presenter.update_provider_state(get_provider_state())
-		self.background.start_model_preload()
 
 	def show_assistant_layer_help(self) -> None:
 		nvda_ui.message(

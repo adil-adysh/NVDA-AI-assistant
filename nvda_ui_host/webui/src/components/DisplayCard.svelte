@@ -21,8 +21,8 @@
 
 <section class="workspace-card content-card" aria-labelledby="content-heading">
     <div class="section-header">
-        <h2 id="content-heading" class="section-title">Content</h2>
-        <div class="toolbar" aria-label="Content actions">
+        <h2 id="content-heading" class="section-title">{t('content_heading', 'Content')}</h2>
+        <div class="toolbar" aria-label={t('content_actions_label', 'Content actions')}>
             <button id="copy-text" type="button" aria-keyshortcuts="Alt+Shift+T" onclick={copyCurrentText}>{t('copy_text_button', 'Copy text')}</button>
             <button id="copy-markdown" type="button" aria-keyshortcuts="Alt+Shift+M" onclick={copyCurrentMarkdown}>{t('copy_markdown_button', 'Copy markdown')}</button>
             <button id="clear" type="button" aria-keyshortcuts="Alt+Shift+R" onclick={clearDisplayedContent}>{t('clear_button', 'Clear')}</button>
@@ -30,7 +30,7 @@
         </div>
     </div>
 
-    <div id="content" bind:this={contentElement} role="main" tabindex="-1" aria-describedby="shortcut-hint">
+    <div id="content" bind:this={contentElement} role="main" tabindex="-1">
         {#if isChatMode}
             {#if appState.chat.messages.length === 0}
                 {t('no_chat_messages', 'No chat messages available.')}
@@ -47,7 +47,7 @@
             {/each}
 
             {#if appState.display.actions.length > 0}
-                <div class="result-actions" aria-label="Result actions">
+                <div class="result-actions" aria-label={t('result_actions_label', 'Result actions')}>
                     <button
                         bind:this={firstActionElement}
                         type="button"
