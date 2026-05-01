@@ -17,6 +17,37 @@ from .view_models import ChatWindowViewModel, DisplayResultViewModel
 from ..utils.markdown import render_markdown_to_html
 
 
+def _normalize_stream_fragment(
+	known_text: str,
+	partial_text: str,
+	generated_chars: int,
+) -> tuple[str, str]:
+	partial_text = partial_text or ""
+	if not partial_text:
+		return known_text, ""
+
+	known_length = len(known_text)
+	if generated_chars <= known_length:
+		return known_text, ""
+
+	if len(partial_text) == generated_chars:
+		normalized_text = partial_text
+	elif known_length + len(partial_text) == generated_chars:
+		normalized_text = f"{known_text}{partial_text}"
+	elif partial_text.startswith(known_text):
+		normalized_text = partial_text[:generated_chars]
+	else:
+		normalized_text = f"{known_text}{partial_text}"
+		if len(normalized_text) > generated_chars:
+			normalized_text = normalized_text[:generated_chars]
+
+	if not normalized_text.startswith(known_text):
+		return normalized_text, partial_text
+
+	delta_text = normalized_text[known_length:]
+	return normalized_text, delta_text
+
+
 class UIAdapter:
 	def __init__(self) -> None:
 		self._host_lifecycle = HostLifecycleService()
@@ -272,6 +303,7 @@ class UIAdapter:
 		assistant_message_id = self._new_message_id("assistant")
 		assistant_stream_id = str(uuid4())
 		streaming_started = False
+		normalized_stream_text = ""
 		pending_stream_delta_chunks: list[str] = []
 		pending_stream_delta_char_count = 0
 		stream_sequence = 0
@@ -317,12 +349,17 @@ class UIAdapter:
 			return True
 
 		def update_streaming_message(partial_text: str, _generated_chars: int) -> None:
-			nonlocal pending_stream_delta_char_count
+			nonlocal pending_stream_delta_char_count, normalized_stream_text
 			if not host_stream_updates_enabled:
 				return
-			if partial_text:
-				pending_stream_delta_chunks.append(partial_text)
-				pending_stream_delta_char_count += len(partial_text)
+			normalized_stream_text, delta_text = _normalize_stream_fragment(
+				normalized_stream_text,
+				partial_text,
+				_generated_chars,
+			)
+			if delta_text:
+				pending_stream_delta_chunks.append(delta_text)
+				pending_stream_delta_char_count += len(delta_text)
 			should_flush_update = not streaming_started or pending_stream_delta_char_count >= stream_update_interval
 			if not should_flush_update:
 				return
