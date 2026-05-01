@@ -270,6 +270,7 @@ class UIAdapter:
 			},
 		)
 		assistant_message_id = self._new_message_id("assistant")
+		assistant_stream_id = str(uuid4())
 		streaming_started = False
 		pending_stream_delta_chunks: list[str] = []
 		pending_stream_delta_char_count = 0
@@ -292,12 +293,14 @@ class UIAdapter:
 						use_case_id,
 						conversation_id or "",
 						assistant_message_id,
+						assistant_stream_id,
 					)
 					streaming_started = True
 				self._host_renderer.chat_stream_delta(
 					use_case_id,
 					conversation_id or "",
 					assistant_message_id,
+					assistant_stream_id,
 					delta_text,
 					stream_sequence,
 				)
@@ -353,6 +356,8 @@ class UIAdapter:
 								use_case_id,
 								conversation_id or "",
 								assistant_message_id,
+								assistant_stream_id,
+								stream_sequence - 1,
 								assistant_content,
 								metadata={"focus_target": "composer"},
 							)
@@ -374,6 +379,8 @@ class UIAdapter:
 									use_case_id,
 									conversation_id or "",
 									assistant_message_id,
+									assistant_stream_id,
+									stream_sequence - 1,
 									reason="final_commit_failed",
 								)
 							except Exception:

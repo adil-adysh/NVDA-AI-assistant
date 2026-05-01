@@ -87,6 +87,7 @@ class UIHostRenderer(ABC):
 		use_case_id: str | None,
 		conversation_id: str,
 		message_id: str,
+		stream_id: str,
 		role: str = "assistant",
 		metadata: dict[str, Any] | None = None,
 	) -> None:
@@ -98,6 +99,7 @@ class UIHostRenderer(ABC):
 		use_case_id: str | None,
 		conversation_id: str,
 		message_id: str,
+		stream_id: str,
 		delta: str,
 		sequence: int,
 		metadata: dict[str, Any] | None = None,
@@ -110,6 +112,8 @@ class UIHostRenderer(ABC):
 		use_case_id: str | None,
 		conversation_id: str,
 		message_id: str,
+		stream_id: str,
+		final_sequence: int,
 		content: list[dict[str, Any]] | str,
 		status: str | None = None,
 		metadata: dict[str, Any] | None = None,
@@ -122,6 +126,8 @@ class UIHostRenderer(ABC):
 		use_case_id: str | None,
 		conversation_id: str,
 		message_id: str,
+		stream_id: str,
+		last_sequence: int,
 		reason: str | None = None,
 		metadata: dict[str, Any] | None = None,
 	) -> None:

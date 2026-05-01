@@ -160,10 +160,12 @@ Payload fields:
 - `use_case_id`: string | null
 - `conversation_id`: string
 - `message_id`: string
+- `stream_id`: string
 - `role`: string, typically `assistant`
 - `metadata`: object | null
 
 This command starts a streamed chat message without requiring the add-on to resend the full message content on every partial token.
+A host-backed UI should treat `stream_id` as the identity of one ordered stream lifecycle for a given `message_id`.
 
 ### `chat_stream_delta`
 
@@ -172,6 +174,7 @@ Payload fields:
 - `use_case_id`: string | null
 - `conversation_id`: string
 - `message_id`: string
+- `stream_id`: string
 - `delta`: string
 - `sequence`: integer
 - `metadata`: object | null
@@ -185,11 +188,14 @@ Payload fields:
 - `use_case_id`: string | null
 - `conversation_id`: string
 - `message_id`: string
+- `stream_id`: string
+- `final_sequence`: integer
 - `content`: string | array
 - `status`: string | null
 - `metadata`: object | null
 
 This command commits the final structured content for a streamed message. It is the point where rich blocks such as HTML, thinking traces, or citations should replace any temporary delta-rendered text.
+The host should only finalize a stream when `stream_id` matches the active stream for that message and `final_sequence` is not older than the latest applied delta.
 
 ### `chat_stream_abort`
 
@@ -198,10 +204,19 @@ Payload fields:
 - `use_case_id`: string | null
 - `conversation_id`: string
 - `message_id`: string
+- `stream_id`: string
+- `last_sequence`: integer
 - `reason`: string | null
 - `metadata`: object | null
 
 This command marks an in-progress streamed message as aborted when the stream cannot be completed in the host projection.
+
+Recommended state machine:
+
+- `chat_stream_begin` starts or replaces the active stream identified by `stream_id`
+- `chat_stream_delta` is applied only to the active stream and only when `sequence` is newer than the latest applied delta
+- `chat_stream_end` finalizes only the active stream and only when `final_sequence` is at least the latest applied delta sequence
+- `chat_stream_abort` aborts only the active stream and only when `last_sequence` is at least the latest applied delta sequence
 
 ### `show_error`
 

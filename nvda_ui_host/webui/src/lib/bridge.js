@@ -183,27 +183,57 @@ function ensureStreamingMessage(payload) {
         role: payload.role || 'assistant',
         content: Array.isArray(payload.content) ? payload.content : [],
         streaming: true,
+        streamId: typeof payload.stream_id === 'string' ? payload.stream_id : null,
         streamSequence: -1,
     };
     appState.chat.messages.push(streamingMessage);
     return streamingMessage;
 }
 
+function findStreamingMessage(messageId) {
+    return appState.chat.messages.find(message => message.id === messageId) || null;
+}
+
 function beginChatStream(payload) {
+    const messageId = payload.message_id || payload.id;
+    const streamId = typeof payload.stream_id === 'string' && payload.stream_id.trim() ? payload.stream_id.trim() : null;
+    if (!messageId || !streamId) {
+        return;
+    }
+
     appState.chat.active = true;
 
     if (payload.conversation_id) {
         appState.chat.conversationId = payload.conversation_id;
     }
 
-    ensureStreamingMessage(payload);
+    const existingMessage = findStreamingMessage(messageId);
+    if (!existingMessage) {
+        ensureStreamingMessage(payload);
+    } else {
+        appState.chat.messages = appState.chat.messages.map(message =>
+            message.id === messageId
+                ? {
+                      ...message,
+                      role: payload.role || message.role || 'assistant',
+                      content: message.streamId === streamId ? message.content : [],
+                      streaming: true,
+                      streamId,
+                      streamSequence: message.streamId === streamId ? message.streamSequence ?? -1 : -1,
+                      streamAborted: false,
+                  }
+                : message
+        );
+    }
+
     setViewMode('chat', resolveChatFocusTarget(payload));
 }
 
 function applyChatStreamDelta(payload) {
     const messageId = payload.message_id || payload.id;
+    const streamId = typeof payload.stream_id === 'string' && payload.stream_id.trim() ? payload.stream_id.trim() : null;
     const delta = typeof payload.delta === 'string' ? payload.delta : '';
-    if (!messageId || !delta) {
+    if (!messageId || !streamId || !delta) {
         return;
     }
 
@@ -212,7 +242,10 @@ function applyChatStreamDelta(payload) {
     }
 
     const incomingSequence = Number.isInteger(payload.sequence) ? payload.sequence : null;
-    ensureStreamingMessage(payload);
+    const existingMessage = findStreamingMessage(messageId);
+    if (!existingMessage || existingMessage.streamId !== streamId || existingMessage.streaming !== true) {
+        return;
+    }
     appState.chat.messages = appState.chat.messages.map(message => {
         if (message.id !== messageId) {
             return message;
@@ -236,6 +269,7 @@ function applyChatStreamDelta(payload) {
             ...message,
             content: contentBlocks,
             streaming: true,
+            streamId,
             streamSequence: incomingSequence ?? currentSequence + 1,
         };
     });
@@ -245,7 +279,9 @@ function applyChatStreamDelta(payload) {
 
 function endChatStream(payload) {
     const messageId = payload.message_id || payload.id;
-    if (!messageId) {
+    const streamId = typeof payload.stream_id === 'string' && payload.stream_id.trim() ? payload.stream_id.trim() : null;
+    const finalSequence = Number.isInteger(payload.final_sequence) ? payload.final_sequence : null;
+    if (!messageId || !streamId || finalSequence === null) {
         return;
     }
 
@@ -253,14 +289,41 @@ function endChatStream(payload) {
         appState.chat.conversationId = payload.conversation_id;
     }
 
-    ensureStreamingMessage(payload);
+    const existingMessage = findStreamingMessage(messageId);
+    if (!existingMessage) {
+        appState.chat.messages.push({
+            id: messageId,
+            role: 'assistant',
+            content: payload.content || [],
+            streaming: false,
+            streamId,
+            streamSequence: finalSequence,
+        });
+        setViewMode('chat', resolveChatFocusTarget(payload));
+        return;
+    }
+
     appState.chat.messages = appState.chat.messages.map(message =>
         message.id === messageId
-            ? {
-                  ...message,
-                  content: payload.content || message.content,
-                  streaming: false,
-              }
+            ? (() => {
+                  if (message.streamId !== streamId) {
+                      return message;
+                  }
+
+                  const currentSequence = Number.isInteger(message.streamSequence) ? message.streamSequence : -1;
+                  if (finalSequence < currentSequence) {
+                      return message;
+                  }
+
+                  return {
+                      ...message,
+                      content: payload.content || message.content,
+                      streaming: false,
+                      streamId,
+                      streamSequence: finalSequence,
+                      streamAborted: false,
+                  };
+              })()
             : message
     );
 
@@ -269,17 +332,32 @@ function endChatStream(payload) {
 
 function abortChatStream(payload) {
     const messageId = payload.message_id || payload.id;
-    if (!messageId) {
+    const streamId = typeof payload.stream_id === 'string' && payload.stream_id.trim() ? payload.stream_id.trim() : null;
+    const lastSequence = Number.isInteger(payload.last_sequence) ? payload.last_sequence : null;
+    if (!messageId || !streamId || lastSequence === null) {
         return;
     }
 
     appState.chat.messages = appState.chat.messages.map(message =>
         message.id === messageId
-            ? {
-                  ...message,
-                  streaming: false,
-                  streamAborted: true,
-              }
+            ? (() => {
+                  if (message.streamId !== streamId) {
+                      return message;
+                  }
+
+                  const currentSequence = Number.isInteger(message.streamSequence) ? message.streamSequence : -1;
+                  if (lastSequence < currentSequence) {
+                      return message;
+                  }
+
+                  return {
+                      ...message,
+                      streaming: false,
+                      streamAborted: true,
+                      streamId,
+                      streamSequence: lastSequence,
+                  };
+              })()
             : message
     );
 
