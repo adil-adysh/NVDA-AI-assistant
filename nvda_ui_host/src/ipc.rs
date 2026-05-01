@@ -32,7 +32,11 @@ fn ui_event_sender() -> &'static Mutex<Option<mpsc::Sender<String>>> {
 }
 
 pub fn queue_ui_event(message: String) {
-    logger::debug(&format!("IPC queue_ui_event called with payload: {}", message));
+    logger::debug(&format!(
+        "IPC queue_ui_event called with payload len={} preview={}",
+        message.len(),
+        logger::preview(&message, 160)
+    ));
     let sender = ui_event_sender();
     let guard = sender.lock().unwrap();
     if let Some(tx) = guard.as_ref() {
@@ -119,7 +123,11 @@ fn start_command_pipe_listener() {
                         continue;
                     }
 
-                    logger::debug(&format!("IPC raw request: {}", trimmed));
+                    logger::debug(&format!(
+                        "IPC raw request len={} preview={}",
+                        trimmed.len(),
+                        logger::preview(trimmed, 160)
+                    ));
                     let mut writer_guard = writer.lock().unwrap();
                     if let Err(err) = app::handle_raw_message(trimmed, &mut *writer_guard) {
                         logger::error(&format!("Host app command error: {:?}", err));
@@ -197,7 +205,11 @@ fn connect_pipe(pipe_handle: HANDLE) -> bool {
 
 fn write_response<W: Write>(response: &HostResponse, writer: &mut W) -> std::io::Result<()> {
     let text = serde_json::to_string(response)?;
-    logger::debug(&format!("IPC write_response: {}", text));
+    logger::debug(&format!(
+        "IPC write_response len={} preview={}",
+        text.len(),
+        logger::preview(&text, 160)
+    ));
     write_text(&text, writer)
 }
 

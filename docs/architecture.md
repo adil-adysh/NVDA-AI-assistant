@@ -127,11 +127,17 @@ Examples:
 - `chat_set_history`
 - `chat_append`
 - `chat_update`
+- `chat_stream_begin`
+- `chat_stream_delta`
+- `chat_stream_end`
+- `chat_stream_abort`
 - `show_error`
 - `update_progress`
 - `close_window`
 
 The host should render these generically and remain unaware of provider details, prompt logic, or internal NVDA use-case rules.
+
+For chat specifically, `chat_update` is the full-message replacement path, while token streaming should use `chat_stream_begin`, `chat_stream_delta`, and `chat_stream_end` so the add-on does not resend the entire assistant transcript on every partial update.
 
 ### Result actions and follow-up flows
 

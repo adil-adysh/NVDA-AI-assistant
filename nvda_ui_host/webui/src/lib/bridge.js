@@ -167,6 +167,125 @@ function appendChatMessage(payload) {
     setViewMode('chat', resolveChatFocusTarget(payload));
 }
 
+function ensureStreamingMessage(payload) {
+    const messageId = payload.message_id || payload.id;
+    if (!messageId) {
+        return null;
+    }
+
+    const existingMessage = appState.chat.messages.find(message => message.id === messageId);
+    if (existingMessage) {
+        return existingMessage;
+    }
+
+    const streamingMessage = {
+        id: messageId,
+        role: payload.role || 'assistant',
+        content: Array.isArray(payload.content) ? payload.content : [],
+        streaming: true,
+        streamSequence: -1,
+    };
+    appState.chat.messages.push(streamingMessage);
+    return streamingMessage;
+}
+
+function beginChatStream(payload) {
+    appState.chat.active = true;
+
+    if (payload.conversation_id) {
+        appState.chat.conversationId = payload.conversation_id;
+    }
+
+    ensureStreamingMessage(payload);
+    setViewMode('chat', resolveChatFocusTarget(payload));
+}
+
+function applyChatStreamDelta(payload) {
+    const messageId = payload.message_id || payload.id;
+    const delta = typeof payload.delta === 'string' ? payload.delta : '';
+    if (!messageId || !delta) {
+        return;
+    }
+
+    if (payload.conversation_id) {
+        appState.chat.conversationId = payload.conversation_id;
+    }
+
+    const incomingSequence = Number.isInteger(payload.sequence) ? payload.sequence : null;
+    ensureStreamingMessage(payload);
+    appState.chat.messages = appState.chat.messages.map(message => {
+        if (message.id !== messageId) {
+            return message;
+        }
+
+        const currentSequence = Number.isInteger(message.streamSequence) ? message.streamSequence : -1;
+        if (incomingSequence !== null && incomingSequence <= currentSequence) {
+            return message;
+        }
+
+        const contentBlocks = Array.isArray(message.content) ? [...message.content] : [];
+        const textBlockIndex = contentBlocks.findIndex(block => block?.type === 'text');
+        if (textBlockIndex >= 0) {
+            const currentText = typeof contentBlocks[textBlockIndex]?.text === 'string' ? contentBlocks[textBlockIndex].text : '';
+            contentBlocks[textBlockIndex] = { ...contentBlocks[textBlockIndex], text: `${currentText}${delta}` };
+        } else {
+            contentBlocks.unshift({ type: 'text', text: delta });
+        }
+
+        return {
+            ...message,
+            content: contentBlocks,
+            streaming: true,
+            streamSequence: incomingSequence ?? currentSequence + 1,
+        };
+    });
+
+    setViewMode('chat', resolveChatFocusTarget(payload));
+}
+
+function endChatStream(payload) {
+    const messageId = payload.message_id || payload.id;
+    if (!messageId) {
+        return;
+    }
+
+    if (payload.conversation_id) {
+        appState.chat.conversationId = payload.conversation_id;
+    }
+
+    ensureStreamingMessage(payload);
+    appState.chat.messages = appState.chat.messages.map(message =>
+        message.id === messageId
+            ? {
+                  ...message,
+                  content: payload.content || message.content,
+                  streaming: false,
+              }
+            : message
+    );
+
+    setViewMode('chat', resolveChatFocusTarget(payload));
+}
+
+function abortChatStream(payload) {
+    const messageId = payload.message_id || payload.id;
+    if (!messageId) {
+        return;
+    }
+
+    appState.chat.messages = appState.chat.messages.map(message =>
+        message.id === messageId
+            ? {
+                  ...message,
+                  streaming: false,
+                  streamAborted: true,
+              }
+            : message
+    );
+
+    setViewMode('chat', resolveChatFocusTarget(payload));
+}
+
 function updateChatMessage(payload) {
     const messageId = payload.message_id || payload.id;
     if (!messageId) {
@@ -280,6 +399,18 @@ export function handleHostEnvelope(envelope) {
             break;
         case 'chat_update':
             updateChatMessage(payload);
+            break;
+        case 'chat_stream_begin':
+            beginChatStream(payload);
+            break;
+        case 'chat_stream_delta':
+            applyChatStreamDelta(payload);
+            break;
+        case 'chat_stream_end':
+            endChatStream(payload);
+            break;
+        case 'chat_stream_abort':
+            abortChatStream(payload);
             break;
         case 'show_error':
             showError(payload);

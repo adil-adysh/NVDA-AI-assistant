@@ -50,6 +50,84 @@ class UIHostRenderer(ABC):
 		raise NotImplementedError
 
 	@abstractmethod
+	def chat_set_history(
+		self,
+		use_case_id: str | None,
+		conversation_id: str,
+		messages: list[dict[str, Any]],
+		metadata: dict[str, Any] | None = None,
+	) -> None:
+		raise NotImplementedError
+
+	@abstractmethod
+	def chat_append(
+		self,
+		use_case_id: str | None,
+		conversation_id: str,
+		message: dict[str, Any],
+		metadata: dict[str, Any] | None = None,
+	) -> None:
+		raise NotImplementedError
+
+	@abstractmethod
+	def chat_update(
+		self,
+		use_case_id: str | None,
+		conversation_id: str,
+		message_id: str,
+		content: list[dict[str, Any]] | str,
+		status: str | None = None,
+		metadata: dict[str, Any] | None = None,
+	) -> None:
+		raise NotImplementedError
+
+	@abstractmethod
+	def chat_stream_begin(
+		self,
+		use_case_id: str | None,
+		conversation_id: str,
+		message_id: str,
+		role: str = "assistant",
+		metadata: dict[str, Any] | None = None,
+	) -> None:
+		raise NotImplementedError
+
+	@abstractmethod
+	def chat_stream_delta(
+		self,
+		use_case_id: str | None,
+		conversation_id: str,
+		message_id: str,
+		delta: str,
+		sequence: int,
+		metadata: dict[str, Any] | None = None,
+	) -> None:
+		raise NotImplementedError
+
+	@abstractmethod
+	def chat_stream_end(
+		self,
+		use_case_id: str | None,
+		conversation_id: str,
+		message_id: str,
+		content: list[dict[str, Any]] | str,
+		status: str | None = None,
+		metadata: dict[str, Any] | None = None,
+	) -> None:
+		raise NotImplementedError
+
+	@abstractmethod
+	def chat_stream_abort(
+		self,
+		use_case_id: str | None,
+		conversation_id: str,
+		message_id: str,
+		reason: str | None = None,
+		metadata: dict[str, Any] | None = None,
+	) -> None:
+		raise NotImplementedError
+
+	@abstractmethod
 	def show_error(self, error_message: str, details: str | None = None) -> None:
 		raise NotImplementedError
 

@@ -117,7 +117,11 @@ fn flush_pending_messages() {
         if let Some(controller) = current_controller() {
         logger::debug(&format!("Flushing {} queued host messages", count));
         for message in queue.drain(..) {
-            logger::debug(&format!("Flushing queued message: {}", message));
+            logger::debug(&format!(
+                "Flushing queued message len={} preview={}",
+                message.len(),
+                logger::preview(&message, 160)
+            ));
             if let Err(err) = post_message_to_webview(&controller, &message) {
                 logger::error(&format!("Failed to flush queued host message: {:?}", err));
             }
@@ -135,7 +139,11 @@ fn flush_pending_messages() {
             if let Some(override_fn) = *guard {
                 logger::debug(&format!("Flushing {} queued host messages via test override", count));
                 for message in queue.drain(..) {
-                    logger::debug(&format!("Flushing queued message: {}", message));
+                    logger::debug(&format!(
+                        "Flushing queued message len={} preview={}",
+                        message.len(),
+                        logger::preview(&message, 160)
+                    ));
                     if let Err(err) = override_fn(&message) {
                         logger::error(&format!("Failed to flush queued host message: {:?}", err));
                     }
@@ -149,7 +157,11 @@ fn send_webview_message(webview: &ICoreWebView2, message: &str) -> Result<()> {
     let mut wide: Vec<u16> = message.encode_utf16().collect();
     wide.push(0);
     let ptr = PCWSTR(wide.as_ptr());
-    logger::debug(&format!("Rust: send_webview_message payload len={} message={}", message.len(), message));
+    logger::debug(&format!(
+        "Rust: send_webview_message payload len={} preview={}",
+        message.len(),
+        logger::preview(message, 160)
+    ));
     let result = unsafe { webview.PostWebMessageAsString(ptr) };
     logger::debug(&format!("Rust: WebView send result: {:?}", result));
     result
@@ -284,7 +296,13 @@ pub fn post_host_command(message: &str) -> Result<()> {
         queue_len_before
     ));
     logger::info(&format!("WebView host command received: controller_ready={} webview_ready={} length={} message_preview={}", current_controller().is_some(), webview_ready_flag().load(Ordering::SeqCst), message.len(), message.chars().take(120).collect::<String>()));
-    logger::debug(&format!("WebView post_host_command called, message length={} controller_ready={} webview_ready={} message={}", message.len(), current_controller().is_some(), webview_ready_flag().load(Ordering::SeqCst), message));
+    logger::debug(&format!(
+        "WebView post_host_command called, message length={} controller_ready={} webview_ready={} preview={}",
+        message.len(),
+        current_controller().is_some(),
+        webview_ready_flag().load(Ordering::SeqCst),
+        logger::preview(message, 160)
+    ));
     if webview_ready_flag().load(Ordering::SeqCst) {
         if let Some(controller) = current_controller() {
         match post_message_to_webview(&controller, message) {
