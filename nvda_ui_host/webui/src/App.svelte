@@ -2,7 +2,7 @@
     import { onMount } from 'svelte';
     import { focusChatComposer, focusContentRegion, requestCloseHost, submitChatMessage } from './lib/actions.js';
     import { initializeWebViewBridge } from './lib/bridge.js';
-    import { appState } from './lib/state.svelte.js';
+    import { appState, t } from './lib/state.svelte.js';
     import ChatPanel from './components/ChatPanel.svelte';
     import ControlPanel from './components/ControlPanel.svelte';
     import DisplayCard from './components/DisplayCard.svelte';
@@ -137,9 +137,8 @@
 <div class="app-shell">
     <header class="app-header">
         <div class="title-block">
-            <p class="eyebrow">NVDA AI Assistant</p>
-            <h1 class="app-title">Response Workspace</h1>
-            <p id="shortcut-hint" class="shortcut-hint">Shortcuts: Alt+Shift+T copy text, Alt+Shift+M copy markdown, Alt+Shift+I focus chat input, Alt+Shift+L focus content.</p>
+            <p class="eyebrow">{t('app_brand', 'NVDA AI Assistant')}</p>
+            <h1 class="app-title">{t('app_title', 'Response Workspace')}</h1>
         </div>
 
         <ControlPanel />

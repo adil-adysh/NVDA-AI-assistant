@@ -6,6 +6,16 @@ use crate::logger;
 use crate::protocol::{self, AckStage, ParsedCommand, ProtocolError, ResponseMode};
 use crate::window;
 
+fn requires_window_activation(command: &ParsedCommand) -> bool {
+    matches!(
+        command.payload,
+        protocol::UiCommand::RenderDisplay(_)
+            | protocol::UiCommand::OpenChat(_)
+            | protocol::UiCommand::ShowError(_)
+            | protocol::UiCommand::UpdateProgress(_)
+    )
+}
+
 pub fn handle_raw_message(raw: &str, writer: &mut impl Write) -> Result<()> {
     logger::debug(&format!("Host app received raw message: {}", raw));
     match protocol::parse_inbound_command(raw) {
@@ -35,6 +45,9 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
         .map_err(|error| windows::core::Error::new(windows::core::HRESULT(0), error.to_string()))?;
     logger::info(&format!("Host app forwarding normalized command to UI thread: message_id={} payload={}", command.message_id, command.payload.as_legacy_action()));
     logger::debug(&format!("Host app normalized UI thread command: {}", webview_message));
+    if requires_window_activation(&command) {
+        window::show_and_focus_window();
+    }
     if let Err(dispatch_error) = window::post_host_command(webview_message) {
         let (kind, message) = match dispatch_error {
             window::DispatchError::QueueFull => (protocol::ProtocolErrorKind::QueueFull, "Host dispatch queue is full"),

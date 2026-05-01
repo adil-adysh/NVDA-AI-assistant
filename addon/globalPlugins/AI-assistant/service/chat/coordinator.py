@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import threading
 from typing import Any
 
@@ -91,6 +91,12 @@ class ChatCoordinator(BaseCoordinator):
 		with self._session_lock:
 			self._session.reset()
 			self._session_generation += 1
+
+	def seed_history(self, messages: Sequence[Message]) -> None:
+		if not messages:
+			return
+		with self._session_lock:
+			self._session.extend(messages)
 
 	def list_models(self) -> tuple[ProviderModelInfo, ...]:
 		return self._llm_service.list_models()

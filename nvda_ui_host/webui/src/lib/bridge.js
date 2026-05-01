@@ -1,6 +1,7 @@
 import { addInitialImageAttachment } from './attachments.js';
 import {
     appState,
+    clearControlPending,
     mergeLocalizedStrings,
     resetChatState,
     resetDisplayState,
@@ -29,15 +30,44 @@ function ensureSendHostEvent() {
 function updateControlState(payload) {
     const metadata = payload?.metadata || {};
     const providerState = payload?.provider_state || metadata.provider_state || {};
-    const availableProviders = payload?.available_providers || metadata.available_providers || [];
-    const availableModels = payload?.available_models || metadata.available_models || [];
-    const thinkEnabled = payload?.think_enabled ?? metadata.think_enabled ?? false;
+    const availableProviders = payload?.available_providers ?? metadata.available_providers;
+    const availableModels = payload?.available_models ?? metadata.available_models;
+    const thinkEnabled = payload?.think_enabled ?? metadata.think_enabled;
 
-    appState.control.availableProviders = Array.isArray(availableProviders) ? availableProviders : [];
-    appState.control.availableModels = Array.isArray(availableModels) ? availableModels : [];
-    appState.control.selectedProvider = String(providerState.provider || appState.control.selectedProvider || '');
-    appState.control.selectedModel = String(providerState.model || appState.control.selectedModel || '');
-    appState.control.thinkEnabled = Boolean(thinkEnabled);
+    if (Array.isArray(availableProviders)) {
+        appState.control.availableProviders = availableProviders;
+    }
+    if (Array.isArray(availableModels)) {
+        appState.control.availableModels = availableModels;
+    }
+    if (typeof providerState?.provider === 'string') {
+        appState.control.selectedProvider = providerState.provider;
+        appState.control.providerDraft = providerState.provider;
+    }
+    if (typeof providerState?.model === 'string') {
+        appState.control.selectedModel = providerState.model;
+        appState.control.modelDraft = providerState.model;
+    }
+    if (typeof thinkEnabled === 'boolean') {
+        appState.control.thinkEnabled = thinkEnabled;
+        appState.control.thinkDraft = thinkEnabled;
+    }
+
+    if (
+        Array.isArray(availableProviders) ||
+        Array.isArray(availableModels) ||
+        typeof providerState?.provider === 'string' ||
+        typeof providerState?.model === 'string' ||
+        typeof thinkEnabled === 'boolean'
+    ) {
+        clearControlPending();
+    }
+}
+
+function getHostStatusMessage(payload) {
+    const metadata = payload?.metadata || {};
+    const statusMessage = payload?.status_message ?? metadata.status_message;
+    return typeof statusMessage === 'string' && statusMessage.trim() ? statusMessage.trim() : '';
 }
 
 function reportUiApplied(commandId) {
@@ -56,17 +86,8 @@ function openChat(commandId, payload) {
     appState.chat.conversationId = payload.conversation_id || null;
     addInitialImageAttachment(payload.initial_image_base64);
 
-    if (payload.initial_text) {
-        appState.chat.messages = [
-            {
-                id: `initial-${Date.now()}`,
-                role: 'assistant',
-                content: [{ type: 'text', text: payload.initial_text }],
-            },
-        ];
-    }
-
-    setCopyBuffers(payload.initial_text || '', payload.initial_text || '');
+    appState.chat.composerText = typeof payload.initial_text === 'string' ? payload.initial_text : '';
+    setCopyBuffers('', '');
     setViewMode('chat', 'composer');
 }
 
@@ -113,6 +134,11 @@ function setChatHistory(payload) {
     setViewMode('chat', 'composer');
 }
 
+function resolveChatFocusTarget(payload) {
+    const target = payload?.focus_target ?? payload?.metadata?.focus_target ?? null;
+    return typeof target === 'string' && target.trim() ? target.trim() : null;
+}
+
 function appendChatMessage(payload) {
     appState.chat.active = true;
 
@@ -138,7 +164,7 @@ function appendChatMessage(payload) {
         appState.chat.messages.push(message);
     });
 
-    setViewMode('chat', 'composer');
+    setViewMode('chat', resolveChatFocusTarget(payload));
 }
 
 function updateChatMessage(payload) {
@@ -159,7 +185,7 @@ function updateChatMessage(payload) {
         message.id === messageId ? { ...message, content: payload.content || message.content } : message
     );
 
-    setViewMode('chat', 'composer');
+    setViewMode('chat', resolveChatFocusTarget(payload));
 }
 
 function showError(payload) {
@@ -228,10 +254,10 @@ export function handleHostEnvelope(envelope) {
     const commandId = envelope.correlation_id || envelope.id;
     appState.currentCommandId = commandId;
     const payload = envelope.command.payload || {};
+    const hostStatusMessage = getHostStatusMessage(payload);
 
     mergeLocalizedStrings(payload);
     updateControlState(payload);
-    setStatus(`${t('command_prefix', 'Command')}: ${envelope.command.name}`);
     setWindowTitle(payload.title || 'NVDA UI Host');
 
     switch (envelope.command.name) {
@@ -271,6 +297,8 @@ export function handleHostEnvelope(envelope) {
             reportUiFailure(commandId, 'unknown_command');
             return;
     }
+
+    setStatus(hostStatusMessage || `${t('command_prefix', 'Command')}: ${envelope.command.name}`, Boolean(hostStatusMessage));
 
     reportUiApplied(commandId);
 }

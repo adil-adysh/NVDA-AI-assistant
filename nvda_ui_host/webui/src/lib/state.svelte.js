@@ -18,6 +18,10 @@ export const appState = $state({
         selectedProvider: '',
         selectedModel: '',
         thinkEnabled: false,
+        providerDraft: '',
+        modelDraft: '',
+        thinkDraft: false,
+        pendingChange: null,
     },
     localizedStrings: { ...defaultLocalizedStrings },
     chat: {
@@ -111,4 +115,12 @@ export function showDisplayText(text, focusTarget = null) {
 
 export function setWindowTitle(title) {
     appState.title = title || 'NVDA UI Host';
+}
+
+export function setControlPending(change) {
+    appState.control.pendingChange = change;
+}
+
+export function clearControlPending() {
+    appState.control.pendingChange = null;
 }

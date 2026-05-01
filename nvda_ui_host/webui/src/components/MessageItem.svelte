@@ -16,18 +16,9 @@
     <div class="chat-message-header">
         <div class="chat-message-title-group">
             <svelte:element this={headingTag} class="role">{roleLabel}</svelte:element>
-            <p class="message-subtitle">{role === 'assistant' ? 'Response' : 'Prompt'}</p>
+            <p class="message-subtitle">{role === 'assistant' ? t('response_subtitle', 'Response') : t('prompt_subtitle', 'Prompt')}</p>
         </div>
 
-        {#if role === 'assistant'}
-            <div class="chat-message-actions" aria-label="Message actions">
-                <button type="button" onclick={() => copyMessageText(message)}>{t('copy_response_button', 'Copy response')}</button>
-                <button type="button" onclick={() => copyMessageMarkdown(message)}>{t('copy_response_markdown_button', 'Copy response markdown')}</button>
-                {#if showTableCopy}
-                    <button type="button" onclick={() => copyMessageTable(message)}>{t('copy_table_button', 'Copy table')}</button>
-                {/if}
-            </div>
-        {/if}
     </div>
 
     <div class="text">
@@ -35,4 +26,14 @@
             <ContentBlock {block} />
         {/each}
     </div>
+
+    {#if role === 'assistant'}
+        <div class="chat-message-actions" aria-label={t('message_actions_label', 'Message actions')}>
+            <button type="button" onclick={() => copyMessageText(message)}>{t('copy_response_button', 'Copy response')}</button>
+            <button type="button" onclick={() => copyMessageMarkdown(message)}>{t('copy_response_markdown_button', 'Copy response markdown')}</button>
+            {#if showTableCopy}
+                <button type="button" onclick={() => copyMessageTable(message)}>{t('copy_table_button', 'Copy table')}</button>
+            {/if}
+        </div>
+    {/if}
 </article>

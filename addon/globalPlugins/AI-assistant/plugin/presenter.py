@@ -8,11 +8,11 @@ from collections.abc import Callable
 from typing import Any, cast
 from uuid import uuid4
 
-import gui
 from logHandler import log
 
 from ..config.state import ProviderState
 from ..core.events import ProgressEvent
+from ..core.message_transforms import build_assistant_message
 from ..service.chat import ChatCoordinator
 from ..tools import ToolRegistry
 from ..config.settings import get_provider_state
@@ -21,6 +21,7 @@ from ..ui.action_store import ResultActionStore
 from ..ui import nvda_ui
 from ..ui.session_state import build_session_state, merge_session_metadata
 from ..ui.view_models import ChatWindowViewModel, DisplayResultViewModel, ResultActionViewModel
+from ..utils.markdown import render_markdown_to_html
 
 
 def _translate(message: str) -> str:
@@ -45,8 +46,10 @@ class UseCasePresenter:
 		self,
 		initial_text: str | None = None,
 		initial_image_base64: str | None = None,
+		initial_assistant_text: str | None = None,
 	) -> None:
 		self._active_conversation_id = str(uuid4())
+		self._chat_coordinator.reset()
 		provider_state = get_provider_state()
 		session_state = build_session_state(
 			_,
@@ -54,6 +57,9 @@ class UseCasePresenter:
 			conversation_id=self._active_conversation_id,
 			available_models=self._get_cached_models(provider_state),
 		)
+		seed_messages = self._build_seed_messages(initial_assistant_text)
+		if seed_messages:
+			self._chat_coordinator.seed_history(seed_messages)
 		ui_adapter.open_chat_view(
 			ChatWindowViewModel(
 				use_case_id=None,
@@ -64,6 +70,7 @@ class UseCasePresenter:
 			),
 			coordinator=self._chat_coordinator,
 			tool_registry=self._tool_registry,
+			history_messages=self._build_seed_history_messages(initial_assistant_text),
 		)
 		self._refresh_available_models_async(provider_state)
 
@@ -105,6 +112,8 @@ class UseCasePresenter:
 
 		if isinstance(output_html, str) and output_html.strip():
 			is_html = True
+
+		output_text, output_html, is_html = self._normalize_display_outputs(output_text, output_html, is_html)
 
 		has_output_text = isinstance(output_text, str) and bool(output_text.strip())
 		has_output_html = isinstance(output_html, str) and bool(output_html.strip())
@@ -148,6 +157,18 @@ class UseCasePresenter:
 				actions=tuple(actions),
 			)
 		)
+
+	def _normalize_display_outputs(
+		self,
+		output_text: Any,
+		output_html: Any,
+		is_html: bool,
+	) -> tuple[str | None, str | None, bool]:
+		normalized_text = output_text.strip() if isinstance(output_text, str) and output_text.strip() else None
+		normalized_html = output_html.strip() if isinstance(output_html, str) and output_html.strip() else None
+		if normalized_html is None and normalized_text is not None:
+			normalized_html = render_markdown_to_html(normalized_text).strip() or None
+		return normalized_text, normalized_html, bool(is_html or normalized_html)
 
 	def progress_handler(self, event: ProgressEvent) -> None:
 		if event.stage == "error":
@@ -230,7 +251,7 @@ class UseCasePresenter:
 		if use_case_id not in {"summary", "structure_summary", "describe_image"}:
 			return []
 		action_token = self._result_action_store.put({
-			"initial_text": output_text.strip(),
+			"assistant_seed_text": output_text.strip(),
 			"initial_image_base64": getattr(use_case_result, "initial_image_base64", None),
 		})
 		return [ResultActionViewModel(
@@ -250,6 +271,26 @@ class UseCasePresenter:
 		if token:
 			payload = self._result_action_store.pop(token) or payload
 		self.open_chat_window(
-			initial_text=payload.get("initial_text") if isinstance(payload.get("initial_text"), str) else None,
+			initial_assistant_text=payload.get("assistant_seed_text") if isinstance(payload.get("assistant_seed_text"), str) else None,
 			initial_image_base64=payload.get("initial_image_base64") if isinstance(payload.get("initial_image_base64"), str) else None,
 		)
+
+	def _build_seed_messages(self, initial_assistant_text: str | None) -> tuple[Any, ...]:
+		if not isinstance(initial_assistant_text, str) or not initial_assistant_text.strip():
+			return ()
+		return (build_assistant_message(text=initial_assistant_text.strip()),)
+
+	def _build_seed_history_messages(self, initial_assistant_text: str | None) -> list[dict[str, Any]]:
+		if not isinstance(initial_assistant_text, str) or not initial_assistant_text.strip():
+			return []
+		rendered_html = render_markdown_to_html(initial_assistant_text.strip()).strip()
+		content: list[dict[str, Any]]
+		if rendered_html:
+			content = [{"type": "html", "html": rendered_html}]
+		else:
+			content = [{"type": "text", "text": initial_assistant_text.strip()}]
+		return [{
+			"id": f"seed-assistant-{uuid4()}",
+			"role": "assistant",
+			"content": content,
+		}]

@@ -1,4 +1,4 @@
-import { appState, clearCurrentView, setPendingFocus, setStatus, t } from './state.svelte.js';
+import { appState, clearCurrentView, setControlPending, setPendingFocus, setStatus, t } from './state.svelte.js';
 import { clearPendingAttachments } from './attachments.js';
 import {
     extractMarkdownFromBlocks,
@@ -12,13 +12,51 @@ import {
 } from './content.js';
 import { emitUiEvent } from './bridge.js';
 
-async function copyToClipboard(text) {
+function fallbackCopyText(text) {
+    const element = document.createElement('textarea');
+    element.value = text;
+    element.setAttribute('readonly', 'true');
+    element.style.position = 'fixed';
+    element.style.top = '-9999px';
+    element.style.left = '-9999px';
+    document.body.appendChild(element);
+    element.focus();
+    element.select();
+
     try {
-        await navigator.clipboard.writeText(text);
+        return document.execCommand('copy');
+    } finally {
+        document.body.removeChild(element);
+    }
+}
+
+async function copyToClipboard(text) {
+    const normalizedText = String(text || '');
+    if (!normalizedText.trim()) {
+        setStatus(t('copy_failed_status', 'Copy failed.'), true);
+        return false;
+    }
+
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(normalizedText);
+        } else if (!fallbackCopyText(normalizedText)) {
+            throw new Error('Clipboard API unavailable');
+        }
         setStatus(t('copied_status', 'Copied to clipboard.'), true);
+        return true;
     } catch (error) {
+        try {
+            if (fallbackCopyText(normalizedText)) {
+                setStatus(t('copied_status', 'Copied to clipboard.'), true);
+                return true;
+            }
+        } catch (fallbackError) {
+            console.error(fallbackError);
+        }
         setStatus(t('copy_failed_status', 'Copy failed.'), true);
         console.error(error);
+        return false;
     }
 }
 
@@ -100,21 +138,28 @@ export function submitChatMessage(fileInputElement = null) {
 
 export function submitProviderSelection(provider) {
     const value = provider.trim();
-    if (!value) {
+    if (!value || appState.control.pendingChange || value === appState.control.selectedProvider) {
         return;
     }
 
-    appState.control.selectedProvider = value;
+    appState.control.modelDraft = '';
+    setControlPending('provider');
+    setStatus(t('provider_switching_status', 'Switching provider...'));
     emitUiEvent('provider_selected', appState.currentCommandId, { provider: value });
 }
 
 export function submitModelSelection(model) {
     const value = model.trim();
-    if (!value) {
+    if (
+        !value ||
+        appState.control.pendingChange ||
+        (value === appState.control.selectedModel && appState.control.providerDraft === appState.control.selectedProvider)
+    ) {
         return;
     }
 
-    appState.control.selectedModel = value;
+    setControlPending('model');
+    setStatus(t('model_switching_status', 'Updating model...'));
     emitUiEvent('model_selected', appState.currentCommandId, {
         provider: appState.control.selectedProvider.trim() || null,
         model: value,
@@ -122,7 +167,12 @@ export function submitModelSelection(model) {
 }
 
 export function submitThinkModeToggle(enabled) {
-    appState.control.thinkEnabled = Boolean(enabled);
+    if (appState.control.pendingChange || Boolean(enabled) === appState.control.thinkEnabled) {
+        return;
+    }
+
+    setControlPending('think');
+    setStatus(t('think_mode_updating_status', 'Updating think mode...'));
     emitUiEvent('think_mode_toggled', appState.currentCommandId, { enabled: Boolean(enabled) });
 }
 

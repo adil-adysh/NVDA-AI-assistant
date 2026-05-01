@@ -72,14 +72,6 @@ body {
     border: 0;
 }
 
-.shortcut-hint {
-    margin: 0;
-    max-width: 70ch;
-    color: var(--muted);
-    font-size: 0.92rem;
-    line-height: 1.45;
-}
-
 .app-title {
     margin: 0;
     font-family: var(--font-display);
@@ -145,8 +137,8 @@ body {
 }
 
 #provider-select,
-#model-select,
-#model-input {
+#model-input,
+#model-select {
     min-width: 180px;
     padding: 8px 10px;
     border-radius: var(--radius-sm);
@@ -156,9 +148,12 @@ body {
     color: var(--text);
 }
 
-.model-picker {
-    display: grid;
-    gap: 8px;
+#provider-select:disabled,
+#model-input:disabled,
+#model-select:disabled,
+#think-toggle:disabled {
+    opacity: 0.6;
+    cursor: wait;
 }
 
 #status {
@@ -183,6 +178,7 @@ body {
 .composer-toolbar {
     display: flex;
     gap: 10px;
+    margin-top: 10px;
     margin-bottom: 10px;
 }
 
@@ -299,6 +295,7 @@ body {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+    margin-top: 12px;
 }
 
 .chat-message-actions button {
@@ -359,6 +356,26 @@ body {
     line-height: 1.65;
 }
 
+.content-block.image {
+    display: grid;
+    gap: 8px;
+}
+
+.content-block.image img {
+    display: block;
+    max-width: min(100%, 32rem);
+    max-height: 24rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: #fffdf8;
+    object-fit: contain;
+}
+
+.content-block.image figcaption {
+    font-size: 0.88rem;
+    color: var(--muted);
+}
+
 .thinking-block {
     margin-top: 12px;
     padding: 10px 12px;
@@ -370,6 +387,32 @@ body {
 .thinking-block summary {
     cursor: pointer;
     font-weight: 700;
+}
+
+.attachment-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.attachment-chip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: #fff9f0;
+}
+
+.attachment-preview {
+    width: 3rem;
+    height: 3rem;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    object-fit: cover;
+    background: #fffdf8;
 }
 
 .result-actions {
@@ -424,10 +467,6 @@ button:active {
     .section-header,
     .app-header {
         flex-direction: column;
-    }
-
-    .shortcut-hint {
-        max-width: none;
     }
 
     .toolbar,

@@ -36,6 +36,10 @@ export function extractTextFromBlocks(blocks) {
                 return extractTextFromHtml(block.html || '');
             }
 
+            if (block.type === 'image') {
+                return String(block.alt || t('image_attachment_notice', '[Image attachment included]')).trim();
+            }
+
             return String(block.text || '').trim();
         })
         .filter(Boolean)
@@ -57,6 +61,10 @@ export function extractMarkdownFromBlocks(blocks) {
 
             if (block.type === 'html') {
                 return extractTextFromHtml(block.html || '');
+            }
+
+            if (block.type === 'image') {
+                return String(block.alt || t('image_attachment_notice', '[Image attachment included]')).trim();
             }
 
             return String(block.text || '').trim();
