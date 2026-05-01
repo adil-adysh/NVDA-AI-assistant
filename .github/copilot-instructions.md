@@ -1,262 +1,84 @@
 # GitHub Copilot Instructions — NVDA AI Assistant
 
-## 1. Purpose of This File
-This repository implements an NVDA add-on with a layered architecture.
+This repository is a layered NVDA add-on plus an external Rust UI host.
 
-Copilot MUST generate code that:
-- Respects strict layer boundaries
-- Uses existing abstractions (UseCase, ContextPipeline, ProviderProxy)
-- Avoids architectural shortcuts
+Copilot must generate changes that:
+- respect the Python add-on, Rust host, and WebView boundary
+- route feature work through the existing abstractions instead of bypassing them
+- keep NVDA responsive by avoiding blocking work on the main thread
 
----
+## System Model
 
-## 2. System Overview (Mental Model)
-
-Flow of execution:
+Primary application flow:
 
 NVDA → GlobalPlugin → AIAssistantApplication → UseCaseEngine  
 → ContextPipeline → LLMService → ProviderProxy → Provider  
 → Result → Presenter → NVDA UI
 
-This flow must NOT be bypassed.
+Host-backed UI flow:
 
----
+Python add-on → UI intent / host protocol → named-pipe IPC → Rust host  
+→ WebView / Svelte UI → typed UI event → Python add-on
 
-## 3. Layer Responsibilities (STRICT)
+Never bypass those flows with direct provider calls, ad-hoc prompt assembly, or host-specific business logic in the wrong layer.
 
-### plugin/
-- NVDA entrypoint, gestures, lifecycle
-- Threading (BackgroundTaskRunner)
-- Calls UseCaseEngine
-- NO business logic
+## Layer Rules
 
-### use_case/
-- Defines features (summary, image, chat)
-- Pure orchestration layer
-- Uses:
-  - ContextPipeline
-  - LLMService
-- MUST NOT:
-  - Access NVDA APIs
-  - Call providers directly
+### Python add-on
 
-### context/
-- Collects structured data from NVDA/browser
-- Uses collectors (page, image, etc.)
-- Produces `PromptContext`
-- No business logic
+- `plugin/` owns NVDA entrypoints, gestures, lifecycle, and background task scheduling.
+- `use_case/` owns feature orchestration and must go through `UseCaseEngine`.
+- `context/` owns structured context collection and must produce typed context instead of raw prompt strings.
+- `service/` owns model interaction, streaming, tool execution, and chat coordination.
+- `providers/` owns provider-specific implementation details behind `ProviderProxy`.
+- `ui/` and `ui_host/` own rendering contracts and adapters, not business logic.
 
-### providers/
-- Implements LLM providers (Gemini, Ollama)
-- Hidden behind `ProviderProxy`
-- Hot-swappable via config
+### Rust host
 
-### service/
-- Wraps LLM interaction
-- Handles:
-  - tool execution
-  - streaming
-  - chat coordination
-- Only layer allowed to interact with providers
+- `nvda_ui_host/src/protocol.rs` is the protocol source of truth.
+- `ipc.rs` owns transport only.
+- `app.rs` validates incoming commands and normalizes them for the UI thread.
+- `window.rs` and `webview.rs` own native window and WebView lifecycle.
 
-### ui/
-- Rendering only
-- No logic, no provider calls
+### Web UI
 
----
+- `nvda_ui_host/webui/src/` renders generic host intents.
+- Keep provider logic, use-case branching, and NVDA behavior out of the browser layer.
+- Prefer typed protocol-driven UI state over hidden browser-only behavior.
 
-## 4. Dependency Rules (MANDATORY)
+## Required Patterns
 
-Allowed:
+- New features should usually be implemented as a `UseCase` and registered in `use_case/registry.py`.
+- Use `ContextPipeline` and the existing collector/extractor structure instead of hand-building prompt context in a feature.
+- Access providers through `LLMService` and `ProviderProxy`, never directly from `use_case/` or `ui/`.
+- Register tool behavior in the tool registry/executor path instead of invoking tools directly from a feature.
+- Keep host commands generic and protocol-backed. If Python and Rust both change, update the protocol contract deliberately.
 
-plugin → service → use_case → context  
-                  ↓  
-               providers  
+## Hard Constraints
 
-Forbidden:
-- use_case → providers
-- context → use_case
-- ui → service/provider direct calls
+- Do not call providers from `use_case/` or UI code.
+- Do not access NVDA APIs outside the plugin/context layers unless an existing pattern already permits it.
+- Do not block the NVDA main thread.
+- Do not hardcode provider names or provider-specific branching outside provider/config layers.
+- Do not mix UI rendering concerns with business logic.
+- Do not introduce parallel abstractions when an existing `UseCase`, `ContextPipeline`, presenter, or host protocol type already fits.
 
----
+## Validation Defaults
 
-## 5. Use Case Pattern (REQUIRED)
+Match validation to the slice you changed:
 
-When adding a feature:
+- Python add-on changes: `python -m ruff check .` and targeted type or runtime checks when available.
+- Rust host changes: `cargo check --manifest-path nvda_ui_host/Cargo.toml`.
+- Web UI changes: `npm --prefix nvda_ui_host run build:webui`.
+- Cross-boundary protocol changes: validate both Python and Rust/Web UI sides.
 
-1. Create a class extending `UseCase`
-2. Define:
-   - spec
-   - context_profile
-   - execution logic
-3. Register in:
-   `use_case/registry.py`
+## Supporting Docs
 
-Execution MUST go through:
-`UseCaseEngine`
-
-Never:
-- Call use cases directly from plugin
-- Hardcode mappings
-
----
-
-## 6. Context System Rules
-
-- Always use `ContextPipeline`
-- Never manually assemble context in use cases
-- Use:
-  `ContextProfile = Literal["app", "accessibility", "image"]`
-
-Collectors must:
-- Be small and composable
-- Return structured data (not raw strings)
-
----
-
-## 7. Provider Rules
-
-- Always access providers via:
-  `ProviderProxy`
-- Providers must implement:
-  `LLMProvider`
-
-Never:
-- Reference provider names outside `providers/`
-- Add provider-specific logic elsewhere
-
----
-
-## 8. LLM / Chat Rules
-
-All model interaction MUST go through:
-- `LLMService`
-- `ProviderLLMService`
-- `ChatCoordinator`
-
-Responsibilities:
-- streaming
-- tool calls
-- session handling
-
-Never:
-- Call provider from use_case or UI
-- Duplicate chat logic
-
----
-
-## 9. Tools System
-
-- Register tools in `ToolRegistry`
-- Execute via `ToolExecutor`
-
-Never:
-- Execute tools directly in use cases
-
----
-
-## 10. Threading Rules (CRITICAL FOR NVDA)
-
-- Never block main thread
-- Use:
-  `BackgroundTaskRunner`
-
-All long operations must:
-- Run in background
-- Return results safely to UI
-
----
-
-## 11. UI Rules
-
-- Render only
-- No logic
-- No provider or service calls
-
-Must support:
-- streaming updates
-- partial responses
-
----
-
-## 12. Error Handling
-
-- NVDA must never crash
-- Always fail gracefully
-- Provide user-safe messages
-- Log internal errors clearly
-
----
-
-## 13. Code Style
-
-### Python
-- Use type hints everywhere
-- Prefer:
-  - dataclasses
-  - Protocols
-  - TypedDict
-- Avoid dynamic typing unless necessary
-
----
-
-## 14. Performance Constraints
-
-- NVDA is latency-sensitive
-- Prefer:
-  - streaming over blocking
-  - small memory footprint
-- Avoid:
-  - large synchronous operations
-  - unnecessary copies
-
----
-
-## 15. When Generating Code
-
-Copilot must:
-
-1. Identify correct layer
-2. Follow existing patterns in that layer
-3. Reuse abstractions:
-   - UseCaseEngine
-   - ContextPipeline
-   - ProviderProxy
-4. Keep implementation minimal and consistent
-
----
-
-## 16. What NOT to Do
-
-- Do not bypass UseCaseEngine
-- Do not mix UI and logic
-- Do not hardcode provider behavior
-- Do not access NVDA APIs outside plugin/context
-- Do not introduce global state
-- Do not duplicate context or chat logic
-
----
-
-## 17. Good Patterns
-
-✔ Add feature:
-UseCase → Register → Trigger via application → Render via presenter
-
-✔ Add provider:
-Implement `LLMProvider` → Register in factory
-
-✔ Add tool:
-Register in ToolRegistry → Execute via ToolExecutor
-
----
-
-## 18. Bad Patterns
-
-✘ Provider calls inside use_case  
-✘ NVDA API calls inside service  
-✘ Prompt building in UI  
-✘ Skipping ContextPipeline  
-✘ Blocking main thread  
+- `docs/architecture.md` describes the Python/Rust/WebView split and IPC ownership.
+- `docs/ui-host-runtime.md` covers host supervision and pipe lifecycle.
+- `docs/ui-host-protocol.md` covers protocol expectations.
+- Additional file-scoped guidance lives in `.github/instructions/`.
+- Task-specific workflows live in `.github/skills/` and `.github/agents/`.
 
 ---
 
