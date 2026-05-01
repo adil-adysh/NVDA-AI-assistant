@@ -16,8 +16,10 @@ from ..service.chat import ChatCoordinator
 from ..tools import ToolRegistry
 from ..config.settings import get_provider_state
 from ..ui.adapter import ui_adapter
+from ..ui.action_store import ResultActionStore
 from ..ui import nvda_ui
 from ..ui.session_state import build_session_state, merge_session_metadata
+from ..ui.view_models import ChatWindowViewModel, DisplayResultViewModel, ResultActionViewModel
 
 
 def _translate(message: str) -> str:
@@ -32,6 +34,7 @@ class UseCasePresenter:
 		self._chat_coordinator = chat_coordinator
 		self._tool_registry = tool_registry
 		self._active_conversation_id: str | None = None
+		self._result_action_store = ResultActionStore()
 		ui_adapter.register_result_action_handler(self._handle_result_action)
 		ui_adapter.register_session_metadata_provider(self._build_chat_metadata)
 
@@ -42,14 +45,16 @@ class UseCasePresenter:
 	) -> None:
 		self._active_conversation_id = str(uuid4())
 		session_state = build_session_state(_, conversation_id=self._active_conversation_id)
-		ui_adapter.open_chat(
-			use_case_id=None,
-			title=_("AI Chat"),
-			initial_text=initial_text,
-			initial_image_base64=initial_image_base64,
+		ui_adapter.open_chat_view(
+			ChatWindowViewModel(
+				use_case_id=None,
+				title=_("AI Chat"),
+				initial_text=initial_text,
+				initial_image_base64=initial_image_base64,
+				metadata=session_state.to_metadata(),
+			),
 			coordinator=self._chat_coordinator,
 			tool_registry=self._tool_registry,
-			metadata=session_state.to_metadata(),
 		)
 
 	def update_provider_state(self, provider_state: ProviderState | None = None) -> None:
@@ -107,54 +112,64 @@ class UseCasePresenter:
 		copy_text = output_text if has_output_text and not is_html else None
 		copy_markdown = output_text if has_output_text else None
 		metadata = merge_session_metadata(getattr(use_case_result, "metadata", None), session_state)
+		self._result_action_store.clear()
 		actions = self._build_result_actions(use_case_id, output_text, use_case_result)
-		if actions:
-			metadata["actions"] = actions
-		ui_adapter.render_display_result(
-			use_case_id=use_case_id,
-			title=browseable_title,
-			output_text=output_text,
-			output_html=output_html,
-			is_html=is_html,
-			success=True,
-			message=getattr(use_case_result, "message", None),
-			close_button=True,
-			copy_button=True,
-			copy_text=copy_text,
-			copy_markdown=copy_markdown,
-			metadata=metadata,
+		ui_adapter.render_display(
+			DisplayResultViewModel(
+				use_case_id=use_case_id,
+				title=browseable_title,
+				output_text=output_text,
+				output_html=output_html,
+				is_html=is_html,
+				success=True,
+				message=getattr(use_case_result, "message", None),
+				close_button=True,
+				copy_button=True,
+				copy_text=copy_text,
+				copy_markdown=copy_markdown,
+				metadata=metadata,
+				actions=tuple(actions),
+			)
 		)
 
 	def progress_handler(self, event: ProgressEvent) -> None:
 		if event.stage == "error":
+			ui_adapter.show_error(_("Error"), details=event.message)
 			nvda_ui.queue(nvda_ui.message, _("Error: ") + event.message)
 			return
 
 		if event.stage in {"start", "collecting_context", "building_prompt", "llm_request", "tool_execution", "complete"}:
+			ui_adapter.show_progress(event.message)
 			nvda_ui.queue(nvda_ui.message, event.message)
 
 	def _build_chat_metadata(self) -> dict[str, Any]:
 		return build_session_state(_, conversation_id=self._active_conversation_id).to_metadata()
 
-	def _build_result_actions(self, use_case_id: str | None, output_text: str | None, use_case_result: Any) -> list[dict[str, Any]]:
+	def _build_result_actions(self, use_case_id: str | None, output_text: str | None, use_case_result: Any) -> list[ResultActionViewModel]:
 		if not isinstance(output_text, str) or not output_text.strip():
 			return []
 		if use_case_id not in {"summary", "structure_summary", "describe_image"}:
 			return []
-		return [{
-			"id": "open_chat",
-			"label": _("Open Chat"),
-			"kind": "open_chat",
-			"payload": {
-				"initial_text": output_text.strip(),
-				"initial_image_base64": getattr(use_case_result, "initial_image_base64", None),
+		action_token = self._result_action_store.put({
+			"initial_text": output_text.strip(),
+			"initial_image_base64": getattr(use_case_result, "initial_image_base64", None),
+		})
+		return [ResultActionViewModel(
+			id="open_chat",
+			label=_("Open Chat"),
+			kind="open_chat",
+			payload={
+				"token": action_token,
 			},
-		}]
+		)]
 
 	def _handle_result_action(self, action_id: str, payload: dict[str, Any] | None) -> None:
 		if action_id != "open_chat":
 			return
 		payload = payload or {}
+		token = payload.get("token") if isinstance(payload.get("token"), str) else None
+		if token:
+			payload = self._result_action_store.pop(token) or payload
 		self.open_chat_window(
 			initial_text=payload.get("initial_text") if isinstance(payload.get("initial_text"), str) else None,
 			initial_image_base64=payload.get("initial_image_base64") if isinstance(payload.get("initial_image_base64"), str) else None,

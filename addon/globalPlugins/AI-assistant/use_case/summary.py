@@ -54,13 +54,13 @@ class SummaryUseCase(UseCase):
 	def _build_result(self, prompt_context: PromptContext, response: object, prompt: str) -> UseCaseResult:
 		extraction_result = self._get_extraction_result(prompt_context)
 		html_output = self.markdown_to_html(response.text)
+		provider = getattr(response, "provider", None) or "unknown"
+		model = getattr(response, "model", None) or "unknown"
 		return UseCaseResult(
 			success=True,
-			message="Summary ready",
 			initial_text=extraction_result.text,
 			output_text=response.text,
 			output_html=html_output,
-			is_browseable=True,
 			prompt_context=PromptContext(
 				use_case_id=self.spec.id,
 				facts={"extraction_result": extraction_result},
@@ -72,7 +72,8 @@ class SummaryUseCase(UseCase):
 				},
 			),
 			metadata={
-				"model": response.model,
+				"provider": provider,
+				"model": model,
 				"prompt_key": self.spec.prompt_key,
 			},
 		)

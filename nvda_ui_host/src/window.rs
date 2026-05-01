@@ -27,6 +27,13 @@ pub enum DispatchError {
 #[link(name = "user32")]
 extern "system" {
     fn SetFocus(hwnd: HWND) -> HWND;
+    fn AttachThreadInput(id_attach: u32, id_attach_to: u32, attach: i32) -> i32;
+    fn SetActiveWindow(hwnd: HWND) -> HWND;
+}
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetCurrentThreadId() -> u32;
 }
 
 pub fn create_window() -> Result<HWND> {
@@ -132,14 +139,61 @@ fn drain_host_commands() {
     }
 }
 
+fn activate_window(hwnd: HWND) {
+    unsafe {
+        if IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        } else {
+            let _ = ShowWindow(hwnd, SW_SHOW);
+        }
+
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE,
+        );
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_NOTOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE,
+        );
+        let _ = BringWindowToTop(hwnd);
+
+        let foreground = GetForegroundWindow();
+        let current_thread_id = GetCurrentThreadId();
+        let foreground_thread_id = if !foreground.0.is_null() {
+            GetWindowThreadProcessId(foreground, None)
+        } else {
+            0
+        };
+
+        let attached = foreground_thread_id != 0
+            && foreground_thread_id != current_thread_id
+            && AttachThreadInput(foreground_thread_id, current_thread_id, 1) != 0;
+
+        let _ = SetForegroundWindow(hwnd);
+        let _ = SetActiveWindow(hwnd);
+        let _ = SetFocus(hwnd);
+
+        if attached {
+            let _ = AttachThreadInput(foreground_thread_id, current_thread_id, 0);
+        }
+    }
+}
+
 pub fn show_and_focus_window() {
     if let Some(hwnd_value) = WINDOW_HANDLE.get() {
         let hwnd = HWND(*hwnd_value as _);
-        unsafe {
-            let _ = ShowWindow(hwnd, SW_SHOW);
-            let _ = SetForegroundWindow(hwnd);
-            let _ = SetFocus(hwnd);
-        }
+        activate_window(hwnd);
+        let _ = crate::webview::focus_webview();
     }
 }
 
@@ -161,6 +215,20 @@ unsafe extern "system" fn wndproc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
+        WM_CLOSE => {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+            LRESULT(0)
+        }
+        WM_SETFOCUS => {
+            let _ = crate::webview::focus_webview();
+            LRESULT(0)
+        }
+        WM_ACTIVATE => {
+            if (wparam.0 & 0xFFFF) != WA_INACTIVE as usize {
+                let _ = crate::webview::focus_webview();
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
         WM_DESTROY => {
             PostQuitMessage(0);
             LRESULT(0)

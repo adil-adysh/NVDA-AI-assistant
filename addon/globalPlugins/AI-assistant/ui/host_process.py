@@ -87,6 +87,8 @@ def start_host_if_needed() -> None:
 				stdout=subprocess.PIPE,
 				stderr=subprocess.STDOUT,
 				text=True,
+				encoding="utf-8",
+				errors="replace",
 				bufsize=1,
 			)
 			_host_process = process

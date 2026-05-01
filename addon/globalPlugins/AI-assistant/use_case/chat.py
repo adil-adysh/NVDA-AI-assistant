@@ -29,6 +29,8 @@ class OpenChatUseCase(UseCase):
 		emit: Callable[[str, str], None] | None = None,
 		**kwargs: object,
 	) -> UseCaseResult:
+		provider = "unknown"
+		model = "unknown"
 		return UseCaseResult(
 			success=True,
 			initial_text=kwargs.get("initial_text"),
@@ -41,6 +43,11 @@ class OpenChatUseCase(UseCase):
 				image_base64=kwargs.get("initial_image_base64"),
 				metadata={"prompt_key": self.spec.prompt_key},
 			),
+			metadata={
+				"provider": provider,
+				"model": model,
+				"prompt_key": self.spec.prompt_key,
+			},
 		)
 
 
@@ -85,12 +92,18 @@ class OpenChatWithPageContentUseCase(UseCase):
 			elif page_content is None:
 				page_content = prompt_context.text or ""
 
+		provider = getattr(prompt_context, "provider", None) or "unknown"
+		model = getattr(prompt_context, "model", None) or "unknown"
 		return UseCaseResult(
 			success=True,
 			initial_text=page_content,
 			message="Chat window ready",
 			prompt_context=prompt_context,
-			metadata={"prompt_key": self.spec.prompt_key},
+			metadata={
+				"provider": provider,
+				"model": model,
+				"prompt_key": self.spec.prompt_key,
+			},
 		)
 
 
@@ -126,11 +139,17 @@ class OpenChatWithScreenshotUseCase(UseCase):
 			if not initial_text:
 				initial_text = "Describe this screenshot."
 
+		provider = getattr(prompt_context, "provider", None) or "unknown"
+		model = getattr(prompt_context, "model", None) or "unknown"
 		return UseCaseResult(
 			success=True,
 			initial_text=initial_text,
 			initial_image_base64=image_base64,
 			message="Chat window ready",
 			prompt_context=prompt_context,
-			metadata={"prompt_key": self.spec.prompt_key},
+			metadata={
+				"provider": provider,
+				"model": model,
+				"prompt_key": self.spec.prompt_key,
+			},
 		)

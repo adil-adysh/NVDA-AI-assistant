@@ -10,14 +10,16 @@ from uuid import uuid4
 from logHandler import log
 
 from ..config.settings import save, set_model_name, set_ollama_think, set_provider
+from .host_lifecycle import HostLifecycleService, HostLifecycleState
 from . import nvda_ui
 from .host_renderer import HostRenderer, HostUnavailableError
+from .view_models import ChatWindowViewModel, DisplayResultViewModel
 
 
 class UIAdapter:
 	def __init__(self) -> None:
-		self._host_renderer = HostRenderer()
-		self._host_available = True
+		self._host_lifecycle = HostLifecycleService()
+		self._host_renderer = HostRenderer(lifecycle=self._host_lifecycle)
 		self._result_action_handler: Callable[[str, dict[str, Any] | None], None] | None = None
 		self._session_metadata_provider: Callable[[], dict[str, Any]] | None = None
 		self._pending_session_metadata: dict[str, Any] | None = None
@@ -62,13 +64,13 @@ class UIAdapter:
 	def _dispatch_host_command(self, command: Callable[[], None], fallback: Callable[[], None]) -> None:
 		log.debug("ENQUEUE COMMAND: %s", command)
 		log.debug("QUEUE ID (enqueue): %s", id(self._command_queue))
-		log.debug("UIAdapter dispatching host command; host_available=%s", self._host_available)
+		log.debug("UIAdapter dispatching host command; host_state=%s", self._host_lifecycle.state)
 		self._command_queue.put((command, fallback))
 
 	def _dispatch_primary_host_command(self, command: Callable[[], None], fallback: Callable[[], None]) -> None:
-		if not self._host_available:
+		if self._host_lifecycle.state == HostLifecycleState.FAILED:
 			log.info("UIAdapter retrying WebView host for a primary UI action")
-			self._host_available = True
+		self._host_lifecycle.prepare_primary_action()
 
 		def command_with_session_sync() -> None:
 			command()
@@ -77,11 +79,33 @@ class UIAdapter:
 		self._dispatch_host_command(command_with_session_sync, fallback)
 
 	def _mark_host_unavailable(self) -> None:
-		self._host_available = False
+		self._host_lifecycle.mark_failed()
 
 	def _notify_host_unavailable(self) -> None:
 		message = self._get_localized_strings().get("host_unavailable_message", "AI WebView host is unavailable.")
 		nvda_ui.message(message)
+
+	def render_display(self, view_model: DisplayResultViewModel) -> None:
+		metadata = view_model.transport_metadata()
+		self._remember_session_metadata(metadata)
+		self._host_renderer.register_ui_action_handler(self._handle_host_ui_action)
+		self._dispatch_primary_host_command(
+			lambda: self._host_renderer.render_display_result(
+				use_case_id=view_model.use_case_id,
+				title=view_model.title,
+				output_text=view_model.output_text,
+				output_html=view_model.output_html,
+				is_html=view_model.is_html,
+				success=view_model.success,
+				message=view_model.message,
+				close_button=view_model.close_button,
+				copy_button=view_model.copy_button,
+				copy_text=view_model.copy_text,
+				copy_markdown=view_model.copy_markdown,
+				metadata=metadata,
+			),
+			self._notify_host_unavailable,
+		)
 
 	def render_display_result(
 		self,
@@ -98,10 +122,8 @@ class UIAdapter:
 		copy_markdown: str | None = None,
 		metadata: dict[str, Any] | None = None,
 	) -> None:
-		self._remember_session_metadata(metadata)
-		self._host_renderer.register_ui_action_handler(self._handle_host_ui_action)
-		self._dispatch_primary_host_command(
-			lambda: self._host_renderer.render_display_result(
+		self.render_display(
+			DisplayResultViewModel(
 				use_case_id=use_case_id,
 				title=title,
 				output_text=output_text,
@@ -113,21 +135,17 @@ class UIAdapter:
 				copy_button=copy_button,
 				copy_text=copy_text,
 				copy_markdown=copy_markdown,
-				metadata=metadata,
-			),
-			self._notify_host_unavailable,
+				metadata=dict(metadata or {}),
+			)
 		)
 
-	def open_chat(
+	def open_chat_view(
 		self,
-		use_case_id: str | None,
-		title: str,
-		initial_text: str | None = None,
-		initial_image_base64: str | None = None,
+		view_model: ChatWindowViewModel,
 		coordinator: Any | None = None,
 		tool_registry: Any | None = None,
-		metadata: dict[str, Any] | None = None,
 	) -> None:
+		metadata = dict(view_model.metadata)
 		self._remember_session_metadata(metadata)
 		if coordinator is not None:
 			def handle_chat_submission(message: str, conversation_id: str | None, event_payload: dict[str, Any] | None) -> None:
@@ -143,10 +161,10 @@ class UIAdapter:
 
 		self._dispatch_primary_host_command(
 			lambda: self._host_renderer.open_chat(
-				use_case_id=use_case_id,
-				title=title,
-				initial_text=initial_text,
-				initial_image_base64=initial_image_base64,
+				use_case_id=view_model.use_case_id,
+				title=view_model.title,
+				initial_text=view_model.initial_text,
+				initial_image_base64=view_model.initial_image_base64,
 				coordinator=coordinator,
 				tool_registry=tool_registry,
 				metadata=metadata,
@@ -154,9 +172,31 @@ class UIAdapter:
 			self._notify_host_unavailable,
 		)
 
+	def open_chat(
+		self,
+		use_case_id: str | None,
+		title: str,
+		initial_text: str | None = None,
+		initial_image_base64: str | None = None,
+		coordinator: Any | None = None,
+		tool_registry: Any | None = None,
+		metadata: dict[str, Any] | None = None,
+	) -> None:
+		self.open_chat_view(
+			ChatWindowViewModel(
+				use_case_id=use_case_id,
+				title=title,
+				initial_text=initial_text,
+				initial_image_base64=initial_image_base64,
+				metadata=dict(metadata or {}),
+			),
+			coordinator=coordinator,
+			tool_registry=tool_registry,
+		)
+
 	def sync_session_state(self, metadata: dict[str, Any] | None = None) -> None:
 		self._remember_session_metadata(metadata)
-		if not self._host_available:
+		if not self._host_lifecycle.should_dispatch_background_command():
 			return
 		self._dispatch_host_command(
 			lambda: self._send_session_state(metadata),
@@ -318,7 +358,7 @@ class UIAdapter:
 		return f"{prefix}-{uuid4().hex}"
 
 	def show_error(self, error_message: str, details: str | None = None) -> None:
-		if self._host_available:
+		if self._host_lifecycle.should_dispatch_background_command():
 			self._dispatch_host_command(
 				lambda: self._host_renderer.show_error(error_message, details=details),
 				lambda: nvda_ui.message(error_message),
@@ -328,7 +368,7 @@ class UIAdapter:
 		nvda_ui.message(error_message)
 
 	def show_progress(self, message: str) -> None:
-		if self._host_available:
+		if self._host_lifecycle.should_dispatch_background_command():
 			self._dispatch_host_command(
 				lambda: self._host_renderer.show_progress(message),
 				lambda: nvda_ui.queue(nvda_ui.message, message),
@@ -338,7 +378,7 @@ class UIAdapter:
 		nvda_ui.queue(nvda_ui.message, message)
 
 	def close_window(self, reason: str | None = None) -> None:
-		if self._host_available:
+		if self._host_lifecycle.should_dispatch_background_command():
 			self._dispatch_host_command(
 				lambda: self._host_renderer.close_window(reason),
 				lambda: None,
