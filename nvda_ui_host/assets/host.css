@@ -145,6 +145,7 @@ body {
 }
 
 #provider-select,
+#model-select,
 #model-input {
     min-width: 180px;
     padding: 8px 10px;
@@ -153,6 +154,11 @@ body {
     font-size: 0.95rem;
     background: #fff;
     color: var(--text);
+}
+
+.model-picker {
+    display: grid;
+    gap: 8px;
 }
 
 #status {

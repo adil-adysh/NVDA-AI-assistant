@@ -10,6 +10,7 @@ import {
     contentEl,
     fileInputEl,
     modelInputEl,
+    modelSelectEl,
     providerSelectEl,
     thinkToggleEl,
 } from './dom.js';
@@ -21,6 +22,7 @@ import {
     requestCloseHost,
     setupWebViewBridge,
     submitChatMessage,
+    submitModelSelectSelection,
     submitModelSelection,
     submitProviderSelection,
     submitThinkModeToggle,
@@ -41,6 +43,7 @@ chatSendEl?.addEventListener('click', submitChatMessage);
 attachFilesEl?.addEventListener('click', () => fileInputEl?.click());
 fileInputEl?.addEventListener('change', handleFileSelection);
 providerSelectEl?.addEventListener('change', submitProviderSelection);
+modelSelectEl?.addEventListener('change', submitModelSelectSelection);
 modelInputEl?.addEventListener('change', submitModelSelection);
 modelInputEl?.addEventListener('blur', submitModelSelection);
 thinkToggleEl?.addEventListener('change', submitThinkModeToggle);

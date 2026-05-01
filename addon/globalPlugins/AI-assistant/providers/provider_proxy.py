@@ -9,7 +9,7 @@ from logHandler import log
 from ..config.state import ProviderState, subscribe_provider_state_change, unsubscribe_provider_state_change
 from ..core.canonical import Message, Tool
 from ..core.messages import LLMResponse, SummaryResponse
-from .interfaces import LLMProvider, PartialCallback, ProgressCallback
+from .interfaces import LLMProvider, PartialCallback, ProgressCallback, ProviderModelInfo
 from .runtime import ProviderRuntime
 
 
@@ -36,6 +36,14 @@ class ProviderProxy(LLMProvider):
 	def supports_image_description(self) -> bool:
 		self._warn_if_main_thread("supports_image_description")
 		return self._runtime.supports_image_description()
+
+	def list_models(self) -> tuple[ProviderModelInfo, ...]:
+		self._warn_if_main_thread("list_models")
+		return self._runtime.list_models()
+
+	def get_model_info(self, model_name: str | None = None) -> ProviderModelInfo | None:
+		self._warn_if_main_thread("get_model_info")
+		return self._runtime.get_model_info(model_name=model_name)
 
 	def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
 		self._warn_if_main_thread("summarize")

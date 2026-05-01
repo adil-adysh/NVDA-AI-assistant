@@ -7,10 +7,7 @@ from typing import Any, TypedDict
 
 from ..config.state import ProviderState
 from ..config.settings import (
-	get_gemini_model_name,
-	get_ollama_model_name,
 	get_ollama_think,
-	get_openai_model_name,
 	get_provider_state,
 )
 
@@ -114,14 +111,13 @@ def build_session_state(
 	translate: Translator,
 	provider_state: ProviderState | None = None,
 	conversation_id: str | None = None,
+	available_models: tuple[str, ...] | list[str] | None = None,
 ) -> UISessionState:
 	active_provider_state = provider_state or get_provider_state()
 	current_model = active_provider_state.model_name.strip()
-	available_models = _ordered_unique_models(
+	resolved_available_models = _ordered_unique_models(
 		current_model,
-		get_ollama_model_name(),
-		get_gemini_model_name(),
-		get_openai_model_name(),
+		*(available_models or ()),
 	)
 	return UISessionState(
 		provider=active_provider_state.provider,
@@ -131,7 +127,7 @@ def build_session_state(
 			{"id": "gemini", "label": translate("Gemini")},
 			{"id": "openai", "label": translate("OpenAI")},
 		),
-		available_models=available_models,
+		available_models=resolved_available_models,
 		localized_strings=build_localized_strings(translate),
 		think_enabled=get_ollama_think(),
 		conversation_id=conversation_id,

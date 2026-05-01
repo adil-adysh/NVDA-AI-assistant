@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import threading
 from collections.abc import Callable
 from typing import Any, cast
 from uuid import uuid4
@@ -34,6 +35,8 @@ class UseCasePresenter:
 		self._chat_coordinator = chat_coordinator
 		self._tool_registry = tool_registry
 		self._active_conversation_id: str | None = None
+		self._available_models_by_provider: dict[str, tuple[str, ...]] = {}
+		self._model_cache_lock = threading.RLock()
 		self._result_action_store = ResultActionStore()
 		ui_adapter.register_result_action_handler(self._handle_result_action)
 		ui_adapter.register_session_metadata_provider(self._build_chat_metadata)
@@ -44,7 +47,13 @@ class UseCasePresenter:
 		initial_image_base64: str | None = None,
 	) -> None:
 		self._active_conversation_id = str(uuid4())
-		session_state = build_session_state(_, conversation_id=self._active_conversation_id)
+		provider_state = get_provider_state()
+		session_state = build_session_state(
+			_,
+			provider_state,
+			conversation_id=self._active_conversation_id,
+			available_models=self._get_cached_models(provider_state),
+		)
 		ui_adapter.open_chat_view(
 			ChatWindowViewModel(
 				use_case_id=None,
@@ -56,14 +65,21 @@ class UseCasePresenter:
 			coordinator=self._chat_coordinator,
 			tool_registry=self._tool_registry,
 		)
+		self._refresh_available_models_async(provider_state)
 
 	def update_provider_state(self, provider_state: ProviderState | None = None) -> None:
 		try:
 			if provider_state is None:
 				provider_state = get_provider_state()
 			ui_adapter.sync_session_state(
-				build_session_state(_, provider_state, conversation_id=self._active_conversation_id).to_metadata()
+				build_session_state(
+					_,
+					provider_state,
+					conversation_id=self._active_conversation_id,
+					available_models=self._get_cached_models(provider_state),
+				).to_metadata()
 			)
+			self._refresh_available_models_async(provider_state)
 		except Exception:
 			log.exception("Error synchronizing WebView session state after provider change")
 
@@ -104,7 +120,8 @@ class UseCasePresenter:
 
 		browseable_title = nvda_ui.format_browseable_title(title, get_provider_state())
 		self._active_conversation_id = None
-		session_state = build_session_state(_)
+		provider_state = get_provider_state()
+		session_state = build_session_state(_, provider_state, available_models=self._get_cached_models(provider_state))
 		use_case_id = None
 		prompt_context = getattr(use_case_result, "prompt_context", None)
 		if prompt_context is not None:
@@ -143,7 +160,69 @@ class UseCasePresenter:
 			nvda_ui.queue(nvda_ui.message, event.message)
 
 	def _build_chat_metadata(self) -> dict[str, Any]:
-		return build_session_state(_, conversation_id=self._active_conversation_id).to_metadata()
+		provider_state = get_provider_state()
+		return build_session_state(
+			_,
+			provider_state,
+			conversation_id=self._active_conversation_id,
+			available_models=self._get_cached_models(provider_state),
+		).to_metadata()
+
+	def _get_cached_models(self, provider_state: ProviderState) -> tuple[str, ...]:
+		with self._model_cache_lock:
+			return self._available_models_by_provider.get(provider_state.provider, ())
+
+	def _refresh_available_models_async(self, provider_state: ProviderState) -> None:
+		threading.Thread(
+			target=self._refresh_available_models,
+			args=(provider_state,),
+			name=f"ModelCatalogRefresh-{provider_state.provider}",
+			daemon=True,
+		).start()
+
+	def _refresh_available_models(self, provider_state: ProviderState) -> None:
+		current_provider_state = get_provider_state()
+		if current_provider_state.provider != provider_state.provider:
+			log.debug(
+				"Skipping stale model refresh for %s; active provider is %s",
+				provider_state.provider,
+				current_provider_state.provider,
+			)
+			return
+
+		try:
+			models = tuple(
+				model.id
+				for model in self._chat_coordinator.list_models()
+				if isinstance(model.id, str) and model.id.strip()
+			)
+		except Exception:
+			log.exception("Error refreshing provider models for %s", provider_state.provider)
+			return
+
+		if not models:
+			return
+
+		current_provider_state = get_provider_state()
+		if current_provider_state.provider != provider_state.provider:
+			log.debug(
+				"Discarding stale model refresh result for %s; active provider is %s",
+				provider_state.provider,
+				current_provider_state.provider,
+			)
+			return
+
+		with self._model_cache_lock:
+			self._available_models_by_provider[provider_state.provider] = models
+
+		ui_adapter.sync_session_state(
+			build_session_state(
+				_,
+				current_provider_state,
+				conversation_id=self._active_conversation_id,
+				available_models=models,
+			).to_metadata()
+		)
 
 	def _build_result_actions(self, use_case_id: str | None, output_text: str | None, use_case_result: Any) -> list[ResultActionViewModel]:
 		if not isinstance(output_text, str) or not output_text.strip():

@@ -24,6 +24,7 @@ from .types import (
     OllamaGenerateResponse,
     OllamaMessageResponse,
     OllamaModelEntry,
+    OllamaModelMetadata,
     OllamaRunningModelsResponse,
     OllamaShowResponse,
     OllamaToolDefinition,
@@ -314,6 +315,12 @@ class OllamaClient:
         log.debug("Listing local Ollama models")
         return self._listModels()
 
+    def listModelMetadata(self, includeDetails: bool = False) -> tuple[OllamaModelMetadata, ...]:
+        names = self.listLocalModels()
+        if not includeDetails:
+            return tuple(OllamaModelMetadata(name=name) for name in names)
+        return tuple(self.getModelMetadata(name) for name in names)
+
     def listRunningModels(self) -> tuple[str, ...]:
         log.debug("Listing running Ollama models")
         response = _requestJSON(
@@ -358,6 +365,12 @@ class OllamaClient:
             {"model": model.strip()},
         )
         return cast(OllamaShowResponse, response)
+
+    def getModelMetadata(self, model: str) -> OllamaModelMetadata:
+        normalized = str(model or "").strip()
+        if not normalized:
+            raise OllamaClientError("Model name is required for model metadata.")
+        return OllamaModelMetadata.from_show_response(normalized, self.showModel(normalized))
 
     def loadModel(self, model: str | None = None, keepAlive: str | int | None = None):
         modelName = model or self._resolveModel()

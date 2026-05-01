@@ -13,7 +13,7 @@ from ...core.messages import LLMResponse, SummaryResponse
 from ...gemini import GeminiClient, GeminiClientError
 from ...gemini.types import Content, GenerateContentConfig, Part
 from ..config import GeminiConfig
-from ..interfaces import LLMProvider, LLMProviderError, PartialCallback
+from ..interfaces import LLMProvider, LLMProviderError, PartialCallback, ProviderModelInfo, SamplingDefaults
 from ...tools import build_function_tool_definition, normalize_tool_calls
 
 
@@ -38,6 +38,55 @@ class GeminiProvider(LLMProvider):
 
 	def supports_image_description(self) -> bool:
 		return True
+
+	def list_models(self) -> tuple[ProviderModelInfo, ...]:
+		page_token: str | None = None
+		models: list[ProviderModelInfo] = []
+		while True:
+			response = self._client.list_models(page_size=100, page_token=page_token)
+			models.extend(self._normalize_model_info(model) for model in response.models if model.name)
+			page_token = response.next_page_token
+			if not page_token:
+				break
+		return tuple(models)
+
+	def get_model_info(self, model_name: str | None = None) -> ProviderModelInfo | None:
+		resolved_model = (model_name or self._resolve_model()).strip()
+		if not resolved_model:
+			return None
+		return self._normalize_model_info(self._client.get_model(resolved_model))
+
+	def _normalize_model_info(self, model: Any) -> ProviderModelInfo:
+		model_name = str(model.name or "").strip()
+		capabilities: set[str] = set()
+		methods = tuple(method for method in model.supported_generation_methods or [] if isinstance(method, str))
+		if methods:
+			capabilities.update(("completion", "text_input", "text_output"))
+		if "generateContent" in methods:
+			capabilities.update(("chat", "tools"))
+		if "streamGenerateContent" in methods:
+			capabilities.add("streaming")
+		if model.thinking:
+			capabilities.add("thinking")
+		if methods and "embedContent" not in methods:
+			capabilities.add("image_input")
+
+		return ProviderModelInfo(
+			id=model_name,
+			provider=self.provider_name(),
+			display_name=model.display_name or model_name,
+			description=model.description,
+			context_window=model.input_token_limit,
+			output_token_limit=model.output_token_limit,
+			capabilities=tuple(sorted(capabilities)),
+			sampling_defaults=SamplingDefaults(
+				temperature=model.temperature,
+				top_p=model.top_p,
+				top_k=model.top_k,
+				extra={"max_temperature": model.max_temperature} if model.max_temperature is not None else {},
+			),
+			raw=dict(model.raw),
+		)
 
 	def _resolve_model(self) -> str:
 		model = self._config.model_name
@@ -96,12 +145,6 @@ class GeminiProvider(LLMProvider):
 			top_p=self._config.generate_top_p,
 			top_k=self._config.generate_top_k,
 		)
-
-	def list_models(self, page_size: int = 50, page_token: Optional[str] = None):
-		return self._client.list_models(page_size=page_size, page_token=page_token)
-
-	def get_model_info(self, model_name: str):
-		return self._client.get_model(model_name)
 
 	def _supports_multimodal(self) -> bool:
 		return True

@@ -10,8 +10,9 @@ from ...core.canonical import Message, Tool
 from ...core.tooling import ToolCall
 from ...core.messages import LLMResponse, SummaryResponse
 from ...ollama import OllamaClient, OllamaClientError
+from ...ollama.types import OllamaModelMetadata
 from ..config import OllamaConfig
-from ..interfaces import LLMProvider, LLMProviderError, PartialCallback, ProgressCallback
+from ..interfaces import LLMProvider, LLMProviderError, PartialCallback, ProgressCallback, ProviderModelInfo, SamplingDefaults
 from ...tools import build_function_tool_definition, normalize_tool_calls
 
 
@@ -36,6 +37,60 @@ class OllamaProvider(LLMProvider):
 
 	def supports_image_description(self) -> bool:
 		return True
+
+	def list_models(self) -> tuple[ProviderModelInfo, ...]:
+		try:
+			return tuple(self._normalize_model_info(metadata) for metadata in self._client.listModelMetadata())
+		except OllamaClientError as error:
+			raise self._wrap_exception(error) from error
+
+	def get_model_info(self, model_name: str | None = None) -> ProviderModelInfo | None:
+		resolved_model = str(model_name or self._config.model_name or "").strip()
+		if not resolved_model:
+			return None
+		try:
+			metadata = self._client.getModelMetadata(resolved_model)
+		except OllamaClientError as error:
+			raise self._wrap_exception(error) from error
+		return self._normalize_model_info(metadata)
+
+	def _normalize_model_info(self, metadata: OllamaModelMetadata) -> ProviderModelInfo:
+		parameter_defaults = dict(metadata.parameter_defaults)
+		capabilities = {"completion", "chat", "streaming", "text_input", "text_output", "tools"}
+		lowered = metadata.name.lower()
+		if any(token in lowered for token in ("llava", "vision", "moondream", "bakllava", "minicpm-v")):
+			capabilities.add("image_input")
+		if self._config.think:
+			capabilities.add("thinking")
+		return ProviderModelInfo(
+			id=metadata.name,
+			provider=self.provider_name(),
+			display_name=metadata.name,
+			capabilities=tuple(sorted(capabilities)),
+			sampling_defaults=SamplingDefaults(
+				temperature=self._coerce_float(parameter_defaults.get("temperature")),
+				top_p=self._coerce_float(parameter_defaults.get("top_p")),
+				top_k=self._coerce_int(parameter_defaults.get("top_k")),
+				extra={k: v for k, v in parameter_defaults.items() if k not in {"temperature", "top_p", "top_k"}},
+			),
+			raw=dict(metadata.raw),
+		)
+
+	def _coerce_float(self, value: str | None) -> float | None:
+		if value is None:
+			return None
+		try:
+			return float(value)
+		except (TypeError, ValueError):
+			return None
+
+	def _coerce_int(self, value: str | None) -> int | None:
+		if value is None:
+			return None
+		try:
+			return int(value)
+		except (TypeError, ValueError):
+			return None
 
 	def _wrap_exception(self, error: Exception) -> LLMProviderError:
 		if isinstance(error, LLMProviderError):

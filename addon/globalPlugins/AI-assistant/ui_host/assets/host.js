@@ -9,6 +9,7 @@
   var fileInputEl = document.getElementById("file-input");
   var attachmentStripEl = document.getElementById("attachment-strip");
   var providerSelectEl = document.getElementById("provider-select");
+  var modelSelectEl = document.getElementById("model-select");
   var modelInputEl = document.getElementById("model-input");
   var modelOptionsEl = document.getElementById("model-options");
   var thinkToggleEl = document.getElementById("think-toggle");
@@ -739,7 +740,19 @@ ${extractMarkdownFromBlocks(message.content)}`.trim();
     if (appState.controlState.selectedProvider) {
       providerSelectEl.value = appState.controlState.selectedProvider;
     }
+    const modelOptionsMarkup = appState.controlState.availableModels.map((model) => {
+      const value = String(model);
+      return `<option value="${value}">${value}</option>`;
+    }).join("");
     modelOptionsEl.innerHTML = appState.controlState.availableModels.map((model) => `<option value="${String(model)}"></option>`).join("");
+    modelSelectEl.innerHTML = modelOptionsMarkup || `<option value="">${appState.controlState.selectedModel || ""}</option>`;
+    if (appState.controlState.selectedModel) {
+      const existingOption = appState.controlState.availableModels.some((model) => String(model) === appState.controlState.selectedModel);
+      if (!existingOption) {
+        modelSelectEl.innerHTML = `${modelSelectEl.innerHTML}<option value="${appState.controlState.selectedModel}">${appState.controlState.selectedModel}</option>`;
+      }
+      modelSelectEl.value = appState.controlState.selectedModel;
+    }
     modelInputEl.value = appState.controlState.selectedModel;
     thinkToggleEl.checked = appState.controlState.thinkEnabled;
   }
@@ -802,6 +815,14 @@ ${extractMarkdownFromBlocks(message.content)}`.trim();
       provider: providerSelectEl.value.trim() || null,
       model
     });
+  }
+  function submitModelSelectSelection() {
+    const model = modelSelectEl.value.trim();
+    if (!model) {
+      return;
+    }
+    modelInputEl.value = model;
+    submitModelSelection();
   }
   function submitThinkModeToggle() {
     appState.controlState.thinkEnabled = thinkToggleEl.checked;
@@ -1036,6 +1057,7 @@ ${details}` : errorMessage;
   attachFilesEl?.addEventListener("click", () => fileInputEl?.click());
   fileInputEl?.addEventListener("change", handleFileSelection);
   providerSelectEl?.addEventListener("change", submitProviderSelection);
+  modelSelectEl?.addEventListener("change", submitModelSelectSelection);
   modelInputEl?.addEventListener("change", submitModelSelection);
   modelInputEl?.addEventListener("blur", submitModelSelection);
   thinkToggleEl?.addEventListener("change", submitThinkModeToggle);

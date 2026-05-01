@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from logHandler import log
 
-from ..config.settings import save, set_model_name, set_ollama_think, set_provider
+from ..config.settings import is_streaming_enabled, save, set_model_name, set_ollama_think, set_provider
 from .host_lifecycle import HostLifecycleService, HostLifecycleState
 from . import nvda_ui
 from .host_renderer import HostRenderer, HostUnavailableError
@@ -254,8 +254,38 @@ class UIAdapter:
 				"content": user_content,
 			},
 		)
+		assistant_message_id = self._new_message_id("assistant")
+		streaming_started = False
+
+		def update_streaming_message(partial_text: str, _generated_chars: int) -> None:
+			nonlocal streaming_started
+			content = [{"type": "text", "text": partial_text}] if partial_text else []
+			if not streaming_started:
+				streaming_started = True
+				self._host_renderer.chat_append(
+					use_case_id,
+					conversation_id or "",
+					{
+						"id": assistant_message_id,
+						"role": "assistant",
+						"content": content,
+					},
+				)
+			else:
+				self._host_renderer.chat_update(
+					use_case_id,
+					conversation_id or "",
+					assistant_message_id,
+					content,
+				)
+			nvda_ui.play_streaming_tone()
+
 		try:
-			response = coordinator.send_message(text=message_text or None, image_base64=image_base64)
+			response = coordinator.send_message(
+				text=message_text or None,
+				image_base64=image_base64,
+				progress_callback=update_streaming_message if is_streaming_enabled() else None,
+			)
 			assistant_text = getattr(response, "text", None)
 			thinking_trace = None
 			raw = getattr(response, "raw", None)
@@ -274,15 +304,23 @@ class UIAdapter:
 							"collapsed": True,
 						}
 					)
-				self._host_renderer.chat_append(
-					use_case_id,
-					conversation_id or "",
-					{
-						"id": self._new_message_id("assistant"),
-						"role": "assistant",
-						"content": assistant_content,
-					},
-				)
+				if streaming_started:
+					self._host_renderer.chat_update(
+						use_case_id,
+						conversation_id or "",
+						assistant_message_id,
+						assistant_content,
+					)
+				else:
+					self._host_renderer.chat_append(
+						use_case_id,
+						conversation_id or "",
+						{
+							"id": assistant_message_id,
+							"role": "assistant",
+							"content": assistant_content,
+						},
+					)
 		except Exception as error:
 			title = localized_strings.get("chat_submission_failed_title", "Chat submission failed")
 			self._host_renderer.show_error(title, details=str(error))
