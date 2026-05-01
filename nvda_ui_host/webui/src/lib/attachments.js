@@ -1,54 +1,8 @@
-import { attachmentStripEl, fileInputEl } from './dom.js';
-import { t } from './localization.js';
-import { appState } from './state.js';
-import { escapeHtml, focusChatComposer, setStatus } from './utils.js';
+import { appState, setPendingFocus, setStatus, t } from './state.svelte.js';
 
 const TEXT_FILE_EXTENSIONS = new Set([
     'txt', 'md', 'markdown', 'json', 'yaml', 'yml', 'csv', 'tsv', 'py', 'js', 'ts', 'tsx', 'jsx', 'html', 'htm', 'xml', 'css', 'scss', 'less', 'java', 'c', 'cpp', 'h', 'hpp', 'rs', 'go', 'rb', 'php', 'sql', 'log',
 ]);
-
-export function renderAttachments() {
-    if (!attachmentStripEl) {
-        return;
-    }
-
-    if (appState.viewState.mode !== 'chat') {
-        attachmentStripEl.innerHTML = '';
-        return;
-    }
-
-    if (!Array.isArray(appState.chatState.attachments) || appState.chatState.attachments.length === 0) {
-        attachmentStripEl.innerHTML = '';
-        return;
-    }
-
-    attachmentStripEl.innerHTML = appState.chatState.attachments.map(attachment => `
-        <div class="attachment-chip" data-attachment-id="${escapeHtml(attachment.id || '')}">
-            <span>${escapeHtml(attachment.name || attachment.kind || t('attachment_fallback_name', 'Attachment'))}</span>
-            <button type="button" data-remove-attachment="${escapeHtml(attachment.id || '')}">${escapeHtml(t('remove_attachment', 'Remove'))}</button>
-        </div>
-    `).join('');
-}
-
-export function clearPendingAttachments() {
-    appState.chatState.attachments = [];
-    renderAttachments();
-    if (fileInputEl) {
-        fileInputEl.value = '';
-    }
-}
-
-export function upsertAttachment(attachment) {
-    appState.chatState.attachments = appState.chatState.attachments.filter(item => item.id !== attachment.id);
-    appState.chatState.attachments.push(attachment);
-    renderAttachments();
-}
-
-export function removeAttachment(attachmentId) {
-    appState.chatState.attachments = appState.chatState.attachments.filter(item => item.id !== attachmentId);
-    renderAttachments();
-    focusChatComposer();
-}
 
 function createAttachmentId(file) {
     return `attachment-${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${file.name}`;
@@ -76,6 +30,7 @@ function isTextFile(file) {
     if (file.type && file.type.startsWith('text/')) {
         return true;
     }
+
     const parts = file.name.toLowerCase().split('.');
     const extension = parts.length > 1 ? parts.pop() : '';
     return TEXT_FILE_EXTENSIONS.has(extension || '');
@@ -83,6 +38,7 @@ function isTextFile(file) {
 
 async function loadAttachment(file) {
     const attachmentId = createAttachmentId(file);
+
     if (file.type.startsWith('image/')) {
         const dataUrl = await readFileAsDataUrl(file);
         const base64 = dataUrl.includes(',') ? dataUrl.split(',', 2)[1] : dataUrl;
@@ -109,8 +65,40 @@ async function loadAttachment(file) {
     throw new Error(`Unsupported file type for ${file.name}`);
 }
 
-export async function handleFileSelection(event) {
-    const files = Array.from(event.target?.files || []);
+export function upsertAttachment(attachment) {
+    appState.chat.attachments = appState.chat.attachments.filter(item => item.id !== attachment.id);
+    appState.chat.attachments.push(attachment);
+}
+
+export function removeAttachment(attachmentId) {
+    appState.chat.attachments = appState.chat.attachments.filter(item => item.id !== attachmentId);
+    setPendingFocus('composer');
+}
+
+export function clearPendingAttachments(fileInputElement = null) {
+    appState.chat.attachments = [];
+
+    if (fileInputElement) {
+        fileInputElement.value = '';
+    }
+}
+
+export function addInitialImageAttachment(base64) {
+    if (!base64) {
+        return;
+    }
+
+    upsertAttachment({
+        id: `initial-image-${Date.now()}`,
+        kind: 'image',
+        name: t('initial_image_name', 'Initial image'),
+        mime_type: 'image/png',
+        image_base64: base64,
+    });
+}
+
+export async function handleFileSelection(fileList) {
+    const files = Array.from(fileList || []);
     if (files.length === 0) {
         return;
     }
@@ -119,12 +107,12 @@ export async function handleFileSelection(event) {
         try {
             const attachment = await loadAttachment(file);
             upsertAttachment(attachment);
-            setStatus(`${t('attach_button', 'Attach')}: ${file.name}`);
+            setStatus(`${t('attach_button', 'Attach')}: ${file.name}`, true);
         } catch (error) {
             console.error(error);
-            setStatus(`${t('attach_failed_status', 'Unable to attach file.')} ${file.name}`.trim());
+            setStatus(`${t('attach_failed_status', 'Unable to attach file.')} ${file.name}`.trim(), true);
         }
     }
 
-    focusChatComposer();
+    setPendingFocus('composer');
 }

@@ -8,67 +8,7 @@
     <link rel="stylesheet" href="host.css" />
 </head>
 <body>
-    <div id="announcer" class="sr-only" aria-live="assertive" aria-atomic="true"></div>
-    <div class="app-shell">
-        <header class="app-header">
-            <div class="title-block">
-                <p class="eyebrow">NVDA AI Assistant</p>
-                <h1 class="app-title">Response Workspace</h1>
-                <p id="shortcut-hint" class="shortcut-hint">Shortcuts: Alt+Shift+T copy text, Alt+Shift+M copy markdown, Alt+Shift+I focus chat input, Alt+Shift+L focus content.</p>
-            </div>
-            <div id="session-controls" class="session-controls" aria-label="Session controls">
-                <label class="field-group" for="provider-select">
-                    <span id="provider-label">Provider</span>
-                    <select id="provider-select"></select>
-                </label>
-                <label class="field-group" for="model-input">
-                    <span id="model-label">Model</span>
-                    <div class="model-picker">
-                        <select id="model-select"></select>
-                        <input id="model-input" list="model-options" type="text" />
-                    </div>
-                    <datalist id="model-options"></datalist>
-                </label>
-                <label class="toggle-group" for="think-toggle">
-                    <input id="think-toggle" type="checkbox" />
-                    <span id="think-mode-label">Think mode</span>
-                </label>
-            </div>
-        </header>
-        <main class="workspace">
-            <section class="workspace-card status-card" aria-labelledby="status-heading">
-                <h2 id="status-heading" class="section-title">Status</h2>
-                <div id="status" role="status" aria-live="polite" tabindex="-1">Waiting for host command...</div>
-            </section>
-            <section class="workspace-card content-card" aria-labelledby="content-heading">
-                <div class="section-header">
-                    <h2 id="content-heading" class="section-title">Content</h2>
-                    <div class="toolbar" aria-label="Content actions">
-                        <button id="copy-text" aria-keyshortcuts="Alt+Shift+T">Copy text</button>
-                        <button id="copy-markdown" aria-keyshortcuts="Alt+Shift+M">Copy markdown</button>
-                        <button id="clear" aria-keyshortcuts="Alt+Shift+R">Clear</button>
-                        <button id="close-window" aria-keyshortcuts="Escape">Close</button>
-                    </div>
-                </div>
-                <div id="content" role="main" tabindex="-1" aria-describedby="shortcut-hint">No content received yet.</div>
-            </section>
-            <section id="chat-panel" class="workspace-card chat-panel" style="display:none;" aria-labelledby="chat-heading">
-                <div class="section-header">
-                    <h2 id="chat-heading" class="section-title">Chat Composer</h2>
-                    <div class="composer-toolbar">
-                        <button id="attach-files" type="button" aria-keyshortcuts="Alt+Shift+A">Attach</button>
-                        <input id="file-input" type="file" multiple hidden />
-                    </div>
-                </div>
-                <div id="attachment-strip" class="attachment-strip"></div>
-                <label class="composer-field" for="chat-input">
-                    <span class="composer-label">Message</span>
-                    <textarea id="chat-input" placeholder="Type your message..." rows="3" aria-keyshortcuts="Alt+Shift+I"></textarea>
-                </label>
-                <button id="chat-send" aria-keyshortcuts="Enter,Alt+Shift+S">Send</button>
-            </section>
-        </main>
-    </div>
+    <div id="app"></div>
     <script src="host.js"></script>
 </body>
 </html>
