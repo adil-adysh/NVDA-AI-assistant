@@ -30,6 +30,10 @@ class ImageDescriptionUseCase(UseCase):
 		emit: Callable[[str, str], None] | None = None,
 		**kwargs: object,
 	) -> UseCaseResult:
+		if not llm_service.supports_image_description():
+			provider_name = llm_service.provider_name()
+			raise ValueError(f"Image description is not supported by the active provider: {provider_name}")
+
 		return self.execute_prompted_use_case(
 			context_pipeline=context_pipeline,
 			llm_service=llm_service,
@@ -57,6 +61,9 @@ class ImageDescriptionUseCase(UseCase):
 	def _build_result(self, prompt_context: PromptContext, response: object, prompt: str) -> UseCaseResult:
 		image_context = self._get_image_context(prompt_context)
 		html_output = self.markdown_to_html(response.text)
+		# Ensure provider and model are included in metadata if present on response
+		provider = getattr(response, "provider", None) or "unknown"
+		model = getattr(response, "model", None) or "unknown"
 		return UseCaseResult(
 			success=True,
 			message="Image description ready",
@@ -74,7 +81,8 @@ class ImageDescriptionUseCase(UseCase):
 				},
 			),
 			metadata={
-				"model": response.model,
+				"provider": provider,
+				"model": model,
 				"prompt_key": self.spec.prompt_key,
 			},
 		)

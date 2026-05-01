@@ -6,6 +6,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from .host_interface import HostTransport, UIHostRenderer
+from .host_lifecycle import HostLifecycleService
 from .host_process import start_host_if_needed
 from .host_protocol import (
 	EVENT_CHAT_SUBMITTED,
@@ -28,7 +29,7 @@ class HostRenderer(UIHostRenderer):
 	COMMAND_PIPE_NAME = r"\\.\pipe\nvda_ai_assistant_ui_cmd"
 	EVENT_PIPE_NAME = r"\\.\pipe\nvda_ai_assistant_ui_evt"
 
-	def __init__(self) -> None:
+	def __init__(self, lifecycle: HostLifecycleService | None = None) -> None:
 		self._current_conversation_id: str | None = None
 		self._current_use_case_id: str | None = None
 		self._chat_submission_handler: Callable[[str, str | None, dict[str, Any] | None], None] | None = None
@@ -41,7 +42,7 @@ class HostRenderer(UIHostRenderer):
 			event_pipe_name=self.EVENT_PIPE_NAME,
 			event_callback=self._on_host_event,
 		)
-		self._host_ready = False
+		self._lifecycle = lifecycle or HostLifecycleService()
 
 	def render_display_result(
 		self,
@@ -293,9 +294,12 @@ class HostRenderer(UIHostRenderer):
 		try:
 			response_bytes = self._transport.send(message)
 			self._process_response(response_bytes)
+			self._lifecycle.mark_command_succeeded(command_name)
 		except HostUnavailableError:
+			self._lifecycle.mark_failed()
 			raise
 		except Exception as error:
+			self._lifecycle.mark_failed()
 			raise HostUnavailableError(str(error)) from error
 
 	def _probe_host(self) -> None:
@@ -307,19 +311,20 @@ class HostRenderer(UIHostRenderer):
 
 	def _ensure_host_running(self) -> None:
 		try:
-			start_host_if_needed()
+			self._lifecycle.ensure_started(start_host_if_needed)
 		except HostUnavailableError:
 			raise
 		start_event_listener = getattr(self._transport, "start_event_listener", None)
 		if callable(start_event_listener):
 			start_event_listener()
-		if not self._host_ready:
+		if self._lifecycle.state.name not in {"READY", "HIDDEN"}:
 			try:
 				self._probe_host()
 			except Exception as error:
 				logger.error("HostRenderer host health check failed: %s", error, exc_info=True)
+				self._lifecycle.mark_failed()
 				raise HostUnavailableError(str(error)) from error
-			self._host_ready = True
+			self._lifecycle.mark_ready()
 
 	def _process_response(self, response_bytes: bytes) -> None:
 		response_text = response_bytes.decode("utf-8", errors="replace").replace("\r", "").replace("\n", "").strip("\x00 ")
@@ -334,12 +339,16 @@ class HostRenderer(UIHostRenderer):
 			if response.status == "nack":
 				raise HostUnavailableError(response.message or "Host returned nack")
 			logger.debug("HostRenderer received ACK response: %s stage=%s", response.request_id, response.stage)
+		except HostUnavailableError:
+			self._lifecycle.mark_failed()
+			raise
 		except ValueError as error:
 			logger.warning("HostRenderer invalid response payload: %s; %s", response_text, error)
 			return
 		except Exception as error:
+			self._lifecycle.mark_failed()
 			logger.warning("HostRenderer response handling failed: %s", error)
-			return
+			raise HostUnavailableError(str(error)) from error
 
 	def _write_pipe_fallback(self, message: bytes) -> None:
 		try:

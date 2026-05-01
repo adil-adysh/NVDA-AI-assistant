@@ -257,6 +257,24 @@ pub fn resize_webview(hwnd: HWND) {
     }
 }
 
+pub fn focus_webview() -> bool {
+    if let Some(controller) = current_controller() {
+        match unsafe { controller.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC) } {
+            Ok(()) => {
+                logger::debug("Moved focus into WebView");
+                true
+            }
+            Err(error) => {
+                logger::warn(&format!("Unable to move focus into WebView: {:?}", error));
+                false
+            }
+        }
+    } else {
+        logger::debug("Skipped WebView focus move because controller is not ready");
+        false
+    }
+}
+
 pub fn post_host_command(message: &str) -> Result<()> {
     let queue_len_before = pending_messages().lock().unwrap().len();
     logger::debug(&format!(
@@ -483,13 +501,12 @@ logger::info("Initializing WebView2...");
                             logger::error(&format!("add_WebMessageReceived failed: {:?}", e));
                         }
 
-                        let controller_clone = controller.clone();
                         let mut nav_token = 0i64;
                         if let Err(e) = webview.add_NavigationCompleted(
                             &NavigationCompletedEventHandler::create(Box::new(move |_sender: Option<ICoreWebView2>, _args: Option<ICoreWebView2NavigationCompletedEventArgs>| {
                                 logger::debug("Navigation completed");
                                 set_webview_ready(true);
-                                controller_clone.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC).ok();
+                                let _ = focus_webview();
                                 flush_pending_messages();
                                 Ok(())
                             })),
