@@ -56,6 +56,7 @@ class HostProtocolTests(unittest.TestCase):
 			payload={
 				"conversation_id": "abc",
 				"message_id": "assistant_1",
+				"stream_id": "stream_1",
 				"delta": "Hello",
 				"sequence": 3,
 			},
@@ -65,6 +66,7 @@ class HostProtocolTests(unittest.TestCase):
 
 		self.assertEqual(parsed.name, "chat_stream_delta")
 		self.assertEqual(parsed.payload["message_id"], "assistant_1")
+		self.assertEqual(parsed.payload["stream_id"], "stream_1")
 		self.assertEqual(parsed.payload["delta"], "Hello")
 		self.assertEqual(parsed.payload["sequence"], 3)
 
