@@ -19,6 +19,10 @@ VALID_RESPONSE_STATUSES = {"ack", "nack"}
 COMMAND_CHAT_SET_HISTORY = "chat_set_history"
 COMMAND_CHAT_APPEND = "chat_append"
 COMMAND_CHAT_UPDATE = "chat_update"
+COMMAND_CHAT_STREAM_BEGIN = "chat_stream_begin"
+COMMAND_CHAT_STREAM_DELTA = "chat_stream_delta"
+COMMAND_CHAT_STREAM_END = "chat_stream_end"
+COMMAND_CHAT_STREAM_ABORT = "chat_stream_abort"
 
 EVENT_CHAT_SUBMITTED = "chat_submitted"
 EVENT_CHAT_ATTACHMENT_ADDED = "chat_attachment_added"

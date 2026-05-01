@@ -68,6 +68,10 @@ The WebView must continue to handle these command names:
 - `chat_set_history`
 - `chat_append`
 - `chat_update`
+- `chat_stream_begin`
+- `chat_stream_delta`
+- `chat_stream_end`
+- `chat_stream_abort`
 - `show_error`
 - `update_progress`
 - `close_window`
@@ -130,6 +134,43 @@ Required preserved behavior:
 - replaces message content in place
 - updates `conversation_id` and `command_id` when present
 - re-renders chat mode and keeps chat scrolling behavior intact
+
+This command remains the non-streaming full-message replacement path.
+
+### `chat_stream_begin`
+
+Required preserved behavior:
+
+- ensures chat mode is active
+- creates or reuses an in-progress message keyed by `message_id`
+- preserves `conversation_id` when present
+- initializes temporary streaming state without requiring final rich content yet
+
+### `chat_stream_delta`
+
+Required preserved behavior:
+
+- appends only the incremental `delta` text to the in-progress message keyed by `message_id`
+- ignores stale deltas when `sequence` is older than the last applied update for that message
+- preserves `conversation_id` when present
+- keeps chat scrolling behavior intact while the message is streaming
+
+### `chat_stream_end`
+
+Required preserved behavior:
+
+- locates the in-progress message using `message_id`
+- replaces temporary streamed text with final `content`
+- clears temporary streaming state for that message
+- preserves `conversation_id` and focus-target behavior when present
+
+### `chat_stream_abort`
+
+Required preserved behavior:
+
+- locates the in-progress message using `message_id`
+- marks the message as no longer streaming
+- tolerates missing or already-finalized messages without crashing the UI
 
 ### `show_error`
 
@@ -406,6 +447,7 @@ The Svelte refactor is not complete until all of the following still work:
 - `render_display` renders text, HTML, actions, and thinking content
 - `open_chat` opens chat with initial text and optional image
 - `chat_set_history`, `chat_append`, and `chat_update` preserve message history behavior
+- `chat_stream_begin`, `chat_stream_delta`, `chat_stream_end`, and `chat_stream_abort` preserve streamed-message behavior without full-message resends
 - `chat_submitted` includes attachments in the existing shape
 - provider, model, and think-mode events still reach Python unchanged
 - global and message-level copy actions preserve current output behavior

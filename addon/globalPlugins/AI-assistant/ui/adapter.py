@@ -271,33 +271,59 @@ class UIAdapter:
 		)
 		assistant_message_id = self._new_message_id("assistant")
 		streaming_started = False
-		streaming_chunks: list[str] = []
+		pending_stream_delta_chunks: list[str] = []
+		pending_stream_delta_char_count = 0
+		stream_sequence = 0
+		stream_update_interval = 1200
+		host_stream_updates_enabled = True
 
-		def update_streaming_message(partial_text: str, _generated_chars: int) -> None:
-			nonlocal streaming_started
-			if partial_text:
-				streaming_chunks.append(partial_text)
-			accumulated_text = "".join(streaming_chunks)
-			content = [{"type": "text", "text": accumulated_text}] if accumulated_text else []
-			if not streaming_started:
-				streaming_started = True
-				self._host_renderer.chat_append(
-					use_case_id,
-					conversation_id or "",
-					{
-						"id": assistant_message_id,
-						"role": "assistant",
-						"content": content,
-					},
-				)
-			else:
-				self._host_renderer.chat_update(
+		def flush_stream_delta() -> bool:
+			nonlocal streaming_started, pending_stream_delta_chunks, pending_stream_delta_char_count, stream_sequence, host_stream_updates_enabled
+			if not host_stream_updates_enabled:
+				pending_stream_delta_chunks = []
+				pending_stream_delta_char_count = 0
+				return False
+			delta_text = "".join(pending_stream_delta_chunks)
+			if not delta_text:
+				return streaming_started
+			try:
+				if not streaming_started:
+					self._host_renderer.chat_stream_begin(
+						use_case_id,
+						conversation_id or "",
+						assistant_message_id,
+					)
+					streaming_started = True
+				self._host_renderer.chat_stream_delta(
 					use_case_id,
 					conversation_id or "",
 					assistant_message_id,
-					content,
+					delta_text,
+					stream_sequence,
 				)
+			except Exception:
+				host_stream_updates_enabled = False
+				log.exception("Streaming host update failed; continuing without UI refreshes")
+				pending_stream_delta_chunks = []
+				pending_stream_delta_char_count = 0
+				return False
+			stream_sequence += 1
+			pending_stream_delta_chunks = []
+			pending_stream_delta_char_count = 0
 			nvda_ui.play_streaming_tone()
+			return True
+
+		def update_streaming_message(partial_text: str, _generated_chars: int) -> None:
+			nonlocal pending_stream_delta_char_count
+			if not host_stream_updates_enabled:
+				return
+			if partial_text:
+				pending_stream_delta_chunks.append(partial_text)
+				pending_stream_delta_char_count += len(partial_text)
+			should_flush_update = not streaming_started or pending_stream_delta_char_count >= stream_update_interval
+			if not should_flush_update:
+				return
+			flush_stream_delta()
 
 		try:
 			response = coordinator.send_message(
@@ -319,24 +345,40 @@ class UIAdapter:
 					thinking_trace=thinking_trace if isinstance(thinking_trace, str) else None,
 				)
 				if streaming_started:
-					self._host_renderer.chat_update(
-						use_case_id,
-						conversation_id or "",
-						assistant_message_id,
-						assistant_content,
-						metadata={"focus_target": "composer"},
-					)
-				else:
-					self._host_renderer.chat_append(
-						use_case_id,
-						conversation_id or "",
-						{
-							"id": assistant_message_id,
-							"role": "assistant",
-							"content": assistant_content,
-						},
-						metadata={"focus_target": "composer"},
-					)
+					flush_stream_delta()
+				if host_stream_updates_enabled:
+					try:
+						if streaming_started:
+							self._host_renderer.chat_stream_end(
+								use_case_id,
+								conversation_id or "",
+								assistant_message_id,
+								assistant_content,
+								metadata={"focus_target": "composer"},
+							)
+						else:
+							self._host_renderer.chat_append(
+								use_case_id,
+								conversation_id or "",
+								{
+									"id": assistant_message_id,
+									"role": "assistant",
+									"content": assistant_content,
+								},
+								metadata={"focus_target": "composer"},
+							)
+					except Exception:
+						if streaming_started:
+							try:
+								self._host_renderer.chat_stream_abort(
+									use_case_id,
+									conversation_id or "",
+									assistant_message_id,
+									reason="final_commit_failed",
+								)
+							except Exception:
+								pass
+						log.exception("Final host chat update failed after streaming; preserving backend response")
 		except Exception as error:
 			title = localized_strings.get("chat_submission_failed_title", "Chat submission failed")
 			self._host_renderer.show_error(title, details=str(error))

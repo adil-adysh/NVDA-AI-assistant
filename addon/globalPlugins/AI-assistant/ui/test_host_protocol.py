@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import importlib
 import sys
 import unittest
 from pathlib import Path
@@ -11,16 +12,15 @@ MODULE_DIR = Path(__file__).resolve().parent
 if str(MODULE_DIR) not in sys.path:
 	sys.path.insert(0, str(MODULE_DIR))
 
-from host_protocol import (  # type: ignore[import-not-found]
-	ACK_TYPE,
-	COMMAND_TYPE,
-	EVENT_CHAT_SUBMITTED,
-	PROTOCOL_VERSION,
-	SCHEMA,
-	HostCommand,
-	HostEvent,
-	HostResponse,
-)
+host_protocol = importlib.import_module("host_protocol")
+ACK_TYPE = host_protocol.ACK_TYPE
+COMMAND_TYPE = host_protocol.COMMAND_TYPE
+EVENT_CHAT_SUBMITTED = host_protocol.EVENT_CHAT_SUBMITTED
+PROTOCOL_VERSION = host_protocol.PROTOCOL_VERSION
+SCHEMA = host_protocol.SCHEMA
+HostCommand = host_protocol.HostCommand
+HostEvent = host_protocol.HostEvent
+HostResponse = host_protocol.HostResponse
 
 
 class HostProtocolTests(unittest.TestCase):
@@ -49,6 +49,24 @@ class HostProtocolTests(unittest.TestCase):
 		self.assertEqual(parsed.name, "chat_set_history")
 		self.assertEqual(parsed.payload["conversation_id"], "abc")
 		self.assertEqual(parsed.payload["messages"][0]["role"], "user")
+
+	def test_chat_stream_delta_command_roundtrip(self) -> None:
+		command = HostCommand(
+			name="chat_stream_delta",
+			payload={
+				"conversation_id": "abc",
+				"message_id": "assistant_1",
+				"delta": "Hello",
+				"sequence": 3,
+			},
+		)
+		payload = command.to_json()
+		parsed = HostCommand.from_json(payload)
+
+		self.assertEqual(parsed.name, "chat_stream_delta")
+		self.assertEqual(parsed.payload["message_id"], "assistant_1")
+		self.assertEqual(parsed.payload["delta"], "Hello")
+		self.assertEqual(parsed.payload["sequence"], 3)
 
 	def test_host_command_rejects_unsupported_protocol_version(self) -> None:
 		payload = json.dumps(

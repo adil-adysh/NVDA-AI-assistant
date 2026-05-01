@@ -153,6 +153,56 @@ Payload fields:
 - `status`: string | null
 - `metadata`: object | null
 
+### `chat_stream_begin`
+
+Payload fields:
+
+- `use_case_id`: string | null
+- `conversation_id`: string
+- `message_id`: string
+- `role`: string, typically `assistant`
+- `metadata`: object | null
+
+This command starts a streamed chat message without requiring the add-on to resend the full message content on every partial token.
+
+### `chat_stream_delta`
+
+Payload fields:
+
+- `use_case_id`: string | null
+- `conversation_id`: string
+- `message_id`: string
+- `delta`: string
+- `sequence`: integer
+- `metadata`: object | null
+
+This command appends an incremental text delta to an in-progress streamed message. The host should treat `sequence` as monotonic and ignore stale deltas when later updates have already been applied.
+
+### `chat_stream_end`
+
+Payload fields:
+
+- `use_case_id`: string | null
+- `conversation_id`: string
+- `message_id`: string
+- `content`: string | array
+- `status`: string | null
+- `metadata`: object | null
+
+This command commits the final structured content for a streamed message. It is the point where rich blocks such as HTML, thinking traces, or citations should replace any temporary delta-rendered text.
+
+### `chat_stream_abort`
+
+Payload fields:
+
+- `use_case_id`: string | null
+- `conversation_id`: string
+- `message_id`: string
+- `reason`: string | null
+- `metadata`: object | null
+
+This command marks an in-progress streamed message as aborted when the stream cannot be completed in the host projection.
+
 ### `show_error`
 
 Payload fields:

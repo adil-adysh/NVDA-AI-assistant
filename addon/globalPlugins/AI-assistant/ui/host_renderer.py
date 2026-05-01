@@ -261,6 +261,86 @@ class HostRenderer(UIHostRenderer):
 		}
 		self._send_command("chat_update", payload)
 
+	def chat_stream_begin(
+		self,
+		use_case_id: str | None,
+		conversation_id: str,
+		message_id: str,
+		role: str = "assistant",
+		metadata: dict[str, Any] | None = None,
+	) -> None:
+		if conversation_id.strip():
+			self._current_conversation_id = conversation_id.strip()
+		payload: HostCommandPayload = {
+			"use_case_id": use_case_id,
+			"conversation_id": conversation_id,
+			"message_id": message_id,
+			"role": role,
+			"metadata": metadata,
+		}
+		self._send_command("chat_stream_begin", payload)
+
+	def chat_stream_delta(
+		self,
+		use_case_id: str | None,
+		conversation_id: str,
+		message_id: str,
+		delta: str,
+		sequence: int,
+		metadata: dict[str, Any] | None = None,
+	) -> None:
+		if conversation_id.strip():
+			self._current_conversation_id = conversation_id.strip()
+		payload: HostCommandPayload = {
+			"use_case_id": use_case_id,
+			"conversation_id": conversation_id,
+			"message_id": message_id,
+			"delta": delta,
+			"sequence": sequence,
+			"metadata": metadata,
+		}
+		self._send_command("chat_stream_delta", payload)
+
+	def chat_stream_end(
+		self,
+		use_case_id: str | None,
+		conversation_id: str,
+		message_id: str,
+		content: list[dict[str, Any]] | str,
+		status: str | None = None,
+		metadata: dict[str, Any] | None = None,
+	) -> None:
+		if conversation_id.strip():
+			self._current_conversation_id = conversation_id.strip()
+		payload: HostCommandPayload = {
+			"use_case_id": use_case_id,
+			"conversation_id": conversation_id,
+			"message_id": message_id,
+			"content": content,
+			"status": status,
+			"metadata": metadata,
+		}
+		self._send_command("chat_stream_end", payload)
+
+	def chat_stream_abort(
+		self,
+		use_case_id: str | None,
+		conversation_id: str,
+		message_id: str,
+		reason: str | None = None,
+		metadata: dict[str, Any] | None = None,
+	) -> None:
+		if conversation_id.strip():
+			self._current_conversation_id = conversation_id.strip()
+		payload: HostCommandPayload = {
+			"use_case_id": use_case_id,
+			"conversation_id": conversation_id,
+			"message_id": message_id,
+			"reason": reason,
+			"metadata": metadata,
+		}
+		self._send_command("chat_stream_abort", payload)
+
 	def show_error(self, error_message: str, details: str | None = None) -> None:
 		payload: HostCommandPayload = {
 			"error_message": error_message,

@@ -141,6 +141,10 @@ pub enum CommandName {
 	ChatSetHistory,
 	ChatAppend,
 	ChatUpdate,
+	ChatStreamBegin,
+	ChatStreamDelta,
+	ChatStreamEnd,
+	ChatStreamAbort,
 	ShowError,
 	UpdateProgress,
 	CloseWindow,
@@ -182,6 +186,10 @@ pub enum UiCommand {
 	ChatSetHistory(Value),
 	ChatAppend(Value),
 	ChatUpdate(Value),
+	ChatStreamBegin(Value),
+	ChatStreamDelta(Value),
+	ChatStreamEnd(Value),
+	ChatStreamAbort(Value),
 	ShowError(Value),
 	UpdateProgress(Value),
 	CloseWindow(Value),
@@ -197,6 +205,10 @@ impl UiCommand {
 			UiCommand::ChatSetHistory(_) => CommandName::ChatSetHistory,
 			UiCommand::ChatAppend(_) => CommandName::ChatAppend,
 			UiCommand::ChatUpdate(_) => CommandName::ChatUpdate,
+			UiCommand::ChatStreamBegin(_) => CommandName::ChatStreamBegin,
+			UiCommand::ChatStreamDelta(_) => CommandName::ChatStreamDelta,
+			UiCommand::ChatStreamEnd(_) => CommandName::ChatStreamEnd,
+			UiCommand::ChatStreamAbort(_) => CommandName::ChatStreamAbort,
 			UiCommand::ShowError(_) => CommandName::ShowError,
 			UiCommand::UpdateProgress(_) => CommandName::UpdateProgress,
 			UiCommand::CloseWindow(_) => CommandName::CloseWindow,
@@ -212,6 +224,10 @@ impl UiCommand {
 			UiCommand::ChatSetHistory(_) => "chat_set_history",
 			UiCommand::ChatAppend(_) => "chat_append",
 			UiCommand::ChatUpdate(_) => "chat_update",
+			UiCommand::ChatStreamBegin(_) => "chat_stream_begin",
+			UiCommand::ChatStreamDelta(_) => "chat_stream_delta",
+			UiCommand::ChatStreamEnd(_) => "chat_stream_end",
+			UiCommand::ChatStreamAbort(_) => "chat_stream_abort",
 			UiCommand::ShowError(_) => "show_error",
 			UiCommand::UpdateProgress(_) => "progress_update",
 			UiCommand::CloseWindow(_) => "close_window",
@@ -227,6 +243,10 @@ impl UiCommand {
 			| UiCommand::ChatSetHistory(payload)
 			| UiCommand::ChatAppend(payload)
 			| UiCommand::ChatUpdate(payload)
+			| UiCommand::ChatStreamBegin(payload)
+			| UiCommand::ChatStreamDelta(payload)
+			| UiCommand::ChatStreamEnd(payload)
+			| UiCommand::ChatStreamAbort(payload)
 			| UiCommand::ShowError(payload)
 			| UiCommand::UpdateProgress(payload)
 			| UiCommand::CloseWindow(payload) => payload.clone(),
@@ -259,6 +279,10 @@ impl UiCommand {
 			CommandName::ChatSetHistory => UiCommand::ChatSetHistory(payload),
 			CommandName::ChatAppend => UiCommand::ChatAppend(payload),
 			CommandName::ChatUpdate => UiCommand::ChatUpdate(payload),
+			CommandName::ChatStreamBegin => UiCommand::ChatStreamBegin(payload),
+			CommandName::ChatStreamDelta => UiCommand::ChatStreamDelta(payload),
+			CommandName::ChatStreamEnd => UiCommand::ChatStreamEnd(payload),
+			CommandName::ChatStreamAbort => UiCommand::ChatStreamAbort(payload),
 			CommandName::ShowError => UiCommand::ShowError(payload),
 			CommandName::UpdateProgress => UiCommand::UpdateProgress(payload),
 			CommandName::CloseWindow => UiCommand::CloseWindow(payload),
@@ -518,5 +542,16 @@ mod tests {
 		assert_eq!(parsed.response_mode, ResponseMode::V2);
 		assert_eq!(parsed.payload.command_name(), CommandName::SyncSession);
 		assert_eq!(parsed.payload.payload()["conversation_id"], "conv-1");
+	}
+
+	#[test]
+	fn parses_chat_stream_delta_v2_command() {
+		let parsed = parse_inbound_command(r#"{"schema":"nvda.ui_host","version":2,"id":"msg-stream","correlation_id":"conv-1","source":"nvda_addon","type":"command","command":{"name":"chat_stream_delta","payload":{"conversation_id":"conv-1","message_id":"assistant-1","delta":"Hello","sequence":2}}}"#)
+			.expect("parse chat_stream_delta command");
+
+		assert_eq!(parsed.message_id, "msg-stream");
+		assert_eq!(parsed.payload.command_name(), CommandName::ChatStreamDelta);
+		assert_eq!(parsed.payload.payload()["delta"], "Hello");
+		assert_eq!(parsed.payload.payload()["sequence"], 2);
 	}
 }

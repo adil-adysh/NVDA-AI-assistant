@@ -17,7 +17,11 @@ fn requires_window_activation(command: &ParsedCommand) -> bool {
 }
 
 pub fn handle_raw_message(raw: &str, writer: &mut impl Write) -> Result<()> {
-    logger::debug(&format!("Host app received raw message: {}", raw));
+    logger::debug(&format!(
+        "Host app received raw message len={} preview={}",
+        raw.len(),
+        logger::preview(raw, 160)
+    ));
     match protocol::parse_inbound_command(raw) {
         Ok(command) => handle_command(command, writer),
         Err(error) => {
@@ -44,7 +48,11 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
     let webview_message = serde_json::to_string(&protocol::to_webview_envelope(&command))
         .map_err(|error| windows::core::Error::new(windows::core::HRESULT(0), error.to_string()))?;
     logger::info(&format!("Host app forwarding normalized command to UI thread: message_id={} payload={}", command.message_id, command.payload.as_legacy_action()));
-    logger::debug(&format!("Host app normalized UI thread command: {}", webview_message));
+    logger::debug(&format!(
+        "Host app normalized UI thread command len={} preview={}",
+        webview_message.len(),
+        logger::preview(&webview_message, 160)
+    ));
     if requires_window_activation(&command) {
         window::show_and_focus_window();
     }
@@ -61,7 +69,13 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
 }
 
 fn write_json_value(value: &serde_json::Value, writer: &mut impl Write) -> Result<()> {
-    logger::debug(&format!("Host app sending response: {}", value));
+    let serialized = serde_json::to_string(value)
+        .map_err(|error| windows::core::Error::new(windows::core::HRESULT(0), error.to_string()))?;
+    logger::debug(&format!(
+        "Host app sending response len={} preview={}",
+        serialized.len(),
+        logger::preview(&serialized, 160)
+    ));
     serde_json::to_writer(&mut *writer, value)
         .map_err(|error| windows::core::Error::new(windows::core::HRESULT(0), error.to_string()))?;
     writer

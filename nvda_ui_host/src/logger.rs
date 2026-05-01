@@ -86,6 +86,17 @@ pub fn debug(message: &str) {
     let _ = write_line("DEBUG", message);
 }
 
+pub fn preview(message: &str, limit: usize) -> String {
+    let mut preview = String::new();
+    for character in message.chars().take(limit) {
+        preview.push(character);
+    }
+    if message.chars().count() > limit {
+        preview.push_str("...");
+    }
+    preview
+}
+
 pub fn warn(message: &str) {
     let _ = write_line("WARN", message);
 }
