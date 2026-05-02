@@ -21,6 +21,7 @@ The Rust binary is a host and renderer boundary, not a business-logic layer.
 - Treat command responses and asynchronous UI events as distinct flows.
 - Preserve UI-thread affinity and host lifecycle guarantees.
 - When adding a new command or event, update the protocol deliberately and keep semantics generic enough for reuse.
+- Keep activation behavior policy-driven in `app.rs` and native close/hide behavior in `window.rs`.
 
 ## Validation
 

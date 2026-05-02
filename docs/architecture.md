@@ -62,18 +62,25 @@ The IPC boundary must not own use-case behavior, provider behavior, or renderer-
 - `addon/globalPlugins/AI-assistant/ui/host_protocol.py` defines the JSON protocol model.
 - `addon/globalPlugins/AI-assistant/ui/host_interface.py` defines the renderer-facing contract.
 - `addon/globalPlugins/AI-assistant/ui/adapter.py` chooses between host-backed rendering and native NVDA fallback.
-- `addon/globalPlugins/AI-assistant/ui/host_renderer.py` should remain a thin protocol adapter, not a long-term owner of business state.
+- `addon/globalPlugins/AI-assistant/ui/intent.py` defines host presentation intent values such as `interaction_mode`, `attention_policy`, and `focus_target`.
+- `addon/globalPlugins/AI-assistant/ui/host_renderer.py` should remain a thin protocol adapter with reusable payload and event helpers, not a long-term owner of business state.
 - `addon/globalPlugins/AI-assistant/ui/host_transport.py` should remain transport-only.
 - `addon/globalPlugins/AI-assistant/ui/host_process.py` launches and monitors the external host when needed.
-- `addon/globalPlugins/AI-assistant/plugin/presenter.py` maps use-case results into generic UI intents.
+- `addon/globalPlugins/AI-assistant/plugin/presenter.py` maps use-case results into generic UI intents and presentation intent metadata.
 
 ### Host side
 
 - `nvda_ui_host/src/protocol.rs` is the single source of truth for envelope parsing and serialization.
 - `nvda_ui_host/src/ipc.rs` owns transport and connection management only.
-- `nvda_ui_host/src/app.rs` validates commands, emits `ack` or `error`, and normalizes work for the UI thread.
-- `nvda_ui_host/src/window.rs` owns queued UI dispatch and thread affinity.
+- `nvda_ui_host/src/app.rs` validates commands, emits `ack` or `error`, normalizes work for the UI thread, and maps commands to activation policies.
+- `nvda_ui_host/src/window.rs` owns queued UI dispatch, thread affinity, and native foreground/focus/hide behavior.
 - `nvda_ui_host/src/webview.rs` applies typed UI commands and translates JavaScript-originated messages into protocol events.
+
+### Web UI side
+
+- `nvda_ui_host/webui/src/lib/state.svelte.js` owns local presentation state only.
+- `nvda_ui_host/webui/src/lib/bridge.js` applies protocol commands through shared helpers and handler registries.
+- `nvda_ui_host/webui/src/components/` render generic content, controls, and chat primitives without provider-specific logic.
 
 ## IPC model
 
@@ -112,7 +119,7 @@ Why this scales better:
 - `ui_applied`, `ui_failed`, `chat_submitted`, `ui_action_invoked`, `provider_selected`, and `window_closed` are asynchronous UI-originated events.
 - Separating those flows avoids overloading short-lived request transports with long-lived event semantics.
 
-If a dedicated event pipe is not implemented yet, the acceptable intermediate design is explicit event polling from Python. The architectural rule is still the same: command responses and asynchronous UI events stay conceptually separate.
+The current implementation uses a dedicated event pipe. The architectural rule is still the same: command responses and asynchronous UI events stay conceptually separate.
 
 ## UI model
 
@@ -189,6 +196,30 @@ Examples:
 - The UI renders a disclosure control without embedding model-specific logic.
 - Python includes current provider/model state and allowed options.
 - The UI emits a selection event when the user changes provider or model.
+
+### Attention and result-view policy
+
+The add-on should describe attention behavior explicitly rather than relying on renderer-side heuristics.
+
+Recommended rules:
+
+- streamed updates render incrementally without changing focus
+- streamed updates do not foreground the host window
+- a final answer may foreground the host window once if it is backgrounded
+- one-shot results such as image description, summary, and structured summary should render as content plus `Open Chat`
+- one-shot results should not expose session controls until the user explicitly opens chat
+
+Recommended ownership:
+
+- Python decides `interaction_mode`, `controls_visible`, `attention_policy`, and preferred `focus_target`
+- Rust decides how native activation and close behavior are applied
+- the WebView applies focus and scroll only as a projection of that protocol-backed intent
+
+Current implementation notes:
+
+- Python produces intent values through `ui/intent.py`
+- Rust maps command payloads to activation policy in `nvda_ui_host/src/app.rs`
+- the Web UI keeps streaming scroll behavior separate from focus behavior
 
 ## Effect on use cases
 
@@ -296,6 +327,24 @@ For that reason, the EXE and pipe architecture should be designed around chat, r
 - Treat result actions as generic protocol data rather than hardcoded WebView behavior.
 - Treat thinking-trace content as structured presentation data, not implicit text conventions.
 - Treat the Python and Rust protocol implementations as mirrored contracts and test them accordingly.
+
+## Adding Commands And Events
+
+### Adding a host command
+
+1. document the command in `docs/ui-host-protocol.md`
+2. update the Python producer such as the presenter, view model, or adapter
+3. update Rust command parsing or dispatch in `nvda_ui_host/src/protocol.rs` and `nvda_ui_host/src/app.rs`
+4. update Web UI application in `nvda_ui_host/webui/src/lib/bridge.js`
+5. validate producer and consumer sides together
+
+### Adding a UI-originated event
+
+1. document the event in `docs/ui-host-protocol.md`
+2. emit it from the Web UI
+3. keep `nvda_ui_host/src/webview.rs` transport-focused; it should forward the event rather than interpret feature semantics
+4. dispatch it in `ui/host_renderer.py`
+5. add targeted tests when useful
 
 ## Migration direction
 

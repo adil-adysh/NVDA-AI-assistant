@@ -32,6 +32,9 @@ Never bypass those flows with direct provider calls, ad-hoc prompt assembly, or 
 - `service/` owns model interaction, streaming, tool execution, and chat coordination.
 - `providers/` owns provider-specific implementation details behind `ProviderProxy`.
 - `ui/` and `ui_host/` own rendering contracts and adapters, not business logic.
+- `ui/intent.py` is the source of truth for host presentation intent such as `interaction_mode`, `attention_policy`, and `focus_target`.
+- `plugin/presenter.py` decides result-mode behavior such as `result_action_only` and generic follow-up actions like `Open Chat`.
+- `ui/adapter.py` should remain a coordinator; detailed stream projection or payload shaping should move into helpers when it grows.
 
 ### Rust host
 
@@ -39,12 +42,16 @@ Never bypass those flows with direct provider calls, ad-hoc prompt assembly, or 
 - `ipc.rs` owns transport only.
 - `app.rs` validates incoming commands and normalizes them for the UI thread.
 - `window.rs` and `webview.rs` own native window and WebView lifecycle.
+- `app.rs` owns command-to-activation-policy mapping.
+- `window.rs` owns foreground, focus, hide, and close behavior.
 
 ### Web UI
 
 - `nvda_ui_host/webui/src/` renders generic host intents.
 - Keep provider logic, use-case branching, and NVDA behavior out of the browser layer.
 - Prefer typed protocol-driven UI state over hidden browser-only behavior.
+- `webui/src/lib/bridge.js` should use shared helpers or handler registries rather than repeated payload branches.
+- `webui/src/lib/state.svelte.js` owns local presentation state only.
 
 ## Required Patterns
 
@@ -53,6 +60,27 @@ Never bypass those flows with direct provider calls, ad-hoc prompt assembly, or 
 - Access providers through `LLMService` and `ProviderProxy`, never directly from `use_case/` or `ui/`.
 - Register tool behavior in the tool registry/executor path instead of invoking tools directly from a feature.
 - Keep host commands generic and protocol-backed. If Python and Rust both change, update the protocol contract deliberately.
+- Express host-backed UI behavior through protocol-backed presentation metadata such as `interaction_mode`, `controls_visible`, `attention_policy`, and `focus_target`.
+- Streaming updates must not change focus. Final answers may request `foreground_if_background` when Python wants to surface the completed answer.
+- One-shot results such as image description, summary, and structured summary should be modeled as `result_action_only` views with generic result actions.
+
+## Adding Commands And Events
+
+When adding a host command:
+
+1. document it in `docs/ui-host-protocol.md`
+2. update the Python producer such as `presenter.py`, `view_models.py`, or `adapter.py`
+3. update Rust parsing and dispatch in `nvda_ui_host/src/protocol.rs` and `nvda_ui_host/src/app.rs`
+4. update Web UI application in `nvda_ui_host/webui/src/lib/bridge.js`
+5. validate both the producer and consumer sides
+
+When adding a UI-originated event:
+
+1. document it in `docs/ui-host-protocol.md`
+2. emit it from the Web UI
+3. keep `webview.rs` transport-focused; it should forward rather than interpret feature semantics
+4. dispatch it in `ui/host_renderer.py` and route it to the owning Python layer
+5. add targeted tests where useful
 
 ## Hard Constraints
 
@@ -62,6 +90,7 @@ Never bypass those flows with direct provider calls, ad-hoc prompt assembly, or 
 - Do not hardcode provider names or provider-specific branching outside provider/config layers.
 - Do not mix UI rendering concerns with business logic.
 - Do not introduce parallel abstractions when an existing `UseCase`, `ContextPipeline`, presenter, or host protocol type already fits.
+- Do not implement new result behavior by branching on use-case id in the Web UI when presentation intent metadata can express it.
 
 ## Validation Defaults
 

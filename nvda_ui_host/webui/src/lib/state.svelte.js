@@ -12,6 +12,7 @@ export const appState = $state({
     title: 'NVDA UI Host',
     statusMessage: defaultLocalizedStrings.waiting_status,
     announcerMessage: '',
+    controlsVisible: true,
     control: {
         availableProviders: [],
         availableModels: [],
@@ -31,6 +32,7 @@ export const appState = $state({
         messages: [],
         attachments: [],
         composerText: '',
+        renderVersion: 0,
     },
     display: {
         blocks: [],
@@ -39,6 +41,7 @@ export const appState = $state({
     view: {
         mode: 'display',
         pendingFocus: null,
+        interactionMode: 'display',
     },
     copy: {
         text: '',
@@ -78,6 +81,10 @@ export function setViewMode(mode, pendingFocus = null) {
     }
 }
 
+export function setInteractionMode(mode) {
+    appState.view.interactionMode = mode || 'display';
+}
+
 export function setCopyBuffers(text = '', markdown = '') {
     appState.copy.text = text;
     appState.copy.markdown = markdown;
@@ -86,6 +93,10 @@ export function setCopyBuffers(text = '', markdown = '') {
 export function setDisplayBlocks(blocks = [], actions = []) {
     appState.display.blocks = blocks;
     appState.display.actions = actions;
+}
+
+export function bumpChatRenderVersion() {
+    appState.chat.renderVersion += 1;
 }
 
 export function resetDisplayState() {
@@ -100,11 +111,13 @@ export function resetChatState() {
     appState.chat.messages = [];
     appState.chat.attachments = [];
     appState.chat.composerText = '';
+    appState.chat.renderVersion = 0;
 }
 
 export function clearCurrentView() {
     resetChatState();
     resetDisplayState();
+    setInteractionMode('display');
     setViewMode('display', 'content');
 }
 
@@ -123,4 +136,8 @@ export function setControlPending(change) {
 
 export function clearControlPending() {
     appState.control.pendingChange = null;
+}
+
+export function setControlsVisible(visible) {
+    appState.controlsVisible = Boolean(visible);
 }

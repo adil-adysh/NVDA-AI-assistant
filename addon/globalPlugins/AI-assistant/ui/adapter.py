@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import queue
 import threading
 from collections.abc import Callable
@@ -11,6 +12,7 @@ from logHandler import log
 
 from ..config.settings import is_streaming_enabled, save, set_model_name, set_ollama_think, set_provider
 from .host_lifecycle import HostLifecycleService, HostLifecycleState
+from .intent import ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND, merge_presentation_intent
 from . import nvda_ui
 from .host_renderer import HostRenderer, HostUnavailableError
 from .view_models import ChatWindowViewModel, DisplayResultViewModel
@@ -46,6 +48,118 @@ def _normalize_stream_fragment(
 
 	delta_text = normalized_text[known_length:]
 	return normalized_text, delta_text
+
+
+@dataclass(slots=True)
+class _StreamedAssistantProjection:
+	renderer: HostRenderer
+	use_case_id: str | None
+	conversation_id: str
+	message_id: str
+	stream_id: str
+	final_metadata_factory: Callable[[], dict[str, object]]
+	stream_update_interval: int = 1200
+	streaming_started: bool = False
+	host_stream_updates_enabled: bool = True
+	normalized_stream_text: str = ""
+	pending_stream_delta_chunks: list[str] = field(default_factory=list)
+	pending_stream_delta_char_count: int = 0
+	stream_sequence: int = 0
+
+	def update(self, partial_text: str, generated_chars: int) -> None:
+		if not self.host_stream_updates_enabled:
+			return
+		self.normalized_stream_text, delta_text = _normalize_stream_fragment(
+			self.normalized_stream_text,
+			partial_text,
+			generated_chars,
+		)
+		if delta_text:
+			self.pending_stream_delta_chunks.append(delta_text)
+			self.pending_stream_delta_char_count += len(delta_text)
+		should_flush = not self.streaming_started or self.pending_stream_delta_char_count >= self.stream_update_interval
+		if should_flush:
+			self.flush()
+
+	def flush(self) -> bool:
+		if not self.host_stream_updates_enabled:
+			self._clear_pending_delta()
+			return False
+		delta_text = "".join(self.pending_stream_delta_chunks)
+		if not delta_text:
+			return self.streaming_started
+		try:
+			if not self.streaming_started:
+				self.renderer.chat_stream_begin(
+					self.use_case_id,
+					self.conversation_id,
+					self.message_id,
+					self.stream_id,
+				)
+				self.streaming_started = True
+			self.renderer.chat_stream_delta(
+				self.use_case_id,
+				self.conversation_id,
+				self.message_id,
+				self.stream_id,
+				delta_text,
+				self.stream_sequence,
+			)
+		except Exception:
+			self.host_stream_updates_enabled = False
+			log.exception("Streaming host update failed; continuing without UI refreshes")
+			self._clear_pending_delta()
+			return False
+		self.stream_sequence += 1
+		self._clear_pending_delta()
+		nvda_ui.play_streaming_tone()
+		return True
+
+	def finish(self, assistant_content: list[dict[str, Any]]) -> None:
+		if self.streaming_started:
+			self.flush()
+		if not self.host_stream_updates_enabled:
+			return
+		try:
+			if self.streaming_started:
+				self.renderer.chat_stream_end(
+					self.use_case_id,
+					self.conversation_id,
+					self.message_id,
+					self.stream_id,
+					self.stream_sequence - 1,
+					assistant_content,
+					metadata=self.final_metadata_factory(),
+				)
+			else:
+				self.renderer.chat_append(
+					self.use_case_id,
+					self.conversation_id,
+					{
+						"id": self.message_id,
+						"role": "assistant",
+						"content": assistant_content,
+					},
+					metadata=self.final_metadata_factory(),
+				)
+		except Exception:
+			if self.streaming_started:
+				try:
+					self.renderer.chat_stream_abort(
+						self.use_case_id,
+						self.conversation_id,
+						self.message_id,
+						self.stream_id,
+						self.stream_sequence - 1,
+						reason="final_commit_failed",
+					)
+				except Exception:
+					pass
+			log.exception("Final host chat update failed after streaming; preserving backend response")
+
+	def _clear_pending_delta(self) -> None:
+		self.pending_stream_delta_chunks = []
+		self.pending_stream_delta_char_count = 0
 
 
 class UIAdapter:
@@ -251,6 +365,12 @@ class UIAdapter:
 		if isinstance(metadata, dict):
 			self._pending_session_metadata = dict(metadata)
 
+	def _final_answer_metadata(self, metadata: dict[str, Any] | None = None) -> dict[str, object]:
+		return merge_presentation_intent(
+			metadata,
+			attention_policy=ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND,
+		)
+
 	def _send_session_state(self, metadata: dict[str, Any] | None = None) -> None:
 		effective_metadata = metadata if isinstance(metadata, dict) else self._pending_session_metadata
 		self._host_renderer.sync_session_state(metadata=effective_metadata)
@@ -279,18 +399,7 @@ class UIAdapter:
 		if not message_text and image_base64 is None:
 			return
 
-		user_content: list[dict[str, Any]] = []
-		if message_text:
-			user_content.append({"type": "text", "text": message_text})
-		if image_base64:
-			user_content.append(
-				{
-					"type": "image",
-					"image_base64": image_base64,
-					"mime_type": "image/png",
-					"alt": localized_strings.get("image_attachment_notice", "[Image attachment included]"),
-				}
-			)
+		user_content = self._build_user_content(message_text, image_base64, localized_strings)
 		self._host_renderer.chat_append(
 			use_case_id,
 			conversation_id or "",
@@ -300,132 +409,53 @@ class UIAdapter:
 				"content": user_content,
 			},
 		)
-		assistant_message_id = self._new_message_id("assistant")
-		assistant_stream_id = str(uuid4())
-		streaming_started = False
-		normalized_stream_text = ""
-		pending_stream_delta_chunks: list[str] = []
-		pending_stream_delta_char_count = 0
-		stream_sequence = 0
-		stream_update_interval = 1200
-		host_stream_updates_enabled = True
-
-		def flush_stream_delta() -> bool:
-			nonlocal streaming_started, pending_stream_delta_chunks, pending_stream_delta_char_count, stream_sequence, host_stream_updates_enabled
-			if not host_stream_updates_enabled:
-				pending_stream_delta_chunks = []
-				pending_stream_delta_char_count = 0
-				return False
-			delta_text = "".join(pending_stream_delta_chunks)
-			if not delta_text:
-				return streaming_started
-			try:
-				if not streaming_started:
-					self._host_renderer.chat_stream_begin(
-						use_case_id,
-						conversation_id or "",
-						assistant_message_id,
-						assistant_stream_id,
-					)
-					streaming_started = True
-				self._host_renderer.chat_stream_delta(
-					use_case_id,
-					conversation_id or "",
-					assistant_message_id,
-					assistant_stream_id,
-					delta_text,
-					stream_sequence,
-				)
-			except Exception:
-				host_stream_updates_enabled = False
-				log.exception("Streaming host update failed; continuing without UI refreshes")
-				pending_stream_delta_chunks = []
-				pending_stream_delta_char_count = 0
-				return False
-			stream_sequence += 1
-			pending_stream_delta_chunks = []
-			pending_stream_delta_char_count = 0
-			nvda_ui.play_streaming_tone()
-			return True
-
-		def update_streaming_message(partial_text: str, _generated_chars: int) -> None:
-			nonlocal pending_stream_delta_char_count, normalized_stream_text
-			if not host_stream_updates_enabled:
-				return
-			normalized_stream_text, delta_text = _normalize_stream_fragment(
-				normalized_stream_text,
-				partial_text,
-				_generated_chars,
-			)
-			if delta_text:
-				pending_stream_delta_chunks.append(delta_text)
-				pending_stream_delta_char_count += len(delta_text)
-			should_flush_update = not streaming_started or pending_stream_delta_char_count >= stream_update_interval
-			if not should_flush_update:
-				return
-			flush_stream_delta()
+		assistant_projection = _StreamedAssistantProjection(
+			renderer=self._host_renderer,
+			use_case_id=use_case_id,
+			conversation_id=conversation_id or "",
+			message_id=self._new_message_id("assistant"),
+			stream_id=str(uuid4()),
+			final_metadata_factory=self._final_answer_metadata,
+		)
 
 		try:
 			response = coordinator.send_message(
 				text=message_text or None,
 				image_base64=image_base64,
-				progress_callback=update_streaming_message if is_streaming_enabled() else None,
+				progress_callback=assistant_projection.update if is_streaming_enabled() else None,
 			)
 			assistant_text = getattr(response, "text", None)
-			thinking_trace = None
-			raw = getattr(response, "raw", None)
-			if raw is not None:
-				metadata = getattr(raw, "metadata", None)
-				if isinstance(metadata, dict):
-					thinking_trace = metadata.get("thinking_trace")
+			thinking_trace = self._extract_thinking_trace(response)
 			if isinstance(assistant_text, str) and assistant_text.strip():
 				assistant_content = self._build_assistant_content_blocks(
 					assistant_text,
 					localized_strings,
 					thinking_trace=thinking_trace if isinstance(thinking_trace, str) else None,
 				)
-				if streaming_started:
-					flush_stream_delta()
-				if host_stream_updates_enabled:
-					try:
-						if streaming_started:
-							self._host_renderer.chat_stream_end(
-								use_case_id,
-								conversation_id or "",
-								assistant_message_id,
-								assistant_stream_id,
-								stream_sequence - 1,
-								assistant_content,
-								metadata={"focus_target": "composer"},
-							)
-						else:
-							self._host_renderer.chat_append(
-								use_case_id,
-								conversation_id or "",
-								{
-									"id": assistant_message_id,
-									"role": "assistant",
-									"content": assistant_content,
-								},
-								metadata={"focus_target": "composer"},
-							)
-					except Exception:
-						if streaming_started:
-							try:
-								self._host_renderer.chat_stream_abort(
-									use_case_id,
-									conversation_id or "",
-									assistant_message_id,
-									assistant_stream_id,
-									stream_sequence - 1,
-									reason="final_commit_failed",
-								)
-							except Exception:
-								pass
-						log.exception("Final host chat update failed after streaming; preserving backend response")
+				assistant_projection.finish(assistant_content)
 		except Exception as error:
 			title = localized_strings.get("chat_submission_failed_title", "Chat submission failed")
 			self._host_renderer.show_error(title, details=str(error))
+
+	def _build_user_content(
+		self,
+		message_text: str,
+		image_base64: str | None,
+		localized_strings: dict[str, str],
+	) -> list[dict[str, Any]]:
+		content: list[dict[str, Any]] = []
+		if message_text:
+			content.append({"type": "text", "text": message_text})
+		if image_base64:
+			content.append(
+				{
+					"type": "image",
+					"image_base64": image_base64,
+					"mime_type": "image/png",
+					"alt": localized_strings.get("image_attachment_notice", "[Image attachment included]"),
+				}
+			)
+		return content
 
 	def _build_assistant_content_blocks(
 		self,
@@ -451,6 +481,16 @@ class UIAdapter:
 				}
 			)
 		return content
+
+	def _extract_thinking_trace(self, response: Any) -> str | None:
+		raw = getattr(response, "raw", None)
+		if raw is None:
+			return None
+		metadata = getattr(raw, "metadata", None)
+		if isinstance(metadata, dict):
+			thinking_trace = metadata.get("thinking_trace")
+			return thinking_trace if isinstance(thinking_trace, str) else None
+		return None
 
 	def _extract_attachment_context(
 		self,

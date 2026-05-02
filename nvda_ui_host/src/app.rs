@@ -6,14 +6,58 @@ use crate::logger;
 use crate::protocol::{self, AckStage, ParsedCommand, ProtocolError, ResponseMode};
 use crate::window;
 
-fn requires_window_activation(command: &ParsedCommand) -> bool {
-    matches!(
-        command.payload,
-        protocol::UiCommand::RenderDisplay(_)
-            | protocol::UiCommand::OpenChat(_)
-            | protocol::UiCommand::ShowError(_)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ActivationPolicy {
+    NoActivate,
+    ActivateIfBackground,
+    ActivateAndFocus,
+}
+
+fn activation_policy(command: &ParsedCommand) -> ActivationPolicy {
+    let payload = command.payload.payload();
+    let policy = payload
+        .get("attention_policy")
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            payload
+                .get("metadata")
+                .and_then(|value| value.as_object())
+                .and_then(|metadata| metadata.get("attention_policy"))
+                .and_then(|value| value.as_str())
+        });
+
+    match policy {
+        Some("none") => ActivationPolicy::NoActivate,
+        Some("foreground_if_background") => ActivationPolicy::ActivateIfBackground,
+        Some("activate_and_focus") => ActivationPolicy::ActivateAndFocus,
+        _ => match command.payload {
+            protocol::UiCommand::OpenChat(_) => ActivationPolicy::ActivateAndFocus,
+            protocol::UiCommand::RenderDisplay(_) | protocol::UiCommand::ShowError(_) => {
+                ActivationPolicy::ActivateIfBackground
+            }
+            protocol::UiCommand::ChatAppend(_)
+            | protocol::UiCommand::ChatStreamEnd(_) => ActivationPolicy::ActivateIfBackground,
+            protocol::UiCommand::HealthCheck
+            | protocol::UiCommand::SyncSession(_)
+            | protocol::UiCommand::ChatSetHistory(_)
+            | protocol::UiCommand::ChatUpdate(_)
+            | protocol::UiCommand::ChatStreamBegin(_)
+            | protocol::UiCommand::ChatStreamDelta(_)
+            | protocol::UiCommand::ChatStreamAbort(_)
             | protocol::UiCommand::UpdateProgress(_)
-    )
+            | protocol::UiCommand::CloseWindow(_) => ActivationPolicy::NoActivate,
+        },
+    }
+}
+
+#[cfg(test)]
+fn test_command(payload: protocol::UiCommand) -> ParsedCommand {
+    ParsedCommand {
+        message_id: "test-message".to_string(),
+        correlation_id: None,
+        response_mode: ResponseMode::V2,
+        payload,
+    }
 }
 
 pub fn handle_raw_message(raw: &str, writer: &mut impl Write) -> Result<()> {
@@ -45,6 +89,19 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
         }
     }
 
+    if matches!(command.payload, protocol::UiCommand::CloseWindow(_)) {
+        if let Err(dispatch_error) = window::request_close_window() {
+            let (kind, message) = match dispatch_error {
+                window::DispatchError::QueueFull => (protocol::ProtocolErrorKind::QueueFull, "Host dispatch queue is full"),
+                window::DispatchError::QueueDisconnected => (protocol::ProtocolErrorKind::UiDispatchFailed, "Host dispatch queue is disconnected"),
+                window::DispatchError::NotInitialized => (protocol::ProtocolErrorKind::UiDispatchFailed, "Host window dispatch is not initialized"),
+            };
+            let error = ProtocolError::new(kind, Some(command.message_id.clone()), message);
+            return write_json_value(&protocol::build_error(command.response_mode, Some(command.message_id.clone()), &error), writer);
+        }
+        return write_json_value(&protocol::build_ack(&command, AckStage::Enqueued, None), writer);
+    }
+
     let webview_message = serde_json::to_string(&protocol::to_webview_envelope(&command))
         .map_err(|error| windows::core::Error::new(windows::core::HRESULT(0), error.to_string()))?;
     logger::info(&format!("Host app forwarding normalized command to UI thread: message_id={} payload={}", command.message_id, command.payload.as_legacy_action()));
@@ -53,10 +110,7 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
         webview_message.len(),
         logger::preview(&webview_message, 160)
     ));
-    if requires_window_activation(&command) {
-        window::show_and_focus_window();
-    }
-    if let Err(dispatch_error) = window::post_host_command(webview_message) {
+    if let Err(dispatch_error) = window::post_host_command(webview_message, activation_policy(&command)) {
         let (kind, message) = match dispatch_error {
             window::DispatchError::QueueFull => (protocol::ProtocolErrorKind::QueueFull, "Host dispatch queue is full"),
             window::DispatchError::QueueDisconnected => (protocol::ProtocolErrorKind::UiDispatchFailed, "Host dispatch queue is disconnected"),
@@ -94,6 +148,7 @@ fn infer_response_mode(raw: &str) -> ResponseMode {
 mod tests {
     use super::*;
     use serde_json::{from_str, Value};
+    use serde_json::json;
     use std::io::Cursor;
 
     #[test]
@@ -158,5 +213,35 @@ mod tests {
         assert_eq!(response["type"], "ack");
         assert_eq!(response["acked_id"], "msg-1");
         assert_eq!(response["stage"], "accepted");
+    }
+
+    #[test]
+    fn update_progress_does_not_activate_window() {
+        let command = test_command(protocol::UiCommand::UpdateProgress(json!({ "message": "Working..." })));
+        assert_eq!(activation_policy(&command), ActivationPolicy::NoActivate);
+    }
+
+    #[test]
+    fn final_render_display_foregrounds_if_backgrounded() {
+        let command = test_command(protocol::UiCommand::RenderDisplay(json!({ "output_text": "Done" })));
+        assert_eq!(activation_policy(&command), ActivationPolicy::ActivateIfBackground);
+    }
+
+    #[test]
+    fn open_chat_activates_and_focuses() {
+        let command = test_command(protocol::UiCommand::OpenChat(json!({ "title": "Chat" })));
+        assert_eq!(activation_policy(&command), ActivationPolicy::ActivateAndFocus);
+    }
+
+    #[test]
+    fn explicit_attention_policy_overrides_defaults() {
+        let command = test_command(protocol::UiCommand::ChatStreamEnd(json!({
+            "message_id": "assistant-1",
+            "stream_id": "stream-1",
+            "final_sequence": 4,
+            "content": [],
+            "metadata": { "attention_policy": "none" }
+        })));
+        assert_eq!(activation_policy(&command), ActivationPolicy::NoActivate);
     }
 }

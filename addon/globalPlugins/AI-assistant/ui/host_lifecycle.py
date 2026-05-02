@@ -39,7 +39,6 @@ class HostLifecycleService:
 		except Exception:
 			self.mark_failed()
 			raise
-		self.mark_ready()
 
 	def mark_ready(self) -> None:
 		with self._lock:

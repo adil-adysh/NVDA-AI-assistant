@@ -10,6 +10,7 @@ from ..config.settings import (
 	get_ollama_think,
 	get_provider_state,
 )
+from .intent import AttentionPolicy, FocusTarget, InteractionMode
 
 Translator = Callable[[str], str]
 
@@ -32,6 +33,10 @@ class UISessionMetadata(TypedDict, total=False):
 	localized_strings: dict[str, str]
 	think_enabled: bool
 	status_message: str
+	interaction_mode: InteractionMode
+	controls_visible: bool
+	attention_policy: AttentionPolicy
+	focus_target: FocusTarget
 
 
 @dataclass(frozen=True, slots=True)
