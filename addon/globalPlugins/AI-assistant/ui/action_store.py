@@ -8,6 +8,7 @@ from uuid import uuid4
 
 class ResultActionStore:
 	def __init__(self) -> None:
+		super().__init__()
 		self._lock = RLock()
 		self._payloads: dict[str, dict[str, Any]] = {}
 
