@@ -49,10 +49,6 @@ fn determine_log_path() -> PathBuf {
         .unwrap_or_else(|_| std::env::temp_dir().join("nvda_ui_host.log"))
 }
 
-pub fn log_file_path() -> PathBuf {
-    determine_log_path()
-}
-
 fn timestamp() -> String {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     format!("{:010}.{:03}", now.as_secs(), now.subsec_millis())

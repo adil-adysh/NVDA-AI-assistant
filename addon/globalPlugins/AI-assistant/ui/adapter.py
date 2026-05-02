@@ -321,9 +321,9 @@ class UIAdapter:
 		)
 		if history_messages and conversation_id:
 			self._dispatch_host_command(
-				lambda: self._host_renderer.chat_set_history(
+				lambda conv_id=conversation_id: self._host_renderer.chat_set_history(
 					view_model.use_case_id,
-					conversation_id,
+					conv_id,
 					history_messages,
 					metadata=metadata,
 				),
