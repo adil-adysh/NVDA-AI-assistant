@@ -3,13 +3,15 @@ from __future__ import annotations
 
 from typing import Literal, TypedDict
 
-InteractionMode = Literal["display", "chat", "result_action_only"]
+InteractionMode = Literal["display", "chat"]
 AttentionPolicy = Literal["none", "foreground_if_background", "activate_and_focus"]
-FocusTarget = Literal["content", "composer", "first_result_action", "status"]
+FocusTarget = Literal["content", "composer", "primary_action", "status"]
+DisplayVariant = Literal["standard", "result_actions"]
+DisplayToolbarAction = Literal["copy_text", "copy_markdown", "clear", "close"]
+ToolbarPlacement = Literal["after_content"]
 
 INTERACTION_MODE_DISPLAY: InteractionMode = "display"
 INTERACTION_MODE_CHAT: InteractionMode = "chat"
-INTERACTION_MODE_RESULT_ACTION_ONLY: InteractionMode = "result_action_only"
 
 ATTENTION_POLICY_NONE: AttentionPolicy = "none"
 ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND: AttentionPolicy = "foreground_if_background"
@@ -17,8 +19,18 @@ ATTENTION_POLICY_ACTIVATE_AND_FOCUS: AttentionPolicy = "activate_and_focus"
 
 FOCUS_TARGET_CONTENT: FocusTarget = "content"
 FOCUS_TARGET_COMPOSER: FocusTarget = "composer"
-FOCUS_TARGET_FIRST_RESULT_ACTION: FocusTarget = "first_result_action"
+FOCUS_TARGET_PRIMARY_ACTION: FocusTarget = "primary_action"
 FOCUS_TARGET_STATUS: FocusTarget = "status"
+
+DISPLAY_VARIANT_STANDARD: DisplayVariant = "standard"
+DISPLAY_VARIANT_RESULT_ACTIONS: DisplayVariant = "result_actions"
+
+TOOLBAR_ACTION_COPY_TEXT: DisplayToolbarAction = "copy_text"
+TOOLBAR_ACTION_COPY_MARKDOWN: DisplayToolbarAction = "copy_markdown"
+TOOLBAR_ACTION_CLEAR: DisplayToolbarAction = "clear"
+TOOLBAR_ACTION_CLOSE: DisplayToolbarAction = "close"
+
+TOOLBAR_PLACEMENT_AFTER_CONTENT: ToolbarPlacement = "after_content"
 
 
 class PresentationIntent(TypedDict, total=False):
@@ -26,6 +38,17 @@ class PresentationIntent(TypedDict, total=False):
 	controls_visible: bool
 	attention_policy: AttentionPolicy
 	focus_target: FocusTarget
+
+
+class DisplayToolbarIntent(TypedDict):
+	actions: list[DisplayToolbarAction]
+	placement: ToolbarPlacement
+
+
+class DisplayPresentationIntent(TypedDict, total=False):
+	variant: DisplayVariant
+	initial_focus: FocusTarget
+	toolbar: DisplayToolbarIntent
 
 
 def build_presentation_intent(
@@ -63,5 +86,42 @@ def merge_presentation_intent(
 			attention_policy=attention_policy,
 			focus_target=focus_target,
 		)
+	)
+	return merged
+
+
+def build_display_presentation(
+	*,
+	variant: DisplayVariant = DISPLAY_VARIANT_STANDARD,
+	initial_focus: FocusTarget | None = None,
+	toolbar_actions: tuple[DisplayToolbarAction, ...] | list[DisplayToolbarAction] = (),
+	toolbar_placement: ToolbarPlacement = TOOLBAR_PLACEMENT_AFTER_CONTENT,
+) -> DisplayPresentationIntent:
+	presentation: DisplayPresentationIntent = {
+		"variant": variant,
+		"toolbar": {
+			"actions": [action for action in toolbar_actions],
+			"placement": toolbar_placement,
+		},
+	}
+	if initial_focus is not None:
+		presentation["initial_focus"] = initial_focus
+	return presentation
+
+
+def merge_display_presentation(
+	metadata: dict[str, object] | None = None,
+	*,
+	variant: DisplayVariant = DISPLAY_VARIANT_STANDARD,
+	initial_focus: FocusTarget | None = None,
+	toolbar_actions: tuple[DisplayToolbarAction, ...] | list[DisplayToolbarAction] = (),
+	toolbar_placement: ToolbarPlacement = TOOLBAR_PLACEMENT_AFTER_CONTENT,
+) -> dict[str, object]:
+	merged = dict(metadata or {})
+	merged["display_presentation"] = build_display_presentation(
+		variant=variant,
+		initial_focus=initial_focus,
+		toolbar_actions=toolbar_actions,
+		toolbar_placement=toolbar_placement,
 	)
 	return merged

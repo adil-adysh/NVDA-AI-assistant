@@ -114,7 +114,7 @@ export function clearDisplayedContent() {
 }
 
 export function requestCloseHost() {
-    emitUiEvent('close_host', null);
+    emitUiEvent('close_host', appState.currentCommandId);
 }
 
 export function submitChatMessage(fileInputElement = null) {

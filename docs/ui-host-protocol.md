@@ -101,18 +101,28 @@ The host should treat this as presentation data only. Whether thinking content m
 
 Optional presentation metadata may also be included to keep behavior protocol-driven instead of host-specific:
 
-- `interaction_mode`: string, for example `display`, `chat`, or `result_action_only`
+- `interaction_mode`: string, for example `display` or `chat`
 - `controls_visible`: boolean
 - `attention_policy`: string, for example `none`, `foreground_if_background`, or `activate_and_focus`
-- `focus_target`: string, for example `content`, `composer`, `first_result_action`, or `status`
+- `focus_target`: string, for example `content`, `composer`, `primary_action`, or `status`
+
+Display-oriented results should also prefer an explicit `display_presentation` object in metadata instead of making the Web UI infer layout from unrelated flags.
+
+Recommended `display_presentation` fields:
+
+- `variant`: string, for example `standard` or `result_actions`
+- `initial_focus`: string, for example `content` or `primary_action`
+- `toolbar`: object with:
+  - `actions`: ordered array of toolbar action ids such as `copy_text`, `copy_markdown`, `clear`, `close`
+  - `placement`: string, currently `after_content`
 
 Recommended behavior:
 
 - streamed updates should use `attention_policy = none`
 - final answers may use `attention_policy = foreground_if_background`
-- one-shot result views such as image description and summary should use `interaction_mode = result_action_only`
 - one-shot result views may hide session controls with `controls_visible = false`
-- one-shot result views currently render content plus generic result actions such as `Open Chat`
+- one-shot result views should use `display_presentation.variant = result_actions`
+- one-shot result views can render content plus generic result actions such as `Open Chat` while still placing the secondary toolbar after the content
 
 ### `open_chat`
 
@@ -364,6 +374,15 @@ Event payload fields:
 
 - `reason`: string | null
 
+### `web_ui_ready`
+
+Event payload fields:
+
+- none required
+
+This event is emitted by the Web UI after it has attached its host message listener and initialized its bridge.
+Rust should treat this as the point where the browser UI is ready for queued host commands.
+
 ## Extensibility rules
 
 - The host must ignore unknown fields.
@@ -376,6 +395,7 @@ Event payload fields:
 - Result actions should be generic protocol data, not hardcoded WebView behavior for individual use cases.
 - Provider and model choices should be supplied by Python and treated as opaque selectable state by the host UI.
 - Thinking trace presentation should be modeled as structured protocol data rather than inferred from raw output text.
+- navigation completion alone should not be treated as proof that the Web UI application is ready; prefer an explicit `web_ui_ready` handshake from the browser layer before flushing queued commands.
 
 Current implementation notes:
 

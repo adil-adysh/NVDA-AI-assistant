@@ -1,11 +1,20 @@
 <script>
     import { onMount } from 'svelte';
-    import { focusChatComposer, focusContentRegion, requestCloseHost, submitChatMessage } from './lib/actions.js';
+    import {
+        clearDisplayedContent,
+        copyCurrentMarkdown,
+        copyCurrentText,
+        focusChatComposer,
+        focusContentRegion,
+        requestCloseHost,
+        submitChatMessage,
+    } from './lib/actions.js';
     import { initializeWebViewBridge } from './lib/bridge.js';
     import { appState, t } from './lib/state.svelte.js';
     import ChatPanel from './components/ChatPanel.svelte';
     import ControlPanel from './components/ControlPanel.svelte';
     import DisplayCard from './components/DisplayCard.svelte';
+    import GlobalToolbar from './components/GlobalToolbar.svelte';
     import StatusCard from './components/StatusCard.svelte';
 
     let statusElement = $state(null);
@@ -31,8 +40,13 @@
         });
     }
 
+    function hasToolbarAction(actionId) {
+        return Array.isArray(appState.display.toolbarActions) && appState.display.toolbarActions.includes(actionId);
+    }
+
     function handleGlobalShortcut(event) {
         if (event.key === 'Escape') {
+            event.preventDefault();
             requestCloseHost();
             return;
         }
@@ -49,16 +63,25 @@
 
         switch (shortcut) {
             case 't':
+                if (!hasToolbarAction('copy_text')) {
+                    return;
+                }
                 event.preventDefault();
-                document.getElementById('copy-text')?.click();
+                copyCurrentText();
                 break;
             case 'm':
+                if (!hasToolbarAction('copy_markdown')) {
+                    return;
+                }
                 event.preventDefault();
-                document.getElementById('copy-markdown')?.click();
+                copyCurrentMarkdown();
                 break;
             case 'r':
+                if (!hasToolbarAction('clear')) {
+                    return;
+                }
                 event.preventDefault();
-                document.getElementById('clear')?.click();
+                clearDisplayedContent();
                 break;
             case 'l':
                 event.preventDefault();
@@ -120,7 +143,7 @@
             element = statusElement;
         } else if (target === 'composer' && appState.view.mode === 'chat') {
             element = composerElement;
-        } else if (target === 'first-result-action') {
+        } else if (target === 'primary_action') {
             element = firstResultActionElement;
         } else if (target === 'content') {
             element = contentElement;
@@ -162,4 +185,6 @@
             registerFileInput={(element) => fileInputElement = element}
         />
     </main>
+
+    <GlobalToolbar />
 </div>
