@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .intent import AttentionPolicy, FocusTarget, InteractionMode
+
 
 @dataclass(frozen=True, slots=True)
 class ResultActionViewModel:
@@ -35,11 +37,23 @@ class DisplayResultViewModel:
 	copy_markdown: str | None = None
 	metadata: dict[str, object] = field(default_factory=dict)
 	actions: tuple[ResultActionViewModel, ...] = ()
+	interaction_mode: InteractionMode | None = None
+	controls_visible: bool | None = None
+	attention_policy: AttentionPolicy | None = None
+	focus_target: FocusTarget | None = None
 
 	def transport_metadata(self) -> dict[str, object]:
 		metadata = dict(self.metadata)
 		if self.actions:
 			metadata["actions"] = [action.to_transport() for action in self.actions]
+		if self.interaction_mode:
+			metadata["interaction_mode"] = self.interaction_mode
+		if self.controls_visible is not None:
+			metadata["controls_visible"] = self.controls_visible
+		if self.attention_policy:
+			metadata["attention_policy"] = self.attention_policy
+		if self.focus_target:
+			metadata["focus_target"] = self.focus_target
 		return metadata
 
 

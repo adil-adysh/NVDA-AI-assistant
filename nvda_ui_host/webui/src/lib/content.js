@@ -1,5 +1,122 @@
 import { appState, t } from './state.svelte.js';
 
+const ALLOWED_TAGS = new Set([
+    'a',
+    'article',
+    'aside',
+    'b',
+    'blockquote',
+    'br',
+    'caption',
+    'code',
+    'dd',
+    'del',
+    'details',
+    'div',
+    'dl',
+    'dt',
+    'em',
+    'figcaption',
+    'figure',
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'h5',
+    'h6',
+    'hr',
+    'i',
+    'img',
+    'kbd',
+    'li',
+    'main',
+    'ol',
+    'p',
+    'pre',
+    's',
+    'section',
+    'small',
+    'span',
+    'strong',
+    'sub',
+    'summary',
+    'sup',
+    'table',
+    'tbody',
+    'td',
+    'tfoot',
+    'th',
+    'thead',
+    'tr',
+    'u',
+    'ul',
+]);
+
+const ALLOWED_ATTRIBUTES = new Set([
+    'alt',
+    'aria-label',
+    'aria-labelledby',
+    'aria-describedby',
+    'class',
+    'colspan',
+    'href',
+    'role',
+    'rowspan',
+    'scope',
+    'src',
+    'target',
+    'title',
+]);
+
+function isSafeUrl(attributeName, value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) {
+        return true;
+    }
+    if (attributeName === 'href') {
+        return normalized.startsWith('#')
+            || normalized.startsWith('http://')
+            || normalized.startsWith('https://')
+            || normalized.startsWith('mailto:');
+    }
+    if (attributeName === 'src') {
+        return normalized.startsWith('http://')
+            || normalized.startsWith('https://')
+            || normalized.startsWith('data:image/');
+    }
+    return true;
+}
+
+export function sanitizeHtml(html) {
+    if (!html) {
+        return '';
+    }
+
+    const documentFragment = new DOMParser().parseFromString(html, 'text/html');
+    const nodes = [...documentFragment.body.querySelectorAll('*')];
+
+    nodes.forEach(node => {
+        const tagName = node.tagName.toLowerCase();
+        if (!ALLOWED_TAGS.has(tagName)) {
+            node.replaceWith(...node.childNodes);
+            return;
+        }
+
+        [...node.attributes].forEach(attribute => {
+            const name = attribute.name.toLowerCase();
+            if (name.startsWith('on') || !ALLOWED_ATTRIBUTES.has(name) || !isSafeUrl(name, attribute.value)) {
+                node.removeAttribute(attribute.name);
+            }
+        });
+
+        if (tagName === 'a') {
+            node.setAttribute('rel', 'noopener noreferrer');
+        }
+    });
+
+    return documentFragment.body.innerHTML;
+}
+
 export function normalizeContentBlocks(content) {
     if (Array.isArray(content)) {
         return content;

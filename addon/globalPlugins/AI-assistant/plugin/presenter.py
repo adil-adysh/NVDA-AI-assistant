@@ -18,6 +18,17 @@ from ..tools import ToolRegistry
 from ..config.settings import get_provider_state
 from ..ui.adapter import ui_adapter
 from ..ui.action_store import ResultActionStore
+from ..ui.intent import (
+	ATTENTION_POLICY_ACTIVATE_AND_FOCUS,
+	ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND,
+	FOCUS_TARGET_COMPOSER,
+	FOCUS_TARGET_CONTENT,
+	FOCUS_TARGET_FIRST_RESULT_ACTION,
+	INTERACTION_MODE_CHAT,
+	INTERACTION_MODE_DISPLAY,
+	INTERACTION_MODE_RESULT_ACTION_ONLY,
+	merge_presentation_intent,
+)
 from ..ui import nvda_ui
 from ..ui.session_state import build_session_state, merge_session_metadata
 from ..ui.view_models import ChatWindowViewModel, DisplayResultViewModel, ResultActionViewModel
@@ -66,7 +77,13 @@ class UseCasePresenter:
 				title=_("AI Chat"),
 				initial_text=initial_text,
 				initial_image_base64=initial_image_base64,
-				metadata=session_state.to_metadata(),
+				metadata=merge_presentation_intent(
+					session_state.to_metadata(),
+					interaction_mode=INTERACTION_MODE_CHAT,
+					controls_visible=True,
+					attention_policy=ATTENTION_POLICY_ACTIVATE_AND_FOCUS,
+					focus_target=FOCUS_TARGET_COMPOSER,
+				),
 			),
 			coordinator=self._chat_coordinator,
 			tool_registry=self._tool_registry,
@@ -140,6 +157,8 @@ class UseCasePresenter:
 		metadata = merge_session_metadata(getattr(use_case_result, "metadata", None), session_state)
 		self._result_action_store.clear()
 		actions = self._build_result_actions(use_case_id, output_text, use_case_result)
+		is_result_action_only = bool(actions) and use_case_id in {"summary", "structure_summary", "describe_image"}
+		focus_target = FOCUS_TARGET_FIRST_RESULT_ACTION if actions else FOCUS_TARGET_CONTENT
 		ui_adapter.render_display(
 			DisplayResultViewModel(
 				use_case_id=use_case_id,
@@ -155,6 +174,10 @@ class UseCasePresenter:
 				copy_markdown=copy_markdown,
 				metadata=metadata,
 				actions=tuple(actions),
+				interaction_mode=INTERACTION_MODE_RESULT_ACTION_ONLY if is_result_action_only else INTERACTION_MODE_DISPLAY,
+				controls_visible=not is_result_action_only,
+				attention_policy=ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND,
+				focus_target=focus_target,
 			)
 		)
 

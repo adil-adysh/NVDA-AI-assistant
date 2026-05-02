@@ -1,5 +1,8 @@
 <script>
+    import { sanitizeHtml } from '../lib/content.js';
+
     let { block } = $props();
+    let sanitizedHtml = $derived(block?.type === 'html' ? sanitizeHtml(block.html || '') : '');
 </script>
 
 {#if block?.type === 'thinking'}
@@ -19,7 +22,7 @@
         {/if}
     </figure>
 {:else if block?.type === 'html'}
-    <div class="content-block html">{@html block.html || ''}</div>
+    <div class="content-block html">{@html sanitizedHtml}</div>
 {:else}
     <div class="content-block text">{block?.text || ''}</div>
 {/if}

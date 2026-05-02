@@ -35,7 +35,7 @@
         </select>
     </label>
 
-    <label class="field-group" for="model-input">
+    <label class="field-group" for="model-select">
         <span id="model-label">{t('model_label', 'Model')}</span>
         <select
             id="model-select"

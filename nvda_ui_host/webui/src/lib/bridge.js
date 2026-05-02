@@ -1,12 +1,15 @@
 import { addInitialImageAttachment } from './attachments.js';
 import {
     appState,
+    bumpChatRenderVersion,
     clearControlPending,
     mergeLocalizedStrings,
     resetChatState,
     resetDisplayState,
     setCopyBuffers,
+    setControlsVisible,
     setDisplayBlocks,
+    setInteractionMode,
     setPendingFocus,
     setStatus,
     setViewMode,
@@ -27,12 +30,61 @@ function ensureSendHostEvent() {
     }
 }
 
+function getMetadata(payload) {
+    return payload?.metadata || {};
+}
+
+function readPresentationValue(payload, key, fallback = undefined) {
+    const metadata = getMetadata(payload);
+    return payload?.[key] ?? metadata[key] ?? fallback;
+}
+
+function applyPresentationState(payload, defaults = {}) {
+    const controlsVisible = readPresentationValue(payload, 'controls_visible', defaults.controlsVisible);
+    if (typeof controlsVisible === 'boolean') {
+        setControlsVisible(controlsVisible);
+    }
+
+    const interactionMode = readPresentationValue(payload, 'interaction_mode', defaults.interactionMode);
+    if (typeof interactionMode === 'string' && interactionMode.trim()) {
+        setInteractionMode(interactionMode.trim());
+    }
+}
+
+function updateChatEnvelopeState(payload) {
+    appState.chat.active = true;
+    if (payload.conversation_id) {
+        appState.chat.conversationId = payload.conversation_id;
+    }
+    if (payload.command_id) {
+        appState.chat.commandId = payload.command_id;
+    }
+}
+
+function replaceMessageById(message) {
+    if (message?.id) {
+        appState.chat.messages = appState.chat.messages.filter(candidate => candidate.id !== message.id);
+    }
+    appState.chat.messages.push(message);
+}
+
+function setChatMessages(messages) {
+    appState.chat.messages = Array.isArray(messages) ? messages : [];
+    bumpChatRenderVersion();
+}
+
+function updateSingleChatMessage(messageId, updater) {
+    appState.chat.messages = appState.chat.messages.map(message => (
+        message.id === messageId ? updater(message) : message
+    ));
+    bumpChatRenderVersion();
+}
+
 function updateControlState(payload) {
-    const metadata = payload?.metadata || {};
-    const providerState = payload?.provider_state || metadata.provider_state || {};
-    const availableProviders = payload?.available_providers ?? metadata.available_providers;
-    const availableModels = payload?.available_models ?? metadata.available_models;
-    const thinkEnabled = payload?.think_enabled ?? metadata.think_enabled;
+    const providerState = readPresentationValue(payload, 'provider_state', {}) || {};
+    const availableProviders = readPresentationValue(payload, 'available_providers');
+    const availableModels = readPresentationValue(payload, 'available_models');
+    const thinkEnabled = readPresentationValue(payload, 'think_enabled');
 
     if (Array.isArray(availableProviders)) {
         appState.control.availableProviders = availableProviders;
@@ -52,6 +104,7 @@ function updateControlState(payload) {
         appState.control.thinkEnabled = thinkEnabled;
         appState.control.thinkDraft = thinkEnabled;
     }
+    applyPresentationState(payload);
 
     if (
         Array.isArray(availableProviders) ||
@@ -65,9 +118,13 @@ function updateControlState(payload) {
 }
 
 function getHostStatusMessage(payload) {
-    const metadata = payload?.metadata || {};
-    const statusMessage = payload?.status_message ?? metadata.status_message;
+    const statusMessage = readPresentationValue(payload, 'status_message');
     return typeof statusMessage === 'string' && statusMessage.trim() ? statusMessage.trim() : '';
+}
+
+function resolvePresentationFocusTarget(payload, fallback = null) {
+    const target = readPresentationValue(payload, 'focus_target', fallback);
+    return typeof target === 'string' && target.trim() ? target.trim() : null;
 }
 
 function reportUiApplied(commandId) {
@@ -88,21 +145,22 @@ function openChat(commandId, payload) {
 
     appState.chat.composerText = typeof payload.initial_text === 'string' ? payload.initial_text : '';
     setCopyBuffers('', '');
-    setViewMode('chat', 'composer');
+    applyPresentationState(payload, { controlsVisible: true, interactionMode: 'chat' });
+    setViewMode('chat', resolvePresentationFocusTarget(payload, 'composer'));
 }
 
 function syncSession(payload) {
+    applyPresentationState(payload, { controlsVisible: true, interactionMode: 'chat' });
     if (payload.conversation_id) {
         appState.chat.conversationId = payload.conversation_id;
     }
 }
 
 function renderDisplay(payload) {
-    const metadata = payload?.metadata || {};
-    const actions = payload?.actions || metadata.actions || [];
-    const thinkingTrace = payload?.thinking_trace || metadata.thinking_trace || null;
-    const thinkingSummary = payload?.thinking_summary || metadata.thinking_summary || null;
-    const thinkingCollapsed = payload?.thinking_visible_by_default === false || metadata.thinking_visible_by_default === false;
+    const actions = readPresentationValue(payload, 'actions', []);
+    const thinkingTrace = readPresentationValue(payload, 'thinking_trace', null);
+    const thinkingSummary = readPresentationValue(payload, 'thinking_summary', null);
+    const thinkingCollapsed = readPresentationValue(payload, 'thinking_visible_by_default', true) === false;
     const blocks = [];
 
     if (payload.output_html) {
@@ -121,34 +179,24 @@ function renderDisplay(payload) {
     }
 
     setDisplayBlocks(blocks, Array.isArray(actions) ? actions : []);
+    applyPresentationState(payload, { controlsVisible: true, interactionMode: 'display' });
     setViewMode('display');
-    setPendingFocus((payload?.actions || payload?.metadata?.actions || []).length ? 'first-result-action' : 'content');
+    setPendingFocus(resolvePresentationFocusTarget(payload, actions.length ? 'first-result-action' : 'content'));
     setCopyBuffers(payload.copy_text || payload.output_text || '', payload.copy_markdown || '');
 }
 
 function setChatHistory(payload) {
-    appState.chat.active = true;
-    appState.chat.conversationId = payload.conversation_id || null;
-    appState.chat.commandId = payload.command_id || appState.chat.commandId;
-    appState.chat.messages = Array.isArray(payload.messages) ? payload.messages : [];
-    setViewMode('chat', 'composer');
+    updateChatEnvelopeState(payload);
+    setChatMessages(payload.messages);
+    setViewMode('chat', resolvePresentationFocusTarget(payload));
 }
 
 function resolveChatFocusTarget(payload) {
-    const target = payload?.focus_target ?? payload?.metadata?.focus_target ?? null;
-    return typeof target === 'string' && target.trim() ? target.trim() : null;
+    return resolvePresentationFocusTarget(payload);
 }
 
 function appendChatMessage(payload) {
-    appState.chat.active = true;
-
-    if (payload.conversation_id) {
-        appState.chat.conversationId = payload.conversation_id;
-    }
-
-    if (payload.command_id) {
-        appState.chat.commandId = payload.command_id;
-    }
+    updateChatEnvelopeState(payload);
 
     const messages = Array.isArray(payload.messages)
         ? payload.messages
@@ -157,13 +205,10 @@ function appendChatMessage(payload) {
         : [payload];
 
     messages.forEach(message => {
-        if (message.id) {
-            appState.chat.messages = appState.chat.messages.filter(candidate => candidate.id !== message.id);
-        }
-
-        appState.chat.messages.push(message);
+        replaceMessageById(message);
     });
 
+    bumpChatRenderVersion();
     setViewMode('chat', resolveChatFocusTarget(payload));
 }
 
@@ -186,7 +231,7 @@ function ensureStreamingMessage(payload) {
         streamId: typeof payload.stream_id === 'string' ? payload.stream_id : null,
         streamSequence: -1,
     };
-    appState.chat.messages.push(streamingMessage);
+    replaceMessageById(streamingMessage);
     return streamingMessage;
 }
 
@@ -201,32 +246,24 @@ function beginChatStream(payload) {
         return;
     }
 
-    appState.chat.active = true;
-
-    if (payload.conversation_id) {
-        appState.chat.conversationId = payload.conversation_id;
-    }
+    updateChatEnvelopeState(payload);
 
     const existingMessage = findStreamingMessage(messageId);
     if (!existingMessage) {
         ensureStreamingMessage(payload);
     } else {
-        appState.chat.messages = appState.chat.messages.map(message =>
-            message.id === messageId
-                ? {
-                      ...message,
-                      role: payload.role || message.role || 'assistant',
-                      content: message.streamId === streamId ? message.content : [],
-                      streaming: true,
-                      streamId,
-                      streamSequence: message.streamId === streamId ? message.streamSequence ?? -1 : -1,
-                      streamAborted: false,
-                  }
-                : message
-        );
+        updateSingleChatMessage(messageId, message => ({
+            ...message,
+            role: payload.role || message.role || 'assistant',
+            content: message.streamId === streamId ? message.content : [],
+            streaming: true,
+            streamId,
+            streamSequence: message.streamId === streamId ? message.streamSequence ?? -1 : -1,
+            streamAborted: false,
+        }));
     }
 
-    setViewMode('chat', resolveChatFocusTarget(payload));
+    setViewMode('chat');
 }
 
 function applyChatStreamDelta(payload) {
@@ -237,20 +274,14 @@ function applyChatStreamDelta(payload) {
         return;
     }
 
-    if (payload.conversation_id) {
-        appState.chat.conversationId = payload.conversation_id;
-    }
+    updateChatEnvelopeState(payload);
 
     const incomingSequence = Number.isInteger(payload.sequence) ? payload.sequence : null;
     const existingMessage = findStreamingMessage(messageId);
     if (!existingMessage || existingMessage.streamId !== streamId || existingMessage.streaming !== true) {
         return;
     }
-    appState.chat.messages = appState.chat.messages.map(message => {
-        if (message.id !== messageId) {
-            return message;
-        }
-
+    updateSingleChatMessage(messageId, message => {
         const currentSequence = Number.isInteger(message.streamSequence) ? message.streamSequence : -1;
         if (incomingSequence !== null && incomingSequence <= currentSequence) {
             return message;
@@ -274,7 +305,7 @@ function applyChatStreamDelta(payload) {
         };
     });
 
-    setViewMode('chat', resolveChatFocusTarget(payload));
+    setViewMode('chat');
 }
 
 function endChatStream(payload) {
@@ -285,13 +316,11 @@ function endChatStream(payload) {
         return;
     }
 
-    if (payload.conversation_id) {
-        appState.chat.conversationId = payload.conversation_id;
-    }
+    updateChatEnvelopeState(payload);
 
     const existingMessage = findStreamingMessage(messageId);
     if (!existingMessage) {
-        appState.chat.messages.push({
+        replaceMessageById({
             id: messageId,
             role: 'assistant',
             content: payload.content || [],
@@ -303,29 +332,25 @@ function endChatStream(payload) {
         return;
     }
 
-    appState.chat.messages = appState.chat.messages.map(message =>
-        message.id === messageId
-            ? (() => {
-                  if (message.streamId !== streamId) {
-                      return message;
-                  }
+    updateSingleChatMessage(messageId, message => {
+        if (message.streamId !== streamId) {
+            return message;
+        }
 
-                  const currentSequence = Number.isInteger(message.streamSequence) ? message.streamSequence : -1;
-                  if (finalSequence < currentSequence) {
-                      return message;
-                  }
+        const currentSequence = Number.isInteger(message.streamSequence) ? message.streamSequence : -1;
+        if (finalSequence < currentSequence) {
+            return message;
+        }
 
-                  return {
-                      ...message,
-                      content: payload.content || message.content,
-                      streaming: false,
-                      streamId,
-                      streamSequence: finalSequence,
-                      streamAborted: false,
-                  };
-              })()
-            : message
-    );
+        return {
+            ...message,
+            content: payload.content || message.content,
+            streaming: false,
+            streamId,
+            streamSequence: finalSequence,
+            streamAborted: false,
+        };
+    });
 
     setViewMode('chat', resolveChatFocusTarget(payload));
 }
@@ -338,30 +363,26 @@ function abortChatStream(payload) {
         return;
     }
 
-    appState.chat.messages = appState.chat.messages.map(message =>
-        message.id === messageId
-            ? (() => {
-                  if (message.streamId !== streamId) {
-                      return message;
-                  }
+    updateSingleChatMessage(messageId, message => {
+        if (message.streamId !== streamId) {
+            return message;
+        }
 
-                  const currentSequence = Number.isInteger(message.streamSequence) ? message.streamSequence : -1;
-                  if (lastSequence < currentSequence) {
-                      return message;
-                  }
+        const currentSequence = Number.isInteger(message.streamSequence) ? message.streamSequence : -1;
+        if (lastSequence < currentSequence) {
+            return message;
+        }
 
-                  return {
-                      ...message,
-                      streaming: false,
-                      streamAborted: true,
-                      streamId,
-                      streamSequence: lastSequence,
-                  };
-              })()
-            : message
-    );
+        return {
+            ...message,
+            streaming: false,
+            streamAborted: true,
+            streamId,
+            streamSequence: lastSequence,
+        };
+    });
 
-    setViewMode('chat', resolveChatFocusTarget(payload));
+    setViewMode('chat');
 }
 
 function updateChatMessage(payload) {
@@ -370,24 +391,19 @@ function updateChatMessage(payload) {
         return;
     }
 
-    if (payload.conversation_id) {
-        appState.chat.conversationId = payload.conversation_id;
-    }
+    updateChatEnvelopeState(payload);
 
-    if (payload.command_id) {
-        appState.chat.commandId = payload.command_id;
-    }
-
-    appState.chat.messages = appState.chat.messages.map(message =>
-        message.id === messageId ? { ...message, content: payload.content || message.content } : message
-    );
-
+    updateSingleChatMessage(messageId, message => ({
+        ...message,
+        content: payload.content || message.content,
+    }));
     setViewMode('chat', resolveChatFocusTarget(payload));
 }
 
 function showError(payload) {
     resetChatState();
     resetDisplayState();
+    setControlsVisible(true);
     const errorMessage = payload.error_message || t('no_content', 'No content available.');
     const details = typeof payload.details === 'string' ? payload.details.trim() : '';
     const fullMessage = details ? `${errorMessage}\n\n${details}` : errorMessage;
@@ -399,6 +415,7 @@ function showError(payload) {
 function updateProgress(payload) {
     resetChatState();
     resetDisplayState();
+    setControlsVisible(true);
     const progressMessage = payload.message || t('progress_default_message', 'Working...');
     showDisplayText(`${t('progress_prefix', 'Progress')}: ${progressMessage}`, 'content');
     setCopyBuffers(payload.message || '', payload.message || '');
@@ -406,13 +423,28 @@ function updateProgress(payload) {
 }
 
 function closeWindow() {
-    resetChatState();
-    resetDisplayState();
-    const message = t('window_closed_message', 'Window closed by host command.');
-    showDisplayText(message, 'status');
-    setCopyBuffers('', '');
-    setStatus(message, true);
+    setStatus(t('window_closed_message', 'Window closed by host command.'), true);
 }
+
+const COMMAND_HANDLERS = {
+    render_display: payload => {
+        resetChatState();
+        resetDisplayState();
+        renderDisplay(payload);
+    },
+    open_chat: (payload, commandId) => openChat(commandId, payload),
+    sync_session: payload => syncSession(payload),
+    chat_set_history: payload => setChatHistory(payload),
+    chat_append: payload => appendChatMessage(payload),
+    chat_update: payload => updateChatMessage(payload),
+    chat_stream_begin: payload => beginChatStream(payload),
+    chat_stream_delta: payload => applyChatStreamDelta(payload),
+    chat_stream_end: payload => endChatStream(payload),
+    chat_stream_abort: payload => abortChatStream(payload),
+    show_error: payload => showError(payload),
+    update_progress: payload => updateProgress(payload),
+    close_window: () => closeWindow(),
+};
 
 export function emitUiEvent(name, commandId, details = {}) {
     window.__sendHostEvent({
@@ -457,55 +489,16 @@ export function handleHostEnvelope(envelope) {
     updateControlState(payload);
     setWindowTitle(payload.title || 'NVDA UI Host');
 
-    switch (envelope.command.name) {
-        case 'render_display':
-            resetChatState();
-            resetDisplayState();
-            renderDisplay(payload);
-            break;
-        case 'open_chat':
-            openChat(commandId, payload);
-            break;
-        case 'sync_session':
-            syncSession(payload);
-            break;
-        case 'chat_set_history':
-            setChatHistory(payload);
-            break;
-        case 'chat_append':
-            appendChatMessage(payload);
-            break;
-        case 'chat_update':
-            updateChatMessage(payload);
-            break;
-        case 'chat_stream_begin':
-            beginChatStream(payload);
-            break;
-        case 'chat_stream_delta':
-            applyChatStreamDelta(payload);
-            break;
-        case 'chat_stream_end':
-            endChatStream(payload);
-            break;
-        case 'chat_stream_abort':
-            abortChatStream(payload);
-            break;
-        case 'show_error':
-            showError(payload);
-            break;
-        case 'update_progress':
-            updateProgress(payload);
-            break;
-        case 'close_window':
-            closeWindow();
-            break;
-        default:
-            resetChatState();
-            resetDisplayState();
-            showDisplayText(`${t('unhandled_command_prefix', 'Unhandled command')}: ${envelope.command.name}`, 'content');
-            reportUiFailure(commandId, 'unknown_command');
-            return;
+    const commandHandler = COMMAND_HANDLERS[envelope.command.name];
+    if (!commandHandler) {
+        resetChatState();
+        resetDisplayState();
+        showDisplayText(`${t('unhandled_command_prefix', 'Unhandled command')}: ${envelope.command.name}`, 'content');
+        reportUiFailure(commandId, 'unknown_command');
+        return;
     }
+
+    commandHandler(payload, commandId);
 
     setStatus(hostStatusMessage || `${t('command_prefix', 'Command')}: ${envelope.command.name}`, Boolean(hostStatusMessage));
 

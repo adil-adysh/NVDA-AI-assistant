@@ -67,16 +67,16 @@ The Python supervisor should model host state explicitly:
 1. `stopped`
 2. `starting`
 3. `ready`
-4. `unhealthy`
-5. `stopping`
+4. `hidden`
+5. `failed`
 
 Meaning:
 
 - `stopped`: no running host process is owned
 - `starting`: process spawn has begun but readiness is not confirmed
 - `ready`: process is alive and the command pipe has passed readiness checks
-- `unhealthy`: process exists but health or transport guarantees are no longer trusted
-- `stopping`: shutdown is in progress and new commands should not be accepted
+- `hidden`: process is healthy but the native host window is intentionally hidden
+- `failed`: process health or transport guarantees are no longer trusted
 
 This avoids inferring host health from a single pipe operation.
 
@@ -89,6 +89,8 @@ The host should be considered ready only when all of the following are true:
 - the process is still alive
 - the command pipe is reachable
 - a health-check command succeeds
+
+The current Python implementation follows that contract by spawning in `host_process.py`, then probing health from `host_renderer.py` before marking the lifecycle ready.
 
 This is the correct boundary between process supervision and transport availability.
 
@@ -144,6 +146,7 @@ Event messages such as these are asynchronous by nature:
 - `ui_action_invoked`
 - `provider_selected`
 - `model_selected`
+- `think_mode_toggled`
 - `window_closed`
 
 Trying to force both flows through one transient synchronous connection makes the transport harder to reason about and harder to scale.
@@ -222,6 +225,7 @@ It should not decide what commands mean.
 - parsing protocol messages into typed commands
 - returning `ack` or `error`
 - dispatching valid work to the UI thread
+- mapping commands to activation policy such as `NoActivate`, `ActivateIfBackground`, or `ActivateAndFocus`
 
 This is where transport becomes application-aware, but it still remains independent of WebView implementation details.
 
@@ -319,5 +323,10 @@ The recommended runtime design is:
 - transport-only pipe layers
 - bounded restart and shutdown behavior
 - protocol ownership outside process supervision
+
+Current implementation notes:
+
+- the event pipe is active today through `HostPipeTransport.start_event_listener()` and `nvda_ui_host/src/ipc.rs`
+- final-answer foreground behavior is policy-driven in Rust rather than inferred from command names alone
 
 This design keeps the host reliable for simple render flows while still scaling to chat, follow-up actions, model selection, and other interactive UI features.

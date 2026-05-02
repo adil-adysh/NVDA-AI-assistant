@@ -67,7 +67,7 @@ Payload fields:
 - `close_button`: boolean
 - `copy_button`: boolean
 - `copy_text`: string | null
-- `copy_html`: string | null
+- `copy_markdown`: string | null
 - `actions`: array | null
 - `metadata`: object | null
 
@@ -98,6 +98,21 @@ For thinking-trace support, a result may include fields such as:
 - `thinking_visible_by_default`: boolean | null
 
 The host should treat this as presentation data only. Whether thinking content may be shown is an application decision owned by Python.
+
+Optional presentation metadata may also be included to keep behavior protocol-driven instead of host-specific:
+
+- `interaction_mode`: string, for example `display`, `chat`, or `result_action_only`
+- `controls_visible`: boolean
+- `attention_policy`: string, for example `none`, `foreground_if_background`, or `activate_and_focus`
+- `focus_target`: string, for example `content`, `composer`, `first_result_action`, or `status`
+
+Recommended behavior:
+
+- streamed updates should use `attention_policy = none`
+- final answers may use `attention_policy = foreground_if_background`
+- one-shot result views such as image description and summary should use `interaction_mode = result_action_only`
+- one-shot result views may hide session controls with `controls_visible = false`
+- one-shot result views currently render content plus generic result actions such as `Open Chat`
 
 ### `open_chat`
 
@@ -232,11 +247,20 @@ Payload fields:
 - `stage`: string
 - `message`: string
 
+Behavior notes:
+
+- progress updates are informational and should not request foreground or focus changes
+
 ### `close_window`
 
 Payload fields:
 
 - `reason`: string | null
+
+Behavior notes:
+
+- native close or hide behavior is owned by the Rust host window layer
+- the Web UI may update local status text, but it should not be the source of truth for closing the host
 
 ## Failure handling
 
@@ -325,14 +349,14 @@ Event payload fields:
 
 This event is used when the UI allows model selection and the user picks a different model.
 
-### `thinking_visibility_changed`
+### `think_mode_toggled`
 
 Event payload fields:
 
 - `command_id`: string | null
-- `visible`: boolean
+- `enabled`: boolean
 
-This event is optional. It is only needed if Python wants to persist or react to the user preference for expanded or collapsed thinking content. Purely local disclosure state may remain inside the WebView.
+This event is used when the UI allows think-mode toggling and the user changes the value. It is currently consumed by the Python add-on to persist provider-facing configuration.
 
 ### `window_closed`
 
@@ -352,3 +376,9 @@ Event payload fields:
 - Result actions should be generic protocol data, not hardcoded WebView behavior for individual use cases.
 - Provider and model choices should be supplied by Python and treated as opaque selectable state by the host UI.
 - Thinking trace presentation should be modeled as structured protocol data rather than inferred from raw output text.
+
+Current implementation notes:
+
+- Python currently emits presentation intent through metadata in most flows
+- the Web UI reads payload and metadata values through shared helpers in `webui/src/lib/bridge.js`
+- Rust forwards Web UI event envelopes generically from `webview.rs` to the event pipe, and Python validates and dispatches the event names it consumes

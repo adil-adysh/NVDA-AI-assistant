@@ -17,17 +17,20 @@
     });
 
     let isChatMode = $derived(appState.view.mode === 'chat');
+    let isResultActionOnly = $derived(appState.view.interactionMode === 'result_action_only');
 </script>
 
 <section class="workspace-card content-card" aria-labelledby="content-heading">
     <div class="section-header">
         <h2 id="content-heading" class="section-title">{t('content_heading', 'Content')}</h2>
-        <div class="toolbar" aria-label={t('content_actions_label', 'Content actions')}>
-            <button id="copy-text" type="button" aria-keyshortcuts="Alt+Shift+T" onclick={copyCurrentText}>{t('copy_text_button', 'Copy text')}</button>
-            <button id="copy-markdown" type="button" aria-keyshortcuts="Alt+Shift+M" onclick={copyCurrentMarkdown}>{t('copy_markdown_button', 'Copy markdown')}</button>
-            <button id="clear" type="button" aria-keyshortcuts="Alt+Shift+R" onclick={clearDisplayedContent}>{t('clear_button', 'Clear')}</button>
-            <button id="close-window" type="button" aria-keyshortcuts="Escape" onclick={requestCloseHost}>{t('close_button', 'Close')}</button>
-        </div>
+        {#if !isResultActionOnly}
+            <div class="toolbar" aria-label={t('content_actions_label', 'Content actions')}>
+                <button id="copy-text" type="button" aria-keyshortcuts="Alt+Shift+T" onclick={copyCurrentText}>{t('copy_text_button', 'Copy text')}</button>
+                <button id="copy-markdown" type="button" aria-keyshortcuts="Alt+Shift+M" onclick={copyCurrentMarkdown}>{t('copy_markdown_button', 'Copy markdown')}</button>
+                <button id="clear" type="button" aria-keyshortcuts="Alt+Shift+R" onclick={clearDisplayedContent}>{t('clear_button', 'Clear')}</button>
+                <button id="close-window" type="button" aria-keyshortcuts="Escape" onclick={requestCloseHost}>{t('close_button', 'Close')}</button>
+            </div>
+        {/if}
     </div>
 
     <div id="content" bind:this={contentElement} role="main" tabindex="-1">

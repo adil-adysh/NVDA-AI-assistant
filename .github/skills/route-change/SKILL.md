@@ -20,7 +20,8 @@ Use this skill when a request is unclear about which layer should own the behavi
 2. Check `docs/architecture.md` when the change crosses Python, Rust, and Web UI boundaries.
 3. Name the owning abstraction before editing. Examples: `UseCase`, presenter, collector, protocol model, host command handler, Svelte component.
 4. If the request spans Python and Rust or Web UI, treat it as a protocol-backed change rather than a local patch.
-5. Recommend the cheapest validation that can falsify the implementation.
+5. For host-backed UI work, decide whether the change belongs in Python presentation intent, Rust activation/window behavior, or Web UI presentation-only state.
+6. Recommend the cheapest validation that can falsify the implementation.
 
 ## Decision Hints
 
@@ -31,6 +32,8 @@ Use this skill when a request is unclear about which layer should own the behavi
 - Provider-specific adapters belong in `providers/`.
 - Native windowing, WebView, and pipes belong in `nvda_ui_host/src/`.
 - Browser rendering belongs in `nvda_ui_host/webui/src/`.
+- New commands should usually start from Python intent, then flow through `host_protocol.py`, `protocol.rs`, and `bridge.js`.
+- New UI-originated events should usually start from Web UI emission, then flow through `webview.rs`, the event pipe, and `host_renderer.py`.
 
 ## Expected Output
 

@@ -43,6 +43,13 @@ class HostRenderer(UIHostRenderer):
 			event_callback=self._on_host_event,
 		)
 		self._lifecycle = lifecycle or HostLifecycleService()
+		self._event_handlers: dict[str, Callable[[HostEvent], None]] = {
+			EVENT_CHAT_SUBMITTED: self._handle_chat_submitted_event,
+			EVENT_UI_ACTION_INVOKED: self._handle_ui_action_invoked_event,
+			EVENT_PROVIDER_SELECTED: self._handle_provider_selected_event,
+			EVENT_MODEL_SELECTED: self._handle_model_selected_event,
+			EVENT_THINK_MODE_TOGGLED: self._handle_think_mode_toggled_event,
+		}
 
 	def render_display_result(
 		self,
@@ -60,21 +67,23 @@ class HostRenderer(UIHostRenderer):
 		metadata: dict[str, Any] | None = None,
 	) -> None:
 		logger.debug("HostRenderer.render_display_result called use_case_id=%s title=%s", use_case_id, title)
-		payload: HostCommandPayload = {
-			"use_case_id": use_case_id,
-			"title": title,
-			"success": success,
-			"message": message,
-			"output_text": output_text,
-			"output_html": output_html,
-			"is_html": is_html,
-			"close_button": close_button,
-			"copy_button": copy_button,
-			"copy_text": copy_text,
-			"copy_markdown": copy_markdown,
-			"metadata": metadata,
-		}
-		self._send_command("render_display", payload)
+		self._send_command(
+			"render_display",
+			self._build_payload(
+				use_case_id=use_case_id,
+				title=title,
+				success=success,
+				message=message,
+				output_text=output_text,
+				output_html=output_html,
+				is_html=is_html,
+				close_button=close_button,
+				copy_button=copy_button,
+				copy_text=copy_text,
+				copy_markdown=copy_markdown,
+				metadata=metadata,
+			),
+		)
 
 	def open_chat(
 		self,
@@ -87,29 +96,28 @@ class HostRenderer(UIHostRenderer):
 		metadata: dict[str, Any] | None = None,
 	) -> None:
 		self._current_use_case_id = use_case_id
-		conversation_id = None
-		if isinstance(metadata, dict):
-			conversation_id = metadata.get("conversation_id")
-		self._current_conversation_id = conversation_id or str(uuid4())
-		payload: HostCommandPayload = {
-			"use_case_id": use_case_id,
-			"conversation_id": self._current_conversation_id,
-			"title": title,
-			"initial_text": initial_text,
-			"initial_image_base64": initial_image_base64,
-			"metadata": metadata,
-		}
-		self._send_command("open_chat", payload)
+		self._current_conversation_id = self._resolve_conversation_id(None, metadata)
+		self._send_command(
+			"open_chat",
+			self._build_payload(
+				use_case_id=use_case_id,
+				conversation_id=self._current_conversation_id,
+				title=title,
+				initial_text=initial_text,
+				initial_image_base64=initial_image_base64,
+				metadata=metadata,
+			),
+		)
 
 	def sync_session_state(self, metadata: dict[str, Any] | None = None) -> None:
-		metadata_conversation_id = metadata.get("conversation_id") if isinstance(metadata, dict) else None
-		if isinstance(metadata_conversation_id, str) and metadata_conversation_id.strip():
-			self._current_conversation_id = metadata_conversation_id.strip()
-		payload: HostCommandPayload = {
-			"conversation_id": self._current_conversation_id,
-			"metadata": metadata,
-		}
-		self._send_command("sync_session", payload)
+		self._current_conversation_id = self._resolve_conversation_id(None, metadata, fallback=self._current_conversation_id)
+		self._send_command(
+			"sync_session",
+			self._build_payload(
+				conversation_id=self._current_conversation_id,
+				metadata=metadata,
+			),
+		)
 
 	def register_chat_submission_handler(self, handler: Callable[[str, str | None, dict[str, Any] | None], None]) -> None:
 		self._chat_submission_handler = handler
@@ -127,84 +135,11 @@ class HostRenderer(UIHostRenderer):
 		self._think_mode_handler = handler
 
 	def _on_host_event(self, event: HostEvent) -> None:
-		if event.event == EVENT_CHAT_SUBMITTED:
-			message = event.payload.get("message")
-			conversation_id = event.payload.get("conversation_id") or self._current_conversation_id
-			if message is None:
-				message = ""
-			if not isinstance(message, str):
-				logger.warning("Received chat_submitted event with a non-string message")
-				return
-
-			if self._chat_submission_handler is None:
-				logger.warning("HostRenderer has no chat submission handler registered")
-				return
-
-			try:
-				self._chat_submission_handler(message.strip(), conversation_id, event.payload)
-			except Exception:
-				logger.exception("HostRenderer chat submission handler failed")
+		handler = self._event_handlers.get(event.event)
+		if handler is None:
+			logger.debug("HostRenderer received unsupported host event: %s", event.event)
 			return
-
-		if event.event == EVENT_UI_ACTION_INVOKED:
-			action_id = event.payload.get("action_id")
-			payload = event.payload.get("payload")
-			if not isinstance(action_id, str) or not action_id.strip():
-				logger.warning("Received ui_action_invoked without an action id")
-				return
-			if self._ui_action_handler is None:
-				logger.debug("HostRenderer has no UI action handler registered")
-				return
-			try:
-				self._ui_action_handler(action_id, payload if isinstance(payload, dict) else None)
-			except Exception:
-				logger.exception("HostRenderer UI action handler failed")
-			return
-
-		if event.event == EVENT_PROVIDER_SELECTED:
-			provider = event.payload.get("provider")
-			if not isinstance(provider, str) or not provider.strip():
-				logger.warning("Received provider_selected without a provider")
-				return
-			if self._provider_selection_handler is None:
-				logger.debug("HostRenderer has no provider selection handler registered")
-				return
-			try:
-				self._provider_selection_handler(provider.strip())
-			except Exception:
-				logger.exception("HostRenderer provider selection handler failed")
-			return
-
-		if event.event == EVENT_MODEL_SELECTED:
-			model = event.payload.get("model")
-			provider = event.payload.get("provider")
-			if not isinstance(model, str) or not model.strip():
-				logger.warning("Received model_selected without a model")
-				return
-			if self._model_selection_handler is None:
-				logger.debug("HostRenderer has no model selection handler registered")
-				return
-			try:
-				self._model_selection_handler(provider if isinstance(provider, str) else None, model.strip())
-			except Exception:
-				logger.exception("HostRenderer model selection handler failed")
-			return
-
-		if event.event == EVENT_THINK_MODE_TOGGLED:
-			enabled = event.payload.get("enabled")
-			if not isinstance(enabled, bool):
-				logger.warning("Received think_mode_toggled without a boolean enabled flag")
-				return
-			if self._think_mode_handler is None:
-				logger.debug("HostRenderer has no think mode handler registered")
-				return
-			try:
-				self._think_mode_handler(enabled)
-			except Exception:
-				logger.exception("HostRenderer think mode handler failed")
-			return
-
-		logger.debug("HostRenderer received unsupported host event: %s", event.event)
+		handler(event)
 
 	def chat_set_history(
 		self,
@@ -213,15 +148,13 @@ class HostRenderer(UIHostRenderer):
 		messages: list[dict[str, Any]],
 		metadata: dict[str, Any] | None = None,
 	) -> None:
-		if conversation_id.strip():
-			self._current_conversation_id = conversation_id.strip()
-		payload: HostCommandPayload = {
-			"use_case_id": use_case_id,
-			"conversation_id": conversation_id,
-			"messages": messages,
-			"metadata": metadata,
-		}
-		self._send_command("chat_set_history", payload)
+		self._send_conversation_command(
+			"chat_set_history",
+			use_case_id,
+			conversation_id,
+			metadata=metadata,
+			messages=messages,
+		)
 
 	def chat_append(
 		self,
@@ -230,15 +163,13 @@ class HostRenderer(UIHostRenderer):
 		message: dict[str, Any],
 		metadata: dict[str, Any] | None = None,
 	) -> None:
-		if conversation_id.strip():
-			self._current_conversation_id = conversation_id.strip()
-		payload: HostCommandPayload = {
-			"use_case_id": use_case_id,
-			"conversation_id": conversation_id,
-			"message": message,
-			"metadata": metadata,
-		}
-		self._send_command("chat_append", payload)
+		self._send_conversation_command(
+			"chat_append",
+			use_case_id,
+			conversation_id,
+			metadata=metadata,
+			message=message,
+		)
 
 	def chat_update(
 		self,
@@ -249,17 +180,15 @@ class HostRenderer(UIHostRenderer):
 		status: str | None = None,
 		metadata: dict[str, Any] | None = None,
 	) -> None:
-		if conversation_id.strip():
-			self._current_conversation_id = conversation_id.strip()
-		payload: HostCommandPayload = {
-			"use_case_id": use_case_id,
-			"conversation_id": conversation_id,
-			"message_id": message_id,
-			"content": content,
-			"status": status,
-			"metadata": metadata,
-		}
-		self._send_command("chat_update", payload)
+		self._send_conversation_command(
+			"chat_update",
+			use_case_id,
+			conversation_id,
+			metadata=metadata,
+			message_id=message_id,
+			content=content,
+			status=status,
+		)
 
 	def chat_stream_begin(
 		self,
@@ -270,17 +199,15 @@ class HostRenderer(UIHostRenderer):
 		role: str = "assistant",
 		metadata: dict[str, Any] | None = None,
 	) -> None:
-		if conversation_id.strip():
-			self._current_conversation_id = conversation_id.strip()
-		payload: HostCommandPayload = {
-			"use_case_id": use_case_id,
-			"conversation_id": conversation_id,
-			"message_id": message_id,
-			"stream_id": stream_id,
-			"role": role,
-			"metadata": metadata,
-		}
-		self._send_command("chat_stream_begin", payload)
+		self._send_conversation_command(
+			"chat_stream_begin",
+			use_case_id,
+			conversation_id,
+			metadata=metadata,
+			message_id=message_id,
+			stream_id=stream_id,
+			role=role,
+		)
 
 	def chat_stream_delta(
 		self,
@@ -292,18 +219,16 @@ class HostRenderer(UIHostRenderer):
 		sequence: int,
 		metadata: dict[str, Any] | None = None,
 	) -> None:
-		if conversation_id.strip():
-			self._current_conversation_id = conversation_id.strip()
-		payload: HostCommandPayload = {
-			"use_case_id": use_case_id,
-			"conversation_id": conversation_id,
-			"message_id": message_id,
-			"stream_id": stream_id,
-			"delta": delta,
-			"sequence": sequence,
-			"metadata": metadata,
-		}
-		self._send_command("chat_stream_delta", payload)
+		self._send_conversation_command(
+			"chat_stream_delta",
+			use_case_id,
+			conversation_id,
+			metadata=metadata,
+			message_id=message_id,
+			stream_id=stream_id,
+			delta=delta,
+			sequence=sequence,
+		)
 
 	def chat_stream_end(
 		self,
@@ -316,19 +241,17 @@ class HostRenderer(UIHostRenderer):
 		status: str | None = None,
 		metadata: dict[str, Any] | None = None,
 	) -> None:
-		if conversation_id.strip():
-			self._current_conversation_id = conversation_id.strip()
-		payload: HostCommandPayload = {
-			"use_case_id": use_case_id,
-			"conversation_id": conversation_id,
-			"message_id": message_id,
-			"stream_id": stream_id,
-			"final_sequence": final_sequence,
-			"content": content,
-			"status": status,
-			"metadata": metadata,
-		}
-		self._send_command("chat_stream_end", payload)
+		self._send_conversation_command(
+			"chat_stream_end",
+			use_case_id,
+			conversation_id,
+			metadata=metadata,
+			message_id=message_id,
+			stream_id=stream_id,
+			final_sequence=final_sequence,
+			content=content,
+			status=status,
+		)
 
 	def chat_stream_abort(
 		self,
@@ -340,33 +263,31 @@ class HostRenderer(UIHostRenderer):
 		reason: str | None = None,
 		metadata: dict[str, Any] | None = None,
 	) -> None:
-		if conversation_id.strip():
-			self._current_conversation_id = conversation_id.strip()
-		payload: HostCommandPayload = {
-			"use_case_id": use_case_id,
-			"conversation_id": conversation_id,
-			"message_id": message_id,
-			"stream_id": stream_id,
-			"last_sequence": last_sequence,
-			"reason": reason,
-			"metadata": metadata,
-		}
-		self._send_command("chat_stream_abort", payload)
+		self._send_conversation_command(
+			"chat_stream_abort",
+			use_case_id,
+			conversation_id,
+			metadata=metadata,
+			message_id=message_id,
+			stream_id=stream_id,
+			last_sequence=last_sequence,
+			reason=reason,
+		)
 
 	def show_error(self, error_message: str, details: str | None = None) -> None:
-		payload: HostCommandPayload = {
-			"error_message": error_message,
-			"details": details,
-		}
-		self._send_command("show_error", payload)
+		self._send_command(
+			"show_error",
+			self._build_payload(error_message=error_message, details=details),
+		)
 
 	def show_progress(self, message: str) -> None:
-		payload: HostCommandPayload = {"stage": "progress", "message": message}
-		self._send_command("update_progress", payload)
+		self._send_command(
+			"update_progress",
+			self._build_payload(stage="progress", message=message),
+		)
 
 	def close_window(self, reason: str | None = None) -> None:
-		payload: HostCommandPayload = {"reason": reason}
-		self._send_command("close_window", payload)
+		self._send_command("close_window", self._build_payload(reason=reason))
 
 	def is_available(self) -> bool:
 		logger.debug("HostRenderer is_available() probe starting")
@@ -393,6 +314,116 @@ class HostRenderer(UIHostRenderer):
 		except Exception as error:
 			self._lifecycle.mark_failed()
 			raise HostUnavailableError(str(error)) from error
+
+	def _build_payload(self, **payload: Any) -> HostCommandPayload:
+		return {key: value for key, value in payload.items() if value is not None}
+
+	def _resolve_conversation_id(
+		self,
+		conversation_id: str | None,
+		metadata: dict[str, Any] | None = None,
+		*,
+		fallback: str | None = None,
+	) -> str:
+		candidates = (
+			conversation_id,
+			metadata.get("conversation_id") if isinstance(metadata, dict) else None,
+			fallback,
+		)
+		for candidate in candidates:
+			if isinstance(candidate, str) and candidate.strip():
+				return candidate.strip()
+		return str(uuid4())
+
+	def _send_conversation_command(
+		self,
+		command_name: str,
+		use_case_id: str | None,
+		conversation_id: str,
+		*,
+		metadata: dict[str, Any] | None = None,
+		**payload: Any,
+	) -> None:
+		self._current_conversation_id = self._resolve_conversation_id(conversation_id, metadata)
+		self._send_command(
+			command_name,
+			self._build_payload(
+				use_case_id=use_case_id,
+				conversation_id=self._current_conversation_id,
+				metadata=metadata,
+				**payload,
+			),
+		)
+
+	def _handle_chat_submitted_event(self, event: HostEvent) -> None:
+		message = event.payload.get("message")
+		conversation_id = event.payload.get("conversation_id") or self._current_conversation_id
+		if message is None:
+			message = ""
+		if not isinstance(message, str):
+			logger.warning("Received chat_submitted event with a non-string message")
+			return
+		if self._chat_submission_handler is None:
+			logger.warning("HostRenderer has no chat submission handler registered")
+			return
+		try:
+			self._chat_submission_handler(message.strip(), conversation_id, event.payload)
+		except Exception:
+			logger.exception("HostRenderer chat submission handler failed")
+
+	def _handle_ui_action_invoked_event(self, event: HostEvent) -> None:
+		action_id = event.payload.get("action_id")
+		payload = event.payload.get("payload")
+		if not isinstance(action_id, str) or not action_id.strip():
+			logger.warning("Received ui_action_invoked without an action id")
+			return
+		if self._ui_action_handler is None:
+			logger.debug("HostRenderer has no UI action handler registered")
+			return
+		try:
+			self._ui_action_handler(action_id, payload if isinstance(payload, dict) else None)
+		except Exception:
+			logger.exception("HostRenderer UI action handler failed")
+
+	def _handle_provider_selected_event(self, event: HostEvent) -> None:
+		provider = event.payload.get("provider")
+		if not isinstance(provider, str) or not provider.strip():
+			logger.warning("Received provider_selected without a provider")
+			return
+		if self._provider_selection_handler is None:
+			logger.debug("HostRenderer has no provider selection handler registered")
+			return
+		try:
+			self._provider_selection_handler(provider.strip())
+		except Exception:
+			logger.exception("HostRenderer provider selection handler failed")
+
+	def _handle_model_selected_event(self, event: HostEvent) -> None:
+		model = event.payload.get("model")
+		provider = event.payload.get("provider")
+		if not isinstance(model, str) or not model.strip():
+			logger.warning("Received model_selected without a model")
+			return
+		if self._model_selection_handler is None:
+			logger.debug("HostRenderer has no model selection handler registered")
+			return
+		try:
+			self._model_selection_handler(provider if isinstance(provider, str) else None, model.strip())
+		except Exception:
+			logger.exception("HostRenderer model selection handler failed")
+
+	def _handle_think_mode_toggled_event(self, event: HostEvent) -> None:
+		enabled = event.payload.get("enabled")
+		if not isinstance(enabled, bool):
+			logger.warning("Received think_mode_toggled without a boolean enabled flag")
+			return
+		if self._think_mode_handler is None:
+			logger.debug("HostRenderer has no think mode handler registered")
+			return
+		try:
+			self._think_mode_handler(enabled)
+		except Exception:
+			logger.exception("HostRenderer think mode handler failed")
 
 	def _probe_host(self) -> None:
 		command = HostCommand(name="health_check", payload={})

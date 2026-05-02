@@ -97,7 +97,12 @@
     });
 
     $effect(() => {
-        if (appState.view.mode === 'chat' && contentElement instanceof HTMLElement) {
+        const renderVersion = appState.chat.renderVersion;
+        if (renderVersion >= 0 && appState.view.mode === 'chat' && contentElement instanceof HTMLElement) {
+            const nearBottom = contentElement.scrollHeight - contentElement.scrollTop - contentElement.clientHeight < 80;
+            if (!nearBottom && contentElement.scrollTop > 0) {
+                return;
+            }
             contentElement.scrollTop = contentElement.scrollHeight;
         }
     });
@@ -141,7 +146,9 @@
             <h1 class="app-title">{t('app_title', 'Response Workspace')}</h1>
         </div>
 
-        <ControlPanel />
+        {#if appState.controlsVisible}
+            <ControlPanel />
+        {/if}
     </header>
 
     <main class="workspace">

@@ -26,12 +26,14 @@ Use this skill to choose the smallest reliable validation for the slice that cha
 
 - validate at least the producer and consumer sides
 - typical minimum: `cargo check --manifest-path nvda_ui_host/Cargo.toml` plus the matching Python or Web UI validation
+- for command or event wiring changes, also run the focused Python protocol tests under `addon/globalPlugins/AI-assistant/ui/`
 
 ## Repository Notes
 
 - Python formatting and linting are configured in `pyproject.toml`.
 - The repo targets Windows and NVDA, so prefer Windows-friendly commands and paths in documentation or automation.
 - The host build path has Windows-specific behavior in `scripts/build_host.py`; do not assume Unix shell tooling.
+- The host UI uses protocol-backed presentation intent (`interaction_mode`, `controls_visible`, `attention_policy`, `focus_target`); validate both producer and renderer when those change.
 
 ## Output Format
 

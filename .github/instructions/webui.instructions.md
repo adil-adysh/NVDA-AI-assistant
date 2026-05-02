@@ -20,6 +20,8 @@ The Web UI renders host-backed intents. It should stay generic and protocol-driv
 - Preserve keyboard accessibility and screen-reader friendly labeling because this UI is accessibility-critical.
 - Keep styling intentional but lightweight; avoid browser-only behavior that bypasses the host protocol.
 - If a UI change requires a new command or event, update the Rust and Python protocol slices in the same change.
+- Prefer shared helpers or handler registries in `webui/src/lib/bridge.js` over repeated command-specific branches.
+- Keep focus, scroll, and rendering behavior separate. Streaming updates must not move focus.
 
 ## Validation
 

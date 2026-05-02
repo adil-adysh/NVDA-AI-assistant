@@ -10,12 +10,20 @@ use windows::{
 };
 
 use crate::logger;
+use crate::app::ActivationPolicy;
 
 const WM_HOST_COMMAND: u32 = WM_APP + 1;
+const WM_HOST_CLOSE: u32 = WM_APP + 2;
 const HOST_QUEUE_CAPACITY: usize = 128;
 
 static WINDOW_HANDLE: OnceLock<usize> = OnceLock::new();
-static HOST_COMMAND_QUEUE: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+static HOST_COMMAND_QUEUE: OnceLock<Mutex<Vec<QueuedHostCommand>>> = OnceLock::new();
+
+#[derive(Debug, Clone)]
+struct QueuedHostCommand {
+    message: String,
+    activation_policy: ActivationPolicy,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DispatchError {
@@ -93,11 +101,11 @@ pub fn initialize_host_dispatch(hwnd: HWND) {
     logger::info("Host dispatch queue initialized");
 }
 
-fn command_queue() -> &'static Mutex<Vec<String>> {
+fn command_queue() -> &'static Mutex<Vec<QueuedHostCommand>> {
     HOST_COMMAND_QUEUE.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-pub fn post_host_command(command: String) -> std::result::Result<(), DispatchError> {
+pub(crate) fn post_host_command(command: String, activation_policy: ActivationPolicy) -> std::result::Result<(), DispatchError> {
     if let Some(hwnd_value) = WINDOW_HANDLE.get() {
         let mut queue = command_queue().lock().map_err(|_| DispatchError::QueueDisconnected)?;
         if queue.len() >= HOST_QUEUE_CAPACITY {
@@ -105,8 +113,16 @@ pub fn post_host_command(command: String) -> std::result::Result<(), DispatchErr
             return Err(DispatchError::QueueFull);
         }
 
-        queue.push(command.clone());
-        logger::info(&format!("Queued host command, queue size={} command={}...", queue.len(), command.chars().take(80).collect::<String>()));
+        queue.push(QueuedHostCommand {
+            message: command.clone(),
+            activation_policy,
+        });
+        logger::info(&format!(
+            "Queued host command, queue size={} activation_policy={:?} command={}...",
+            queue.len(),
+            activation_policy,
+            command.chars().take(80).collect::<String>()
+        ));
 
         let hwnd = HWND(*hwnd_value as _);
         unsafe {
@@ -115,6 +131,17 @@ pub fn post_host_command(command: String) -> std::result::Result<(), DispatchErr
         return Ok(());
     }
 
+    Err(DispatchError::NotInitialized)
+}
+
+pub(crate) fn request_close_window() -> std::result::Result<(), DispatchError> {
+    if let Some(hwnd_value) = WINDOW_HANDLE.get() {
+        let hwnd = HWND(*hwnd_value as _);
+        unsafe {
+            let _ = PostMessageW(Some(hwnd), WM_HOST_CLOSE, WPARAM(0), LPARAM(0));
+        }
+        return Ok(());
+    }
     Err(DispatchError::NotInitialized)
 }
 
@@ -130,12 +157,33 @@ fn drain_host_commands() {
     }
 
     logger::info(&format!("Flushing {} queued host commands to WebView", messages.len()));
-    for command in messages {
-        logger::debug(&format!("Posting queued command to WebView: {}", command.chars().take(120).collect::<String>()));
-        if let Err(error) = crate::webview::post_host_command(command.as_str()) {
+    for queued_command in messages {
+        logger::debug(&format!(
+            "Posting queued command to WebView activation_policy={:?} command={}",
+            queued_command.activation_policy,
+            queued_command.message.chars().take(120).collect::<String>()
+        ));
+        match queued_command.activation_policy {
+            ActivationPolicy::NoActivate => {}
+            ActivationPolicy::ActivateIfBackground => {
+                if should_activate_window(hwnd()) {
+                    activate_window(hwnd());
+                    let _ = crate::webview::focus_webview();
+                }
+            }
+            ActivationPolicy::ActivateAndFocus => {
+                activate_window(hwnd());
+                let _ = crate::webview::focus_webview();
+            }
+        }
+        if let Err(error) = crate::webview::post_host_command(queued_command.message.as_str()) {
             logger::error(&format!("Failed to post command to WebView on UI thread: {:?}", error));
         }
     }
+}
+
+fn hwnd() -> HWND {
+    HWND(*WINDOW_HANDLE.get().expect("window handle initialized") as _)
 }
 
 fn activate_window(hwnd: HWND) {
@@ -188,11 +236,12 @@ fn activate_window(hwnd: HWND) {
     }
 }
 
-pub fn show_and_focus_window() {
-    if let Some(hwnd_value) = WINDOW_HANDLE.get() {
-        let hwnd = HWND(*hwnd_value as _);
-        activate_window(hwnd);
-        let _ = crate::webview::focus_webview();
+fn should_activate_window(hwnd: HWND) -> bool {
+    unsafe {
+        if IsIconic(hwnd).as_bool() {
+            return true;
+        }
+        GetForegroundWindow() != hwnd
     }
 }
 
@@ -215,6 +264,10 @@ unsafe extern "system" fn wndproc(
 ) -> LRESULT {
     match msg {
         WM_CLOSE => {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+            LRESULT(0)
+        }
+        WM_HOST_CLOSE => {
             let _ = ShowWindow(hwnd, SW_HIDE);
             LRESULT(0)
         }

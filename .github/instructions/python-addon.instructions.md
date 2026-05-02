@@ -24,6 +24,8 @@ Use the existing layered architecture before adding new abstractions.
 - Use the provider proxy and service layer rather than calling Gemini, Ollama, or OpenAI clients from feature code.
 - Keep long-running work off the NVDA main thread and preserve graceful failure behavior.
 - Follow the repository typing posture: strict type hints, explicit data shapes, and minimal dynamic behavior.
+- For host-backed UI work, prefer `ui/intent.py` and presenter/view-model metadata over browser-layer heuristics.
+- Keep `ui/adapter.py` focused on coordination. Extract stream projection or payload shaping into helpers when it starts owning too many details.
 
 ## Validation
 
