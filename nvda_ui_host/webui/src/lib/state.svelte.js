@@ -37,6 +37,9 @@ export const appState = $state({
     display: {
         blocks: [],
         actions: [],
+        variant: 'standard',
+        toolbarActions: [],
+        toolbarPlacement: 'after_content',
     },
     view: {
         mode: 'display',
@@ -90,9 +93,12 @@ export function setCopyBuffers(text = '', markdown = '') {
     appState.copy.markdown = markdown;
 }
 
-export function setDisplayBlocks(blocks = [], actions = []) {
+export function setDisplayBlocks(blocks = [], actions = [], presentation = {}) {
     appState.display.blocks = blocks;
     appState.display.actions = actions;
+    appState.display.variant = presentation.variant || 'standard';
+    appState.display.toolbarActions = Array.isArray(presentation.toolbarActions) ? presentation.toolbarActions : [];
+    appState.display.toolbarPlacement = presentation.toolbarPlacement || 'after_content';
 }
 
 export function bumpChatRenderVersion() {
@@ -102,6 +108,9 @@ export function bumpChatRenderVersion() {
 export function resetDisplayState() {
     appState.display.blocks = [];
     appState.display.actions = [];
+    appState.display.variant = 'standard';
+    appState.display.toolbarActions = [];
+    appState.display.toolbarPlacement = 'after_content';
 }
 
 export function resetChatState() {

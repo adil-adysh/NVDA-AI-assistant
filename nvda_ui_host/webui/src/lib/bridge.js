@@ -51,6 +51,39 @@ function applyPresentationState(payload, defaults = {}) {
     }
 }
 
+const DISPLAY_VARIANTS = new Set(['standard', 'result_actions']);
+const DISPLAY_TOOLBAR_ACTIONS = new Set(['copy_text', 'copy_markdown', 'clear', 'close']);
+
+function resolveDisplayPresentation(payload, { hasActions = false } = {}) {
+    const metadata = getMetadata(payload);
+    const rawPresentation = payload?.display_presentation || metadata.display_presentation || {};
+    const variant = typeof rawPresentation?.variant === 'string' && DISPLAY_VARIANTS.has(rawPresentation.variant)
+        ? rawPresentation.variant
+        : hasActions
+        ? 'result_actions'
+        : 'standard';
+    const toolbar = rawPresentation?.toolbar && typeof rawPresentation.toolbar === 'object'
+        ? rawPresentation.toolbar
+        : {};
+    const toolbarActions = Array.isArray(toolbar.actions)
+        ? toolbar.actions.filter(action => typeof action === 'string' && DISPLAY_TOOLBAR_ACTIONS.has(action))
+        : [];
+    const initialFocus = resolvePresentationFocusTarget({
+        ...payload,
+        metadata: {
+            ...metadata,
+            focus_target: rawPresentation?.initial_focus ?? metadata.focus_target,
+        },
+    }, hasActions ? 'primary_action' : 'content');
+
+    return {
+        variant,
+        initialFocus,
+        toolbarActions,
+        toolbarPlacement: toolbar.placement === 'after_content' ? 'after_content' : 'after_content',
+    };
+}
+
 function updateChatEnvelopeState(payload) {
     appState.chat.active = true;
     if (payload.conversation_id) {
@@ -124,7 +157,11 @@ function getHostStatusMessage(payload) {
 
 function resolvePresentationFocusTarget(payload, fallback = null) {
     const target = readPresentationValue(payload, 'focus_target', fallback);
-    return typeof target === 'string' && target.trim() ? target.trim() : null;
+    if (typeof target !== 'string' || !target.trim()) {
+        return null;
+    }
+
+    return target.trim();
 }
 
 function reportUiApplied(commandId) {
@@ -162,6 +199,8 @@ function renderDisplay(payload) {
     const thinkingSummary = readPresentationValue(payload, 'thinking_summary', null);
     const thinkingCollapsed = readPresentationValue(payload, 'thinking_visible_by_default', true) === false;
     const blocks = [];
+    const normalizedActions = Array.isArray(actions) ? actions : [];
+    const displayPresentation = resolveDisplayPresentation(payload, { hasActions: normalizedActions.length > 0 });
 
     if (payload.output_html) {
         blocks.push({ type: 'html', html: payload.output_html });
@@ -178,10 +217,10 @@ function renderDisplay(payload) {
         });
     }
 
-    setDisplayBlocks(blocks, Array.isArray(actions) ? actions : []);
+    setDisplayBlocks(blocks, normalizedActions, displayPresentation);
     applyPresentationState(payload, { controlsVisible: true, interactionMode: 'display' });
     setViewMode('display');
-    setPendingFocus(resolvePresentationFocusTarget(payload, actions.length ? 'first-result-action' : 'content'));
+    setPendingFocus(displayPresentation.initialFocus);
     setCopyBuffers(payload.copy_text || payload.output_text || '', payload.copy_markdown || '');
 }
 
@@ -401,15 +440,24 @@ function updateChatMessage(payload) {
 }
 
 function showError(payload) {
-    resetChatState();
-    resetDisplayState();
-    setControlsVisible(true);
     const errorMessage = payload.error_message || t('no_content', 'No content available.');
     const details = typeof payload.details === 'string' ? payload.details.trim() : '';
     const fullMessage = details ? `${errorMessage}\n\n${details}` : errorMessage;
+    const statusMessage = `${t('error_prefix', 'Error')}: ${errorMessage}`;
+
+    if (appState.view.mode === 'chat' || appState.chat.active) {
+        setControlsVisible(true);
+        setStatus(statusMessage, true);
+        setPendingFocus('status');
+        return;
+    }
+
+    resetChatState();
+    resetDisplayState();
+    setControlsVisible(true);
     showDisplayText(`${t('error_prefix', 'Error')}: ${fullMessage}`, 'status');
     setCopyBuffers(fullMessage, fullMessage);
-    setStatus(`${t('error_prefix', 'Error')}: ${errorMessage}`, true);
+    setStatus(statusMessage, true);
 }
 
 function updateProgress(payload) {
@@ -535,6 +583,7 @@ export function initializeWebViewBridge() {
     };
 
     window.chrome.webview.addEventListener('message', handleMessage);
+    emitUiEvent('web_ui_ready', null);
 
     return () => {
         window.chrome.webview.removeEventListener?.('message', handleMessage);

@@ -23,6 +23,7 @@ static HOST_COMMAND_QUEUE: OnceLock<Mutex<Vec<QueuedHostCommand>>> = OnceLock::n
 struct QueuedHostCommand {
     message: String,
     activation_policy: ActivationPolicy,
+    request_webview_focus: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,7 +106,11 @@ fn command_queue() -> &'static Mutex<Vec<QueuedHostCommand>> {
     HOST_COMMAND_QUEUE.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-pub(crate) fn post_host_command(command: String, activation_policy: ActivationPolicy) -> std::result::Result<(), DispatchError> {
+pub(crate) fn post_host_command(
+    command: String,
+    activation_policy: ActivationPolicy,
+    request_webview_focus: bool,
+) -> std::result::Result<(), DispatchError> {
     if let Some(hwnd_value) = WINDOW_HANDLE.get() {
         let mut queue = command_queue().lock().map_err(|_| DispatchError::QueueDisconnected)?;
         if queue.len() >= HOST_QUEUE_CAPACITY {
@@ -116,11 +121,13 @@ pub(crate) fn post_host_command(command: String, activation_policy: ActivationPo
         queue.push(QueuedHostCommand {
             message: command.clone(),
             activation_policy,
+            request_webview_focus,
         });
         logger::info(&format!(
-            "Queued host command, queue size={} activation_policy={:?} command={}...",
+            "Queued host command, queue size={} activation_policy={:?} request_webview_focus={} command={}...",
             queue.len(),
             activation_policy,
+            request_webview_focus,
             command.chars().take(80).collect::<String>()
         ));
 
@@ -159,8 +166,9 @@ fn drain_host_commands() {
     logger::info(&format!("Flushing {} queued host commands to WebView", messages.len()));
     for queued_command in messages {
         logger::debug(&format!(
-            "Posting queued command to WebView activation_policy={:?} command={}",
+            "Posting queued command to WebView activation_policy={:?} request_webview_focus={} command={}",
             queued_command.activation_policy,
+            queued_command.request_webview_focus,
             queued_command.message.chars().take(120).collect::<String>()
         ));
         match queued_command.activation_policy {
@@ -168,13 +176,14 @@ fn drain_host_commands() {
             ActivationPolicy::ActivateIfBackground => {
                 if should_activate_window(hwnd()) {
                     activate_window(hwnd());
-                    let _ = crate::webview::focus_webview();
                 }
             }
             ActivationPolicy::ActivateAndFocus => {
                 activate_window(hwnd());
-                let _ = crate::webview::focus_webview();
             }
+        }
+        if queued_command.request_webview_focus || matches!(queued_command.activation_policy, ActivationPolicy::ActivateAndFocus) {
+            let _ = crate::webview::focus_webview();
         }
         if let Err(error) = crate::webview::post_host_command(queued_command.message.as_str()) {
             logger::error(&format!("Failed to post command to WebView on UI thread: {:?}", error));
@@ -184,6 +193,14 @@ fn drain_host_commands() {
 
 fn hwnd() -> HWND {
     HWND(*WINDOW_HANDLE.get().expect("window handle initialized") as _)
+}
+
+fn clear_host_command_queue() {
+    let mut queue = command_queue().lock().unwrap();
+    if !queue.is_empty() {
+        logger::info(&format!("Clearing {} queued host command(s) on window close", queue.len()));
+        queue.clear();
+    }
 }
 
 fn activate_window(hwnd: HWND) {
@@ -264,10 +281,14 @@ unsafe extern "system" fn wndproc(
 ) -> LRESULT {
     match msg {
         WM_CLOSE => {
+            clear_host_command_queue();
+            crate::webview::clear_pending_messages();
             let _ = ShowWindow(hwnd, SW_HIDE);
             LRESULT(0)
         }
         WM_HOST_CLOSE => {
+            clear_host_command_queue();
+            crate::webview::clear_pending_messages();
             let _ = ShowWindow(hwnd, SW_HIDE);
             LRESULT(0)
         }

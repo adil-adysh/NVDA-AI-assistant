@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .intent import AttentionPolicy, FocusTarget, InteractionMode
+from .intent import AttentionPolicy, DisplayPresentationIntent, FocusTarget, InteractionMode
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +37,7 @@ class DisplayResultViewModel:
 	copy_markdown: str | None = None
 	metadata: dict[str, object] = field(default_factory=dict)
 	actions: tuple[ResultActionViewModel, ...] = ()
+	display_presentation: DisplayPresentationIntent | None = None
 	interaction_mode: InteractionMode | None = None
 	controls_visible: bool | None = None
 	attention_policy: AttentionPolicy | None = None
@@ -46,6 +47,8 @@ class DisplayResultViewModel:
 		metadata = dict(self.metadata)
 		if self.actions:
 			metadata["actions"] = [action.to_transport() for action in self.actions]
+		if self.display_presentation:
+			metadata["display_presentation"] = dict(self.display_presentation)
 		if self.interaction_mode:
 			metadata["interaction_mode"] = self.interaction_mode
 		if self.controls_visible is not None:

@@ -50,6 +50,38 @@ fn activation_policy(command: &ParsedCommand) -> ActivationPolicy {
     }
 }
 
+fn requests_webview_focus(command: &ParsedCommand) -> bool {
+    let payload = command.payload.payload();
+    let focus_target = payload
+        .get("focus_target")
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            payload
+                .get("display_presentation")
+                .and_then(|value| value.as_object())
+                .and_then(|presentation| presentation.get("initial_focus"))
+                .and_then(|value| value.as_str())
+        })
+        .or_else(|| {
+            payload
+                .get("metadata")
+                .and_then(|value| value.as_object())
+                .and_then(|metadata| metadata.get("focus_target"))
+                .and_then(|value| value.as_str())
+        })
+        .or_else(|| {
+            payload
+                .get("metadata")
+                .and_then(|value| value.as_object())
+                .and_then(|metadata| metadata.get("display_presentation"))
+                .and_then(|value| value.as_object())
+                .and_then(|presentation| presentation.get("initial_focus"))
+                .and_then(|value| value.as_str())
+        });
+
+    matches!(focus_target, Some(value) if !value.trim().is_empty())
+}
+
 #[cfg(test)]
 fn test_command(payload: protocol::UiCommand) -> ParsedCommand {
     ParsedCommand {
@@ -110,7 +142,11 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
         webview_message.len(),
         logger::preview(&webview_message, 160)
     ));
-    if let Err(dispatch_error) = window::post_host_command(webview_message, activation_policy(&command)) {
+    if let Err(dispatch_error) = window::post_host_command(
+        webview_message,
+        activation_policy(&command),
+        requests_webview_focus(&command),
+    ) {
         let (kind, message) = match dispatch_error {
             window::DispatchError::QueueFull => (protocol::ProtocolErrorKind::QueueFull, "Host dispatch queue is full"),
             window::DispatchError::QueueDisconnected => (protocol::ProtocolErrorKind::UiDispatchFailed, "Host dispatch queue is disconnected"),
@@ -243,5 +279,38 @@ mod tests {
             "metadata": { "attention_policy": "none" }
         })));
         assert_eq!(activation_policy(&command), ActivationPolicy::NoActivate);
+    }
+
+    #[test]
+    fn render_display_with_focus_target_requests_webview_focus() {
+        let command = test_command(protocol::UiCommand::RenderDisplay(json!({
+            "output_text": "Done",
+            "metadata": { "focus_target": "content" }
+        })));
+        assert!(requests_webview_focus(&command));
+    }
+
+    #[test]
+    fn render_display_with_display_presentation_initial_focus_requests_webview_focus() {
+        let command = test_command(protocol::UiCommand::RenderDisplay(json!({
+            "output_text": "Done",
+            "metadata": {
+                "display_presentation": {
+                    "variant": "result_actions",
+                    "initial_focus": "primary_action",
+                    "toolbar": {
+                        "actions": ["copy_text", "copy_markdown", "close"],
+                        "placement": "after_content"
+                    }
+                }
+            }
+        })));
+        assert!(requests_webview_focus(&command));
+    }
+
+    #[test]
+    fn command_without_focus_target_does_not_request_webview_focus() {
+        let command = test_command(protocol::UiCommand::UpdateProgress(json!({ "message": "Working..." })));
+        assert!(!requests_webview_focus(&command));
     }
 }

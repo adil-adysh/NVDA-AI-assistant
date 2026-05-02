@@ -32,31 +32,39 @@ intent = _load_module("intent", "intent.py")
 view_models = _load_module("view_models", "view_models.py")
 
 ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND = intent.ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND
-FOCUS_TARGET_FIRST_RESULT_ACTION = intent.FOCUS_TARGET_FIRST_RESULT_ACTION
-INTERACTION_MODE_RESULT_ACTION_ONLY = intent.INTERACTION_MODE_RESULT_ACTION_ONLY
+DISPLAY_VARIANT_RESULT_ACTIONS = intent.DISPLAY_VARIANT_RESULT_ACTIONS
+FOCUS_TARGET_PRIMARY_ACTION = intent.FOCUS_TARGET_PRIMARY_ACTION
+TOOLBAR_ACTION_CLOSE = intent.TOOLBAR_ACTION_CLOSE
+TOOLBAR_ACTION_COPY_MARKDOWN = intent.TOOLBAR_ACTION_COPY_MARKDOWN
+TOOLBAR_ACTION_COPY_TEXT = intent.TOOLBAR_ACTION_COPY_TEXT
+build_display_presentation = intent.build_display_presentation
 DisplayResultViewModel = view_models.DisplayResultViewModel
 ResultActionViewModel = view_models.ResultActionViewModel
 
 
 class ViewModelTransportTests(unittest.TestCase):
-	def test_display_result_transport_metadata_includes_presentation_intent(self) -> None:
+	def test_display_result_transport_metadata_includes_display_presentation(self) -> None:
 		view_model = DisplayResultViewModel(
 			use_case_id="summary",
 			title="Summary",
 			output_text="Example",
 			actions=(ResultActionViewModel(id="open_chat", label="Open Chat", kind="open_chat"),),
-			interaction_mode=INTERACTION_MODE_RESULT_ACTION_ONLY,
+			display_presentation=build_display_presentation(
+				variant=DISPLAY_VARIANT_RESULT_ACTIONS,
+				initial_focus=FOCUS_TARGET_PRIMARY_ACTION,
+				toolbar_actions=(TOOLBAR_ACTION_COPY_TEXT, TOOLBAR_ACTION_COPY_MARKDOWN, TOOLBAR_ACTION_CLOSE),
+			),
 			controls_visible=False,
 			attention_policy=ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND,
-			focus_target=FOCUS_TARGET_FIRST_RESULT_ACTION,
 		)
 
 		metadata = view_model.transport_metadata()
 
-		self.assertEqual(metadata["interaction_mode"], INTERACTION_MODE_RESULT_ACTION_ONLY)
+		self.assertEqual(metadata["display_presentation"]["variant"], DISPLAY_VARIANT_RESULT_ACTIONS)
+		self.assertEqual(metadata["display_presentation"]["initial_focus"], FOCUS_TARGET_PRIMARY_ACTION)
+		self.assertEqual(metadata["display_presentation"]["toolbar"]["actions"], [TOOLBAR_ACTION_COPY_TEXT, TOOLBAR_ACTION_COPY_MARKDOWN, TOOLBAR_ACTION_CLOSE])
 		self.assertEqual(metadata["controls_visible"], False)
 		self.assertEqual(metadata["attention_policy"], ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND)
-		self.assertEqual(metadata["focus_target"], FOCUS_TARGET_FIRST_RESULT_ACTION)
 		self.assertEqual(metadata["actions"][0]["id"], "open_chat")
 
 

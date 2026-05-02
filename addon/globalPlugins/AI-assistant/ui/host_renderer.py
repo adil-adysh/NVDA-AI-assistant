@@ -344,7 +344,11 @@ class HostRenderer(UIHostRenderer):
 		metadata: dict[str, Any] | None = None,
 		**payload: Any,
 	) -> None:
-		self._current_conversation_id = self._resolve_conversation_id(conversation_id, metadata)
+		self._current_conversation_id = self._resolve_conversation_id(
+			conversation_id,
+			metadata,
+			fallback=self._current_conversation_id,
+		)
 		self._send_command(
 			command_name,
 			self._build_payload(

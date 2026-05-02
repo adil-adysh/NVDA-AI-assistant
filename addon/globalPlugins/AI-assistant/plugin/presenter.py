@@ -21,12 +21,18 @@ from ..ui.action_store import ResultActionStore
 from ..ui.intent import (
 	ATTENTION_POLICY_ACTIVATE_AND_FOCUS,
 	ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND,
+	DISPLAY_VARIANT_RESULT_ACTIONS,
+	DISPLAY_VARIANT_STANDARD,
 	FOCUS_TARGET_COMPOSER,
 	FOCUS_TARGET_CONTENT,
-	FOCUS_TARGET_FIRST_RESULT_ACTION,
+	FOCUS_TARGET_PRIMARY_ACTION,
 	INTERACTION_MODE_CHAT,
 	INTERACTION_MODE_DISPLAY,
-	INTERACTION_MODE_RESULT_ACTION_ONLY,
+	TOOLBAR_ACTION_CLEAR,
+	TOOLBAR_ACTION_CLOSE,
+	TOOLBAR_ACTION_COPY_MARKDOWN,
+	TOOLBAR_ACTION_COPY_TEXT,
+	build_display_presentation,
 	merge_presentation_intent,
 )
 from ..ui import nvda_ui
@@ -157,8 +163,12 @@ class UseCasePresenter:
 		metadata = merge_session_metadata(getattr(use_case_result, "metadata", None), session_state)
 		self._result_action_store.clear()
 		actions = self._build_result_actions(use_case_id, output_text, use_case_result)
-		is_result_action_only = bool(actions) and use_case_id in {"summary", "structure_summary", "describe_image"}
-		focus_target = FOCUS_TARGET_FIRST_RESULT_ACTION if actions else FOCUS_TARGET_CONTENT
+		is_result_action_screen = bool(actions) and use_case_id in {"summary", "structure_summary", "describe_image"}
+		display_presentation = build_display_presentation(
+			variant=DISPLAY_VARIANT_RESULT_ACTIONS if is_result_action_screen else DISPLAY_VARIANT_STANDARD,
+			initial_focus=FOCUS_TARGET_PRIMARY_ACTION if actions else FOCUS_TARGET_CONTENT,
+			toolbar_actions=self._build_display_toolbar_actions(include_clear=not is_result_action_screen),
+		)
 		ui_adapter.render_display(
 			DisplayResultViewModel(
 				use_case_id=use_case_id,
@@ -174,12 +184,22 @@ class UseCasePresenter:
 				copy_markdown=copy_markdown,
 				metadata=metadata,
 				actions=tuple(actions),
-				interaction_mode=INTERACTION_MODE_RESULT_ACTION_ONLY if is_result_action_only else INTERACTION_MODE_DISPLAY,
-				controls_visible=not is_result_action_only,
+				display_presentation=display_presentation,
+				interaction_mode=INTERACTION_MODE_DISPLAY,
+				controls_visible=not is_result_action_screen,
 				attention_policy=ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND,
-				focus_target=focus_target,
 			)
 		)
+
+	def _build_display_toolbar_actions(self, *, include_clear: bool) -> tuple[str, ...]:
+		actions = [
+			TOOLBAR_ACTION_COPY_TEXT,
+			TOOLBAR_ACTION_COPY_MARKDOWN,
+			TOOLBAR_ACTION_CLOSE,
+		]
+		if include_clear:
+			actions.insert(2, TOOLBAR_ACTION_CLEAR)
+		return tuple(actions)
 
 	def _normalize_display_outputs(
 		self,

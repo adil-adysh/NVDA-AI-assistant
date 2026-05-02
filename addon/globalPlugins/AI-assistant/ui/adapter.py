@@ -319,7 +319,7 @@ class UIAdapter:
 			),
 			self._notify_host_unavailable,
 		)
-		if history_messages and conversation_id and self._host_lifecycle.should_dispatch_background_command():
+		if history_messages and conversation_id:
 			self._dispatch_host_command(
 				lambda: self._host_renderer.chat_set_history(
 					view_model.use_case_id,

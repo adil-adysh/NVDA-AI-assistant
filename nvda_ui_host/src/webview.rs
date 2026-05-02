@@ -50,11 +50,15 @@ fn set_webview_ready(value: bool) {
 }
 
 #[cfg(test)]
+pub(crate) fn is_webview_ready() -> bool {
+	webview_ready_flag().load(Ordering::SeqCst)
+}
+
+#[cfg(test)]
 pub(crate) fn pending_message_count() -> usize {
     pending_messages().lock().unwrap().len()
 }
 
-#[cfg(test)]
 pub(crate) fn clear_pending_messages() {
     pending_messages().lock().unwrap().clear();
 }
@@ -245,6 +249,13 @@ fn handle_js_event(message: &str, hwnd: HWND) -> Result<()> {
         return Ok(());
     }
 
+    if event_name == Some("web_ui_ready") {
+		logger::info("WebView UI reported ready");
+		set_webview_ready(true);
+		flush_pending_messages();
+		return Ok(());
+	}
+
     if let Some("close_host") | Some("escape_pressed") = event_name {
         unsafe {
             let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
@@ -414,6 +425,20 @@ mod tests {
 
         clear_test_controller_ready();
     }
+
+    #[test]
+    fn web_ui_ready_event_marks_webview_ready() {
+        let _guard = test_guard();
+        set_webview_ready(false);
+
+        handle_js_event(
+            r#"{"schema":"nvda.ui_host","version":2,"type":"event","event":{"name":"web_ui_ready","payload":{}}}"#,
+            HWND(std::ptr::null_mut()),
+        )
+        .expect("web_ui_ready event should succeed");
+
+        assert!(is_webview_ready());
+    }
 }
 
 pub fn init_webview(hwnd: HWND) -> Result<()> {
@@ -523,9 +548,7 @@ logger::info("Initializing WebView2...");
                         if let Err(e) = webview.add_NavigationCompleted(
                             &NavigationCompletedEventHandler::create(Box::new(move |_sender: Option<ICoreWebView2>, _args: Option<ICoreWebView2NavigationCompletedEventArgs>| {
                                 logger::debug("Navigation completed");
-                                set_webview_ready(true);
                                 let _ = focus_webview();
-                                flush_pending_messages();
                                 Ok(())
                             })),
                             &mut nav_token,

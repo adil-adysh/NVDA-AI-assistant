@@ -422,6 +422,20 @@ body {
     margin-top: 14px;
 }
 
+.content-toolbar {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+}
+
+.global-toolbar-card {
+    padding-top: 14px;
+}
+
+.global-toolbar {
+    justify-content: flex-start;
+}
+
 .result-actions button {
     margin-right: 0;
 }
