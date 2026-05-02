@@ -57,7 +57,7 @@ class GeminiProvider(LLMProvider):
 		return self._normalize_model_info(self._client.get_model(resolved_model))
 
 	def _normalize_model_info(self, model: Any) -> ProviderModelInfo:
-		model_name = str(model.name or "").strip()
+		model_name = str(model.name or "").strip().split("/")[-1]
 		capabilities: set[str] = set()
 		methods = tuple(method for method in model.supported_generation_methods or [] if isinstance(method, str))
 		if methods:
