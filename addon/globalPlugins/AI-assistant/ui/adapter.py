@@ -166,6 +166,7 @@ class UIAdapter:
 	def __init__(self) -> None:
 		self._host_lifecycle = HostLifecycleService()
 		self._host_renderer = HostRenderer(lifecycle=self._host_lifecycle)
+		self._host_renderer.register_host_closed_handler(self._handle_host_closed)
 		self._result_action_handler: Callable[[str, dict[str, Any] | None], None] | None = None
 		self._session_metadata_provider: Callable[[], dict[str, Any]] | None = None
 		self._pending_session_metadata: dict[str, Any] | None = None
@@ -529,6 +530,10 @@ class UIAdapter:
 			self._result_action_handler(action_id, payload)
 		except Exception:
 			log.exception("UIAdapter result action handler failed")
+
+	def _handle_host_closed(self, event_payload: dict[str, Any] | None) -> None:
+		log.info("UIAdapter received host_closed event from host: %s", event_payload)
+		self._host_lifecycle.mark_hidden()
 
 	def _handle_provider_selection(self, provider: str) -> None:
 		self._apply_control_change(lambda: self._set_provider_and_save(provider))

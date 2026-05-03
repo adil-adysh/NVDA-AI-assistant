@@ -112,11 +112,9 @@ export function clearDisplayedContent() {
     clearCurrentView();
     setStatus(t('content_cleared_status', 'Content cleared.'), true);
 }
-
 export function requestCloseHost() {
-    emitUiEvent('close_host', appState.currentCommandId);
+    emitUiEvent('close_host', null);
 }
-
 export function submitChatMessage(fileInputElement = null) {
     const message = appState.chat.composerText.trim();
     const attachments = Array.isArray(appState.chat.attachments) ? appState.chat.attachments : [];

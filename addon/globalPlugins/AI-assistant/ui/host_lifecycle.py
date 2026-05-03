@@ -64,4 +64,4 @@ class HostLifecycleService:
 		self.mark_ready()
 
 	def should_dispatch_background_command(self) -> bool:
-		return self.state != HostLifecycleState.FAILED
+		return self.state == HostLifecycleState.READY

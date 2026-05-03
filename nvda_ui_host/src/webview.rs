@@ -1,23 +1,23 @@
 use std::cell::RefCell;
-use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use windows::{
-    core::{PCWSTR, Result, w},
+    core::{w, Result, PCWSTR},
     Win32::{
         Foundation::*,
-        UI::WindowsAndMessaging::{GetClientRect, PostMessageW, WM_CLOSE},
+        UI::WindowsAndMessaging::GetClientRect,
     },
 };
 
+use crate::app::ActivationPolicy;
 use crate::logger;
+use crate::window::request_close_window;
 use serde_json::Value;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use webview2_com::{
     AddScriptToExecuteOnDocumentCreatedCompletedHandler,
-    CreateCoreWebView2ControllerCompletedHandler,
-    CreateCoreWebView2EnvironmentCompletedHandler,
-    NavigationCompletedEventHandler,
-    WebMessageReceivedEventHandler,
+    CreateCoreWebView2ControllerCompletedHandler, CreateCoreWebView2EnvironmentCompletedHandler,
+    NavigationCompletedEventHandler, WebMessageReceivedEventHandler,
 };
 
 use crate::ipc;
@@ -27,7 +27,21 @@ static mut WEBVIEW_CORE: Option<ICoreWebView2> = None;
 thread_local! {
     static WEBVIEW_CONTROLLER: RefCell<Option<ICoreWebView2Controller>> = const { RefCell::new(None) };
 }
-static PENDING_MESSAGES: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+#[derive(Clone)]
+struct PendingWebViewCommand {
+    message: String,
+    activation_policy: ActivationPolicy,
+    request_webview_focus: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeliveryOutcome {
+    Delivered,
+    DeferredVisibility,
+}
+
+static PENDING_MESSAGES: OnceLock<Mutex<Vec<PendingWebViewCommand>>> = OnceLock::new();
+static WEBVIEW_STATE: OnceLock<Mutex<WebViewState>> = OnceLock::new();
 static WEBVIEW_READY: OnceLock<AtomicBool> = OnceLock::new();
 
 #[cfg(test)]
@@ -37,8 +51,32 @@ static TEST_CAPTURED_MESSAGES: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 #[cfg(test)]
 static TEST_CONTROLLER_READY: OnceLock<AtomicBool> = OnceLock::new();
 
-fn pending_messages() -> &'static Mutex<Vec<String>> {
+fn pending_messages() -> &'static Mutex<Vec<PendingWebViewCommand>> {
     PENDING_MESSAGES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WebViewState {
+    Uninitialized,
+    EnvironmentReady,
+    ControllerReady,
+    NavigationStarted,
+    WebUiReady,
+    Ready,
+}
+
+fn webview_state() -> &'static Mutex<WebViewState> {
+    WEBVIEW_STATE.get_or_init(|| Mutex::new(WebViewState::Uninitialized))
+}
+
+fn current_webview_state() -> WebViewState {
+    *webview_state().lock().unwrap()
+}
+
+fn set_webview_state(state: WebViewState) {
+    let mut guard = webview_state().lock().unwrap();
+    *guard = state;
+    logger::info(&format!("WebView state changed to {:?}", state));
 }
 
 fn webview_ready_flag() -> &'static AtomicBool {
@@ -49,9 +87,49 @@ fn set_webview_ready(value: bool) {
     webview_ready_flag().store(value, Ordering::SeqCst);
 }
 
+fn maybe_transition_to_ready() {
+    let state = current_webview_state();
+    if state == WebViewState::Ready {
+        flush_pending_messages();
+        return;
+    }
+    if state == WebViewState::ControllerReady && webview_ready_flag().load(Ordering::SeqCst) {
+        set_webview_state(WebViewState::Ready);
+        logger::info("WebView host is ready");
+        flush_pending_messages();
+    } else if state == WebViewState::WebUiReady && current_controller().is_some() {
+        set_webview_state(WebViewState::Ready);
+        logger::info("WebView host is ready");
+        flush_pending_messages();
+    }
+}
+
+enum WebViewEvent {
+    WebUiReady,
+    CloseHost,
+    EscapePressed,
+    Other,
+}
+
+fn parse_webview_event(payload: &Value) -> Option<WebViewEvent> {
+    let event_name = payload
+        .get("event")
+        .and_then(Value::as_object)
+        .and_then(|event| event.get("name"))
+        .and_then(Value::as_str);
+
+    match event_name {
+        Some("web_ui_ready") => Some(WebViewEvent::WebUiReady),
+        Some("close_host") => Some(WebViewEvent::CloseHost),
+        Some("escape_pressed") => Some(WebViewEvent::EscapePressed),
+        Some(_) => Some(WebViewEvent::Other),
+        None => None,
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn is_webview_ready() -> bool {
-	webview_ready_flag().load(Ordering::SeqCst)
+    webview_ready_flag().load(Ordering::SeqCst)
 }
 
 #[cfg(test)]
@@ -73,7 +151,11 @@ pub(crate) fn set_post_message_override(override_fn: fn(&str) -> Result<()>) {
 #[cfg(test)]
 #[cfg(test)]
 pub(crate) fn clear_captured_messages() {
-    let _ = TEST_CAPTURED_MESSAGES.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap().clear();
+    let _ = TEST_CAPTURED_MESSAGES
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .unwrap()
+        .clear();
 }
 
 #[cfg(test)]
@@ -112,43 +194,116 @@ pub(crate) fn test_controller_ready() -> bool {
         .unwrap_or(false)
 }
 
-fn flush_pending_messages() {
-    let mut queue = pending_messages().lock().unwrap();
-    let count = queue.len();
-    logger::info(&format!("FLUSH CALLED: queue_size={}", count));
+fn host_ready() -> bool {
+    current_webview_state() == WebViewState::Ready
+}
 
-    if webview_ready_flag().load(Ordering::SeqCst) {
-        if let Some(controller) = current_controller() {
-        logger::debug(&format!("Flushing {} queued host messages", count));
-        for message in queue.drain(..) {
-            logger::debug(&format!(
-                "Flushing queued message len={} preview={}",
-                message.len(),
-                logger::preview(&message, 160)
-            ));
-            if let Err(err) = post_message_to_webview(&controller, &message) {
-                logger::error(&format!("Failed to flush queued host message: {:?}", err));
+fn window_ready_for_delivery(policy: ActivationPolicy) -> bool {
+    let visible_before = crate::window::is_window_visible();
+    match policy {
+        ActivationPolicy::NoActivate => visible_before,
+        ActivationPolicy::ActivateIfBackground => {
+            if visible_before {
+                if crate::window::should_activate_visible_window() {
+                    crate::window::try_activate_window(policy)
+                } else {
+                    true
+                }
+            } else {
+                crate::window::try_activate_window(policy)
             }
         }
-        logger::debug("flush_pending_messages completed, queue drained");
-        return;
+        ActivationPolicy::ActivateAndFocus => crate::window::try_activate_window(policy),
+    }
+}
+
+fn send_pending_command(controller: &ICoreWebView2Controller, command: PendingWebViewCommand) -> Result<DeliveryOutcome> {
+    if !window_ready_for_delivery(command.activation_policy) {
+        logger::info(&format!(
+            "Deferring host command until window is visible activation_policy={:?} request_webview_focus={} preview={}",
+            command.activation_policy,
+            command.request_webview_focus,
+            logger::preview(&command.message, 160)
+        ));
+        return Ok(DeliveryOutcome::DeferredVisibility);
+    }
+
+    if command.request_webview_focus || command.activation_policy == ActivationPolicy::ActivateAndFocus {
+        let _ = focus_webview();
+    }
+
+    post_message_to_webview(controller, &command.message)?;
+    Ok(DeliveryOutcome::Delivered)
+}
+
+fn flush_pending_messages() {
+    let count = pending_messages().lock().unwrap().len();
+    logger::info(&format!("FLUSH CALLED: queue_size={}", count));
+
+    if host_ready() {
+        if let Some(controller) = current_controller() {
+            let queued_commands = {
+                let mut queue = pending_messages().lock().unwrap();
+                std::mem::take(&mut *queue)
+            };
+            logger::debug(&format!("Flushing {} queued host messages", count));
+            let mut deferred_commands: Vec<PendingWebViewCommand> = Vec::new();
+            for command in queued_commands {
+                logger::debug(&format!(
+                    "Flushing queued message len={} activation_policy={:?} request_webview_focus={} preview={}",
+                    command.message.len(),
+                    command.activation_policy,
+                    command.request_webview_focus,
+                    logger::preview(&command.message, 160)
+                ));
+                match send_pending_command(&controller, command.clone()) {
+                    Ok(DeliveryOutcome::Delivered) => {}
+                    Ok(DeliveryOutcome::DeferredVisibility) => deferred_commands.push(command),
+                    Err(err) => {
+                        logger::error(&format!("Failed to flush queued host message: {:?}", err));
+                        deferred_commands.push(command);
+                    }
+                }
+            }
+            if !deferred_commands.is_empty() {
+                let deferred_count = deferred_commands.len();
+                let mut queue = pending_messages().lock().unwrap();
+                queue.extend(deferred_commands);
+                logger::info(&format!(
+                    "Re-queued {} host message(s) pending a visible window",
+                    deferred_count
+                ));
+            }
+            logger::debug("flush_pending_messages completed, queue drained");
+            return;
         }
     }
-    logger::info(&format!("flush_pending_messages: WebView not ready, queue size {}", count));
+
+    logger::info(&format!(
+        "flush_pending_messages: WebView not ready, queue size {}",
+        count
+    ));
 
     #[cfg(test)]
     {
         if let Some(mutex) = POST_WEB_MESSAGE_OVERRIDE.get() {
             let guard = mutex.lock().unwrap();
             if let Some(override_fn) = *guard {
-                logger::debug(&format!("Flushing {} queued host messages via test override", count));
-                for message in queue.drain(..) {
+                logger::debug(&format!(
+                    "Flushing {} queued host messages via test override",
+                    count
+                ));
+                let queued_commands = {
+                    let mut queue = pending_messages().lock().unwrap();
+                    std::mem::take(&mut *queue)
+                };
+                for command in queued_commands {
                     logger::debug(&format!(
                         "Flushing queued message len={} preview={}",
-                        message.len(),
-                        logger::preview(&message, 160)
+                        command.message.len(),
+                        logger::preview(&command.message, 160)
                     ));
-                    if let Err(err) = override_fn(&message) {
+                    if let Err(err) = override_fn(&command.message) {
                         logger::error(&format!("Failed to flush queued host message: {:?}", err));
                     }
                 }
@@ -199,7 +354,10 @@ fn build_embedded_html() -> String {
     let mut html = HOST_HTML.to_string();
 
     let style_block = format!("<style>{}</style>", HOST_CSS);
-    html = html.replace("<link rel=\"stylesheet\" href=\"host.css\" />", &style_block);
+    html = html.replace(
+        "<link rel=\"stylesheet\" href=\"host.css\" />",
+        &style_block,
+    );
     html = html.replace("<link rel=\"stylesheet\" href=\"host.css\"/>", &style_block);
     html = html.replace("<link rel=\"stylesheet\" href=\"host.css\">", &style_block);
 
@@ -226,7 +384,7 @@ fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
 
-fn handle_js_event(message: &str, hwnd: HWND) -> Result<()> {
+fn handle_js_event(message: &str, _hwnd: HWND) -> Result<()> {
     logger::debug(&format!("WebView JS event received: {}", message));
     let payload: Value = match serde_json::from_str(message) {
         Ok(value) => value,
@@ -238,33 +396,40 @@ fn handle_js_event(message: &str, hwnd: HWND) -> Result<()> {
 
     let schema = payload.get("schema").and_then(Value::as_str);
     let message_type = payload.get("type").and_then(Value::as_str);
-    let event_name = payload
-        .get("event")
-        .and_then(Value::as_object)
-        .and_then(|event| event.get("name"))
-        .and_then(Value::as_str);
 
     if schema != Some("nvda.ui_host") || message_type != Some("event") {
-        logger::warn(&format!("WebView JS event ignored due to invalid schema/type: {:?}/{:?}", schema, message_type));
+        logger::warn(&format!(
+            "WebView JS event ignored due to invalid schema/type: {:?}/{:?}",
+            schema, message_type
+        ));
         return Ok(());
     }
 
-    if event_name == Some("web_ui_ready") {
-		logger::info("WebView UI reported ready");
-		set_webview_ready(true);
-		flush_pending_messages();
-		return Ok(());
-	}
-
-    if let Some("close_host") | Some("escape_pressed") = event_name {
-        unsafe {
-            let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+    let event = parse_webview_event(&payload);
+    match event {
+        Some(WebViewEvent::WebUiReady) => {
+            logger::info("WebView UI reported ready");
+            set_webview_ready(true);
+            if current_webview_state() == WebViewState::ControllerReady {
+                set_webview_state(WebViewState::Ready);
+                logger::info("WebView host is ready");
+            } else {
+                set_webview_state(WebViewState::WebUiReady);
+            }
+            maybe_transition_to_ready();
         }
-        return Ok(());
-    }
-
-    if event_name.is_some() {
-        ipc::queue_ui_event(message.to_string());
+        Some(WebViewEvent::CloseHost) | Some(WebViewEvent::EscapePressed) => {
+            logger::info("WebView close event received, requesting host close");
+            if let Err(dispatch_error) = request_close_window("user_escape") {
+                logger::error(&format!("Failed to request host close from WebView event: {:?}", dispatch_error));
+            }
+        }
+        Some(WebViewEvent::Other) => {
+            ipc::queue_ui_event(message.to_string());
+        }
+        None => {
+            logger::warn("WebView JS event ignored due to missing event name");
+        }
     }
 
     Ok(())
@@ -298,7 +463,7 @@ pub fn focus_webview() -> bool {
     }
 }
 
-pub fn post_host_command(message: &str) -> Result<()> {
+pub(crate) fn post_host_command(message: &str, activation_policy: ActivationPolicy, request_webview_focus: bool) -> Result<()> {
     let queue_len_before = pending_messages().lock().unwrap().len();
     logger::debug(&format!(
         "QUEUE MESSAGE: controller_ready={} webview_ready={} queue_len_before={}",
@@ -306,7 +471,7 @@ pub fn post_host_command(message: &str) -> Result<()> {
         webview_ready_flag().load(Ordering::SeqCst),
         queue_len_before
     ));
-    logger::info(&format!("WebView host command received: controller_ready={} webview_ready={} length={} message_preview={}", current_controller().is_some(), webview_ready_flag().load(Ordering::SeqCst), message.len(), message.chars().take(120).collect::<String>()));
+    logger::info(&format!("WebView host command received: controller_ready={} webview_ready={} activation_policy={:?} request_webview_focus={} length={} message_preview={}", current_controller().is_some(), webview_ready_flag().load(Ordering::SeqCst), activation_policy, request_webview_focus, message.len(), message.chars().take(120).collect::<String>()));
     logger::debug(&format!(
         "WebView post_host_command called, message length={} controller_ready={} webview_ready={} preview={}",
         message.len(),
@@ -314,21 +479,27 @@ pub fn post_host_command(message: &str) -> Result<()> {
         webview_ready_flag().load(Ordering::SeqCst),
         logger::preview(message, 160)
     ));
-    if webview_ready_flag().load(Ordering::SeqCst) {
+
+    let pending_command = PendingWebViewCommand {
+        message: message.to_string(),
+        activation_policy,
+        request_webview_focus,
+    };
+
+    if host_ready() {
         if let Some(controller) = current_controller() {
-        match post_message_to_webview(&controller, message) {
-            Ok(()) => {
-                logger::debug("WebView message sent immediately");
-                return Ok(());
+            match send_pending_command(&controller, pending_command.clone()) {
+                Ok(DeliveryOutcome::Delivered) => {
+                    logger::debug("WebView message sent immediately");
+                    return Ok(());
+                }
+                Ok(DeliveryOutcome::DeferredVisibility) => {
+                    logger::info("WebView host command deferred until the window becomes visible");
+                }
+                Err(err) => {
+                    logger::warn(&format!("WebView send failed, queueing message: {:?}", err));
+                }
             }
-            Err(err) => {
-                logger::warn(&format!("WebView send failed, queueing message: {:?}", err));
-                let mut queue = pending_messages().lock().unwrap();
-                queue.push(message.to_string());
-                logger::debug(&format!("WebView queue size after enqueue: {}", queue.len()));
-                return Ok(());
-            }
-        }
         }
     }
 
@@ -346,8 +517,12 @@ pub fn post_host_command(message: &str) -> Result<()> {
     }
 
     let mut queue = pending_messages().lock().unwrap();
-    queue.push(message.to_string());
+    queue.push(pending_command);
     Ok(())
+}
+
+pub(crate) fn notify_window_visible() {
+    flush_pending_messages();
 }
 
 #[cfg(test)]
@@ -366,7 +541,7 @@ mod tests {
         clear_pending_messages();
         assert_eq!(pending_message_count(), 0);
 
-        post_host_command("test message").expect("post_host_command should succeed");
+        post_host_command("test message", ActivationPolicy::NoActivate, false).expect("post_host_command should succeed");
 
         assert_eq!(pending_message_count(), 1);
     }
@@ -377,8 +552,8 @@ mod tests {
         clear_pending_messages();
         assert_eq!(pending_message_count(), 0);
 
-        post_host_command("first message").expect("post_host_command should succeed");
-        post_host_command("second message").expect("post_host_command should succeed");
+        post_host_command("first message", ActivationPolicy::NoActivate, false).expect("post_host_command should succeed");
+        post_host_command("second message", ActivationPolicy::NoActivate, false).expect("post_host_command should succeed");
 
         assert_eq!(pending_message_count(), 2);
     }
@@ -394,15 +569,21 @@ mod tests {
             Ok(())
         });
 
-        post_host_command("queued message 1").expect("post_host_command should succeed");
-        post_host_command("queued message 2").expect("post_host_command should succeed");
+        post_host_command("queued message 1", ActivationPolicy::NoActivate, false).expect("post_host_command should succeed");
+        post_host_command("queued message 2", ActivationPolicy::NoActivate, false).expect("post_host_command should succeed");
 
         assert_eq!(pending_message_count(), 2);
 
         flush_pending_messages();
 
         assert_eq!(pending_message_count(), 0);
-        assert_eq!(captured_messages(), vec!["queued message 1".to_string(), "queued message 2".to_string()]);
+        assert_eq!(
+            captured_messages(),
+            vec![
+                "queued message 1".to_string(),
+                "queued message 2".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -418,7 +599,7 @@ mod tests {
             Ok(())
         });
 
-        post_host_command("immediate message").expect("post_host_command should succeed");
+        post_host_command("immediate message", ActivationPolicy::NoActivate, false).expect("post_host_command should succeed");
 
         assert_eq!(pending_message_count(), 0);
         assert_eq!(captured_messages(), vec!["immediate message".to_string()]);
@@ -443,8 +624,8 @@ mod tests {
 
 pub fn init_webview(hwnd: HWND) -> Result<()> {
     unsafe {
-logger::info("Initializing WebView2...");
-                        logger::debug("WebView init_webview() starting environment creation");
+        logger::info("Initializing WebView2...");
+        logger::debug("WebView init_webview() starting environment creation");
 
         CreateCoreWebView2EnvironmentWithOptions(
             None,
@@ -453,6 +634,7 @@ logger::info("Initializing WebView2...");
             &CreateCoreWebView2EnvironmentCompletedHandler::create(Box::new(move |_hr: Result<()>, env: Option<ICoreWebView2Environment>| {
                 logger::debug(&format!("Environment creation callback complete: hr={:?}", _hr));
                 logger::info("Environment created");
+                set_webview_state(WebViewState::EnvironmentReady);
 
                 let Some(env) = env else {
                     logger::error("WebView2 environment callback returned None");
@@ -475,7 +657,14 @@ logger::info("Initializing WebView2...");
                         WEBVIEW_CONTROLLER.with(|slot| {
                             *slot.borrow_mut() = Some(controller.clone());
                         });
-                        set_webview_ready(false);
+                        if webview_ready_flag().load(Ordering::SeqCst) {
+                            set_webview_state(WebViewState::Ready);
+                            logger::info("WebView host is ready");
+                        } else {
+                            set_webview_state(WebViewState::ControllerReady);
+                            logger::info("WebView controller ready");
+                        }
+                        maybe_transition_to_ready();
                         logger::info("WEBVIEW CONTROLLER SET");
 
                         let webview = match controller.CoreWebView2() {
@@ -563,8 +752,10 @@ logger::info("Initializing WebView2...");
                         let ptr = PCWSTR(html_wide.as_ptr());
                         if let Err(e) = webview.NavigateToString(ptr) {
                             logger::error(&format!("WebView NavigateToString failed: {:?}", e));
+                        } else {
+                            set_webview_state(WebViewState::NavigationStarted);
+                            logger::info("Navigation started");
                         }
-                        logger::info("Navigation started");
 
                         Ok(())
                     })),

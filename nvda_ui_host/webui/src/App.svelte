@@ -46,6 +46,9 @@
 
     function handleGlobalShortcut(event) {
         if (event.key === 'Escape') {
+            if (event.repeat) {
+                return;
+            }
             event.preventDefault();
             requestCloseHost();
             return;
