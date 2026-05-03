@@ -10,6 +10,7 @@ from .host_lifecycle import HostLifecycleService
 from .host_process import start_host_if_needed
 from .host_protocol import (
 	EVENT_CHAT_SUBMITTED,
+	EVENT_HOST_CLOSED,
 	EVENT_MODEL_SELECTED,
 	EVENT_PROVIDER_SELECTED,
 	EVENT_THINK_MODE_TOGGLED,
@@ -37,6 +38,7 @@ class HostRenderer(UIHostRenderer):
 		self._provider_selection_handler: Callable[[str], None] | None = None
 		self._model_selection_handler: Callable[[str | None, str], None] | None = None
 		self._think_mode_handler: Callable[[bool], None] | None = None
+		self._host_closed_handler: Callable[[dict[str, Any] | None], None] | None = None
 		self._transport: HostTransport = HostPipeTransport(
 			self.COMMAND_PIPE_NAME,
 			event_pipe_name=self.EVENT_PIPE_NAME,
@@ -49,6 +51,7 @@ class HostRenderer(UIHostRenderer):
 			EVENT_PROVIDER_SELECTED: self._handle_provider_selected_event,
 			EVENT_MODEL_SELECTED: self._handle_model_selected_event,
 			EVENT_THINK_MODE_TOGGLED: self._handle_think_mode_toggled_event,
+			EVENT_HOST_CLOSED: self._handle_host_closed_event,
 		}
 
 	def render_display_result(
@@ -133,6 +136,9 @@ class HostRenderer(UIHostRenderer):
 
 	def register_think_mode_handler(self, handler: Callable[[bool], None]) -> None:
 		self._think_mode_handler = handler
+
+	def register_host_closed_handler(self, handler: Callable[[dict[str, Any] | None], None]) -> None:
+		self._host_closed_handler = handler
 
 	def _on_host_event(self, event: HostEvent) -> None:
 		handler = self._event_handlers.get(event.event)
@@ -428,6 +434,17 @@ class HostRenderer(UIHostRenderer):
 			self._think_mode_handler(enabled)
 		except Exception:
 			logger.exception("HostRenderer think mode handler failed")
+
+	def _handle_host_closed_event(self, event: HostEvent) -> None:
+		logger.info("HostRenderer received host_closed event from host")
+		self._lifecycle.mark_hidden()
+		if self._host_closed_handler is None:
+			logger.debug("HostRenderer has no host closed handler registered")
+			return
+		try:
+			self._host_closed_handler(event.payload)
+		except Exception:
+			logger.exception("HostRenderer host_closed handler failed")
 
 	def _probe_host(self) -> None:
 		command = HostCommand(name="health_check", payload={})

@@ -9,15 +9,49 @@ use windows::{
     },
 };
 
+use serde_json::json;
+
+use crate::ipc;
 use crate::logger;
 use crate::app::ActivationPolicy;
 
 const WM_HOST_COMMAND: u32 = WM_APP + 1;
-const WM_HOST_CLOSE: u32 = WM_APP + 2;
+pub(crate) const WM_HOST_CLOSE: u32 = WM_APP + 2;
 const HOST_QUEUE_CAPACITY: usize = 128;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowState {
+    Hidden,
+    Visible,
+    Closing,
+}
+
 static WINDOW_HANDLE: OnceLock<usize> = OnceLock::new();
+static WINDOW_STATE: OnceLock<Mutex<WindowState>> = OnceLock::new();
+static CLOSE_REASON: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static HOST_COMMAND_QUEUE: OnceLock<Mutex<Vec<QueuedHostCommand>>> = OnceLock::new();
+
+fn window_state() -> &'static Mutex<WindowState> {
+    WINDOW_STATE.get_or_init(|| Mutex::new(WindowState::Hidden))
+}
+
+fn set_window_state(state: WindowState) {
+    let mut guard = window_state().lock().unwrap();
+    *guard = state;
+}
+
+fn current_window_state() -> WindowState {
+    *window_state().lock().unwrap()
+}
+
+fn close_reason() -> &'static Mutex<Option<String>> {
+    CLOSE_REASON.get_or_init(|| Mutex::new(None))
+}
+
+fn take_close_reason() -> Option<String> {
+    let mut guard = close_reason().lock().unwrap();
+    guard.take()
+}
 
 #[derive(Debug, Clone)]
 struct QueuedHostCommand {
@@ -99,6 +133,7 @@ pub fn set_window_title(title: &str) {
 pub fn initialize_host_dispatch(hwnd: HWND) {
     set_window_handle(hwnd);
     let _ = HOST_COMMAND_QUEUE.set(Mutex::new(Vec::new()));
+    set_window_state(WindowState::Hidden);
     logger::info("Host dispatch queue initialized");
 }
 
@@ -141,9 +176,18 @@ pub(crate) fn post_host_command(
     Err(DispatchError::NotInitialized)
 }
 
-pub(crate) fn request_close_window() -> std::result::Result<(), DispatchError> {
+pub(crate) fn request_close_window(reason: &str) -> std::result::Result<(), DispatchError> {
     if let Some(hwnd_value) = WINDOW_HANDLE.get() {
+        let state = current_window_state();
+        if state != WindowState::Visible {
+            logger::debug(&format!("request_close_window ignored because window state is {:?}", state));
+            return Ok(());
+        }
+
         let hwnd = HWND(*hwnd_value as _);
+        logger::info(&format!("request_close_window(reason={}) accepted current_state={:?}", reason, state));
+        let mut guard = close_reason().lock().map_err(|_| DispatchError::QueueDisconnected)?;
+        *guard = Some(reason.to_string());
         unsafe {
             let _ = PostMessageW(Some(hwnd), WM_HOST_CLOSE, WPARAM(0), LPARAM(0));
         }
@@ -171,21 +215,11 @@ fn drain_host_commands() {
             queued_command.request_webview_focus,
             queued_command.message.chars().take(120).collect::<String>()
         ));
-        match queued_command.activation_policy {
-            ActivationPolicy::NoActivate => {}
-            ActivationPolicy::ActivateIfBackground => {
-                if should_activate_window(hwnd()) {
-                    activate_window(hwnd());
-                }
-            }
-            ActivationPolicy::ActivateAndFocus => {
-                activate_window(hwnd());
-            }
-        }
-        if queued_command.request_webview_focus || matches!(queued_command.activation_policy, ActivationPolicy::ActivateAndFocus) {
-            let _ = crate::webview::focus_webview();
-        }
-        if let Err(error) = crate::webview::post_host_command(queued_command.message.as_str()) {
+        if let Err(error) = crate::webview::post_host_command(
+            queued_command.message.as_str(),
+            queued_command.activation_policy,
+            queued_command.request_webview_focus,
+        ) {
             logger::error(&format!("Failed to post command to WebView on UI thread: {:?}", error));
         }
     }
@@ -193,6 +227,31 @@ fn drain_host_commands() {
 
 fn hwnd() -> HWND {
     HWND(*WINDOW_HANDLE.get().expect("window handle initialized") as _)
+}
+
+pub(crate) fn is_window_visible() -> bool {
+    unsafe { IsWindowVisible(hwnd()).as_bool() }
+}
+
+pub(crate) fn should_activate_visible_window() -> bool {
+    should_activate_window(hwnd())
+}
+
+pub(crate) fn try_activate_window(policy: ActivationPolicy) -> bool {
+    let hwnd = hwnd();
+    match policy {
+        ActivationPolicy::NoActivate => {}
+        ActivationPolicy::ActivateIfBackground => {
+            if should_activate_window(hwnd) {
+                activate_window(hwnd);
+            }
+        }
+        ActivationPolicy::ActivateAndFocus => {
+            activate_window(hwnd);
+        }
+    }
+
+    is_window_visible()
 }
 
 fn clear_host_command_queue() {
@@ -203,13 +262,74 @@ fn clear_host_command_queue() {
     }
 }
 
-fn activate_window(hwnd: HWND) {
-    unsafe {
-        if IsIconic(hwnd).as_bool() {
-            let _ = ShowWindow(hwnd, SW_RESTORE);
-        } else {
-            let _ = ShowWindow(hwnd, SW_SHOW);
+fn handle_window_close(hwnd: HWND, source: &str) -> LRESULT {
+    let current_state = current_window_state();
+    logger::info(&format!("Window close handler invoked from {} current_state={:?}", source, current_state));
+    if current_state != WindowState::Visible {
+        logger::debug("Window close ignored because window is not visible");
+        return LRESULT(0);
+    }
+
+    set_window_state(WindowState::Closing);
+    logger::info("Window state transitioning to Closing");
+    clear_host_command_queue();
+    crate::webview::clear_pending_messages();
+    let reason = if source == "WM_CLOSE" {
+        let _ = take_close_reason();
+        "os_close".to_string()
+    } else {
+        take_close_reason().unwrap_or_else(|| "programmatic".to_string())
+    };
+    let event_message = json!({
+        "schema": "nvda.ui_host",
+        "version": 2,
+        "type": "event",
+        "event": {
+            "name": "host_closed",
+            "payload": {
+                "reason": reason,
+                "source": source,
+            }
         }
+    })
+    .to_string();
+    ipc::queue_ui_event(event_message);
+    let visible_before = unsafe { IsWindowVisible(hwnd).as_bool() };
+    logger::info(&format!("Window close before hide: hwnd={:?} visible_before={} state={:?}", hwnd, visible_before, current_window_state()));
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_HIDE);
+    }
+    let visible_after = unsafe { IsWindowVisible(hwnd).as_bool() };
+    logger::info(&format!("ShowWindow(SW_HIDE) called; visible_after={} state=Hidden", visible_after));
+    set_window_state(WindowState::Hidden);
+    LRESULT(0)
+}
+
+fn activate_window(hwnd: HWND) {
+    let visible_before = unsafe { IsWindowVisible(hwnd).as_bool() };
+    let style_before = unsafe { GetWindowLongW(hwnd, GWL_STYLE) };
+    logger::info(&format!("activate_window called hwnd={:?} visible_before={} style_before=0x{:x}", hwnd, visible_before, style_before));
+
+    unsafe {
+        let result = if IsIconic(hwnd).as_bool() {
+            ShowWindow(hwnd, SW_RESTORE)
+        } else if visible_before {
+            ShowWindow(hwnd, SW_SHOW)
+        } else {
+            ShowWindow(hwnd, SW_SHOWNORMAL)
+        };
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
+        );
+        let visible_mid = IsWindowVisible(hwnd).as_bool();
+        let style_mid = GetWindowLongW(hwnd, GWL_STYLE);
+        logger::info(&format!("activate_window show result={:?} visible_mid={} style_mid=0x{:x}", result, visible_mid, style_mid));
 
         let _ = SetWindowPos(
             hwnd,
@@ -250,6 +370,16 @@ fn activate_window(hwnd: HWND) {
         if attached {
             let _ = AttachThreadInput(foreground_thread_id, current_thread_id, 0);
         }
+
+        let visible_after = IsWindowVisible(hwnd).as_bool();
+        let style_after = GetWindowLongW(hwnd, GWL_STYLE);
+        if visible_after {
+            set_window_state(WindowState::Visible);
+            crate::webview::notify_window_visible();
+        } else {
+            logger::warn(&format!("activate_window did not make window visible hwnd={:?} visible_after={} style_after=0x{:x}", hwnd, visible_after, style_after));
+        }
+        logger::info(&format!("activate_window complete hwnd={:?} visible_after={} style_after=0x{:x}", hwnd, visible_after, style_after));
     }
 }
 
@@ -280,18 +410,8 @@ unsafe extern "system" fn wndproc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
-        WM_CLOSE => {
-            clear_host_command_queue();
-            crate::webview::clear_pending_messages();
-            let _ = ShowWindow(hwnd, SW_HIDE);
-            LRESULT(0)
-        }
-        WM_HOST_CLOSE => {
-            clear_host_command_queue();
-            crate::webview::clear_pending_messages();
-            let _ = ShowWindow(hwnd, SW_HIDE);
-            LRESULT(0)
-        }
+        WM_CLOSE => handle_window_close(hwnd, "WM_CLOSE"),
+        WM_HOST_CLOSE => handle_window_close(hwnd, "WM_HOST_CLOSE"),
         WM_SETFOCUS => {
             let _ = crate::webview::focus_webview();
             LRESULT(0)

@@ -122,7 +122,7 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
     }
 
     if matches!(command.payload, protocol::UiCommand::CloseWindow(_)) {
-        if let Err(dispatch_error) = window::request_close_window() {
+        if let Err(dispatch_error) = window::request_close_window("programmatic") {
             let (kind, message) = match dispatch_error {
                 window::DispatchError::QueueFull => (protocol::ProtocolErrorKind::QueueFull, "Host dispatch queue is full"),
                 window::DispatchError::QueueDisconnected => (protocol::ProtocolErrorKind::UiDispatchFailed, "Host dispatch queue is disconnected"),
@@ -142,10 +142,19 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
         webview_message.len(),
         logger::preview(&webview_message, 160)
     ));
+    let policy = activation_policy(&command);
+    let focus_request = requests_webview_focus(&command);
+    logger::info(&format!(
+        "Host app command policy: message_id={} command={} activation_policy={:?} request_webview_focus={}",
+        command.message_id,
+        command.payload.as_legacy_action(),
+        policy,
+        focus_request,
+    ));
     if let Err(dispatch_error) = window::post_host_command(
         webview_message,
-        activation_policy(&command),
-        requests_webview_focus(&command),
+        policy,
+        focus_request,
     ) {
         let (kind, message) = match dispatch_error {
             window::DispatchError::QueueFull => (protocol::ProtocolErrorKind::QueueFull, "Host dispatch queue is full"),
