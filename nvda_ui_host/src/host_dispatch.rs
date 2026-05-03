@@ -89,6 +89,44 @@ pub(crate) fn host_ready() -> bool {
     current_webview_state() == WebViewState::Ready
 }
 
+pub(crate) fn flush_pending_commands<E>(
+    mut deliver: impl FnMut(HostCommand) -> Result<DeliveryOutcome, E>,
+    mut on_error: impl FnMut(&HostCommand, &E),
+) {
+    let count = pending_command_count();
+    logger::info(&format!("FLUSH CALLED: queue_size={}", count));
+
+    let queued_commands = take_pending_commands();
+    logger::debug(&format!("Flushing {} queued host messages", count));
+    let mut deferred_commands: Vec<HostCommand> = Vec::new();
+    for command in queued_commands {
+        logger::debug(&format!(
+            "Flushing queued message len={} activation_policy={:?} request_webview_focus={} preview={}",
+            command.message.len(),
+            command.activation_policy,
+            command.request_webview_focus,
+            logger::preview(&command.message, 160)
+        ));
+        match deliver(command.clone()) {
+            Ok(DeliveryOutcome::Delivered) => {}
+            Ok(DeliveryOutcome::DeferredVisibility) => deferred_commands.push(command),
+            Err(error) => {
+                on_error(&command, &error);
+                deferred_commands.push(command);
+            }
+        }
+    }
+    if !deferred_commands.is_empty() {
+        let deferred_count = deferred_commands.len();
+        requeue_pending_commands(deferred_commands);
+        logger::info(&format!(
+            "Re-queued {} host message(s) pending a visible window",
+            deferred_count
+        ));
+    }
+    logger::debug("flush_pending_messages completed, queue drained");
+}
+
 pub(crate) fn window_ready_for_delivery(
     policy: ActivationPolicy,
     is_window_visible: impl Fn() -> bool,
@@ -116,6 +154,7 @@ pub(crate) fn window_ready_for_delivery(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
 
     #[test]
     fn no_activate_requires_visible_window() {
@@ -168,5 +207,44 @@ mod tests {
         );
 
         assert!(!ready);
+    }
+
+    #[test]
+    fn flush_pending_commands_requeues_deferred_and_failed_commands() {
+        clear_pending_commands();
+        enqueue_pending_command(HostCommand {
+            message: "delivered".to_string(),
+            activation_policy: ActivationPolicy::NoActivate,
+            request_webview_focus: false,
+        });
+        enqueue_pending_command(HostCommand {
+            message: "deferred".to_string(),
+            activation_policy: ActivationPolicy::ActivateIfBackground,
+            request_webview_focus: false,
+        });
+        enqueue_pending_command(HostCommand {
+            message: "failed".to_string(),
+            activation_policy: ActivationPolicy::ActivateAndFocus,
+            request_webview_focus: true,
+        });
+
+        let errors: RefCell<Vec<String>> = RefCell::new(Vec::new());
+        flush_pending_commands(
+            |command| match command.message.as_str() {
+                "delivered" => Ok(DeliveryOutcome::Delivered),
+                "deferred" => Ok(DeliveryOutcome::DeferredVisibility),
+                _ => Err("send_failed"),
+            },
+            |command, error| {
+                errors
+                    .borrow_mut()
+                    .push(format!("{}:{}", command.message, error));
+            },
+        );
+
+        let pending = take_pending_commands();
+        let pending_messages: Vec<String> = pending.into_iter().map(|command| command.message).collect();
+        assert_eq!(pending_messages, vec!["deferred".to_string(), "failed".to_string()]);
+        assert_eq!(errors.into_inner(), vec!["failed:send_failed".to_string()]);
     }
 }
