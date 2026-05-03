@@ -169,44 +169,19 @@ fn send_pending_command(controller: &ICoreWebView2Controller, command: HostComma
 }
 
 fn flush_pending_messages() {
-    let count = host_dispatch::pending_command_count();
-    logger::info(&format!("FLUSH CALLED: queue_size={}", count));
-
     if host_dispatch::host_ready() {
         if let Some(controller) = current_controller() {
-            let queued_commands = host_dispatch::take_pending_commands();
-            logger::debug(&format!("Flushing {} queued host messages", count));
-            let mut deferred_commands: Vec<HostCommand> = Vec::new();
-            for command in queued_commands {
-                logger::debug(&format!(
-                    "Flushing queued message len={} activation_policy={:?} request_webview_focus={} preview={}",
-                    command.message.len(),
-                    command.activation_policy,
-                    command.request_webview_focus,
-                    logger::preview(&command.message, 160)
-                ));
-                match send_pending_command(&controller, command.clone()) {
-                    Ok(DeliveryOutcome::Delivered) => {}
-                    Ok(DeliveryOutcome::DeferredVisibility) => deferred_commands.push(command),
-                    Err(err) => {
-                        logger::error(&format!("Failed to flush queued host message: {:?}", err));
-                        deferred_commands.push(command);
-                    }
-                }
-            }
-            if !deferred_commands.is_empty() {
-                let deferred_count = deferred_commands.len();
-                host_dispatch::requeue_pending_commands(deferred_commands);
-                logger::info(&format!(
-                    "Re-queued {} host message(s) pending a visible window",
-                    deferred_count
-                ));
-            }
-            logger::debug("flush_pending_messages completed, queue drained");
+            host_dispatch::flush_pending_commands(
+                |command| send_pending_command(&controller, command),
+                |_, err| {
+                    logger::error(&format!("Failed to flush queued host message: {:?}", err));
+                },
+            );
             return;
         }
     }
 
+    let count = host_dispatch::pending_command_count();
     logger::info(&format!(
         "flush_pending_messages: WebView not ready, queue size {}",
         count
