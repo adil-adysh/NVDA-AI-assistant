@@ -1,4 +1,5 @@
 mod app;
+mod host_dispatch;
 mod ipc;
 mod logger;
 mod protocol;

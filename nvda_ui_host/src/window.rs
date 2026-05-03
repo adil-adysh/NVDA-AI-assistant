@@ -14,6 +14,7 @@ use serde_json::json;
 use crate::ipc;
 use crate::logger;
 use crate::app::ActivationPolicy;
+use crate::host_dispatch::HostCommand;
 
 const WM_HOST_COMMAND: u32 = WM_APP + 1;
 pub(crate) const WM_HOST_CLOSE: u32 = WM_APP + 2;
@@ -29,7 +30,7 @@ enum WindowState {
 static WINDOW_HANDLE: OnceLock<usize> = OnceLock::new();
 static WINDOW_STATE: OnceLock<Mutex<WindowState>> = OnceLock::new();
 static CLOSE_REASON: OnceLock<Mutex<Option<String>>> = OnceLock::new();
-static HOST_COMMAND_QUEUE: OnceLock<Mutex<Vec<QueuedHostCommand>>> = OnceLock::new();
+static HOST_COMMAND_QUEUE: OnceLock<Mutex<Vec<HostCommand>>> = OnceLock::new();
 
 fn window_state() -> &'static Mutex<WindowState> {
     WINDOW_STATE.get_or_init(|| Mutex::new(WindowState::Hidden))
@@ -51,13 +52,6 @@ fn close_reason() -> &'static Mutex<Option<String>> {
 fn take_close_reason() -> Option<String> {
     let mut guard = close_reason().lock().unwrap();
     guard.take()
-}
-
-#[derive(Debug, Clone)]
-struct QueuedHostCommand {
-    message: String,
-    activation_policy: ActivationPolicy,
-    request_webview_focus: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,7 +131,7 @@ pub fn initialize_host_dispatch(hwnd: HWND) {
     logger::info("Host dispatch queue initialized");
 }
 
-fn command_queue() -> &'static Mutex<Vec<QueuedHostCommand>> {
+fn command_queue() -> &'static Mutex<Vec<HostCommand>> {
     HOST_COMMAND_QUEUE.get_or_init(|| Mutex::new(Vec::new()))
 }
 
@@ -153,7 +147,7 @@ pub(crate) fn post_host_command(
             return Err(DispatchError::QueueFull);
         }
 
-        queue.push(QueuedHostCommand {
+        queue.push(HostCommand {
             message: command.clone(),
             activation_policy,
             request_webview_focus,
