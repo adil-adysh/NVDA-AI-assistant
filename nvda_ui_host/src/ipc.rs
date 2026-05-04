@@ -17,10 +17,10 @@ use crate::protocol::HostResponse;
 
 const COMMAND_PIPE_NAME: &str = r"\\.\pipe\nvda_ai_assistant_ui_cmd";
 const EVENT_PIPE_NAME: &str = r"\\.\pipe\nvda_ai_assistant_ui_evt";
-const BUFFER_SIZE: u32 = 4096;
+const BUFFER_SIZE: u32 = 65536;
 const PIPE_ACCESS_DUPLEX: u32 = 0x00000003;
-const PIPE_TYPE_MESSAGE: u32 = 0x00000004;
-const PIPE_READMODE_MESSAGE: u32 = 0x00000002;
+const PIPE_TYPE_BYTE: u32 = 0x00000000;
+const PIPE_READMODE_BYTE: u32 = 0x00000000;
 const PIPE_WAIT: u32 = 0x00000000;
 const PIPE_UNLIMITED_INSTANCES: u32 = 255;
 const ERROR_PIPE_CONNECTED: u32 = 535;
@@ -73,7 +73,7 @@ fn create_pipe(name: &[u16]) -> Result<HANDLE> {
         let handle = CreateNamedPipeW(
             PCWSTR(name.as_ptr()),
             PIPE_ACCESS_DUPLEX,
-            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
             PIPE_UNLIMITED_INSTANCES,
             BUFFER_SIZE,
             BUFFER_SIZE,
