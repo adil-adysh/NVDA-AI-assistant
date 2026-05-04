@@ -77,7 +77,7 @@ class HostPipeTransport:
 					0,
 					None,
 				)
-				self._set_message_mode(handle, win32pipe_module)
+				self._set_byte_mode(handle, win32pipe_module)
 				logger.debug("HostPipeTransport connected handle=%s", handle)
 				return handle
 			except Exception as error:
@@ -191,9 +191,9 @@ class HostPipeTransport:
 		winerror = getattr(error, "winerror", None)
 		return winerror in (109, 232)
 
-	def _set_message_mode(self, handle: Any, win32pipe_module: Any) -> None:
+	def _set_byte_mode(self, handle: Any, win32pipe_module: Any) -> None:
 		try:
-			win32pipe_module.SetNamedPipeHandleState(handle, win32pipe_module.PIPE_READMODE_MESSAGE, None, None)
-			logger.debug("HostPipeTransport set message read mode")
+			win32pipe_module.SetNamedPipeHandleState(handle, win32pipe_module.PIPE_READMODE_BYTE, None, None)
+			logger.debug("HostPipeTransport set byte read mode")
 		except Exception as error:
-			logger.debug("HostPipeTransport could not set message read mode: %s", error)
+			logger.debug("HostPipeTransport could not set byte read mode: %s", error)
