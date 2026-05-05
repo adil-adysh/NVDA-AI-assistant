@@ -1,0 +1,19 @@
+[package]
+name = "memory_engine"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "memory_engine"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23" }
+redb = "2.1"
+serde = { version = "1.0", features = ["derive"] }
+
+[profile.release]
+lto = false
+codegen-units = 1
+opt-level = "z"
+strip = true
