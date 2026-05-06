@@ -12,32 +12,47 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Create requirements
-        run: echo -e "pre-commit\nscons\nmarkdown" > requirements.txt
-
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version-file: .python-version
           cache: "pip"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: "npm"
+          cache-dependency-path: nvda_ui_host/package-lock.json
+
+      - name: Setup Rust
+        uses: moonrepo/setup-rust@v1
+        with:
+          inherit-toolchain: true
+          profile: minimal
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip wheel
-          pip install -r requirements.txt
-          sudo apt-get update -y
-          sudo apt-get install -y gettext
+          pip install pre-commit scons markdown
+
+      - name: Install gettext tools
+        run: choco install gettext -y
 
       - name: Run code checks
+        env:
+          SKIP: no-commit-to-branch
         run: |
-          export SKIP=no-commit-to-branch
           pre-commit run --all-files
+
+      - name: Build host
+        run: python scripts/build_host.py
 
       - name: Build addon
         run: |
@@ -53,7 +68,7 @@ jobs:
             ./*.pot
 
   release:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     needs: build
     if: github.ref_type == 'tag'
     permissions:
@@ -70,36 +85,47 @@ jobs:
 
       - name: Move artifacts to root
         run: |
-          cp -r packaged_addon/* .
+          Copy-Item -Path packaged_addon\* -Destination . -Recurse
 
       - name: Extract version
         id: version
         run: |
-          VERSION="${GITHUB_REF#refs/tags/}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          $version = $env:GITHUB_REF -replace '^refs/tags/', ''
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version-file: .python-version
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: "npm"
+          cache-dependency-path: nvda_ui_host/package-lock.json
+
+      - name: Setup Rust
+        uses: moonrepo/setup-rust@v1
+        with:
+          inherit-toolchain: true
+          profile: minimal
 
       - name: Install git-cliff binary
         run: |
-          set -euo pipefail
-          DOWNLOAD_URL=$(python3 -c "import json, urllib.request, sys; req=urllib.request.Request('https://api.github.com/repos/orhun/git-cliff/releases/latest', headers={'User-Agent':'github-actions'}); obj=json.loads(urllib.request.urlopen(req).read()); assets=[a['browser_download_url'] for a in obj['assets'] if 'x86_64-unknown-linux-gnu.tar.gz' in a['browser_download_url']]; print(assets[0] if assets else sys.exit('No x86_64 linux asset found'))")
-          echo "Installing git-cliff from ${DOWNLOAD_URL}"
-          curl -sSL "$DOWNLOAD_URL" | tar xz -C /tmp
-          sudo mv /tmp/git-cliff-*/git-cliff /usr/local/bin/git-cliff
-          sudo chmod +x /usr/local/bin/git-cliff
+          cargo install git-cliff --locked
 
       - name: Generate release notes
         run: |
           git-cliff --config cliff.toml --current --output RELEASE_NOTES.md
-          echo -e "\n### SHA256" >> RELEASE_NOTES.md
-          sha256sum *.nvda-addon >> RELEASE_NOTES.md
+          Add-Content RELEASE_NOTES.md ""
+          Add-Content RELEASE_NOTES.md "### SHA256"
+          Get-FileHash -Algorithm SHA256 *.nvda-addon | ForEach-Object {
+            Add-Content RELEASE_NOTES.md "$($_.Hash)  $(Split-Path $_.Path -Leaf)"
+          }
 
       - name: Debug release notes
-        run: cat RELEASE_NOTES.md
+        run: Get-Content RELEASE_NOTES.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
