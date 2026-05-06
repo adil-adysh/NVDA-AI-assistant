@@ -15,6 +15,7 @@ from .host_lifecycle import HostLifecycleService, HostLifecycleState
 from .intent import ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND, merge_presentation_intent
 from . import nvda_ui
 from .host_renderer import HostRenderer, HostUnavailableError
+from .attachment_context import extract_attachment_context
 from .view_models import ChatWindowViewModel, DisplayResultViewModel
 from ..utils.markdown import render_markdown_to_html
 
@@ -509,28 +510,11 @@ class UIAdapter:
 		localized_strings: dict[str, str],
 	) -> tuple[str | None, str]:
 		attachments = event_payload.get("attachments") if isinstance(event_payload, dict) else None
-		if not isinstance(attachments, list):
-			return None, ""
-
-		image_base64 = None
-		file_sections: list[str] = []
 		attached_file_label = localized_strings.get("attached_file_label", "Attached file")
-		for attachment in attachments:
-			if not isinstance(attachment, dict):
-				continue
-			kind = attachment.get("kind")
-			name = str(attachment.get("name") or "attachment")
-			if kind == "image" and image_base64 is None:
-				candidate = attachment.get("image_base64")
-				if isinstance(candidate, str) and candidate.strip():
-					image_base64 = candidate.strip()
-				continue
-			if kind == "file":
-				text = attachment.get("text")
-				if isinstance(text, str) and text.strip():
-					file_sections.append(f"{attached_file_label}: {name}\n{text.strip()}")
-
-		return image_base64, "\n\n".join(file_sections)
+		context = extract_attachment_context(attachments, attached_file_label=attached_file_label)
+		if context.image_count > 1:
+			log.warning("UIAdapter received %s image attachments; only the first supported image will be sent", context.image_count)
+		return context.image_base64, context.file_context
 
 	def _handle_host_ui_action(self, action_id: str, payload: dict[str, Any] | None) -> None:
 		if self._result_action_handler is None:

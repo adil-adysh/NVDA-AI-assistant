@@ -15,7 +15,7 @@ export const defaultLocalizedStrings = {
     result_actions_label: 'Result actions',
     message_actions_label: 'Message actions',
     pending_attachments_label: 'Pending attachments',
-    attach_button: 'Attach',
+    attach_button: 'Upload image',
     send_button: 'Send',
     copy_text_button: 'Copy text',
     copy_markdown_button: 'Copy markdown',

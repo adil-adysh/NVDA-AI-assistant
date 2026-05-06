@@ -123,11 +123,15 @@ export function submitChatMessage(fileInputElement = null) {
         return;
     }
 
-    emitUiEvent('chat_submitted', appState.chat.commandId, {
+    const sent = emitUiEvent('chat_submitted', appState.chat.commandId, {
         conversation_id: appState.chat.conversationId,
         message,
         attachments,
     });
+
+    if (!sent) {
+        return;
+    }
 
     appState.chat.composerText = '';
     clearPendingAttachments(fileInputElement);

@@ -23,6 +23,7 @@ class HostPipeTransport:
 		self._pipe_name = pipe_name
 		self._event_pipe_name = event_pipe_name
 		self._event_callback = event_callback
+		self._stop_event = threading.Event()
 		self._event_listener_started = False
 		self._event_listener_lock = threading.Lock()
 
