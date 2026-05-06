@@ -3,6 +3,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+try:
+    from logHandler import log
+except Exception:
+    import logging
+
+    log = logging.getLogger(__name__)
+
 import jinja2
 
 
@@ -51,14 +58,33 @@ def _iter_template_names(template_name: str, language: str | None = None) -> tup
 
 
 def render_prompt_template(template_name: str, language: str | None = None, **context: object) -> str:
-    for candidate in _iter_template_names(template_name, language=language):
+    candidates = _iter_template_names(template_name, language=language)
+    log.debug(
+        "Prompt template candidates=%s template_name=%r language=%r",
+        candidates,
+        template_name,
+        language,
+    )
+    for candidate in candidates:
         try:
             template = JINJA_ENV.get_template(candidate)
+            log.debug(
+                "Prompt template selected=%r language=%r candidate=%r",
+                template_name,
+                language,
+                candidate,
+            )
             break
         except jinja2.TemplateNotFound:
+            log.debug("Prompt template candidate not found=%r", candidate)
             continue
     else:
         template = JINJA_ENV.get_template(template_name)
+        log.debug(
+            "Prompt template fallback to default=%r language=%r",
+            template_name,
+            language,
+        )
     return template.render(**context)
 
 

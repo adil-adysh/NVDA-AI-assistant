@@ -25,12 +25,79 @@ addon_info = AddonInfo(
 		"""NVDA AI assistant helps NVDA users by using AI to simplify complex information, summarize content, and provide contextual guidance for tasks that are otherwise hard to access."""
 	),
 	# version
-	addon_version="0.8.0",
+	addon_version="0.8.1",
 	# Brief changelog for this version
 	# Translators: what's new content for this add-on version to be shown in the add-on store
 	addon_changelog=_(
 		"""
-v0.8.0
+# Changelog
+
+## Added
+
+### Image Description Support for OpenAI
+
+* Added image description support to the OpenAI provider.
+* Users can now generate AI-powered descriptions for images and other visual content using supported OpenAI models.
+
+### Expanded Accessibility Prompt Localization
+
+Added localized accessibility prompt templates for the following languages:
+
+* Arabic
+* Czech
+* English
+* French
+* German
+* Hindi
+* Italian
+* Japanese
+* Korean
+* Portuguese
+* Brazilian Portuguese
+* Russian
+* Simplified Chinese
+* Spanish
+
+Localized templates are now available for:
+
+* Image descriptions
+* Structure summaries
+* Browser summaries
+* Generic summaries
+* Terminal summaries
+
+This improves accessibility and AI interaction quality for NVDA users across multiple languages and regions.
+
+
+## Changed
+
+### Improved Navigation Behavior
+
+* Improved keyboard navigation behavior for provider and model selection controls.
+* Selection changes are now deferred while navigating options with:
+
+  * Arrow keys
+  * Home/End
+  * Page Up/Page Down
+* Changes are committed only after the control loses focus, helping prevent accidental provider or model switches during keyboard navigation.
+
+### Improved WebView Localization Handling
+
+* Updated WebView UI components to consistently use localized strings.
+* Localized additional interface elements including:
+
+  * Thinking status labels
+  * Image alternative text
+  * Status messages
+* Improved translation string extraction and localization ownership handling for translators and contributors.
+
+
+
+
+
+
+
+		v0.8.0
 Added
 • 
 Embedded WebView-based UI host for modernized interaction handling
