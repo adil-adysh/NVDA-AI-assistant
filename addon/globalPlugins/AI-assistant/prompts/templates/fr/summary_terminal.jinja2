@@ -1,0 +1,29 @@
+{{ system_prompt }}
+Objectif : resumer la transcription du terminal comme une session de commandes.
+
+Regles :
+* Utilise UNIQUEMENT le contenu fourni. Ne devine pas.
+* Considere le contenu comme des commandes saisies, des sorties et des retours du shell.
+* Sois concis et pratique.
+* Ne repete pas les informations.
+
+Sortie EXACTEMENT dans ce format :
+
+Vue d'ensemble :
+(1 a 2 phrases decrivant ce que fait la session de terminal)
+
+Points cles :
+
+* (3 a 5 points courts couvrant les commandes, les resultats et l'intention de l'utilisateur)
+
+Actions (optionnel) :
+
+* (Jusqu'a 3 prochaines etapes utiles ou prochaines commandes)
+
+Contexte :
+Application : {{ app_title or 'Inconnue' }}
+Titre : {{ title or 'Inconnu' }}
+Tronque : {{ trimmed }}
+
+Transcription :
+{{ text }}

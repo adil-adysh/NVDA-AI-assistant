@@ -1,0 +1,78 @@
+{{ system_prompt }}
+Ziel: Den aktuellen Inhalt zusammenfassen.
+
+Regeln:
+* Verwende NUR die gegebenen Inhalte. Nichts raten.
+* Sei knapp und praxisnah.
+* Wiederhole keine Informationen.
+
+Ausgabe GENAU in diesem Format:
+
+Ueberblick:
+(1 bis 2 Saetze zum Inhalt)
+
+Wichtige Punkte:
+
+* (3 bis 5 kurze Punkte, die fuer den Nutzer wichtig sind)
+
+Aktionen (optional):
+
+* (Bis zu 3 sinnvolle naechste Schritte)
+
+Kontext:
+App: {{ app_title or 'Unbekannt' }}
+Titel: {{ title or 'Unbekannt' }}
+Gekuetzt: {{ trimmed }}
+
+Anzahlen:
+Ueberschriften: {{ headings|length }}
+Links: {{ links|length }}
+Schaltflaechen: {{ buttons|length }}
+Landmarks: {{ landmarks|length }}
+Eingaben: {{ inputs|length }}
+Kombinationsfelder: {{ comboboxes|length }}
+Kontrollkaestchen: {{ checkboxes|length }}
+Optionsfelder: {{ radios|length }}
+
+Ueberschriften:
+{% if headings %}{% for heading in headings %}- {{ 'H' ~ heading[0] if heading[0] is not none else '' }}{{ heading[0] is not none and ': ' or '' }}{{ heading[1] }}
+{% endfor %}{% else %}- Keine
+{% endif %}
+
+Landmarks:
+{% if landmarks %}{% for item in landmarks %}- {{ item }}
+{% endfor %}{% else %}- Keine
+{% endif %}
+
+Links:
+{% if links %}{% for item in links %}- {{ item }}
+{% endfor %}{% else %}- Keine
+{% endif %}
+
+Schaltflaechen:
+{% if buttons %}{% for item in buttons %}- {{ item }}
+{% endfor %}{% else %}- Keine
+{% endif %}
+
+Eingaben:
+{% if inputs %}{% for item in inputs %}- {{ item }}
+{% endfor %}{% else %}- Keine
+{% endif %}
+
+Kombinationsfelder:
+{% if comboboxes %}{% for item in comboboxes %}- {{ item }}
+{% endfor %}{% else %}- Keine
+{% endif %}
+
+Kontrollkaestchen:
+{% if checkboxes %}{% for item in checkboxes %}- {{ item }}
+{% endfor %}{% else %}- Keine
+{% endif %}
+
+Optionsfelder:
+{% if radios %}{% for item in radios %}- {{ item }}
+{% endfor %}{% else %}- Keine
+{% endif %}
+
+Inhalt:
+{{ text }}

@@ -1,0 +1,28 @@
+{{ system_prompt }}
+Objectif : decrire la capture de la fenetre visible pour une personne qui utilise un lecteur d'ecran.
+
+Regles :
+* Utilise UNIQUEMENT le contenu visible de l'image. Ne devine pas et n'invente pas les details manquants.
+* Decris la disposition, le texte visible, les libelles, les boutons, les controles et les sections mises en avant.
+* Mentionne ce qui semble interactif, ce qui parait desactive et quel est le focus principal.
+* Ajoute assez de contexte pour qu'une personne aveugle comprenne le but de l'ecran et les prochaines etapes.
+* Si un element visuel n'est pas clairement lisible, indique qu'il est incertain ou seulement partiellement visible.
+* Ne repete pas les informations et n'utilise pas de formulation vague.
+
+Sortie EXACTEMENT dans ce format :
+
+Vue d'ensemble :
+(1 a 2 phrases resumant la fenetre visible et son objectif principal)
+
+Points cles :
+
+* (3 a 5 points courts decrivant les elements visibles importants, le texte et la structure)
+
+Actions (optionnel) :
+
+* (Jusqu'a 3 prochaines etapes utiles ou ce que l'utilisateur peut faire ensuite)
+
+Contexte :
+{% if app_title %}Application : {{ app_title }}
+{% endif %}{% if window_title %}Fenetre : {{ window_title }}
+{% endif %}

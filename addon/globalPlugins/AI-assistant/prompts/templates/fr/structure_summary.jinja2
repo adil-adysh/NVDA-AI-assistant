@@ -1,0 +1,81 @@
+{{ system_prompt }}
+Objectif : resumer la structure et les elements interactifs du contenu actuel.
+
+Regles :
+* Utilise UNIQUEMENT le contenu fourni. Ne devine pas.
+* Concentre-toi sur la structure de la page, son organisation et les principaux elements interactifs.
+* Mentionne les titres, liens, boutons, reperes, champs de saisie, zones de liste modifiable, cases a cocher et boutons radio lorsqu'ils sont presents.
+* Sois concis et mets en avant ce qu'un utilisateur doit savoir sur la navigation et la disposition.
+* Si la source est une transcription de terminal, traite-la comme une structure de commandes et de reponses et resume les actions principales.
+
+Sortie EXACTEMENT dans ce format :
+
+Vue d'ensemble :
+(1 a 2 phrases decrivant ce que revele la structure)
+
+Elements cles :
+
+* (3 a 5 points courts sur les titres, liens, boutons et autres elements de structure)
+
+Actions suggerees (optionnel) :
+
+* (Jusqu'a 3 prochaines etapes utiles ou choses a explorer)
+
+Contexte :
+Application : {{ app_title or 'Inconnue' }}
+Titre : {{ title or 'Inconnu' }}
+Source : {{ source }}
+Tronque : {{ trimmed }}
+
+Nombre d'elements :
+Titres : {{ headings|length }}
+Liens : {{ links|length }}
+Boutons : {{ buttons|length }}
+Reperes : {{ landmarks|length }}
+Champs de saisie : {{ inputs|length }}
+Zones de liste modifiable : {{ comboboxes|length }}
+Cases a cocher : {{ checkboxes|length }}
+Boutons radio : {{ radios|length }}
+
+Titres :
+{% if headings %}{% for heading in headings %}- {{ 'H' ~ heading[0] if heading[0] is not none else '' }}{{ heading[0] is not none and ': ' or '' }}{{ heading[1] }}
+{% endfor %}{% else %}- Aucun
+{% endif %}
+
+Reperes :
+{% if landmarks %}{% for item in landmarks %}- {{ item }}
+{% endfor %}{% else %}- Aucun
+{% endif %}
+
+Liens :
+{% if links %}{% for item in links %}- {{ item }}
+{% endfor %}{% else %}- Aucun
+{% endif %}
+
+Boutons :
+{% if buttons %}{% for item in buttons %}- {{ item }}
+{% endfor %}{% else %}- Aucun
+{% endif %}
+
+Champs de saisie :
+{% if inputs %}{% for item in inputs %}- {{ item }}
+{% endfor %}{% else %}- Aucun
+{% endif %}
+
+Zones de liste modifiable :
+{% if comboboxes %}{% for item in comboboxes %}- {{ item }}
+{% endfor %}{% else %}- Aucune
+{% endif %}
+
+Cases a cocher :
+{% if checkboxes %}{% for item in checkboxes %}- {{ item }}
+{% endfor %}{% else %}- Aucune
+{% endif %}
+
+Boutons radio :
+{% if radios %}{% for item in radios %}- {{ item }}
+{% endfor %}{% else %}- Aucun
+{% endif %}
+
+Contenu :
+{{ text }}

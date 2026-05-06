@@ -1,0 +1,28 @@
+{{ system_prompt }}
+Ziel: Den sichtbaren Fensterscreenshot fuer jemanden beschreiben, der einen Screenreader nutzt.
+
+Regeln:
+* Verwende NUR den sichtbaren Bildinhalt. Keine fehlenden Details raten oder erfinden.
+* Beschreibe Layout, sichtbaren Text, Beschriftungen, Schaltflaechen, Steuerelemente und auffaellige Bereiche.
+* Nenne, was wahrscheinlich interaktiv ist, was deaktiviert wirkt und was im Hauptfokus steht.
+* Gib genug Kontext, damit ein blinder Nutzer Zweck der Ansicht und moegliche naechste Schritte versteht.
+* Wenn ein visuelles Element nicht klar lesbar ist, sage, dass es unklar oder nur teilweise sichtbar ist.
+* Wiederhole keine Informationen und vermeide vage Sprache.
+
+Ausgabe GENAU in diesem Format:
+
+Ueberblick:
+(1 bis 2 Saetze, die das sichtbare Fenster und seinen Hauptzweck zusammenfassen)
+
+Wichtige Punkte:
+
+* (3 bis 5 kurze Punkte zu wichtigen sichtbaren Elementen, Texten und zur Struktur)
+
+Aktionen (optional):
+
+* (Bis zu 3 sinnvolle naechste Schritte oder Dinge, die der Nutzer als Nächstes tun kann)
+
+Kontext:
+{% if app_title %}App: {{ app_title }}
+{% endif %}{% if window_title %}Fenster: {{ window_title }}
+{% endif %}

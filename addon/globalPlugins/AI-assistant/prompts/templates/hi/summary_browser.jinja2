@@ -1,0 +1,82 @@
+{{ system_prompt }}
+लक्ष्य: वर्तमान ब्राउज़र पेज की सामग्री का सार दें और संरचना व नेविगेशन पर ध्यान रखें।
+
+नियम:
+* केवल दी गई सामग्री का उपयोग करें। अनुमान न लगाएं।
+* संक्षिप्त और व्यावहारिक रहें।
+* जानकारी दोहराएं नहीं।
+* जहां मौजूद हों वहां पेज का उद्देश्य, मुख्य शीर्षक, लिंक, बटन और लैंडमार्क का उल्लेख करें।
+
+आउटपुट बिल्कुल इसी रूप में दें:
+
+अवलोकन:
+(पेज के उद्देश्य पर 1 से 2 वाक्य)
+
+मुख्य बिंदु:
+
+* (3 से 5 छोटे बिंदु जो उपयोगकर्ता के लिए महत्वपूर्ण हों)
+
+पेज संरचना सार:
+(लेआउट या नेविगेशन का छोटा वर्णन)
+
+क्रियाएं (वैकल्पिक):
+
+* (अधिकतम 3 उपयोगी अगले कदम)
+
+संदर्भ:
+ऐप: {{ app_title or 'अज्ञात' }}
+शीर्षक: {{ title or 'अज्ञात' }}
+संक्षिप्त: {{ trimmed }}
+
+गिनती:
+शीर्षक: {{ headings|length }}
+लिंक: {{ links|length }}
+बटन: {{ buttons|length }}
+लैंडमार्क: {{ landmarks|length }}
+इनपुट: {{ inputs|length }}
+कॉम्बो बॉक्स: {{ comboboxes|length }}
+चेकबॉक्स: {{ checkboxes|length }}
+रेडियो बटन: {{ radios|length }}
+
+शीर्षक:
+{% if headings %}{% for heading in headings %}- {{ 'H' ~ heading[0] if heading[0] is not none else '' }}{{ heading[0] is not none and ': ' or '' }}{{ heading[1] }}
+{% endfor %}{% else %}- कोई नहीं
+{% endif %}
+
+लैंडमार्क:
+{% if landmarks %}{% for item in landmarks %}- {{ item }}
+{% endfor %}{% else %}- कोई नहीं
+{% endif %}
+
+लिंक:
+{% if links %}{% for item in links %}- {{ item }}
+{% endfor %}{% else %}- कोई नहीं
+{% endif %}
+
+बटन:
+{% if buttons %}{% for item in buttons %}- {{ item }}
+{% endfor %}{% else %}- कोई नहीं
+{% endif %}
+
+इनपुट:
+{% if inputs %}{% for item in inputs %}- {{ item }}
+{% endfor %}{% else %}- कोई नहीं
+{% endif %}
+
+कॉम्बो बॉक्स:
+{% if comboboxes %}{% for item in comboboxes %}- {{ item }}
+{% endfor %}{% else %}- कोई नहीं
+{% endif %}
+
+चेकबॉक्स:
+{% if checkboxes %}{% for item in checkboxes %}- {{ item }}
+{% endfor %}{% else %}- कोई नहीं
+{% endif %}
+
+रेडियो बटन:
+{% if radios %}{% for item in radios %}- {{ item }}
+{% endfor %}{% else %}- कोई नहीं
+{% endif %}
+
+सामग्री:
+{{ text }}

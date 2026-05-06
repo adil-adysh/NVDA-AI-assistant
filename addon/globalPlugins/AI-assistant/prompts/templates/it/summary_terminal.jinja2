@@ -1,0 +1,29 @@
+{{ system_prompt }}
+Obiettivo: riassumere la trascrizione del terminale come una sessione di comandi.
+
+Regole:
+* Usa SOLO il contenuto fornito. Non indovinare.
+* Tratta il contenuto come input di comandi, output di comandi e feedback della shell.
+* Sii conciso e pratico.
+* Non ripetere le informazioni.
+
+Output ESATTAMENTE in questo formato:
+
+Panoramica:
+(1 o 2 frasi che descrivono cosa sta facendo la sessione di terminale)
+
+Punti chiave:
+
+* (da 3 a 5 punti brevi su comandi, risultati e intento dell'utente)
+
+Azioni (facoltativo):
+
+* (Fino a 3 passaggi successivi utili o prossimi comandi)
+
+Contesto:
+App: {{ app_title or 'Sconosciuta' }}
+Titolo: {{ title or 'Sconosciuto' }}
+Troncato: {{ trimmed }}
+
+Trascrizione:
+{{ text }}

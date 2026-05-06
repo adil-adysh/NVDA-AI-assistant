@@ -1,0 +1,28 @@
+{{ system_prompt }}
+Obiettivo: descrivere la schermata visibile della finestra per una persona che usa uno screen reader.
+
+Regole:
+* Usa SOLO il contenuto visibile dell'immagine. Non indovinare e non inventare dettagli mancanti.
+* Descrivi il layout, il testo visibile, le etichette, i pulsanti, i controlli e le sezioni piu evidenti.
+* Indica cosa sembra interattivo, cosa appare disabilitato e quale sia il focus principale.
+* Includi abbastanza contesto da permettere a una persona cieca di capire lo scopo della schermata e i prossimi passi.
+* Se non riesci a leggere chiaramente un elemento visivo, di che e incerto o visibile solo in parte.
+* Non ripetere le informazioni e non usare un linguaggio vago.
+
+Output ESATTAMENTE in questo formato:
+
+Panoramica:
+(1 o 2 frasi che riassumono la finestra visibile e il suo scopo principale)
+
+Punti chiave:
+
+* (da 3 a 5 punti brevi che descrivono elementi visibili importanti, testo e struttura)
+
+Azioni (facoltativo):
+
+* (Fino a 3 passaggi successivi utili o cosa puo fare l'utente dopo)
+
+Contesto:
+{% if app_title %}App: {{ app_title }}
+{% endif %}{% if window_title %}Finestra: {{ window_title }}
+{% endif %}

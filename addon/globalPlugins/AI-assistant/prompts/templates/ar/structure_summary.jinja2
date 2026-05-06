@@ -1,0 +1,81 @@
+{{ system_prompt }}
+الهدف: تلخيص البنية والعناصر التفاعلية في المحتوى الحالي.
+
+القواعد:
+* استخدم المحتوى المعطى فقط. لا تخمن.
+* ركز على بنية الصفحة وتنظيمها والعناصر التفاعلية الرئيسية.
+* اذكر العناوين والروابط والأزرار والمعالم وحقول الإدخال ومربعات التحرير والسرد ومربعات الاختيار وأزرار الاختيار عند وجودها.
+* كن موجزًا وابرز ما يحتاجه المستخدم لفهم التنقل والتخطيط.
+* إذا كان المصدر سجل طرفية، فتعامل معه كبنية أوامر واستجابات ولخص الإجراءات الرئيسية.
+
+اكتب المخرجات بالشكل التالي تمامًا:
+
+نظرة عامة:
+(جملة إلى جملتين تصفان ما تكشفه البنية)
+
+العناصر الأساسية:
+
+* (3 إلى 5 نقاط قصيرة عن العناوين والروابط والأزرار وبقية البنية)
+
+إجراءات مقترحة (اختياري):
+
+* (حتى 3 خطوات تالية مفيدة أو أشياء يمكن استكشافها)
+
+السياق:
+التطبيق: {{ app_title or 'غير معروف' }}
+العنوان: {{ title or 'غير معروف' }}
+المصدر: {{ source }}
+تم الاختصار: {{ trimmed }}
+
+العدد:
+العناوين: {{ headings|length }}
+الروابط: {{ links|length }}
+الأزرار: {{ buttons|length }}
+المعالم: {{ landmarks|length }}
+حقول الإدخال: {{ inputs|length }}
+مربعات التحرير والسرد: {{ comboboxes|length }}
+مربعات الاختيار: {{ checkboxes|length }}
+أزرار الاختيار: {{ radios|length }}
+
+العناوين:
+{% if headings %}{% for heading in headings %}- {{ 'ع' ~ heading[0] if heading[0] is not none else '' }}{{ heading[0] is not none and ': ' or '' }}{{ heading[1] }}
+{% endfor %}{% else %}- لا يوجد
+{% endif %}
+
+المعالم:
+{% if landmarks %}{% for item in landmarks %}- {{ item }}
+{% endfor %}{% else %}- لا يوجد
+{% endif %}
+
+الروابط:
+{% if links %}{% for item in links %}- {{ item }}
+{% endfor %}{% else %}- لا يوجد
+{% endif %}
+
+الأزرار:
+{% if buttons %}{% for item in buttons %}- {{ item }}
+{% endfor %}{% else %}- لا يوجد
+{% endif %}
+
+حقول الإدخال:
+{% if inputs %}{% for item in inputs %}- {{ item }}
+{% endfor %}{% else %}- لا يوجد
+{% endif %}
+
+مربعات التحرير والسرد:
+{% if comboboxes %}{% for item in comboboxes %}- {{ item }}
+{% endfor %}{% else %}- لا يوجد
+{% endif %}
+
+مربعات الاختيار:
+{% if checkboxes %}{% for item in checkboxes %}- {{ item }}
+{% endfor %}{% else %}- لا يوجد
+{% endif %}
+
+أزرار الاختيار:
+{% if radios %}{% for item in radios %}- {{ item }}
+{% endfor %}{% else %}- لا يوجد
+{% endif %}
+
+المحتوى:
+{{ text }}

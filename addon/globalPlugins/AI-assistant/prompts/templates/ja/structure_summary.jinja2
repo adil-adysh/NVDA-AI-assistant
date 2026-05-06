@@ -1,0 +1,81 @@
+{{ system_prompt }}
+目的: 現在の内容の構造と操作可能な要素を要約する。
+
+ルール:
+* 与えられた内容だけを使うこと。推測しないこと。
+* ページ構造、構成、主な操作可能要素に注目すること。
+* 見出し、リンク、ボタン、ランドマーク、入力欄、コンボボックス、チェックボックス、ラジオボタンがあれば述べること。
+* 簡潔にし、ナビゲーションやレイアウトについてユーザーが知るべき点を強調すること。
+* ソースがターミナル記録の場合は、コマンドと応答の構造として扱い、主な操作を要約すること。
+
+出力は必ず次の形式にする:
+
+概要:
+(構造から分かることを 1〜2 文で)
+
+主要要素:
+
+* (見出し、リンク、ボタン、その他の構造に関する短いポイントを 3〜5 個)
+
+推奨操作 (任意):
+
+* (役立つ次の手順や詳しく見るべき点を最大 3 個)
+
+コンテキスト:
+アプリ: {{ app_title or '不明' }}
+タイトル: {{ title or '不明' }}
+ソース: {{ source }}
+省略あり: {{ trimmed }}
+
+件数:
+見出し: {{ headings|length }}
+リンク: {{ links|length }}
+ボタン: {{ buttons|length }}
+ランドマーク: {{ landmarks|length }}
+入力欄: {{ inputs|length }}
+コンボボックス: {{ comboboxes|length }}
+チェックボックス: {{ checkboxes|length }}
+ラジオボタン: {{ radios|length }}
+
+見出し:
+{% if headings %}{% for heading in headings %}- {{ 'H' ~ heading[0] if heading[0] is not none else '' }}{{ heading[0] is not none and ': ' or '' }}{{ heading[1] }}
+{% endfor %}{% else %}- なし
+{% endif %}
+
+ランドマーク:
+{% if landmarks %}{% for item in landmarks %}- {{ item }}
+{% endfor %}{% else %}- なし
+{% endif %}
+
+リンク:
+{% if links %}{% for item in links %}- {{ item }}
+{% endfor %}{% else %}- なし
+{% endif %}
+
+ボタン:
+{% if buttons %}{% for item in buttons %}- {{ item }}
+{% endfor %}{% else %}- なし
+{% endif %}
+
+入力欄:
+{% if inputs %}{% for item in inputs %}- {{ item }}
+{% endfor %}{% else %}- なし
+{% endif %}
+
+コンボボックス:
+{% if comboboxes %}{% for item in comboboxes %}- {{ item }}
+{% endfor %}{% else %}- なし
+{% endif %}
+
+チェックボックス:
+{% if checkboxes %}{% for item in checkboxes %}- {{ item }}
+{% endfor %}{% else %}- なし
+{% endif %}
+
+ラジオボタン:
+{% if radios %}{% for item in radios %}- {{ item }}
+{% endfor %}{% else %}- なし
+{% endif %}
+
+内容:
+{{ text }}

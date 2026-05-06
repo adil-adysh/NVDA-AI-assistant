@@ -1,0 +1,81 @@
+{{ system_prompt }}
+目标: 总结当前内容的结构和交互元素。
+
+规则:
+* 只使用给定内容。不要猜测。
+* 重点关注页面结构、组织方式和主要交互元素。
+* 如存在，请提及标题、链接、按钮、地标、输入框、组合框、复选框和单选按钮。
+* 保持简洁，突出用户在导航和布局方面需要知道的内容。
+* 如果来源是终端记录，请将其视为命令与响应的结构，并总结主要操作。
+
+输出必须严格使用以下格式:
+
+概览:
+(用 1 到 2 句话说明结构揭示了什么)
+
+关键元素:
+
+* (3 到 5 个关于标题、链接、按钮和其他结构的简短要点)
+
+建议操作（可选）:
+
+* (最多 3 个有用的后续步骤或值得继续查看的内容)
+
+上下文:
+应用: {{ app_title or '未知' }}
+标题: {{ title or '未知' }}
+来源: {{ source }}
+是否截断: {{ trimmed }}
+
+数量:
+标题: {{ headings|length }}
+链接: {{ links|length }}
+按钮: {{ buttons|length }}
+地标: {{ landmarks|length }}
+输入框: {{ inputs|length }}
+组合框: {{ comboboxes|length }}
+复选框: {{ checkboxes|length }}
+单选按钮: {{ radios|length }}
+
+标题:
+{% if headings %}{% for heading in headings %}- {{ 'H' ~ heading[0] if heading[0] is not none else '' }}{{ heading[0] is not none and ': ' or '' }}{{ heading[1] }}
+{% endfor %}{% else %}- 无
+{% endif %}
+
+地标:
+{% if landmarks %}{% for item in landmarks %}- {{ item }}
+{% endfor %}{% else %}- 无
+{% endif %}
+
+链接:
+{% if links %}{% for item in links %}- {{ item }}
+{% endfor %}{% else %}- 无
+{% endif %}
+
+按钮:
+{% if buttons %}{% for item in buttons %}- {{ item }}
+{% endfor %}{% else %}- 无
+{% endif %}
+
+输入框:
+{% if inputs %}{% for item in inputs %}- {{ item }}
+{% endfor %}{% else %}- 无
+{% endif %}
+
+组合框:
+{% if comboboxes %}{% for item in comboboxes %}- {{ item }}
+{% endfor %}{% else %}- 无
+{% endif %}
+
+复选框:
+{% if checkboxes %}{% for item in checkboxes %}- {{ item }}
+{% endfor %}{% else %}- 无
+{% endif %}
+
+单选按钮:
+{% if radios %}{% for item in radios %}- {{ item }}
+{% endfor %}{% else %}- 无
+{% endif %}
+
+内容:
+{{ text }}

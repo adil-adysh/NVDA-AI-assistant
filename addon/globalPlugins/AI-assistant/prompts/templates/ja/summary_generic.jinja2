@@ -1,0 +1,78 @@
+{{ system_prompt }}
+目的: 現在の内容を要約する。
+
+ルール:
+* 与えられた内容だけを使うこと。推測しないこと。
+* 簡潔で実用的にすること。
+* 情報を繰り返さないこと。
+
+出力は必ず次の形式にする:
+
+概要:
+(内容について 1〜2 文で)
+
+重要ポイント:
+
+* (ユーザーに重要な短いポイントを 3〜5 個)
+
+操作候補 (任意):
+
+* (役立つ次の手順を最大 3 個)
+
+コンテキスト:
+アプリ: {{ app_title or '不明' }}
+タイトル: {{ title or '不明' }}
+省略あり: {{ trimmed }}
+
+件数:
+見出し: {{ headings|length }}
+リンク: {{ links|length }}
+ボタン: {{ buttons|length }}
+ランドマーク: {{ landmarks|length }}
+入力欄: {{ inputs|length }}
+コンボボックス: {{ comboboxes|length }}
+チェックボックス: {{ checkboxes|length }}
+ラジオボタン: {{ radios|length }}
+
+見出し:
+{% if headings %}{% for heading in headings %}- {{ 'H' ~ heading[0] if heading[0] is not none else '' }}{{ heading[0] is not none and ': ' or '' }}{{ heading[1] }}
+{% endfor %}{% else %}- なし
+{% endif %}
+
+ランドマーク:
+{% if landmarks %}{% for item in landmarks %}- {{ item }}
+{% endfor %}{% else %}- なし
+{% endif %}
+
+リンク:
+{% if links %}{% for item in links %}- {{ item }}
+{% endfor %}{% else %}- なし
+{% endif %}
+
+ボタン:
+{% if buttons %}{% for item in buttons %}- {{ item }}
+{% endfor %}{% else %}- なし
+{% endif %}
+
+入力欄:
+{% if inputs %}{% for item in inputs %}- {{ item }}
+{% endfor %}{% else %}- なし
+{% endif %}
+
+コンボボックス:
+{% if comboboxes %}{% for item in comboboxes %}- {{ item }}
+{% endfor %}{% else %}- なし
+{% endif %}
+
+チェックボックス:
+{% if checkboxes %}{% for item in checkboxes %}- {{ item }}
+{% endfor %}{% else %}- なし
+{% endif %}
+
+ラジオボタン:
+{% if radios %}{% for item in radios %}- {{ item }}
+{% endfor %}{% else %}- なし
+{% endif %}
+
+内容:
+{{ text }}
