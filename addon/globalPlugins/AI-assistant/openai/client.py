@@ -64,6 +64,94 @@ class OpenAIClient:
 
         return self._request_json(self._chat_path, payload)
 
+    def describe_image(
+        self,
+        model: str,
+        image_base64: str,
+        prompt: str,
+        temperature: float = 0.2,
+        top_p: float = 0.85,
+        top_k: int | None = None,
+        max_tokens: int | None = None,
+        detail: str = "auto",
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        image_base64 = str(image_base64 or "").strip()
+        if not image_base64:
+            raise OpenAIClientConfigurationError("OpenAI image data is required.")
+
+        prompt = str(prompt or "").strip()
+        if not prompt:
+            raise OpenAIClientConfigurationError("OpenAI image prompt is required.")
+
+        message = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{image_base64}",
+                        "detail": detail,
+                    },
+                },
+            ],
+        }
+
+        return self.create_chat_completion(
+            model=model,
+            messages=[message],
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            max_tokens=max_tokens,
+            tools=tools,
+        )
+
+    def stream_describe_image(
+        self,
+        model: str,
+        image_base64: str,
+        prompt: str,
+        temperature: float = 0.2,
+        top_p: float = 0.85,
+        top_k: int | None = None,
+        max_tokens: int | None = None,
+        detail: str = "auto",
+        tools: list[dict[str, Any]] | None = None,
+    ) -> Generator[dict[str, Any], None, None]:
+        image_base64 = str(image_base64 or "").strip()
+        if not image_base64:
+            raise OpenAIClientConfigurationError("OpenAI image data is required.")
+
+        prompt = str(prompt or "").strip()
+        if not prompt:
+            raise OpenAIClientConfigurationError("OpenAI image prompt is required.")
+
+        message = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{image_base64}",
+                        "detail": detail,
+                    },
+                },
+            ],
+        }
+
+        yield from self.stream_chat_completion(
+            model=model,
+            messages=[message],
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            max_tokens=max_tokens,
+            tools=tools,
+        )
+
     def stream_chat_completion(
         self,
         model: str,

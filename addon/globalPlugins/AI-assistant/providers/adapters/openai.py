@@ -9,8 +9,8 @@ from typing import Any
 from ...core.canonical import Message, Tool
 from ...core.messages import LLMResponse, SummaryResponse
 from ...core.tooling import ToolCall
-from ...tools import build_function_tool_definition, normalize_tool_calls
 from ...openai import OpenAIClient, OpenAIClientError
+from ...tools import build_function_tool_definition, normalize_tool_calls
 from ..config import OpenAIConfig
 from ..interfaces import LLMProvider, LLMProviderError, PartialCallback, ProgressCallback, ProviderModelInfo, SamplingDefaults
 
@@ -89,20 +89,22 @@ class OpenAIProvider(LLMProvider):
 
     def _normalize_model_info(self, data: dict[str, Any]) -> ProviderModelInfo:
         model_id = str(data.get("id", "")).strip()
-        lowered = model_id.lower()
+        lowered = self._normalized_model_family(model_id)
         capabilities: set[str] = set()
         sampling_defaults = SamplingDefaults(temperature=1.0, top_p=1.0)
+        input_modalities = self._extract_modalities(data, modality_kind="input")
+        output_modalities = self._extract_modalities(data, modality_kind="output")
 
         if lowered:
             capabilities.add("streaming")
 
-        if any(token in lowered for token in ("gpt", "chatgpt", "o1", "o3")):
+        if any(token in lowered for token in ("gpt", "chatgpt", "o1", "o3", "o4")):
             capabilities.update(("chat", "completion", "tools", "text_input", "text_output"))
 
-        if lowered.startswith(("gpt-5", "o1", "o3")):
+        if lowered.startswith(("gpt-5", "o1", "o3", "o4")):
             capabilities.add("thinking")
 
-        if lowered.startswith(("gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-5", "o1", "o3")):
+        if self._supports_image_input_family(lowered):
             capabilities.add("image_input")
 
         if lowered.startswith(("gpt-audio", "gpt-realtime")):
@@ -115,7 +117,10 @@ class OpenAIProvider(LLMProvider):
             capabilities.add("image_output")
 
         if lowered.endswith(("transcribe", "transcription")):
-            capabilities.update(("audio_input",))
+            capabilities.add("audio_input")
+
+        capabilities.update(self._capabilities_from_modalities(input_modalities, modality_kind="input"))
+        capabilities.update(self._capabilities_from_modalities(output_modalities, modality_kind="output"))
 
         return ProviderModelInfo(
             id=model_id,
@@ -127,6 +132,64 @@ class OpenAIProvider(LLMProvider):
             sampling_defaults=sampling_defaults,
             raw=data,
         )
+
+    def _normalized_model_family(self, model_id: str) -> str:
+        lowered = model_id.lower().strip()
+        if lowered.startswith("ft:"):
+            parts = lowered.split(":")
+            if len(parts) > 1 and parts[1]:
+                return parts[1]
+        return lowered
+
+    def _supports_image_input_family(self, lowered_model: str) -> bool:
+        return lowered_model.startswith(
+            (
+                "chatgpt-4o",
+                "gpt-4o",
+                "gpt-4.1",
+                "gpt-4.5",
+                "gpt-5",
+                "gpt-4-turbo",
+                "gpt-4-vision-preview",
+                "o1",
+                "o3",
+                "o4",
+            )
+        )
+
+    def _extract_modalities(self, data: dict[str, Any], modality_kind: str) -> tuple[str, ...]:
+        key = f"{modality_kind}_modalities"
+        modalities = self._coerce_modalities(data.get(key))
+        if modalities:
+            return modalities
+
+        architecture = data.get("architecture")
+        if isinstance(architecture, dict):
+            modalities = self._coerce_modalities(architecture.get(key))
+            if modalities:
+                return modalities
+
+        return ()
+
+    def _coerce_modalities(self, value: Any) -> tuple[str, ...]:
+        if not isinstance(value, (list, tuple, set)):
+            return ()
+        normalized = tuple(
+            str(item).strip().lower()
+            for item in value
+            if isinstance(item, str) and str(item).strip()
+        )
+        return tuple(dict.fromkeys(normalized))
+
+    def _capabilities_from_modalities(self, modalities: tuple[str, ...], modality_kind: str) -> set[str]:
+        capabilities: set[str] = set()
+        if "text" in modalities:
+            capabilities.add(f"text_{modality_kind}")
+        if "image" in modalities:
+            capabilities.add(f"image_{modality_kind}")
+        if "audio" in modalities:
+            capabilities.add(f"audio_{modality_kind}")
+        return capabilities
 
     def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
         model = self._resolve_model()
@@ -168,29 +231,20 @@ class OpenAIProvider(LLMProvider):
         if not self._capabilities_for_model(model).supports("image_input"):
             raise LLMProviderError(f"OpenAI model {model} does not advertise image input support.")
 
-        message = {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{image_base64}"},
-                },
-            ],
-        }
-
         try:
             if stream_handler is not None:
-                text, _, _ = self._stream_chat_completion(
+                text, _, _ = self._stream_describe_image(
                     model=model,
-                    messages=[message],
+                    image_base64=image_base64,
+                    prompt=prompt,
                     stream_handler=stream_handler,
                 )
                 return SummaryResponse(text=text, model=model, provider=self.provider_name())
 
-            response = self._client.create_chat_completion(
+            response = self._client.describe_image(
                 model=model,
-                messages=[message],
+                image_base64=image_base64,
+                prompt=prompt,
                 temperature=self._config.generate_temperature,
                 top_p=self._config.generate_top_p,
                 max_tokens=self._config.generate_max_tokens,
@@ -200,6 +254,70 @@ class OpenAIProvider(LLMProvider):
 
         choice = self._parse_choice(response)
         return SummaryResponse(text=choice.get("content", "") or "", model=model, provider=self.provider_name())
+
+    def _stream_describe_image(
+        self,
+        model: str,
+        image_base64: str,
+        prompt: str,
+        stream_handler: PartialCallback,
+    ) -> tuple[str, list[ToolCall] | None, list[dict[str, Any]]]:
+        return self._collect_stream_completion(
+            self._client.stream_describe_image(
+                model=model,
+                image_base64=image_base64,
+                prompt=prompt,
+                temperature=self._config.generate_temperature,
+                top_p=self._config.generate_top_p,
+                max_tokens=self._config.generate_max_tokens,
+            ),
+            stream_handler,
+        )
+
+    def _collect_stream_completion(
+        self,
+        chunks: Iterable[dict[str, Any]],
+        stream_handler: PartialCallback,
+    ) -> tuple[str, list[ToolCall] | None, list[dict[str, Any]]]:
+        accumulated_text = ""
+        collected_chunks: list[dict[str, Any]] = []
+        streamed_tool_calls: dict[int, dict[str, Any]] = {}
+
+        for chunk in chunks:
+            collected_chunks.append(chunk)
+            choices = chunk.get("choices")
+            if not isinstance(choices, list):
+                continue
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                delta = choice.get("delta")
+                if not isinstance(delta, dict):
+                    continue
+
+                content = delta.get("content")
+                if isinstance(content, str) and content:
+                    accumulated_text = f"{accumulated_text}{content}"
+                    stream_handler(accumulated_text, len(accumulated_text))
+
+                self._merge_streamed_tool_calls(streamed_tool_calls, delta.get("tool_calls"))
+
+                function_call = delta.get("function_call")
+                if isinstance(function_call, dict):
+                    self._merge_streamed_tool_calls(
+                        streamed_tool_calls,
+                        [
+                            {
+                                "index": 0,
+                                "function": function_call,
+                            }
+                        ],
+                    )
+
+        normalized_tool_calls = normalize_tool_calls(
+            [streamed_tool_calls[index] for index in sorted(streamed_tool_calls)]
+        )
+        return accumulated_text, normalized_tool_calls, collected_chunks
 
     def _convert_message(self, message: Message) -> dict[str, Any]:
         text_parts: list[str] = []
@@ -277,52 +395,17 @@ class OpenAIProvider(LLMProvider):
         stream_handler: PartialCallback,
         tools: list[dict[str, Any]] | None = None,
     ) -> tuple[str, list[ToolCall] | None, list[dict[str, Any]]]:
-        accumulated_text = ""
-        chunks: list[dict[str, Any]] = []
-        streamed_tool_calls: dict[int, dict[str, Any]] = {}
-
-        for chunk in self._client.stream_chat_completion(
-            model=model,
-            messages=messages,
-            temperature=self._config.generate_temperature,
-            top_p=self._config.generate_top_p,
-            max_tokens=self._config.generate_max_tokens,
-            tools=tools,
-        ):
-            chunks.append(chunk)
-            choices = chunk.get("choices")
-            if not isinstance(choices, list):
-                continue
-            for choice in choices:
-                if not isinstance(choice, dict):
-                    continue
-                delta = choice.get("delta")
-                if not isinstance(delta, dict):
-                    continue
-
-                content = delta.get("content")
-                if isinstance(content, str) and content:
-                    accumulated_text = f"{accumulated_text}{content}"
-                    stream_handler(accumulated_text, len(accumulated_text))
-
-                self._merge_streamed_tool_calls(streamed_tool_calls, delta.get("tool_calls"))
-
-                function_call = delta.get("function_call")
-                if isinstance(function_call, dict):
-                    self._merge_streamed_tool_calls(
-                        streamed_tool_calls,
-                        [
-                            {
-                                "index": 0,
-                                "function": function_call,
-                            }
-                        ],
-                    )
-
-        normalized_tool_calls = normalize_tool_calls(
-            [streamed_tool_calls[index] for index in sorted(streamed_tool_calls)]
+        return self._collect_stream_completion(
+            self._client.stream_chat_completion(
+                model=model,
+                messages=messages,
+                temperature=self._config.generate_temperature,
+                top_p=self._config.generate_top_p,
+                max_tokens=self._config.generate_max_tokens,
+                tools=tools,
+            ),
+            stream_handler,
         )
-        return accumulated_text, normalized_tool_calls, chunks
 
     def _merge_streamed_tool_calls(
         self,
