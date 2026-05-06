@@ -100,14 +100,8 @@ Improved command queue and activation policy handling
 )
 
 # Define the python files that are the sources of your add-on.
-# You can either list every file (using ""/") as a path separator,
-# or use glob expressions.
-# For example to include all files with a ".py" extension from the "globalPlugins" dir of your add-on
-# the list can be written as follows:
-# pythonSources = ["addon/globalPlugins/*.py"]
-# For more information on SCons Glob expressions please take a look at:
-# https://scons.org/doc/production/HTML/scons-user/apd.html
-pythonSources: list[str] = []
+# These same files are also scanned for gettext message extraction.
+pythonSources: list[str] = ["addon/globalPlugins/AI-assistant/**/*.py"]
 
 # Files that contain strings for translation. Usually your python sources
 i18nSources: list[str] = pythonSources + ["buildVars.py"]

@@ -147,6 +147,12 @@ Optional UI state for provider/model controls may also be included. A typical ch
 - `available_providers`: array | null
 - `available_models`: array | null
 
+Localization notes:
+
+- translator-facing WebView labels should be provided by Python through `metadata.localized_strings` rather than owned by the browser bundle
+- strings intended for translators should live in Python source included in the add-on gettext extraction inputs
+- the repository gettext configuration recognizes Python-side extraction keywords such as `translate(...)`; browser-side default label tables are not the source of truth for the POT file
+
 This command is the preferred follow-up target for actions such as `Open Chat` from an image description result.
 
 ### `chat_set_history`
