@@ -181,6 +181,16 @@ class UIAdapter:
 	def register_session_metadata_provider(self, provider: Callable[[], dict[str, Any]]) -> None:
 		self._session_metadata_provider = provider
 
+	def close(self) -> None:
+		try:
+			close_host = getattr(self._host_renderer, "close", None)
+			if callable(close_host):
+				close_host()
+		except Exception:
+			log.exception("UIAdapter host cleanup failed")
+		finally:
+			self._running = False
+
 	def _worker_loop(self) -> None:
 		log.debug("UIAdapter worker thread started")
 		while self._running:
@@ -533,7 +543,7 @@ class UIAdapter:
 
 	def _handle_host_closed(self, event_payload: dict[str, Any] | None) -> None:
 		log.info("UIAdapter received host_closed event from host: %s", event_payload)
-		self._host_lifecycle.mark_hidden()
+		self._host_lifecycle.mark_host_closed()
 
 	def _handle_provider_selection(self, provider: str) -> None:
 		self._apply_control_change(lambda: self._set_provider_and_save(provider))
