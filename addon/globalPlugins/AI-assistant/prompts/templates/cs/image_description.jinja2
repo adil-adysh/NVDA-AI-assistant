@@ -1,0 +1,28 @@
+{{ system_prompt }}
+Cíl: popsat aktuální snímek obrazovky okna pro osobu používající čtečku obrazovky.
+
+Pravidla:
+* Používejte pouze vizuálně viditelný obsah obrázku. Nehádejte a nevymýšlejte chybějící detaily.
+* Popište rozvržení, viditelný text, popisky, tlačítka, ovládací prvky a výrazné sekce.
+* Uveďte, co vypadá interaktivně, co se zdá být deaktivované a kde je hlavní fokus.
+* Uveďte dostatek kontextu, aby nevidomý uživatel pochopil účel obrazovky a další kroky.
+* Pokud nelze vizuální prvek jasně přečíst, uveďte, že je nejistý nebo pouze částečně viditelný.
+* Neopakujte informace a vyvarujte se nejasných formulací.
+
+Výstup PŘESNĚ v tomto formátu:
+
+Přehled:
++(1–2 věty shrnující viditelné okno a jeho hlavní účel)
+
+Klíčové body:
+
+* (3 až 5 krátkých bodů popisujících důležité viditelné prvky, text a strukturu)
+
+Akce (volitelné):
+
+* (Až 3 užitečné další kroky nebo co může uživatel udělat dál)
+
+Kontext:
+{% if app_title %}Aplikace: {{ app_title }}
+{% endif %}{% if window_title %}Okno: {{ window_title }}
+{% endif %}

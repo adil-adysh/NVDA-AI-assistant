@@ -1,0 +1,78 @@
+{{ system_prompt }}
+목표: 현재 내용을 요약한다.
+
+규칙:
+* 주어진 내용만 사용한다. 추측하지 않는다.
+* 간결하고 실용적으로 작성한다.
+* 정보를 반복하지 않는다.
+
+출력은 반드시 다음 형식을 따른다:
+
+개요:
+(내용에 대한 1~2문장)
+
+핵심 사항:
+
+* (사용자에게 중요한 짧은 항목 3~5개)
+
+작업 (선택 사항):
+
+* (유용한 다음 단계 최대 3개)
+
+문맥:
+앱: {{ app_title or '알 수 없음' }}
+제목: {{ title or '알 수 없음' }}
+잘림: {{ trimmed }}
+
+개수:
+제목: {{ headings|length }}
+링크: {{ links|length }}
+버튼: {{ buttons|length }}
+랜드마크: {{ landmarks|length }}
+입력 필드: {{ inputs|length }}
+콤보 상자: {{ comboboxes|length }}
+체크박스: {{ checkboxes|length }}
+라디오 버튼: {{ radios|length }}
+
+제목:
+{% if headings %}{% for heading in headings %}- {{ 'H' ~ heading[0] if heading[0] is not none else '' }}{{ heading[0] is not none and ': ' or '' }}{{ heading[1] }}
+{% endfor %}{% else %}- 없음
+{% endif %}
+
+랜드마크:
+{% if landmarks %}{% for item in landmarks %}- {{ item }}
+{% endfor %}{% else %}- 없음
+{% endif %}
+
+링크:
+{% if links %}{% for item in links %}- {{ item }}
+{% endfor %}{% else %}- 없음
+{% endif %}
+
+버튼:
+{% if buttons %}{% for item in buttons %}- {{ item }}
+{% endfor %}{% else %}- 없음
+{% endif %}
+
+입력 필드:
+{% if inputs %}{% for item in inputs %}- {{ item }}
+{% endfor %}{% else %}- 없음
+{% endif %}
+
+콤보 상자:
+{% if comboboxes %}{% for item in comboboxes %}- {{ item }}
+{% endfor %}{% else %}- 없음
+{% endif %}
+
+체크박스:
+{% if checkboxes %}{% for item in checkboxes %}- {{ item }}
+{% endfor %}{% else %}- 없음
+{% endif %}
+
+라디오 버튼:
+{% if radios %}{% for item in radios %}- {{ item }}
+{% endfor %}{% else %}- 없음
+{% endif %}
+
+내용:
+{{ text }}

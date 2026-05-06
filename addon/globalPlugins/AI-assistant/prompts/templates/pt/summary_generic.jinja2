@@ -1,0 +1,78 @@
+{{ system_prompt }}
+Objetivo: resumir o conteúdo atual.
+
+Regras:
+* Use APENAS o conteúdo fornecido. Não adivinhe.
+* Seja conciso e prático.
+* Não repita informações.
+
+Saída EXATAMENTE neste formato:
+
+Visão geral:
++(1 a 2 frases sobre o conteúdo)
+
+Pontos principais:
+
+* (3 a 5 pontos curtos importantes para o usuário)
+
+Ações (opcional):
+
+* (Até 3 passos úteis seguintes)
+
+Contexto:
+Aplicativo: {{ app_title or 'Desconhecido' }}
+Título: {{ title or 'Desconhecido' }}
+Resumido: {{ trimmed }}
+
+Contagens:
+Títulos: {{ headings|length }}
+Links: {{ links|length }}
+Botões: {{ buttons|length }}
+Marcos: {{ landmarks|length }}
+Campos de entrada: {{ inputs|length }}
+Caixas combinadas: {{ comboboxes|length }}
+Caixas de seleção: {{ checkboxes|length }}
+Botões de opção: {{ radios|length }}
+
+Títulos:
+{% if headings %}{% for heading in headings %}- {{ 'H' ~ heading[0] if heading[0] is not none else '' }}{{ heading[0] is not none and ': ' or '' }}{{ heading[1] }}
+{% endfor %}{% else %}- Nenhum
+{% endif %}
+
+Marcos:
+{% if landmarks %}{% for item in landmarks %}- {{ item }}
+{% endfor %}{% else %}- Nenhum
+{% endif %}
+
+Links:
+{% if links %}{% for item in links %}- {{ item }}
+{% endfor %}{% else %}- Nenhum
+{% endif %}
+
+Botões:
+{% if buttons %}{% for item in buttons %}- {{ item }}
+{% endfor %}{% else %}- Nenhum
+{% endif %}
+
+Campos de entrada:
+{% if inputs %}{% for item in inputs %}- {{ item }}
+{% endfor %}{% else %}- Nenhum
+{% endif %}
+
+Caixas combinadas:
+{% if comboboxes %}{% for item in comboboxes %}- {{ item }}
+{% endfor %}{% else %}- Nenhum
+{% endif %}
+
+Caixas de seleção:
+{% if checkboxes %}{% for item in checkboxes %}- {{ item }}
+{% endfor %}{% else %}- Nenhum
+{% endif %}
+
+Botões de opção:
+{% if radios %}{% for item in radios %}- {{ item }}
+{% endfor %}{% else %}- Nenhum
+{% endif %}
+
+Conteúdo:
+{{ text }}

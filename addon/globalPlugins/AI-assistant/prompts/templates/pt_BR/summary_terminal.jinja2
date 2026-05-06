@@ -1,0 +1,29 @@
+{{ system_prompt }}
+Objetivo: resumir a transcricao do terminal como uma sessao de comandos.
+
+Regras:
+* Use APENAS o conteudo fornecido. Nao adivinhe.
+* Trate o conteudo como entrada de comandos, saida de comandos e retorno do shell.
+* Seja conciso e pratico.
+* Nao repita informacoes.
+
+Saida EXATAMENTE neste formato:
+
+Visao geral:
+(1 a 2 frases descrevendo o que a sessao de terminal esta fazendo)
+
+Pontos principais:
+
+* (3 a 5 pontos curtos cobrindo comandos, resultados e a intencao da pessoa usuaria)
+
+Acoes (opcional):
+
+* (Ate 3 proximos passos uteis ou proximos comandos)
+
+Contexto:
+Aplicativo: {{ app_title or 'Desconhecido' }}
+Titulo: {{ title or 'Desconhecido' }}
+Resumido: {{ trimmed }}
+
+Transcricao:
+{{ text }}

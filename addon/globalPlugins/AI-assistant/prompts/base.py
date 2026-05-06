@@ -18,21 +18,47 @@ JINJA_ENV = jinja2.Environment(
 SYSTEM_PROMPT_TEMPLATE = "system_prompt.jinja2"
 
 
-def render_prompt_template(template_name: str, language: str | None = None, **context: object) -> str:
+def _iter_template_names(template_name: str, language: str | None = None) -> tuple[str, ...]:
+    candidates: list[str] = []
     if language:
-        language_template_name = f"{language}/{template_name}"
+        normalized_language = language.strip()
+        language_variants: list[str] = []
+        for variant in (
+            normalized_language,
+            normalized_language.replace("-", "_"),
+            normalized_language.replace("_", "-"),
+        ):
+            if variant and variant not in language_variants:
+                language_variants.append(variant)
+
+        base_variants: list[str] = []
+        for variant in language_variants:
+            base_language = variant.split("_", 1)[0].split("-", 1)[0]
+            if base_language and base_language not in language_variants and base_language not in base_variants:
+                base_variants.append(base_language)
+
+        for variant in language_variants + base_variants:
+            candidate = f"{variant}/{template_name}"
+            if candidate not in candidates:
+                candidates.append(candidate)
+
+    english_template = f"en/{template_name}"
+    if english_template not in candidates:
+        candidates.append(english_template)
+    if template_name not in candidates:
+        candidates.append(template_name)
+    return tuple(candidates)
+
+
+def render_prompt_template(template_name: str, language: str | None = None, **context: object) -> str:
+    for candidate in _iter_template_names(template_name, language=language):
         try:
-            template = JINJA_ENV.get_template(language_template_name)
+            template = JINJA_ENV.get_template(candidate)
+            break
         except jinja2.TemplateNotFound:
-            try:
-                template = JINJA_ENV.get_template(f"en/{template_name}")
-            except jinja2.TemplateNotFound:
-                template = JINJA_ENV.get_template(template_name)
+            continue
     else:
-        try:
-            template = JINJA_ENV.get_template(template_name)
-        except jinja2.TemplateNotFound:
-            template = JINJA_ENV.get_template(f"en/{template_name}")
+        template = JINJA_ENV.get_template(template_name)
     return template.render(**context)
 
 

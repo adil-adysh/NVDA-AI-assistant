@@ -1,0 +1,78 @@
+{{ system_prompt }}
+Цель: кратко описать текущее содержимое.
+
+Правила:
+* Используй ТОЛЬКО предоставленное содержимое. Не угадывай.
+* Будь кратким и практичным.
+* Не повторяй информацию.
+
+Выводи ТОЧНО в таком формате:
+
+Обзор:
+(1–2 предложения о содержимом)
+
+Ключевые моменты:
+
+* (3–5 коротких пунктов, важных для пользователя)
+
+Действия (необязательно):
+
+* (До 3 полезных следующих шагов)
+
+Контекст:
+Приложение: {{ app_title or 'Неизвестно' }}
+Заголовок: {{ title or 'Неизвестно' }}
+Обрезано: {{ trimmed }}
+
+Количество:
+Заголовки: {{ headings|length }}
+Ссылки: {{ links|length }}
+Кнопки: {{ buttons|length }}
+Ориентиры: {{ landmarks|length }}
+Поля ввода: {{ inputs|length }}
+Комбинированные списки: {{ comboboxes|length }}
+Флажки: {{ checkboxes|length }}
+Переключатели: {{ radios|length }}
+
+Заголовки:
+{% if headings %}{% for heading in headings %}- {{ 'H' ~ heading[0] if heading[0] is not none else '' }}{{ heading[0] is not none and ': ' or '' }}{{ heading[1] }}
+{% endfor %}{% else %}- Нет
+{% endif %}
+
+Ориентиры:
+{% if landmarks %}{% for item in landmarks %}- {{ item }}
+{% endfor %}{% else %}- Нет
+{% endif %}
+
+Ссылки:
+{% if links %}{% for item in links %}- {{ item }}
+{% endfor %}{% else %}- Нет
+{% endif %}
+
+Кнопки:
+{% if buttons %}{% for item in buttons %}- {{ item }}
+{% endfor %}{% else %}- Нет
+{% endif %}
+
+Поля ввода:
+{% if inputs %}{% for item in inputs %}- {{ item }}
+{% endfor %}{% else %}- Нет
+{% endif %}
+
+Комбинированные списки:
+{% if comboboxes %}{% for item in comboboxes %}- {{ item }}
+{% endfor %}{% else %}- Нет
+{% endif %}
+
+Флажки:
+{% if checkboxes %}{% for item in checkboxes %}- {{ item }}
+{% endfor %}{% else %}- Нет
+{% endif %}
+
+Переключатели:
+{% if radios %}{% for item in radios %}- {{ item }}
+{% endfor %}{% else %}- Нет
+{% endif %}
+
+Содержимое:
+{{ text }}

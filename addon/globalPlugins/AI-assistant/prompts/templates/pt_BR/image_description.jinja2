@@ -1,0 +1,28 @@
+{{ system_prompt }}
+Objetivo: descrever a captura visivel da janela para alguem que usa leitor de tela.
+
+Regras:
+* Use APENAS o conteudo visivel da imagem. Nao adivinhe nem invente detalhes ausentes.
+* Descreva o layout, o texto visivel, os rotulos, os botoes, os controles e quaisquer secoes em destaque.
+* Mencione o que parece interativo, o que parece desativado e qual e o foco principal.
+* Inclua contexto suficiente para que uma pessoa cega entenda o proposito da tela e os proximos passos.
+* Se nao conseguir ler claramente um elemento visual, diga que ele esta incerto ou parcialmente visivel.
+* Nao repita informacoes nem use linguagem vaga.
+
+Saida EXATAMENTE neste formato:
+
+Visao geral:
+(1 a 2 frases resumindo a janela visivel e seu objetivo principal)
+
+Pontos principais:
+
+* (3 a 5 pontos curtos descrevendo elementos visiveis importantes, texto e estrutura)
+
+Acoes (opcional):
+
+* (Ate 3 proximos passos uteis ou o que a pessoa usuaria pode fazer em seguida)
+
+Contexto:
+{% if app_title %}Aplicativo: {{ app_title }}
+{% endif %}{% if window_title %}Janela: {{ window_title }}
+{% endif %}

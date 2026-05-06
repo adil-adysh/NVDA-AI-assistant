@@ -1,0 +1,81 @@
+{{ system_prompt }}
+Obiettivo: riassumere la struttura e gli elementi interattivi del contenuto corrente.
+
+Regole:
+* Usa SOLO il contenuto fornito. Non indovinare.
+* Concentrati sulla struttura della pagina, sull'organizzazione e sui principali elementi interattivi.
+* Menziona intestazioni, link, pulsanti, punti di riferimento, campi di input, caselle combinate, caselle di controllo e pulsanti di opzione quando presenti.
+* Sii conciso e metti in evidenza cosa deve sapere l'utente su navigazione e layout.
+* Se la fonte e una trascrizione di terminale, trattala come una struttura di comandi e risposte e riassumi le azioni principali.
+
+Output ESATTAMENTE in questo formato:
+
+Panoramica:
+(1 o 2 frasi che descrivono cosa rivela la struttura)
+
+Elementi chiave:
+
+* (da 3 a 5 punti brevi su intestazioni, link, pulsanti e altra struttura)
+
+Azioni suggerite (facoltativo):
+
+* (Fino a 3 passaggi successivi utili o aspetti da esplorare)
+
+Contesto:
+App: {{ app_title or 'Sconosciuta' }}
+Titolo: {{ title or 'Sconosciuto' }}
+Fonte: {{ source }}
+Troncato: {{ trimmed }}
+
+Conteggi:
+Intestazioni: {{ headings|length }}
+Link: {{ links|length }}
+Pulsanti: {{ buttons|length }}
+Punti di riferimento: {{ landmarks|length }}
+Campi di input: {{ inputs|length }}
+Caselle combinate: {{ comboboxes|length }}
+Caselle di controllo: {{ checkboxes|length }}
+Pulsanti di opzione: {{ radios|length }}
+
+Intestazioni:
+{% if headings %}{% for heading in headings %}- {{ 'H' ~ heading[0] if heading[0] is not none else '' }}{{ heading[0] is not none and ': ' or '' }}{{ heading[1] }}
+{% endfor %}{% else %}- Nessuna
+{% endif %}
+
+Punti di riferimento:
+{% if landmarks %}{% for item in landmarks %}- {{ item }}
+{% endfor %}{% else %}- Nessuno
+{% endif %}
+
+Link:
+{% if links %}{% for item in links %}- {{ item }}
+{% endfor %}{% else %}- Nessuno
+{% endif %}
+
+Pulsanti:
+{% if buttons %}{% for item in buttons %}- {{ item }}
+{% endfor %}{% else %}- Nessuno
+{% endif %}
+
+Campi di input:
+{% if inputs %}{% for item in inputs %}- {{ item }}
+{% endfor %}{% else %}- Nessuno
+{% endif %}
+
+Caselle combinate:
+{% if comboboxes %}{% for item in comboboxes %}- {{ item }}
+{% endfor %}{% else %}- Nessuna
+{% endif %}
+
+Caselle di controllo:
+{% if checkboxes %}{% for item in checkboxes %}- {{ item }}
+{% endfor %}{% else %}- Nessuna
+{% endif %}
+
+Pulsanti di opzione:
+{% if radios %}{% for item in radios %}- {{ item }}
+{% endfor %}{% else %}- Nessuno
+{% endif %}
+
+Contenuto:
+{{ text }}

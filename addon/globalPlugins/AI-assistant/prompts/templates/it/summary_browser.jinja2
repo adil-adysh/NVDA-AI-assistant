@@ -1,0 +1,82 @@
+{{ system_prompt }}
+Obiettivo: riassumere il contenuto della pagina web corrente prestando attenzione alla struttura e alla navigazione.
+
+Regole:
+* Usa SOLO il contenuto fornito. Non indovinare.
+* Sii conciso e pratico.
+* Non ripetere le informazioni.
+* Cita lo scopo della pagina, le intestazioni principali, i link, i pulsanti e i punti di riferimento quando presenti.
+
+Output ESATTAMENTE in questo formato:
+
+Panoramica:
+(1 o 2 frasi sullo scopo della pagina)
+
+Punti chiave:
+
+* (da 3 a 5 punti brevi importanti per l'utente)
+
+Riepilogo della struttura della pagina:
+(Breve descrizione del layout o della navigazione)
+
+Azioni (facoltativo):
+
+* (Fino a 3 passaggi successivi utili)
+
+Contesto:
+App: {{ app_title or 'Sconosciuta' }}
+Titolo: {{ title or 'Sconosciuto' }}
+Troncato: {{ trimmed }}
+
+Conteggi:
+Intestazioni: {{ headings|length }}
+Link: {{ links|length }}
+Pulsanti: {{ buttons|length }}
+Punti di riferimento: {{ landmarks|length }}
+Campi di input: {{ inputs|length }}
+Caselle combinate: {{ comboboxes|length }}
+Caselle di controllo: {{ checkboxes|length }}
+Pulsanti di opzione: {{ radios|length }}
+
+Intestazioni:
+{% if headings %}{% for heading in headings %}- {{ 'H' ~ heading[0] if heading[0] is not none else '' }}{{ heading[0] is not none and ': ' or '' }}{{ heading[1] }}
+{% endfor %}{% else %}- Nessuna
+{% endif %}
+
+Punti di riferimento:
+{% if landmarks %}{% for item in landmarks %}- {{ item }}
+{% endfor %}{% else %}- Nessuno
+{% endif %}
+
+Link:
+{% if links %}{% for item in links %}- {{ item }}
+{% endfor %}{% else %}- Nessuno
+{% endif %}
+
+Pulsanti:
+{% if buttons %}{% for item in buttons %}- {{ item }}
+{% endfor %}{% else %}- Nessuno
+{% endif %}
+
+Campi di input:
+{% if inputs %}{% for item in inputs %}- {{ item }}
+{% endfor %}{% else %}- Nessuno
+{% endif %}
+
+Caselle combinate:
+{% if comboboxes %}{% for item in comboboxes %}- {{ item }}
+{% endfor %}{% else %}- Nessuna
+{% endif %}
+
+Caselle di controllo:
+{% if checkboxes %}{% for item in checkboxes %}- {{ item }}
+{% endfor %}{% else %}- Nessuna
+{% endif %}
+
+Pulsanti di opzione:
+{% if radios %}{% for item in radios %}- {{ item }}
+{% endfor %}{% else %}- Nessuno
+{% endif %}
+
+Contenuto:
+{{ text }}

@@ -1,0 +1,29 @@
+{{ system_prompt }}
+Ziel: Das Terminalprotokoll als Befehlssitzung zusammenfassen.
+
+Regeln:
+* Verwende NUR die gegebenen Inhalte. Nichts raten.
+* Behandle den Inhalt als Befehlseingaben, Befehlsausgaben und Shell-Rueckmeldungen.
+* Sei knapp und praxisnah.
+* Wiederhole keine Informationen.
+
+Ausgabe GENAU in diesem Format:
+
+Ueberblick:
+(1 bis 2 Saetze dazu, was die Terminalsitzung macht)
+
+Wichtige Punkte:
+
+* (3 bis 5 kurze Punkte zu Befehlen, Ergebnissen und Nutzerabsicht)
+
+Aktionen (optional):
+
+* (Bis zu 3 sinnvolle naechste Schritte oder naechste Befehle)
+
+Kontext:
+App: {{ app_title or 'Unbekannt' }}
+Titel: {{ title or 'Unbekannt' }}
+Gekuetzt: {{ trimmed }}
+
+Protokoll:
+{{ text }}

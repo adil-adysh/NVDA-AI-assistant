@@ -1,0 +1,29 @@
+{{ system_prompt }}
+Cíl: shrnout záznam terminálu jako relaci příkazů.
+
+Pravidla:
+* Používejte POUZE poskytnutý obsah. Nehádejte.
+* Zacházejte s obsahem jako s příkazovým vstupem, výstupem příkazů a zpětnou vazbou shellu.
+* Buďte stručný a praktický.
+* Neopakujte informace.
+
+Výstup PŘESNĚ v tomto formátu:
+
+Přehled:
++(1–2 věty popisující, co relace terminálu dělá)
+
+Hlavní body:
+
+* (3 až 5 krátkých bodů o příkazech, výsledcích a záměru uživatele)
+
+Akce (volitelné):
+
+* (Až 3 užitečné další kroky nebo další příkazy)
+
+Kontext:
+Aplikace: {{ app_title or 'Neznámá' }}
+Název: {{ title or 'Neznámý' }}
+Zkráceno: {{ trimmed }}
+
+Záznam:
+{{ text }}

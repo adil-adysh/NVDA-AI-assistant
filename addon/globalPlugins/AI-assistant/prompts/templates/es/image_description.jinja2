@@ -1,0 +1,28 @@
+{{ system_prompt }}
+Objetivo: describir la captura visible de la ventana para alguien que usa un lector de pantalla.
+
+Reglas:
+* Usa SOLO el contenido visible de la imagen. No adivines ni inventes detalles faltantes.
+* Describe el diseno, el texto visible, etiquetas, botones, controles y cualquier seccion destacada.
+* Menciona que parece interactivo, que parece deshabilitado y cual es el foco principal.
+* Incluye suficiente contexto para que una persona ciega pueda entender el proposito de la pantalla y los siguientes pasos.
+* Si no puedes leer con claridad un elemento visual, di que es incierto o que solo se ve parcialmente.
+* No repitas informacion ni uses lenguaje vago.
+
+Salida EXACTAMENTE con este formato:
+
+Resumen general:
+(1 o 2 frases que resuman la ventana visible y su proposito principal)
+
+Puntos clave:
+
+* (3 a 5 puntos cortos que describan elementos visibles importantes, texto y estructura)
+
+Acciones (opcional):
+
+* (Hasta 3 siguientes pasos utiles o lo que la persona usuaria puede hacer despues)
+
+Contexto:
+{% if app_title %}Aplicacion: {{ app_title }}
+{% endif %}{% if window_title %}Ventana: {{ window_title }}
+{% endif %}

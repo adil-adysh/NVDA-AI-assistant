@@ -1,0 +1,82 @@
+{{ system_prompt }}
+Cíl: shrnout obsah aktuální stránky v prohlížeči s ohledem na strukturu a navigaci.
+
+Pravidla:
+* Používejte POUZE poskytnutý obsah. Nehádejte.
+* Buďte stručný a praktický.
+* Neopakujte informace.
+* Uveďte účel stránky, hlavní nadpisy, odkazy, tlačítka a landmarky, pokud existují.
+
+Výstup PŘESNĚ v tomto formátu:
+
+Přehled:
++(1–2 věty o účelu stránky)
+
+Hlavní body:
+
+* (3 až 5 krátkých bodů důležitých pro uživatele)
+
+Shrnutí struktury stránky:
++(Krátký popis rozložení nebo navigace)
+
+Akce (volitelné):
+
+* (Až 3 užitečné další kroky)
+
+Kontext:
+Aplikace: {{ app_title or 'Neznámá' }}
+Název: {{ title or 'Neznámý' }}
+Zkráceno: {{ trimmed }}
+
+Počty:
+Nadpisy: {{ headings|length }}
+Odkazy: {{ links|length }}
+Tlačítka: {{ buttons|length }}
+Landmarky: {{ landmarks|length }}
+Vstupy: {{ inputs|length }}
+Rozbalovací seznamy: {{ comboboxes|length }}
+Zaškrtávací políčka: {{ checkboxes|length }}
+Přepínače: {{ radios|length }}
+
+Nadpisy:
+{% if headings %}{% for heading in headings %}- {{ 'H' ~ heading[0] if heading[0] is not none else '' }}{{ heading[0] is not none and ': ' or '' }}{{ heading[1] }}
+{% endfor %}{% else %}- Žádné
+{% endif %}
+
+Landmarky:
+{% if landmarks %}{% for item in landmarks %}- {{ item }}
+{% endfor %}{% else %}- Žádné
+{% endif %}
+
+Odkazy:
+{% if links %}{% for item in links %}- {{ item }}
+{% endfor %}{% else %}- Žádné
+{% endif %}
+
+Tlačítka:
+{% if buttons %}{% for item in buttons %}- {{ item }}
+{% endfor %}{% else %}- Žádné
+{% endif %}
+
+Vstupy:
+{% if inputs %}{% for item in inputs %}- {{ item }}
+{% endfor %}{% else %}- Žádné
+{% endif %}
+
+Rozbalovací seznamy:
+{% if comboboxes %}{% for item in comboboxes %}- {{ item }}
+{% endfor %}{% else %}- Žádné
+{% endif %}
+
+Zaškrtávací políčka:
+{% if checkboxes %}{% for item in checkboxes %}- {{ item }}
+{% endfor %}{% else %}- Žádné
+{% endif %}
+
+Přepínače:
+{% if radios %}{% for item in radios %}- {{ item }}
+{% endfor %}{% else %}- Žádné
+{% endif %}
+
+Obsah:
+{{ text }}
