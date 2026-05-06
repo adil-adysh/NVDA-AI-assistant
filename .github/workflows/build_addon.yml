@@ -43,7 +43,10 @@ jobs:
           pip install pre-commit scons markdown
 
       - name: Install gettext tools
-        run: choco install gettext -y
+        run: |
+          choco install gettext -y
+          $gettextBin = 'C:\Program Files\gettext-iconv\bin'
+          "${gettextBin}" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Run code checks
         env:
