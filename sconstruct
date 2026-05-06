@@ -45,6 +45,10 @@ def expandGlobs(patterns: Iterable[str], rootdir: Path = Path(".")) -> list[FS.E
 	return [env.Entry(e) for pattern in patterns for e in rootdir.glob(pattern.lstrip('/'))]
 
 
+def isVendorSource(file: FS.Entry) -> bool:
+	return "addon/globalPlugins/AI-assistant/lib/" in Path(str(file)).as_posix()
+
+
 addonDir: Final = Path("addon/")
 localeDir: Final = addonDir / "locale"
 docsDir: Final = addonDir / "doc"
@@ -143,7 +147,7 @@ for mdFile in env.Glob(docsDir/"*/*.md"):
 	env.Depends(addon, htmlFile)
 
 # Pot target
-i18nFiles = expandGlobs(buildVars.i18nSources)
+i18nFiles = [file for file in expandGlobs(buildVars.i18nSources) if not isVendorSource(file)]
 gettextvars: dict[str, str] = {
 	"gettext_package_bugs_address": "nvda-translations@groups.io",
 	"gettext_package_name": buildVars.addon_info["addon_name"],
