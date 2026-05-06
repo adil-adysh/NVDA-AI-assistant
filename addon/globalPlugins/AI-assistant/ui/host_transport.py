@@ -101,24 +101,31 @@ class HostPipeTransport:
 		import win32pipe
 
 		logger.debug("HostPipeTransport event listener starting for pipe %s", self._event_pipe_name)
-		while True:
+		while not self._stop_event.is_set():
 			try:
 				handle = self._connect(self._event_pipe_name, win32file, win32pipe)
 			except Exception as error:
+				if self._stop_event.is_set():
+					break
 				logger.debug("HostPipeTransport event listener waiting for pipe %s: %s", self._event_pipe_name, error)
 				time.sleep(0.5)
 				continue
 
 			try:
-				while True:
+				while not self._stop_event.is_set():
 					payload = self._read_line(handle, win32file, timeout_seconds=None)
 					if not payload:
 						break
 					self._dispatch_event(payload)
 			except Exception as error:
+				if self._stop_event.is_set():
+					break
 				logger.debug("HostPipeTransport event listener disconnected from %s: %s", self._event_pipe_name, error)
 			finally:
 				self._close_handle(handle, win32file)
+
+	def close(self) -> None:
+		self._stop_event.set()
 
 	def _dispatch_event(self, payload: bytes) -> None:
 		if self._event_callback is None:

@@ -49,6 +49,9 @@ class HostLifecycleService:
 			if self._state != HostLifecycleState.FAILED:
 				self._state = HostLifecycleState.HIDDEN
 
+	def mark_host_closed(self) -> None:
+		self.mark_hidden()
+
 	def mark_failed(self) -> None:
 		with self._lock:
 			self._state = HostLifecycleState.FAILED

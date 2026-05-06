@@ -59,6 +59,12 @@ class UseCasePresenter:
 		ui_adapter.register_result_action_handler(self._handle_result_action)
 		ui_adapter.register_session_metadata_provider(self._build_chat_metadata)
 
+	def close(self) -> None:
+		try:
+			ui_adapter.close()
+		except Exception:
+			log.exception("Error closing UI adapter during presenter shutdown")
+
 	def open_chat_window(
 		self,
 		initial_text: str | None = None,

@@ -79,6 +79,10 @@ class AIAssistantApplication:
 
 	def terminate(self) -> None:
 		try:
+			self.presenter.close()
+		except Exception:
+			log.exception("Error closing presenter during terminate")
+		try:
 			unsubscribe_provider_state_change(self._on_provider_state_change)
 		except Exception:
 			log.exception("Error unsubscribing provider state listener")

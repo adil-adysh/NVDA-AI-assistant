@@ -295,6 +295,12 @@ class HostRenderer(UIHostRenderer):
 	def close_window(self, reason: str | None = None) -> None:
 		self._send_command("close_window", self._build_payload(reason=reason))
 
+	def close(self) -> None:
+		close_transport = getattr(self._transport, "close", None)
+		if callable(close_transport):
+			close_transport()
+		self._lifecycle.mark_stopped()
+
 	def is_available(self) -> bool:
 		logger.debug("HostRenderer is_available() probe starting")
 		try:
@@ -437,7 +443,7 @@ class HostRenderer(UIHostRenderer):
 
 	def _handle_host_closed_event(self, event: HostEvent) -> None:
 		logger.info("HostRenderer received host_closed event from host")
-		self._lifecycle.mark_hidden()
+		self._lifecycle.mark_host_closed()
 		if self._host_closed_handler is None:
 			logger.debug("HostRenderer has no host closed handler registered")
 			return
