@@ -22,6 +22,8 @@ The Web UI renders host-backed intents. It should stay generic and protocol-driv
 - If a UI change requires a new command or event, update the Rust and Python protocol slices in the same change.
 - Prefer shared helpers or handler registries in `webui/src/lib/bridge.js` over repeated command-specific branches.
 - Keep focus, scroll, and rendering behavior separate. Streaming updates must not move focus.
+- Do not add user-facing label catalogs or fallback UI copy in the Web UI when Python already supplies `localized_strings` for the same surface.
+- Web UI fallback text should be limited to transport-safe bootstrapping or defensive rendering, and should not become the primary owner of translator-facing labels.
 
 ## Validation
 

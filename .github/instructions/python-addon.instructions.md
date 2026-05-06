@@ -26,6 +26,9 @@ Use the existing layered architecture before adding new abstractions.
 - Follow the repository typing posture: strict type hints, explicit data shapes, and minimal dynamic behavior.
 - For host-backed UI work, prefer `ui/intent.py` and presenter/view-model metadata over browser-layer heuristics.
 - Keep `ui/adapter.py` focused on coordination. Extract stream projection or payload shaping into helpers when it starts owning too many details.
+- Translator-facing WebView labels and status strings should originate in Python metadata rather than being invented in the Web UI.
+- Strings that must appear in the generated POT file should live in Python source scanned by `i18nSources` and use a gettext extraction keyword recognized by the repo's `xgettext` configuration, such as `translate(...)`.
+- Add `# TRANSLATORS:` comments immediately above extracted msgids when the UI meaning would not be obvious from the text alone.
 
 ## Validation
 

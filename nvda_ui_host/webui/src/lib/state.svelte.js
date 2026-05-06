@@ -10,7 +10,7 @@ function pingAnnouncer(message) {
 export const appState = $state({
     currentCommandId: null,
     title: 'NVDA UI Host',
-    statusMessage: defaultLocalizedStrings.waiting_status,
+    statusMessage: '',
     announcerMessage: '',
     controlsVisible: true,
     control: {
