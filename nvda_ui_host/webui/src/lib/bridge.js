@@ -23,11 +23,15 @@ function ensureSendHostEvent() {
         window.__sendHostEvent = payload => {
             if (window.chrome?.webview?.postMessage) {
                 window.chrome.webview.postMessage(JSON.stringify(payload));
+                return true;
             } else {
                 console.warn('Unable to send host event; WebView bridge unavailable.');
+                return false;
             }
         };
     }
+
+    return typeof window.__sendHostEvent === 'function';
 }
 
 function getMetadata(payload) {
@@ -246,6 +250,11 @@ function appendChatMessage(payload) {
     messages.forEach(message => {
         replaceMessageById(message);
     });
+
+    const appendedUserMessage = messages.some(message => message?.role === 'user');
+    if (appendedUserMessage) {
+        appState.chat.composerText = '';
+    }
 
     bumpChatRenderVersion();
     setViewMode('chat', resolveChatFocusTarget(payload));
@@ -495,7 +504,11 @@ const COMMAND_HANDLERS = {
 };
 
 export function emitUiEvent(name, commandId, details = {}) {
-    window.__sendHostEvent({
+    if (!ensureSendHostEvent()) {
+        return false;
+    }
+
+    return window.__sendHostEvent({
         schema: 'nvda.ui_host',
         version: 2,
         id: `web-ui-${name}-${Date.now()}`,
@@ -557,7 +570,7 @@ export function initializeWebViewBridge() {
     ensureSendHostEvent();
 
     if (!window.chrome?.webview?.addEventListener) {
-        setStatus(t('bridge_unavailable_status', 'WebView bridge unavailable.'), true);
+        console.debug('WebView message bridge is not available in this context.');
         return () => {};
     }
 

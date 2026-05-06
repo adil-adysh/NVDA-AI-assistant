@@ -85,7 +85,7 @@ def build_localized_strings(translate: Translator) -> dict[str, str]:
 		"result_actions_label": translate("Result actions"),
 		"message_actions_label": translate("Message actions"),
 		"pending_attachments_label": translate("Pending attachments"),
-		"attach_button": translate("Attach"),
+		"attach_button": translate("Upload image"),
 		"send_button": translate("Send"),
 		"copy_text_button": translate("Copy text"),
 		"copy_markdown_button": translate("Copy markdown"),

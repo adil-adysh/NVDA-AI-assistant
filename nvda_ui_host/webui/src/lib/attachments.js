@@ -1,5 +1,9 @@
 import { appState, setPendingFocus, setStatus, t } from './state.svelte.js';
 
+const SUPPORTED_IMAGE_EXTENSIONS = new Set([
+    'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg',
+]);
+
 const TEXT_FILE_EXTENSIONS = new Set([
     'txt', 'md', 'markdown', 'json', 'yaml', 'yml', 'csv', 'tsv', 'py', 'js', 'ts', 'tsx', 'jsx', 'html', 'htm', 'xml', 'css', 'scss', 'less', 'java', 'c', 'cpp', 'h', 'hpp', 'rs', 'go', 'rb', 'php', 'sql', 'log',
 ]);
@@ -26,43 +30,45 @@ function readFileAsText(file) {
     });
 }
 
+function getFileExtension(file) {
+    const parts = file.name.toLowerCase().split('.');
+    return parts.length > 1 ? parts.pop() || '' : '';
+}
+
+function isSupportedImageFile(file) {
+    if (file.type && file.type.startsWith('image/')) {
+        return true;
+    }
+
+    const extension = getFileExtension(file);
+    return SUPPORTED_IMAGE_EXTENSIONS.has(extension);
+}
+
 function isTextFile(file) {
     if (file.type && file.type.startsWith('text/')) {
         return true;
     }
 
-    const parts = file.name.toLowerCase().split('.');
-    const extension = parts.length > 1 ? parts.pop() : '';
+    const extension = getFileExtension(file);
     return TEXT_FILE_EXTENSIONS.has(extension || '');
 }
 
 async function loadAttachment(file) {
     const attachmentId = createAttachmentId(file);
 
-    if (file.type.startsWith('image/')) {
-        const dataUrl = await readFileAsDataUrl(file);
-        const base64 = dataUrl.includes(',') ? dataUrl.split(',', 2)[1] : dataUrl;
-        return {
-            id: attachmentId,
-            kind: 'image',
-            name: file.name,
-            mime_type: file.type || 'image/png',
-            image_base64: base64,
-        };
+    if (!isSupportedImageFile(file)) {
+        throw new Error(`Unsupported image type for ${file.name}`);
     }
 
-    if (isTextFile(file)) {
-        const text = await readFileAsText(file);
-        return {
-            id: attachmentId,
-            kind: 'file',
-            name: file.name,
-            mime_type: file.type || 'text/plain',
-            text,
-        };
-    }
-
-    throw new Error(`Unsupported file type for ${file.name}`);
+    const dataUrl = await readFileAsDataUrl(file);
+    const base64 = dataUrl.includes(',') ? dataUrl.split(',', 2)[1] : dataUrl;
+    return {
+        id: attachmentId,
+        kind: 'image',
+        name: file.name,
+        mime_type: file.type || 'image/png',
+        image_base64: base64,
+    };
 }
 
 export function upsertAttachment(attachment) {
@@ -107,10 +113,11 @@ export async function handleFileSelection(fileList) {
         try {
             const attachment = await loadAttachment(file);
             upsertAttachment(attachment);
-            setStatus(`${t('attach_button', 'Attach')}: ${file.name}`, true);
+            setStatus(`${t('attach_button', 'Upload image')}: ${file.name}`, true);
         } catch (error) {
             console.error(error);
-            setStatus(`${t('attach_failed_status', 'Unable to attach file.')} ${file.name}`.trim(), true);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            setStatus(`${t('attach_failed_status', 'Unable to attach image.')} ${errorMessage}`.trim(), true);
         }
     }
 
