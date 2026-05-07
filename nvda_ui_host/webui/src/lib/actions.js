@@ -116,6 +116,10 @@ export function requestCloseHost() {
     emitUiEvent('close_host', null);
 }
 export function submitChatMessage(fileInputElement = null) {
+    if (!appState.control.chatEnabled || appState.control.pendingChange) {
+        return;
+    }
+
     const message = appState.chat.composerText.trim();
     const attachments = Array.isArray(appState.chat.attachments) ? appState.chat.attachments : [];
 

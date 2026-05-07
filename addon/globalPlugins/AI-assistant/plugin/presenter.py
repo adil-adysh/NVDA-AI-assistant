@@ -14,6 +14,8 @@ from ..config.state import ProviderState
 from ..core.events import ProgressEvent
 from ..core.message_transforms import build_assistant_message
 from ..service.chat import ChatCoordinator
+from ..service.provider_catalog import ProviderCatalogService
+from ..service.provider_readiness import ProviderReadinessService
 from ..tools import ToolRegistry
 from ..config.settings import get_provider_state
 from ..ui.adapter import ui_adapter
@@ -49,9 +51,17 @@ _ = cast(Callable[[str], str], getattr(builtins, "_", _translate))
 
 
 class UseCasePresenter:
-	def __init__(self, chat_coordinator: ChatCoordinator, tool_registry: ToolRegistry) -> None:
+	def __init__(
+		self,
+		chat_coordinator: ChatCoordinator,
+		tool_registry: ToolRegistry,
+		provider_catalog: ProviderCatalogService | None = None,
+		readiness_service: ProviderReadinessService | None = None,
+	) -> None:
 		self._chat_coordinator = chat_coordinator
 		self._tool_registry = tool_registry
+		self._provider_catalog = provider_catalog or ProviderCatalogService()
+		self._readiness_service = readiness_service or ProviderReadinessService()
 		self._active_conversation_id: str | None = None
 		self._available_models_by_provider: dict[str, tuple[str, ...]] = {}
 		self._model_cache_lock = threading.RLock()
@@ -79,6 +89,7 @@ class UseCasePresenter:
 			provider_state,
 			conversation_id=self._active_conversation_id,
 			available_models=self._get_cached_models(provider_state),
+			readiness=self._readiness_service.evaluate_active(),
 		)
 		seed_messages = self._build_seed_messages(initial_assistant_text)
 		if seed_messages:
@@ -113,6 +124,7 @@ class UseCasePresenter:
 					provider_state,
 					conversation_id=self._active_conversation_id,
 					available_models=self._get_cached_models(provider_state),
+					readiness=self._readiness_service.evaluate_active(),
 				).to_metadata()
 			)
 			self._refresh_available_models_async(provider_state)
@@ -236,6 +248,7 @@ class UseCasePresenter:
 			provider_state,
 			conversation_id=self._active_conversation_id,
 			available_models=self._get_cached_models(provider_state),
+			readiness=self._readiness_service.evaluate_active(),
 		).to_metadata()
 
 	def _get_cached_models(self, provider_state: ProviderState) -> tuple[str, ...]:
@@ -263,7 +276,7 @@ class UseCasePresenter:
 		try:
 			models = tuple(
 				model.id
-				for model in self._chat_coordinator.list_models()
+				for model in self._provider_catalog.list_active_models()
 				if isinstance(model.id, str) and model.id.strip()
 			)
 		except Exception:
@@ -291,6 +304,7 @@ class UseCasePresenter:
 				current_provider_state,
 				conversation_id=self._active_conversation_id,
 				available_models=models,
+				readiness=self._readiness_service.evaluate_active(),
 			).to_metadata()
 		)
 

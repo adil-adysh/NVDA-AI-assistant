@@ -63,6 +63,10 @@ class _FakeOpenAIClientError(RuntimeError):
 	pass
 
 
+class _FakeOpenAIClientConfigurationError(_FakeOpenAIClientError):
+	pass
+
+
 class _FakeOpenAIClient:
 	def __init__(self, **kwargs) -> None:
 		self.kwargs = kwargs
@@ -71,6 +75,11 @@ class _FakeOpenAIClient:
 openai_module.OpenAIClient = _FakeOpenAIClient
 openai_module.OpenAIClientError = _FakeOpenAIClientError
 sys.modules[openai_module.__name__] = openai_module
+
+openai_errors_module = types.ModuleType(f"{PACKAGE_NAME}.openai.errors")
+openai_errors_module.OpenAIClientConfigurationError = _FakeOpenAIClientConfigurationError
+openai_errors_module.OpenAIClientError = _FakeOpenAIClientError
+sys.modules[openai_errors_module.__name__] = openai_errors_module
 
 config_module = _load_module(
 	f"{PACKAGE_NAME}.providers.config",

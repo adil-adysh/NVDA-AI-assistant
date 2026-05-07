@@ -11,10 +11,12 @@ import gui
 from logHandler import log
 
 from ..config.state import ProviderState, subscribe_provider_state_change, unsubscribe_provider_state_change
-from ..config.settings import get_provider, get_provider_state, save, set_provider
+from ..config.settings import get_provider_state
+from ..service import get_provider_display_name, provider_control_service
 from ..ui.host_process import stop_host
 from ..ui.settings_panel import AIAssistantSettingsPanel
 from ..ui import nvda_ui
+from ..ui.session_state import build_provider_status_message
 from ..use_case.types import (
 	DESCRIBE_IMAGE,
 	OPEN_CHAT,
@@ -167,20 +169,18 @@ class AIAssistantApplication:
 		self.layer_mode.activate()
 
 	def toggle_provider(self) -> None:
-		current_provider = get_provider()
-		providers = ["ollama", "gemini", "openai"]
-		if current_provider not in providers:
-			target_provider = "ollama"
-		else:
-			target_provider = providers[(providers.index(current_provider) + 1) % len(providers)]
 		try:
-			set_provider(target_provider)
-			save()
+			result = provider_control_service.cycle_provider()
 		except Exception as error:
 			nvda_ui.message(str(error))
 			return
 
-		nvda_ui.message(_(f"AI provider switched to {target_provider.capitalize()}."))
+		provider_label = get_provider_display_name(result.provider_state.provider)
+		message = _("AI provider switched to {provider}.").format(provider=provider_label)
+		guidance = build_provider_status_message(_, result.readiness)
+		if guidance:
+			message = f"{message} {guidance}"
+		nvda_ui.message(message)
 
 	def show_assistant_layer_help(self) -> None:
 		nvda_ui.message(
