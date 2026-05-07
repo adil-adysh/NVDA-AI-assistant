@@ -10,6 +10,7 @@ from typing import Any, cast
 from logHandler import log
 
 from ..providers.interfaces import LLMProviderError, ProviderConfigurationError
+from ..service.error_presentation import present_error
 from ..service.llm import LLMService
 from ..service.provider_readiness import ProviderReadinessService, get_provider_display_name
 from ..ui import nvda_ui
@@ -49,10 +50,10 @@ class BackgroundTaskRunner:
 				nvda_ui.queue(nvda_ui.message, f"Checking {provider_name} model availability.")
 				model = self._llm_service.ensure_model_available(on_progress=lambda text: nvda_ui.queue(nvda_ui.message, text))
 			except LLMProviderError as error:
-				nvda_ui.queue(nvda_ui.message, str(error))
+				nvda_ui.queue(nvda_ui.message, present_error(error, _).message)
 			except Exception as error:
 				log.exception("Unexpected error during model preload")
-				nvda_ui.queue(nvda_ui.message, str(error))
+				nvda_ui.queue(nvda_ui.message, present_error(error, _).message)
 			else:
 				nvda_ui.queue(nvda_ui.message, f"{provider_name.capitalize()} model {model} is ready.")
 
@@ -76,7 +77,7 @@ class BackgroundTaskRunner:
 				return
 			except Exception as error:
 				log.exception("BackgroundTaskRunner failed executing use case %s", use_case_id)
-				nvda_ui.queue(nvda_ui.message, _(f"Error: {error}"))
+				nvda_ui.queue(nvda_ui.message, present_error(error, _).message)
 				return
 
 			nvda_ui.queue(render_result, result)

@@ -11,6 +11,7 @@ from uuid import uuid4
 from logHandler import log
 
 from ..config.settings import is_streaming_enabled
+from ..service.error_presentation import present_error
 from ..service.provider_controls import provider_control_service
 from .host_lifecycle import HostLifecycleService, HostLifecycleState
 from .intent import ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND, merge_presentation_intent
@@ -447,8 +448,9 @@ class UIAdapter:
 				)
 				assistant_projection.finish(assistant_content)
 		except Exception as error:
-			title = localized_strings.get("chat_submission_failed_title", "Chat submission failed")
-			self._host_renderer.show_error(title, details=str(error))
+			presentation = present_error(error)
+			self._host_renderer.show_error(presentation.title, details=presentation.message)
+			nvda_ui.message(presentation.message)
 
 	def _build_user_content(
 		self,
@@ -553,13 +555,9 @@ class UIAdapter:
 			operation()
 		except Exception as error:
 			log.exception("UIAdapter control update failed")
-			localized_strings = self._get_localized_strings()
-			message = str(error).strip() or localized_strings.get(
-				"control_update_failed_status",
-				"Unable to update session controls.",
-			)
-			nvda_ui.message(message)
-			self.sync_session_state(metadata=self._build_status_sync_metadata(message))
+			presentation = present_error(error)
+			nvda_ui.message(presentation.message)
+			self.sync_session_state(metadata=self._build_status_sync_metadata(presentation.message))
 
 	def _build_status_sync_metadata(self, status_message: str) -> dict[str, Any] | None:
 		metadata = dict(self._build_sync_metadata() or {})

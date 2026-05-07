@@ -263,8 +263,11 @@ def build_session_state(
 
 def merge_session_metadata(metadata: dict[str, Any] | None, session_state: UISessionState) -> dict[str, Any]:
 	merged = dict(metadata or {})
-	for key, value in session_state.to_metadata().items():
-		merged.setdefault(key, value)
+	session_metadata = session_state.to_metadata()
+	for key, value in session_metadata.items():
+		merged[key] = value
+	if "status_message" not in session_metadata:
+		merged.pop("status_message", None)
 	return merged
 
 
@@ -303,5 +306,11 @@ def build_provider_status_message(translate: Translator, readiness: ProviderRead
 	if readiness.reason is ProviderReadinessReason.MISSING_CHAT_PATH:
 		# TRANSLATORS: Guidance shown when OpenAI is selected without a chat endpoint path.
 		return translate("OpenAI is selected but the chat endpoint path is not configured.")
+	if readiness.reason is ProviderReadinessReason.UNSUPPORTED_MODEL:
+		if readiness.provider == "gemini":
+			# TRANSLATORS: Guidance shown when a Gemini model is selected that only works through Live API or Interactions API workflows.
+			return translate("The selected Gemini model is not supported here. Choose a standard Gemini model instead of a Live API or Interactions-only preview model.")
+		# TRANSLATORS: Guidance shown when the selected model is not supported for the current workflow.
+		return translate("The selected {provider} model is not supported for this workflow.").format(provider=provider_label)
 	# TRANSLATORS: Guidance shown when the selected provider is not ready but no specific reason is available.
 	return translate("{provider} is selected but not fully configured.").format(provider=provider_label)

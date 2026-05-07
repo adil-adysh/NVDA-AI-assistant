@@ -10,6 +10,7 @@ from ..ui import nvda_ui
 from ..observability.context import ExecutionContext
 from ..observability.metrics import RequestMetrics
 from ..observability.reporter import FileMetricsReporter, MetricsReporter
+from ..service.error_presentation import present_error
 from ..providers.interfaces import LLMProviderError
 from ..config.settings import (
 	is_progress_enabled,
@@ -84,6 +85,9 @@ class BaseCoordinator:
 
 	def _handle_progress(self, partial_text: str, generated_chars: int) -> None:
 		"""Shared progress handler with throttling and preview generation."""
+		if generated_chars > 0:
+			nvda_ui.play_streaming_tone()
+
 		if not is_progress_enabled():
 			return
 		if generated_chars < self.MIN_CHARS:
@@ -170,7 +174,7 @@ class BaseCoordinator:
 
 	def _format_error_message(self, error: Exception) -> str:
 		"""Return a formatted error message for NVDA UI."""
-		return str(error)
+		return present_error(error).message
 
 	def _pre_run(self, *args: Any, **kwargs: Any) -> None:
 		"""Optional hook run in the background thread before task logic."""

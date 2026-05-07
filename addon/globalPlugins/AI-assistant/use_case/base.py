@@ -8,6 +8,7 @@ from typing import Any
 
 from ..context.pipeline import ContextPipeline
 from ..context.types import PromptContext
+from ..providers.interfaces import PartialCallback
 from ..service.llm import LLMService
 from ..utils.markdown import render_markdown_to_html
 from .types import UseCaseResult, UseCaseSpec
@@ -45,7 +46,7 @@ class UseCase(ABC):
 		context_pipeline: ContextPipeline | None,
 		llm_service: LLMService,
 		build_prompt: Callable[[PromptContext], str],
-		llm_call: Callable[[str, PromptContext], Any],
+		llm_call: Callable[[str, PromptContext, PartialCallback | None], Any],
 		build_result: Callable[[PromptContext, Any, str], UseCaseResult],
 		emit: ContextEmitter = None,
 		collecting_message: str = "Collecting context...",
@@ -64,7 +65,12 @@ class UseCase(ABC):
 
 		if emit is not None:
 			emit("llm_request", llm_request_message)
-		response = llm_call(prompt, prompt_context)
+
+		def stream_handler(partial_text: str, generated_chars: int) -> None:
+			if emit is not None and generated_chars > 0:
+				emit("streaming", partial_text)
+
+		response = llm_call(prompt, prompt_context, stream_handler if emit is not None else None)
 
 		response_text = getattr(response, "text", None)
 		if response_text is not None:

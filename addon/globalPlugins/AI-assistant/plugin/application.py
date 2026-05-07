@@ -172,7 +172,9 @@ class AIAssistantApplication:
 		try:
 			result = provider_control_service.cycle_provider()
 		except Exception as error:
-			nvda_ui.message(str(error))
+			from ..service.error_presentation import present_error
+
+			nvda_ui.message(present_error(error, _).message)
 			return
 
 		provider_label = get_provider_display_name(result.provider_state.provider)
