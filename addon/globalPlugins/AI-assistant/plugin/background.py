@@ -9,9 +9,11 @@ from typing import Any, cast
 
 from logHandler import log
 
-from ..providers.interfaces import LLMProviderError
+from ..providers.interfaces import LLMProviderError, ProviderConfigurationError
 from ..service.llm import LLMService
+from ..service.provider_readiness import ProviderReadinessService, get_provider_display_name
 from ..ui import nvda_ui
+from ..ui.session_state import build_provider_status_message
 from ..use_case.engine import UseCaseEngine
 from ..use_case.types import UseCaseId
 
@@ -24,15 +26,26 @@ _ = cast(Callable[[str], str], getattr(builtins, "_", _translate))
 
 
 class BackgroundTaskRunner:
-	def __init__(self, llm_service: LLMService, use_case_engine: UseCaseEngine, progress_handler: Callable[[Any], None]) -> None:
+	def __init__(
+		self,
+		llm_service: LLMService,
+		use_case_engine: UseCaseEngine,
+		progress_handler: Callable[[Any], None],
+		readiness_service: ProviderReadinessService | None = None,
+	) -> None:
 		self._llm_service = llm_service
 		self._use_case_engine = use_case_engine
 		self._progress_handler = progress_handler
+		self._readiness_service = readiness_service or ProviderReadinessService()
 
 	def start_model_preload(self) -> None:
 		def worker() -> None:
 			try:
-				provider_name = self._llm_service.provider_name()
+				readiness = self._readiness_service.evaluate_active()
+				if not readiness.can_infer:
+					log.debug("Skipping model preload for %s; provider is not ready", readiness.provider)
+					return
+				provider_name = get_provider_display_name(readiness.provider)
 				nvda_ui.queue(nvda_ui.message, f"Checking {provider_name} model availability.")
 				model = self._llm_service.ensure_model_available(on_progress=lambda text: nvda_ui.queue(nvda_ui.message, text))
 			except LLMProviderError as error:
@@ -55,6 +68,12 @@ class BackgroundTaskRunner:
 			log.debug("BackgroundTaskRunner worker starting use_case_id=%s title=%s", use_case_id, title)
 			try:
 				result = self._use_case_engine.execute(use_case_id, progress=self._progress_handler)
+			except ProviderConfigurationError:
+				log.exception("BackgroundTaskRunner blocked by provider configuration for use case %s", use_case_id)
+				readiness = self._readiness_service.evaluate_active()
+				message = build_provider_status_message(_, readiness) or _("The selected provider is not fully configured.")
+				nvda_ui.queue(nvda_ui.message, message)
+				return
 			except Exception as error:
 				log.exception("BackgroundTaskRunner failed executing use case %s", use_case_id)
 				nvda_ui.queue(nvda_ui.message, _(f"Error: {error}"))

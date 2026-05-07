@@ -13,13 +13,23 @@ from ...core.messages import LLMResponse, SummaryResponse
 from ...gemini import GeminiClient, GeminiClientError
 from ...gemini.types import Content, GenerateContentConfig, Part
 from ..config import GeminiConfig
-from ..interfaces import LLMProvider, LLMProviderError, PartialCallback, ProviderModelInfo, SamplingDefaults
+from ..interfaces import (
+	LLMProvider,
+	LLMProviderError,
+	MissingCredentialsError,
+	MissingEndpointError,
+	MissingModelError,
+	PartialCallback,
+	ProviderModelInfo,
+	SamplingDefaults,
+)
 from ...tools import build_function_tool_definition, normalize_tool_calls
 
 
 class GeminiProvider(LLMProvider):
 	def __init__(self, config: GeminiConfig) -> None:
 		self._config = config
+		self._validate_config(config)
 		try:
 			self._client = GeminiClient(
 				api_key=config.api_key,
@@ -29,6 +39,14 @@ class GeminiProvider(LLMProvider):
 			)
 		except GeminiClientError as error:
 			raise LLMProviderError(str(error)) from error
+
+	def _validate_config(self, config: GeminiConfig) -> None:
+		if not str(config.model_name or "").strip():
+			raise MissingModelError("Gemini model name is required.")
+		if not str(config.base_url or "").strip():
+			raise MissingEndpointError("Gemini base URL is required.")
+		if not str(config.api_key or "").strip() and not str(config.api_token or "").strip():
+			raise MissingCredentialsError("Gemini API key or bearer token is required.")
 
 	def provider_name(self) -> str:
 		return "gemini"
@@ -90,7 +108,9 @@ class GeminiProvider(LLMProvider):
 
 	def _resolve_model(self) -> str:
 		model = self._config.model_name
-		return model.strip() if model else ""
+		if not model:
+			raise MissingModelError("Gemini model name is required.")
+		return model.strip()
 
 	def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
 		model = self._resolve_model()

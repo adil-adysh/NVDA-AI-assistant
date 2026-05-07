@@ -10,9 +10,22 @@ from ...core.canonical import Message, Tool
 from ...core.messages import LLMResponse, SummaryResponse
 from ...core.tooling import ToolCall
 from ...openai import OpenAIClient, OpenAIClientError
+from ...openai.errors import OpenAIClientConfigurationError
 from ...tools import build_function_tool_definition, normalize_tool_calls
 from ..config import OpenAIConfig
-from ..interfaces import LLMProvider, LLMProviderError, PartialCallback, ProgressCallback, ProviderModelInfo, SamplingDefaults
+from ..interfaces import (
+    LLMProvider,
+    LLMProviderError,
+    MissingChatPathError,
+    MissingCredentialsError,
+    MissingEndpointError,
+    MissingModelError,
+    PartialCallback,
+    ProgressCallback,
+    ProviderConfigurationError,
+    ProviderModelInfo,
+    SamplingDefaults,
+)
 
 
 class OpenAIProvider(LLMProvider):
@@ -40,12 +53,21 @@ class OpenAIProvider(LLMProvider):
     def _wrap_exception(self, error: Exception) -> LLMProviderError:
         if isinstance(error, LLMProviderError):
             return error
+        if isinstance(error, OpenAIClientConfigurationError):
+            message = str(error)
+            if "API key" in message:
+                return MissingCredentialsError(message)
+            if "base URL" in message:
+                return MissingEndpointError(message)
+            if "chat endpoint" in message:
+                return MissingChatPathError(message)
+            return ProviderConfigurationError(message)
         return LLMProviderError(str(error))
 
     def _resolve_model(self) -> str:
         model = self._config.model_name
         if not model:
-            raise LLMProviderError("OpenAI model name is required.")
+            raise MissingModelError("OpenAI model name is required.")
         return model.strip()
 
     def list_models(self) -> tuple[ProviderModelInfo, ...]:

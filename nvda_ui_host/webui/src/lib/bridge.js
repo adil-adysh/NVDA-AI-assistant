@@ -119,9 +119,11 @@ function updateSingleChatMessage(messageId, updater) {
 
 function updateControlState(payload) {
     const providerState = readPresentationValue(payload, 'provider_state', {}) || {};
+    const providerStatus = readPresentationValue(payload, 'provider_status', {}) || {};
     const availableProviders = readPresentationValue(payload, 'available_providers');
     const availableModels = readPresentationValue(payload, 'available_models');
     const thinkEnabled = readPresentationValue(payload, 'think_enabled');
+    const chatEnabled = readPresentationValue(payload, 'chat_enabled');
 
     if (Array.isArray(availableProviders)) {
         appState.control.availableProviders = availableProviders;
@@ -141,14 +143,29 @@ function updateControlState(payload) {
         appState.control.thinkEnabled = thinkEnabled;
         appState.control.thinkDraft = thinkEnabled;
     }
+    if (providerStatus && typeof providerStatus === 'object') {
+        appState.control.providerStatus = {
+            state: typeof providerStatus.state === 'string' ? providerStatus.state : 'ready',
+            reason: typeof providerStatus.reason === 'string' ? providerStatus.reason : null,
+            canInfer: providerStatus.can_infer !== false,
+            canListModels: providerStatus.can_list_models !== false,
+        };
+    }
+    if (typeof chatEnabled === 'boolean') {
+        appState.control.chatEnabled = chatEnabled;
+    } else if (providerStatus && typeof providerStatus === 'object' && typeof providerStatus.can_infer === 'boolean') {
+        appState.control.chatEnabled = providerStatus.can_infer;
+    }
     applyPresentationState(payload);
 
     if (
+        (providerStatus && typeof providerStatus === 'object') ||
         Array.isArray(availableProviders) ||
         Array.isArray(availableModels) ||
         typeof providerState?.provider === 'string' ||
         typeof providerState?.model === 'string' ||
-        typeof thinkEnabled === 'boolean'
+        typeof thinkEnabled === 'boolean' ||
+        typeof chatEnabled === 'boolean'
     ) {
         clearControlPending();
     }

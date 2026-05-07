@@ -22,6 +22,13 @@ export const appState = $state({
         providerDraft: '',
         modelDraft: '',
         thinkDraft: false,
+        chatEnabled: true,
+        providerStatus: {
+            state: 'ready',
+            reason: null,
+            canInfer: true,
+            canListModels: true,
+        },
         pendingChange: null,
     },
     localizedStrings: { ...defaultLocalizedStrings },

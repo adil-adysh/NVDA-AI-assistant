@@ -10,6 +10,13 @@ from ..config.settings import (
 	get_ollama_think,
 	get_provider_state,
 )
+from ..service.provider_readiness import (
+	ProviderReadiness,
+	ProviderReadinessReason,
+	ProviderReadinessService,
+	ProviderReadinessState,
+	get_provider_display_name,
+)
 from .intent import AttentionPolicy, FocusTarget, InteractionMode
 
 Translator = Callable[[str], str]
@@ -25,13 +32,22 @@ class SessionProviderOption(TypedDict):
 	label: str
 
 
+class SessionProviderStatus(TypedDict, total=False):
+	state: str
+	reason: str
+	can_infer: bool
+	can_list_models: bool
+
+
 class UISessionMetadata(TypedDict, total=False):
 	conversation_id: str
 	provider_state: SessionProviderInfo
+	provider_status: SessionProviderStatus
 	available_providers: list[SessionProviderOption]
 	available_models: list[str]
 	localized_strings: dict[str, str]
 	think_enabled: bool
+	chat_enabled: bool
 	status_message: str
 	interaction_mode: InteractionMode
 	controls_visible: bool
@@ -43,10 +59,13 @@ class UISessionMetadata(TypedDict, total=False):
 class UISessionState:
 	provider: str
 	model: str
+	provider_status: SessionProviderStatus
 	available_providers: tuple[SessionProviderOption, ...]
 	available_models: tuple[str, ...]
 	localized_strings: dict[str, str]
 	think_enabled: bool
+	chat_enabled: bool
+	status_message: str | None = None
 	conversation_id: str | None = None
 
 	def to_metadata(self) -> UISessionMetadata:
@@ -55,14 +74,21 @@ class UISessionState:
 				"provider": self.provider,
 				"model": self.model,
 			},
+			"provider_status": dict(self.provider_status),
 			"available_providers": [dict(option) for option in self.available_providers],
 			"available_models": list(self.available_models),
 			"localized_strings": dict(self.localized_strings),
 			"think_enabled": self.think_enabled,
+			"chat_enabled": self.chat_enabled,
 		}
 		if self.conversation_id:
 			metadata["conversation_id"] = self.conversation_id
+		if self.status_message:
+			metadata["status_message"] = self.status_message
 		return metadata
+
+
+_READINESS_SERVICE = ProviderReadinessService()
 
 
 # TRANSLATORS: Strings sent from the Python add-on to the WebView UI.
@@ -203,8 +229,10 @@ def build_session_state(
 	provider_state: ProviderState | None = None,
 	conversation_id: str | None = None,
 	available_models: tuple[str, ...] | list[str] | None = None,
+	readiness: ProviderReadiness | None = None,
 ) -> UISessionState:
 	active_provider_state = provider_state or get_provider_state()
+	resolved_readiness = readiness or _READINESS_SERVICE.evaluate_active()
 	current_model = active_provider_state.model_name.strip()
 	resolved_available_models = _ordered_unique_models(
 		current_model,
@@ -213,6 +241,12 @@ def build_session_state(
 	return UISessionState(
 		provider=active_provider_state.provider,
 		model=active_provider_state.model_name,
+		provider_status={
+			"state": resolved_readiness.state.value,
+			"can_infer": resolved_readiness.can_infer,
+			"can_list_models": resolved_readiness.can_list_models,
+			**({"reason": resolved_readiness.reason.value} if resolved_readiness.reason is not None else {}),
+		},
 		available_providers=(
 			{"id": "ollama", "label": translate("Ollama")},
 			{"id": "gemini", "label": translate("Gemini")},
@@ -221,6 +255,8 @@ def build_session_state(
 		available_models=resolved_available_models,
 		localized_strings=build_localized_strings(translate),
 		think_enabled=get_ollama_think(),
+		chat_enabled=resolved_readiness.can_infer,
+		status_message=build_provider_status_message(translate, resolved_readiness),
 		conversation_id=conversation_id,
 	)
 
@@ -242,3 +278,30 @@ def _ordered_unique_models(*candidates: str) -> tuple[str, ...]:
 		seen.add(model_name)
 		models.append(model_name)
 	return tuple(models)
+
+
+def build_provider_status_message(translate: Translator, readiness: ProviderReadiness | None) -> str | None:
+	if readiness is None or readiness.state is ProviderReadinessState.READY or readiness.can_infer:
+		return None
+
+	provider_label = translate(get_provider_display_name(readiness.provider))
+	if readiness.reason is ProviderReadinessReason.MISSING_CREDENTIALS:
+		if readiness.provider == "gemini":
+			# TRANSLATORS: Guidance shown when Gemini is selected without an API key or bearer token.
+			return translate("Gemini is selected but not configured. Set an API key or bearer token in settings.")
+		if readiness.provider == "openai":
+			# TRANSLATORS: Guidance shown when OpenAI is selected without an API key.
+			return translate("OpenAI is selected but not configured. Set an API key in settings.")
+		# TRANSLATORS: Guidance shown when the selected provider is missing credentials.
+		return translate("{provider} is selected but missing required credentials.").format(provider=provider_label)
+	if readiness.reason is ProviderReadinessReason.MISSING_MODEL:
+		# TRANSLATORS: Guidance shown when the selected provider has no configured model.
+		return translate("{provider} is selected but no model is configured.").format(provider=provider_label)
+	if readiness.reason in {ProviderReadinessReason.MISSING_SERVER_URL, ProviderReadinessReason.MISSING_BASE_URL}:
+		# TRANSLATORS: Guidance shown when the selected provider is missing a server or base URL.
+		return translate("{provider} is selected but its server address is not configured.").format(provider=provider_label)
+	if readiness.reason is ProviderReadinessReason.MISSING_CHAT_PATH:
+		# TRANSLATORS: Guidance shown when OpenAI is selected without a chat endpoint path.
+		return translate("OpenAI is selected but the chat endpoint path is not configured.")
+	# TRANSLATORS: Guidance shown when the selected provider is not ready but no specific reason is available.
+	return translate("{provider} is selected but not fully configured.").format(provider=provider_label)

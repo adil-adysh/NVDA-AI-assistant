@@ -17,6 +17,26 @@ class LLMProviderError(RuntimeError):
 	"""Base exception for LLM provider failures."""
 
 
+class ProviderConfigurationError(LLMProviderError):
+	"""Raised when a provider configuration is incomplete or invalid."""
+
+
+class MissingCredentialsError(ProviderConfigurationError):
+	"""Raised when provider credentials are missing."""
+
+
+class MissingModelError(ProviderConfigurationError):
+	"""Raised when no model has been configured for a provider."""
+
+
+class MissingEndpointError(ProviderConfigurationError):
+	"""Raised when a provider endpoint configuration is missing."""
+
+
+class MissingChatPathError(ProviderConfigurationError):
+	"""Raised when a required chat endpoint path is missing."""
+
+
 @dataclass(frozen=True)
 class SamplingDefaults:
 	temperature: float | None = None

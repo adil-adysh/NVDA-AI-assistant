@@ -27,6 +27,8 @@
             submitChatMessage(fileInputElement);
         }
     }
+
+    let chatDisabled = $derived(!appState.control.chatEnabled || Boolean(appState.control.pendingChange));
 </script>
 
 {#if appState.view.mode === 'chat'}
@@ -46,13 +48,14 @@
                 aria-keyshortcuts="Alt+Shift+I"
                 onkeydown={handleKeydown}
                 onfocus={focusChatComposer}
+                disabled={chatDisabled}
             ></textarea>
         </label>
 
         <div class="composer-toolbar">
-            <button id="attach-files" type="button" aria-keyshortcuts="Alt+Shift+A" onclick={() => fileInputElement?.click()}>{t('attach_button', 'Upload image')}</button>
+            <button id="attach-files" type="button" aria-keyshortcuts="Alt+Shift+A" onclick={() => fileInputElement?.click()} disabled={chatDisabled}>{t('attach_button', 'Upload image')}</button>
         </div>
 
-        <button id="chat-send" type="button" aria-keyshortcuts="Enter,Alt+Shift+S" onclick={() => submitChatMessage(fileInputElement)}>{t('send_button', 'Send')}</button>
+        <button id="chat-send" type="button" aria-keyshortcuts="Enter,Alt+Shift+S" onclick={() => submitChatMessage(fileInputElement)} disabled={chatDisabled}>{t('send_button', 'Send')}</button>
     </section>
 {/if}

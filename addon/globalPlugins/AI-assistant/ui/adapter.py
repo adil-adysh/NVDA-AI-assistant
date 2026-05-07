@@ -10,7 +10,8 @@ from uuid import uuid4
 
 from logHandler import log
 
-from ..config.settings import is_streaming_enabled, save, set_model_name, set_ollama_think, set_provider
+from ..config.settings import is_streaming_enabled
+from ..service.provider_controls import provider_control_service
 from .host_lifecycle import HostLifecycleService, HostLifecycleState
 from .intent import ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND, merge_presentation_intent
 from . import nvda_ui
@@ -539,18 +540,13 @@ class UIAdapter:
 		self._apply_control_change(lambda: self._set_think_mode_and_save(enabled))
 
 	def _set_provider_and_save(self, provider: str) -> None:
-		set_provider(provider)
-		save()
+		provider_control_service.select_provider(provider)
 
 	def _set_model_and_save(self, provider: str | None, model: str) -> None:
-		if provider:
-			set_provider(provider)
-		set_model_name(model)
-		save()
+		provider_control_service.select_model(model=model, provider=provider)
 
 	def _set_think_mode_and_save(self, enabled: bool) -> None:
-		set_ollama_think(enabled)
-		save()
+		provider_control_service.set_think_mode(enabled)
 
 	def _apply_control_change(self, operation: Callable[[], None]) -> None:
 		try:
