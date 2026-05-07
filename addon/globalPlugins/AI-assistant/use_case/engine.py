@@ -7,6 +7,7 @@ from typing import Any
 from ..context.pipeline import ContextPipeline
 from ..core.events import ProgressEvent, ProgressHandler
 from ..service import LLMService
+from ..service.error_presentation import present_error
 from .base import UseCase
 from .registry import build_default_use_cases
 from .types import UseCaseId, UseCaseResult, UseCaseSpec
@@ -48,7 +49,7 @@ class UseCaseEngine:
 				**kwargs,
 			)
 		except Exception as error:
-			emit("error", str(error))
+			emit("error", present_error(error).message)
 			raise
 
 		emit("complete", result.message or f"{use_case_id} complete")

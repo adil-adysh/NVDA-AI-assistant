@@ -37,7 +37,7 @@ class SummaryUseCase(UseCase):
 				self._get_extraction_result(prompt_context),
 				language=prompt_context.language,
 			),
-			llm_call=lambda prompt, prompt_context: llm_service.summarize(prompt),
+			llm_call=lambda prompt, prompt_context, stream_handler: llm_service.summarize(prompt, stream_handler=stream_handler),
 			build_result=self._build_result,
 			emit=emit,
 			collecting_message="Collecting page content...",

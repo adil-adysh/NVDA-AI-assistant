@@ -10,7 +10,7 @@ from logHandler import log
 from ...core.canonical import Message, Tool
 from ...core.tooling import ToolCall
 from ...core.messages import LLMResponse, SummaryResponse
-from ...gemini import GeminiClient, GeminiClientError
+from ...gemini import GeminiAPIError, GeminiClient, GeminiClientError
 from ...gemini.types import Content, GenerateContentConfig, Part
 from ..config import GeminiConfig
 from ..interfaces import (
@@ -22,7 +22,9 @@ from ..interfaces import (
 	PartialCallback,
 	ProviderModelInfo,
 	SamplingDefaults,
+	UnsupportedModelError,
 )
+from ...service.provider_readiness import is_gemini_generate_content_incompatible_model_name
 from ...tools import build_function_tool_definition, normalize_tool_calls
 
 
@@ -62,7 +64,12 @@ class GeminiProvider(LLMProvider):
 		models: list[ProviderModelInfo] = []
 		while True:
 			response = self._client.list_models(page_size=100, page_token=page_token)
-			models.extend(self._normalize_model_info(model) for model in response.models if model.name)
+			for model in response.models:
+				if not model.name:
+					continue
+				normalized_model = self._normalize_model_info(model)
+				if normalized_model.supports("chat"):
+					models.append(normalized_model)
 			page_token = response.next_page_token
 			if not page_token:
 				break
@@ -110,7 +117,25 @@ class GeminiProvider(LLMProvider):
 		model = self._config.model_name
 		if not model:
 			raise MissingModelError("Gemini model name is required.")
-		return model.strip()
+		resolved = model.strip()
+		if is_gemini_generate_content_incompatible_model_name(resolved):
+			raise UnsupportedModelError(
+				"The selected Gemini model is only available through another Gemini API workflow and cannot be used for chat or summaries here. Choose a standard Gemini model that supports generateContent.",
+			)
+		return resolved
+
+	def _wrap_gemini_error(self, error: GeminiClientError) -> LLMProviderError:
+		if isinstance(error, GeminiAPIError):
+			message = str(getattr(error, "details", "") or getattr(error, "body", "") or "")
+			if (
+				error.status_code == 404 and "not supported for generatecontent" in message.lower()
+			) or (
+				error.status_code == 400 and "only supports interactions api" in message.lower()
+			):
+				return UnsupportedModelError(
+					"The selected Gemini model does not support this add-on's generateContent workflow. Choose a standard Gemini model instead of a Live API or Interactions-only preview model."
+				)
+		return LLMProviderError(str(error))
 
 	def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
 		model = self._resolve_model()
@@ -128,7 +153,7 @@ class GeminiProvider(LLMProvider):
 
 			response = self._client.generate_content(model=model, contents=prompt, config=config)
 		except GeminiClientError as error:
-			raise LLMProviderError(str(error)) from error
+			raise self._wrap_gemini_error(error) from error
 		return SummaryResponse(text=response.text, model=model, provider=self.provider_name())
 
 	def describe_image(
@@ -156,7 +181,7 @@ class GeminiProvider(LLMProvider):
 				return SummaryResponse(text=accumulated, model=model, provider=self.provider_name())
 			response = self._client.describe_image(model=model, image_bytes=image_bytes, prompt=prompt, config=config)
 		except GeminiClientError as error:
-			raise LLMProviderError(str(error)) from error
+			raise self._wrap_gemini_error(error) from error
 		return SummaryResponse(text=response.text, model=model, provider=self.provider_name())
 
 	def _build_generation_config(self) -> GenerateContentConfig:
@@ -342,13 +367,16 @@ class GeminiProvider(LLMProvider):
 				stream_handler(text_output, len(text_output))
 			return LLMResponse(text=text_output, model="gemini", raw=None, metrics=None)
 
-		response = self._client.generate_content(
+		try:
+			response = self._client.generate_content(
 			model=self._resolve_model(),
 			contents=contents,
 			config=self._build_generation_config(),
 			tools=gemini_tools,
 			system_instruction=system_instruction,
-		)
+			)
+		except GeminiClientError as error:
+			raise self._wrap_gemini_error(error) from error
 		if stream_handler is not None and response.text:
 			stream_handler(response.text, len(response.text))
 		tool_calls = self._extract_tool_calls(response.raw)

@@ -20,6 +20,7 @@ class ProviderReadinessReason(str, Enum):
 	MISSING_BASE_URL = "missing_base_url"
 	MISSING_CHAT_PATH = "missing_chat_path"
 	MISSING_CREDENTIALS = "missing_credentials"
+	UNSUPPORTED_MODEL = "unsupported_model"
 
 
 def get_provider_display_name(provider: str) -> str:
@@ -29,6 +30,18 @@ def get_provider_display_name(provider: str) -> str:
 	if normalized == "gemini":
 		return "Gemini"
 	return "Ollama"
+
+
+def is_gemini_generate_content_incompatible_model_name(model_name: str) -> bool:
+	normalized = str(model_name or "").strip().lower()
+	return any(
+		marker in normalized
+		for marker in (
+			"live-preview",
+			"deep-research-preview",
+			"deep-research-max-preview",
+		)
+	)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +112,14 @@ class ProviderReadinessService:
 			return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_BASE_URL)
 		if not api_key and not api_token:
 			return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_CREDENTIALS)
+		if is_gemini_generate_content_incompatible_model_name(model_name):
+			return ProviderReadiness(
+				provider=config.provider,
+				state=ProviderReadinessState.INVALID_CONFIG,
+				reason=ProviderReadinessReason.UNSUPPORTED_MODEL,
+				can_infer=False,
+				can_list_models=True,
+			)
 		return ProviderReadiness(
 			provider=config.provider,
 			state=ProviderReadinessState.READY,

@@ -214,6 +214,10 @@ function syncSession(payload) {
     }
 }
 
+function shouldClearStatusForCommand(commandName) {
+    return commandName === 'sync_session';
+}
+
 function renderDisplay(payload) {
     const actions = readPresentationValue(payload, 'actions', []);
     const thinkingTrace = readPresentationValue(payload, 'thinking_trace', null);
@@ -578,7 +582,13 @@ export function handleHostEnvelope(envelope) {
 
     commandHandler(payload, commandId);
 
-    setStatus(hostStatusMessage || `${t('command_prefix', 'Command')}: ${envelope.command.name}`, Boolean(hostStatusMessage));
+    if (hostStatusMessage) {
+        setStatus(hostStatusMessage, true);
+    } else if (shouldClearStatusForCommand(envelope.command.name)) {
+        setStatus('');
+    } else {
+        setStatus(`${t('command_prefix', 'Command')}: ${envelope.command.name}`);
+    }
 
     reportUiApplied(commandId);
 }

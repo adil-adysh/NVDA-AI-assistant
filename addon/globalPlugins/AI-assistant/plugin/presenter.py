@@ -237,6 +237,10 @@ class UseCasePresenter:
 			nvda_ui.queue(nvda_ui.message, _("Error: ") + event.message)
 			return
 
+		if event.stage == "streaming":
+			nvda_ui.play_streaming_tone()
+			return
+
 		if event.stage in {"start", "collecting_context", "building_prompt", "llm_request", "tool_execution", "complete"}:
 			ui_adapter.show_progress(event.message)
 			nvda_ui.queue(nvda_ui.message, event.message)

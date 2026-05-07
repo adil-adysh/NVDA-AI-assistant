@@ -109,6 +109,7 @@ ProviderReadinessReason = provider_readiness_module.ProviderReadinessReason
 ProviderReadinessService = provider_readiness_module.ProviderReadinessService
 ProviderReadinessState = provider_readiness_module.ProviderReadinessState
 build_session_state = session_state_module.build_session_state
+merge_session_metadata = session_state_module.merge_session_metadata
 
 
 class ProviderStateFlowTests(unittest.TestCase):
@@ -166,6 +167,58 @@ class ProviderStateFlowTests(unittest.TestCase):
 		self.assertEqual(readiness.state, ProviderReadinessState.READY)
 		self.assertIsNone(readiness.reason)
 		self.assertTrue(readiness.can_infer)
+		self.assertTrue(readiness.can_list_models)
+
+	def test_gemini_live_preview_model_is_invalid_for_current_workflow(self) -> None:
+		config = GeminiConfig(
+			provider="gemini",
+			model_name="gemini-3.1-flash-live-preview",
+			timeout_seconds=30.0,
+			enable_streaming=True,
+			enable_progress=False,
+			num_ctx=0,
+			max_retries=1,
+			retry_backoff_seconds=0.1,
+			generate_temperature=0.2,
+			generate_top_k=0,
+			generate_top_p=0.9,
+			generate_max_tokens=512,
+			api_key="configured-key",
+			api_token="",
+			base_url="https://generativelanguage.googleapis.com",
+		)
+
+		readiness = self.readiness_service.evaluate(config)
+
+		self.assertEqual(readiness.state, ProviderReadinessState.INVALID_CONFIG)
+		self.assertEqual(readiness.reason, ProviderReadinessReason.UNSUPPORTED_MODEL)
+		self.assertFalse(readiness.can_infer)
+		self.assertTrue(readiness.can_list_models)
+
+	def test_gemini_deep_research_preview_model_is_invalid_for_current_workflow(self) -> None:
+		config = GeminiConfig(
+			provider="gemini",
+			model_name="deep-research-preview-04-2026",
+			timeout_seconds=30.0,
+			enable_streaming=True,
+			enable_progress=False,
+			num_ctx=0,
+			max_retries=1,
+			retry_backoff_seconds=0.1,
+			generate_temperature=0.2,
+			generate_top_k=0,
+			generate_top_p=0.9,
+			generate_max_tokens=512,
+			api_key="configured-key",
+			api_token="",
+			base_url="https://generativelanguage.googleapis.com",
+		)
+
+		readiness = self.readiness_service.evaluate(config)
+
+		self.assertEqual(readiness.state, ProviderReadinessState.INVALID_CONFIG)
+		self.assertEqual(readiness.reason, ProviderReadinessReason.UNSUPPORTED_MODEL)
+		self.assertFalse(readiness.can_infer)
 		self.assertTrue(readiness.can_list_models)
 
 	def test_catalog_does_not_construct_provider_when_not_ready(self) -> None:
@@ -236,6 +289,42 @@ class ProviderStateFlowTests(unittest.TestCase):
 		self.assertEqual(metadata["provider_status"]["state"], ProviderReadinessState.UNCONFIGURED.value)
 		self.assertEqual(metadata["provider_status"]["reason"], ProviderReadinessReason.MISSING_CREDENTIALS.value)
 		self.assertIn("OpenAI is selected but not configured", metadata["status_message"])
+
+	def test_merge_session_metadata_clears_stale_status_when_provider_is_ready(self) -> None:
+		config = GeminiConfig(
+			provider="gemini",
+			model_name="gemini-2.5-flash",
+			timeout_seconds=30.0,
+			enable_streaming=True,
+			enable_progress=False,
+			num_ctx=0,
+			max_retries=1,
+			retry_backoff_seconds=0.1,
+			generate_temperature=0.2,
+			generate_top_k=0,
+			generate_top_p=0.9,
+			generate_max_tokens=512,
+			api_key="configured-key",
+			api_token="",
+			base_url="https://generativelanguage.googleapis.com",
+		)
+		_set_active_config(config)
+		readiness = self.readiness_service.evaluate_active()
+
+		session_state = build_session_state(
+			lambda message: message,
+			provider_state=_get_provider_state(),
+			available_models=("gemini-2.5-flash",),
+			readiness=readiness,
+		)
+		merged = merge_session_metadata(
+			{"status_message": "Gemini is selected but not configured. Set an API key or bearer token in settings."},
+			session_state,
+		)
+
+		self.assertNotIn("status_message", merged)
+		self.assertTrue(merged["chat_enabled"])
+		self.assertEqual(merged["provider_status"]["state"], ProviderReadinessState.READY.value)
 
 
 if __name__ == "__main__":

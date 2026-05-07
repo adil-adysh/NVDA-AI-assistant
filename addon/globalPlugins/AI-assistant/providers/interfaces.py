@@ -37,6 +37,10 @@ class MissingChatPathError(ProviderConfigurationError):
 	"""Raised when a required chat endpoint path is missing."""
 
 
+class UnsupportedModelError(ProviderConfigurationError):
+	"""Raised when the selected model is not supported for the current workflow."""
+
+
 @dataclass(frozen=True)
 class SamplingDefaults:
 	temperature: float | None = None

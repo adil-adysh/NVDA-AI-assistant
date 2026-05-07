@@ -41,9 +41,10 @@ class ImageDescriptionUseCase(UseCase):
 				self._get_image_context(prompt_context),
 				language=prompt_context.language,
 			),
-			llm_call=lambda prompt, prompt_context: llm_service.describe_image(
+			llm_call=lambda prompt, prompt_context, stream_handler: llm_service.describe_image(
 				image_base64=self._get_image_context(prompt_context).image_base64 or "",
 				prompt=prompt,
+				stream_handler=stream_handler,
 			),
 			build_result=self._build_result,
 			emit=emit,
