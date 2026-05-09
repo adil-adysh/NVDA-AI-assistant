@@ -16,6 +16,7 @@ from ..service.provider_controls import provider_control_service
 from .host_lifecycle import HostLifecycleService, HostLifecycleState
 from .intent import ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND, merge_presentation_intent
 from . import nvda_ui
+from .accessibility import queue_response_announcement, strip_html_for_announcement
 from .host_renderer import HostRenderer, HostUnavailableError
 from .attachment_context import extract_attachment_context
 from .view_models import ChatWindowViewModel, DisplayResultViewModel
@@ -249,6 +250,13 @@ class UIAdapter:
 		metadata = view_model.transport_metadata()
 		self._remember_session_metadata(metadata)
 		self._host_renderer.register_ui_action_handler(self._handle_host_ui_action)
+		if view_model.success:
+			queue_response_announcement(
+				nvda_ui.queue,
+				nvda_ui.message,
+				view_model.output_text,
+				strip_html_for_announcement(view_model.output_html),
+			)
 		self._dispatch_primary_host_command(
 			lambda: self._host_renderer.render_display_result(
 				use_case_id=view_model.use_case_id,
@@ -317,6 +325,7 @@ class UIAdapter:
 					daemon=True,
 				).start()
 			self._host_renderer.register_chat_submission_handler(handle_chat_submission)
+		self._host_renderer.register_ui_action_handler(self._handle_host_ui_action)
 		self._host_renderer.register_provider_selection_handler(self._handle_provider_selection)
 		self._host_renderer.register_model_selection_handler(self._handle_model_selection)
 		self._host_renderer.register_think_mode_handler(self._handle_think_mode_toggle)
@@ -447,6 +456,7 @@ class UIAdapter:
 					thinking_trace=thinking_trace if isinstance(thinking_trace, str) else None,
 				)
 				assistant_projection.finish(assistant_content)
+				queue_response_announcement(nvda_ui.queue, nvda_ui.message, assistant_text)
 		except Exception as error:
 			presentation = present_error(error)
 			self._host_renderer.show_error(presentation.title, details=presentation.message)

@@ -1,4 +1,4 @@
-import { appState, clearCurrentView, setControlPending, setPendingFocus, setStatus, t } from './state.svelte.js';
+import { appState, clearCurrentView, setActiveConversationId, setControlPending, setPendingFocus, setStatus, t } from './state.svelte.js';
 import { clearPendingAttachments } from './attachments.js';
 import {
     extractMarkdownFromBlocks,
@@ -190,6 +190,34 @@ export function invokeResultAction(action) {
     emitUiEvent('ui_action_invoked', appState.currentCommandId, {
         action_id: action.id,
         payload: action.payload || {},
+    });
+}
+
+export function startNewConversation() {
+    emitUiEvent('ui_action_invoked', appState.currentCommandId, {
+        action_id: 'conversation_new',
+        payload: {},
+    });
+}
+
+export function openConversation(conversationId) {
+    if (!conversationId) {
+        return;
+    }
+    setActiveConversationId(conversationId);
+    emitUiEvent('ui_action_invoked', appState.currentCommandId, {
+        action_id: 'conversation_open',
+        payload: { conversation_id: conversationId },
+    });
+}
+
+export function deleteConversation(conversationId) {
+    if (!conversationId) {
+        return;
+    }
+    emitUiEvent('ui_action_invoked', appState.currentCommandId, {
+        action_id: 'conversation_delete',
+        payload: { conversation_id: conversationId },
     });
 }
 

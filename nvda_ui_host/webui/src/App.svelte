@@ -11,6 +11,8 @@
     } from './lib/actions.js';
     import { initializeWebViewBridge } from './lib/bridge.js';
     import { appState, t } from './lib/state.svelte.js';
+    import AccessibilityAnnouncer from './components/AccessibilityAnnouncer.svelte';
+    import ChatComposer from './components/ChatComposer.svelte';
     import ChatPanel from './components/ChatPanel.svelte';
     import ControlPanel from './components/ControlPanel.svelte';
     import DisplayCard from './components/DisplayCard.svelte';
@@ -163,7 +165,7 @@
 
 <svelte:window onkeydown={handleGlobalShortcut} />
 
-<div id="announcer" class="sr-only" aria-live="assertive" aria-atomic="true">{appState.announcerMessage}</div>
+<AccessibilityAnnouncer />
 
 <div class="app-shell">
     <header class="app-header">
@@ -179,14 +181,21 @@
 
     <main class="workspace">
         <StatusCard registerStatus={(element) => statusElement = element} />
+        {#if appState.view.mode === 'chat'}
+            <ChatPanel />
+        {/if}
+
         <DisplayCard
             registerContent={(element) => contentElement = element}
             registerFirstAction={(element) => firstResultActionElement = element}
         />
-        <ChatPanel
-            registerComposer={(element) => composerElement = element}
-            registerFileInput={(element) => fileInputElement = element}
-        />
+
+        {#if appState.view.mode === 'chat'}
+            <ChatComposer
+                registerComposer={(element) => composerElement = element}
+                registerFileInput={(element) => fileInputElement = element}
+            />
+        {/if}
     </main>
 
     <GlobalToolbar />

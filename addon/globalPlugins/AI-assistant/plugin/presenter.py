@@ -6,14 +6,12 @@ import builtins
 import threading
 from collections.abc import Callable
 from typing import Any, cast
-from uuid import uuid4
 
 from logHandler import log
 
 from ..config.state import ProviderState
 from ..core.events import ProgressEvent
-from ..core.message_transforms import build_assistant_message
-from ..service.chat import ChatCoordinator
+from ..service.chat import ChatCoordinator, ConversationService
 from ..service.provider_catalog import ProviderCatalogService
 from ..service.provider_readiness import ProviderReadinessService
 from ..tools import ToolRegistry
@@ -41,6 +39,14 @@ from ..ui import nvda_ui
 from ..ui.session_state import build_session_state, merge_session_metadata
 from ..ui.view_models import ChatWindowViewModel, DisplayResultViewModel, ResultActionViewModel
 from ..utils.markdown import render_markdown_to_html
+from .ui_actions import (
+	ConversationDeleteAction,
+	ConversationNewAction,
+	ConversationOpenAction,
+	OpenChatAction,
+	parse_ui_action,
+	serialize_ui_action,
+)
 
 
 def _translate(message: str) -> str:
@@ -54,15 +60,16 @@ class UseCasePresenter:
 	def __init__(
 		self,
 		chat_coordinator: ChatCoordinator,
+		conversation_service: ConversationService,
 		tool_registry: ToolRegistry,
 		provider_catalog: ProviderCatalogService | None = None,
 		readiness_service: ProviderReadinessService | None = None,
 	) -> None:
 		self._chat_coordinator = chat_coordinator
+		self._conversation_service = conversation_service
 		self._tool_registry = tool_registry
 		self._provider_catalog = provider_catalog or ProviderCatalogService()
 		self._readiness_service = readiness_service or ProviderReadinessService()
-		self._active_conversation_id: str | None = None
 		self._available_models_by_provider: dict[str, tuple[str, ...]] = {}
 		self._model_cache_lock = threading.RLock()
 		self._result_action_store = ResultActionStore()
@@ -80,20 +87,23 @@ class UseCasePresenter:
 		initial_text: str | None = None,
 		initial_image_base64: str | None = None,
 		initial_assistant_text: str | None = None,
+		conversation_id: str | None = None,
+		force_new_conversation: bool = False,
 	) -> None:
-		self._active_conversation_id = str(uuid4())
-		self._chat_coordinator.reset()
+		active_conversation_id = self._conversation_service.open_conversation(
+			conversation_id=conversation_id,
+			initial_assistant_text=initial_assistant_text,
+			force_new=force_new_conversation,
+		)
 		provider_state = get_provider_state()
 		session_state = build_session_state(
 			_,
 			provider_state,
-			conversation_id=self._active_conversation_id,
+			conversation_id=active_conversation_id,
 			available_models=self._get_cached_models(provider_state),
+			conversation_summaries=self._build_conversation_summaries(),
 			readiness=self._readiness_service.evaluate_active(),
 		)
-		seed_messages = self._build_seed_messages(initial_assistant_text)
-		if seed_messages:
-			self._chat_coordinator.seed_history(seed_messages)
 		ui_adapter.open_chat_view(
 			ChatWindowViewModel(
 				use_case_id=None,
@@ -110,7 +120,7 @@ class UseCasePresenter:
 			),
 			coordinator=self._chat_coordinator,
 			tool_registry=self._tool_registry,
-			history_messages=self._build_seed_history_messages(initial_assistant_text),
+			history_messages=self._conversation_service.history_transport(),
 		)
 		self._refresh_available_models_async(provider_state)
 
@@ -122,8 +132,9 @@ class UseCasePresenter:
 				build_session_state(
 					_,
 					provider_state,
-					conversation_id=self._active_conversation_id,
+					conversation_id=self._conversation_service.current_conversation_id(),
 					available_models=self._get_cached_models(provider_state),
+					conversation_summaries=self._build_conversation_summaries(),
 					readiness=self._readiness_service.evaluate_active(),
 				).to_metadata()
 			)
@@ -169,7 +180,6 @@ class UseCasePresenter:
 			return
 
 		browseable_title = nvda_ui.format_browseable_title(title, get_provider_state())
-		self._active_conversation_id = None
 		provider_state = get_provider_state()
 		session_state = build_session_state(_, provider_state, available_models=self._get_cached_models(provider_state))
 		use_case_id = None
@@ -184,7 +194,7 @@ class UseCasePresenter:
 		is_result_action_screen = bool(actions) and use_case_id in {"summary", "structure_summary", "describe_image"}
 		display_presentation = build_display_presentation(
 			variant=DISPLAY_VARIANT_RESULT_ACTIONS if is_result_action_screen else DISPLAY_VARIANT_STANDARD,
-			initial_focus=FOCUS_TARGET_PRIMARY_ACTION if actions else FOCUS_TARGET_CONTENT,
+			initial_focus=FOCUS_TARGET_CONTENT if is_result_action_screen or not actions else FOCUS_TARGET_PRIMARY_ACTION,
 			toolbar_actions=self._build_display_toolbar_actions(include_clear=not is_result_action_screen),
 		)
 		ui_adapter.render_display(
@@ -250,10 +260,14 @@ class UseCasePresenter:
 		return build_session_state(
 			_,
 			provider_state,
-			conversation_id=self._active_conversation_id,
+			conversation_id=self._conversation_service.current_conversation_id(),
 			available_models=self._get_cached_models(provider_state),
+			conversation_summaries=self._build_conversation_summaries(),
 			readiness=self._readiness_service.evaluate_active(),
 		).to_metadata()
+
+	def _build_conversation_summaries(self) -> list[dict[str, object]]:
+		return self._conversation_service.list_conversation_summaries()
 
 	def _get_cached_models(self, provider_state: ProviderState) -> tuple[str, ...]:
 		with self._model_cache_lock:
@@ -306,8 +320,9 @@ class UseCasePresenter:
 			build_session_state(
 				_,
 				current_provider_state,
-				conversation_id=self._active_conversation_id,
+				conversation_id=self._conversation_service.current_conversation_id(),
 				available_models=models,
+				conversation_summaries=self._build_conversation_summaries(),
 				readiness=self._readiness_service.evaluate_active(),
 			).to_metadata()
 		)
@@ -317,47 +332,58 @@ class UseCasePresenter:
 			return []
 		if use_case_id not in {"summary", "structure_summary", "describe_image"}:
 			return []
-		action_token = self._result_action_store.put({
-			"assistant_seed_text": output_text.strip(),
-			"initial_image_base64": getattr(use_case_result, "initial_image_base64", None),
-		})
+		stored_action = OpenChatAction(
+			assistant_seed_text=output_text.strip(),
+			initial_image_base64=getattr(use_case_result, "initial_image_base64", None),
+			force_new_conversation=True,
+		)
+		stored_action_id, stored_payload = serialize_ui_action(stored_action)
+		action_token = self._result_action_store.put(stored_payload)
+		transport_action = OpenChatAction(token=action_token)
+		action_id, action_payload = serialize_ui_action(transport_action)
 		return [ResultActionViewModel(
-			id="open_chat",
+			id=action_id,
 			label=_("Open Chat"),
-			kind="open_chat",
-			payload={
-				"token": action_token,
-			},
+			kind=action_id,
+			payload=action_payload,
 		)]
 
 	def _handle_result_action(self, action_id: str, payload: dict[str, Any] | None) -> None:
-		if action_id != "open_chat":
+		action = parse_ui_action(action_id, payload)
+		if action is None:
 			return
-		payload = payload or {}
-		token = payload.get("token") if isinstance(payload.get("token"), str) else None
-		if token:
-			payload = self._result_action_store.pop(token) or payload
+		self._dispatch_ui_action(action)
+
+	def _dispatch_ui_action(
+		self,
+		action: ConversationNewAction | ConversationOpenAction | ConversationDeleteAction | OpenChatAction,
+	) -> None:
+		if isinstance(action, ConversationNewAction):
+			self.open_chat_window(force_new_conversation=True)
+			return
+		if isinstance(action, ConversationOpenAction):
+			self.open_chat_window(conversation_id=action.conversation_id)
+			return
+		if isinstance(action, ConversationDeleteAction):
+			delete_result = self._conversation_service.delete_conversation(action.conversation_id)
+			if not delete_result.deleted:
+				return
+			if delete_result.active_conversation_deleted:
+				self.open_chat_window(force_new_conversation=True)
+			else:
+				self.update_provider_state()
+			return
+		resolved_action = action
+		if isinstance(action, OpenChatAction) and action.token:
+			stored_payload = self._result_action_store.pop(action.token)
+			if stored_payload is not None:
+				stored_action = parse_ui_action("open_chat", stored_payload)
+				if isinstance(stored_action, OpenChatAction):
+					resolved_action = stored_action
+		if not isinstance(resolved_action, OpenChatAction):
+			return
 		self.open_chat_window(
-			initial_assistant_text=payload.get("assistant_seed_text") if isinstance(payload.get("assistant_seed_text"), str) else None,
-			initial_image_base64=payload.get("initial_image_base64") if isinstance(payload.get("initial_image_base64"), str) else None,
+			initial_assistant_text=resolved_action.assistant_seed_text,
+			initial_image_base64=resolved_action.initial_image_base64,
+			force_new_conversation=resolved_action.force_new_conversation,
 		)
-
-	def _build_seed_messages(self, initial_assistant_text: str | None) -> tuple[Any, ...]:
-		if not isinstance(initial_assistant_text, str) or not initial_assistant_text.strip():
-			return ()
-		return (build_assistant_message(text=initial_assistant_text.strip()),)
-
-	def _build_seed_history_messages(self, initial_assistant_text: str | None) -> list[dict[str, Any]]:
-		if not isinstance(initial_assistant_text, str) or not initial_assistant_text.strip():
-			return []
-		rendered_html = render_markdown_to_html(initial_assistant_text.strip()).strip()
-		content: list[dict[str, Any]]
-		if rendered_html:
-			content = [{"type": "html", "html": rendered_html}]
-		else:
-			content = [{"type": "text", "text": initial_assistant_text.strip()}]
-		return [{
-			"id": f"seed-assistant-{uuid4()}",
-			"role": "assistant",
-			"content": content,
-		}]

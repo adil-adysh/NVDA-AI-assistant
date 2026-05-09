@@ -10,13 +10,20 @@
     let roleLabel = $derived(formatRoleLabel(role));
     let headingTag = $derived(role === 'assistant' ? 'h5' : 'h6');
     let showTableCopy = $derived(hasRenderedTables(message?.content));
+    let isStreaming = $derived(message?.streaming === true);
 </script>
 
-<article class={`chat-message ${role}`} aria-label={roleLabel}>
+<article class={`chat-message ${role}`} aria-label={roleLabel} aria-busy={isStreaming}>
     <div class="chat-message-header">
         <div class="chat-message-title-group">
             <svelte:element this={headingTag} class="role">{roleLabel}</svelte:element>
-            <p class="message-subtitle">{role === 'assistant' ? t('response_subtitle', 'Response') : t('prompt_subtitle', 'Prompt')}</p>
+            <p class="message-subtitle">
+                {#if role === 'assistant' && isStreaming}
+                    {t('response_streaming_subtitle', 'Response in progress')}
+                {:else}
+                    {role === 'assistant' ? t('response_subtitle', 'Response') : t('prompt_subtitle', 'Prompt')}
+                {/if}
+            </p>
         </div>
 
     </div>

@@ -49,6 +49,7 @@ class AIAssistantApplication:
 		self._last_provider_state = get_provider_state()
 		self.presenter = UseCasePresenter(
 			chat_coordinator=self._services.chat_coordinator,
+			conversation_service=self._services.conversation_service,
 			tool_registry=self._services.tool_registry,
 		)
 		self.background = BackgroundTaskRunner(
