@@ -16,7 +16,7 @@ from ..image.services import ImageCaptureService, ImageEncoder, ImagePreprocesso
 from ..observability.reporter import FileMetricsReporter
 from ..ui import nvda_ui
 from ..providers.provider_proxy import ProviderProxy
-from ..service.chat import ChatCoordinator
+from ..service.chat import ChatCoordinator, ConversationService, build_default_conversation_repository
 from ..service.llm import ProviderLLMService
 from ..tools import ToolDefinition, ToolExecutor, ToolRegistry
 from ..use_case.engine import UseCaseEngine
@@ -52,7 +52,12 @@ def build_plugin_services() -> PluginServices:
 	_register_default_tools(tool_registry)
 	tool_executor = ToolExecutor(tool_registry)
 	llm_service = ProviderLLMService(provider, tool_executor=tool_executor)
-	chat_coordinator = ChatCoordinator(client=llm_service, metrics_reporter=metrics_reporter)
+	chat_coordinator = ChatCoordinator(
+		client=llm_service,
+		metrics_reporter=metrics_reporter,
+		repository=build_default_conversation_repository(),
+	)
+	conversation_service = ConversationService(chat_coordinator)
 	use_case_engine = UseCaseEngine(
 		llm_service=llm_service,
 		context_pipeline=context_pipeline,
@@ -68,6 +73,7 @@ def build_plugin_services() -> PluginServices:
 		tool_executor=tool_executor,
 		llm_service=llm_service,
 		chat_coordinator=chat_coordinator,
+		conversation_service=conversation_service,
 		use_case_engine=use_case_engine,
 	)
 

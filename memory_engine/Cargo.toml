@@ -8,7 +8,7 @@ name = "memory_engine"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.23" }
+pyo3 = { version = "0.23", features = ["extension-module"] }
 redb = "2.1"
 serde = { version = "1.0", features = ["derive"] }
 

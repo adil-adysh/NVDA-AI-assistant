@@ -1,18 +1,24 @@
 import { defaultLocalizedStrings } from './defaults.js';
 
-function pingAnnouncer(message) {
-    appState.announcerMessage = '';
-    queueMicrotask(() => {
-        appState.announcerMessage = message;
-    });
+function publishAnnouncement(channel, message) {
+    const nextId = appState.accessibility.nextAnnouncementId + 1;
+    appState.accessibility.nextAnnouncementId = nextId;
+    appState.accessibility[channel] = {
+        id: nextId,
+        message,
+    };
 }
 
 export const appState = $state({
     currentCommandId: null,
     title: 'NVDA UI Host',
     statusMessage: '',
-    announcerMessage: '',
     controlsVisible: true,
+    accessibility: {
+        nextAnnouncementId: 0,
+        statusAnnouncement: null,
+        responseAnnouncement: null,
+    },
     control: {
         availableProviders: [],
         availableModels: [],
@@ -36,6 +42,7 @@ export const appState = $state({
         active: false,
         commandId: null,
         conversationId: null,
+        conversations: [],
         messages: [],
         attachments: [],
         composerText: '',
@@ -76,8 +83,16 @@ export function setStatus(message, announce = false) {
     appState.statusMessage = message;
 
     if (announce) {
-        pingAnnouncer(message);
+        publishAnnouncement('statusAnnouncement', message);
     }
+}
+
+export function announceResponse(message) {
+    if (typeof message !== 'string' || !message.trim()) {
+        return;
+    }
+
+    publishAnnouncement('responseAnnouncement', message.trim());
 }
 
 export function setPendingFocus(target) {
@@ -112,6 +127,39 @@ export function bumpChatRenderVersion() {
     appState.chat.renderVersion += 1;
 }
 
+export function setConversationSummaries(conversations = []) {
+    const normalizedConversations = Array.isArray(conversations) ? conversations : [];
+    const seenConversationIds = new Set();
+    appState.chat.conversations = normalizedConversations.filter(conversation => {
+        const conversationId = typeof conversation?.id === 'string' ? conversation.id : null;
+        if (!conversationId || seenConversationIds.has(conversationId)) {
+            return false;
+        }
+        seenConversationIds.add(conversationId);
+        return true;
+    });
+    syncActiveConversationSelection();
+}
+
+export function setActiveConversationId(conversationId = null) {
+    const normalizedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
+    appState.chat.conversationId = normalizedConversationId || null;
+    syncActiveConversationSelection();
+}
+
+export function syncActiveConversationSelection() {
+    if (!appState.chat.conversationId) {
+        return;
+    }
+
+    const stillExists = appState.chat.conversations.some(conversation => conversation.id === appState.chat.conversationId);
+    if (stillExists) {
+        return;
+    }
+
+    appState.chat.conversationId = appState.chat.conversations[0]?.id ?? null;
+}
+
 export function resetDisplayState() {
     appState.display.blocks = [];
     appState.display.actions = [];
@@ -124,6 +172,7 @@ export function resetChatState() {
     appState.chat.active = false;
     appState.chat.commandId = null;
     appState.chat.conversationId = null;
+    appState.chat.conversations = [];
     appState.chat.messages = [];
     appState.chat.attachments = [];
     appState.chat.composerText = '';

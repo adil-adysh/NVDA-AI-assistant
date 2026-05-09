@@ -1,12 +1,16 @@
 import { addInitialImageAttachment } from './attachments.js';
+import { extractTextFromBlocks } from './content.js';
 import {
+    announceResponse,
     appState,
     bumpChatRenderVersion,
     clearControlPending,
     mergeLocalizedStrings,
     resetChatState,
     resetDisplayState,
+    setActiveConversationId,
     setCopyBuffers,
+    setConversationSummaries,
     setControlsVisible,
     setDisplayBlocks,
     setInteractionMode,
@@ -17,6 +21,24 @@ import {
     showDisplayText,
     t,
 } from './state.svelte.js';
+
+function announceAssistantMessage(message) {
+    if (!message || message.role !== 'assistant' || message.streaming === true) {
+        return;
+    }
+
+    const text = extractTextFromBlocks(message.content);
+    if (text) {
+        announceResponse(text);
+    }
+}
+
+function announceDisplayBlocks(blocks) {
+    const text = extractTextFromBlocks(blocks);
+    if (text) {
+        announceResponse(text);
+    }
+}
 
 function ensureSendHostEvent() {
     if (typeof window.__sendHostEvent !== 'function') {
@@ -91,10 +113,18 @@ function resolveDisplayPresentation(payload, { hasActions = false } = {}) {
 function updateChatEnvelopeState(payload) {
     appState.chat.active = true;
     if (payload.conversation_id) {
-        appState.chat.conversationId = payload.conversation_id;
+        setActiveConversationId(payload.conversation_id);
     }
     if (payload.command_id) {
         appState.chat.commandId = payload.command_id;
+    }
+    updateConversationSummaries(payload);
+}
+
+function updateConversationSummaries(payload) {
+    const conversationSummaries = readPresentationValue(payload, 'conversation_summaries');
+    if (Array.isArray(conversationSummaries)) {
+        setConversationSummaries(conversationSummaries);
     }
 }
 
@@ -156,6 +186,7 @@ function updateControlState(payload) {
     } else if (providerStatus && typeof providerStatus === 'object' && typeof providerStatus.can_infer === 'boolean') {
         appState.control.chatEnabled = providerStatus.can_infer;
     }
+    updateConversationSummaries(payload);
     applyPresentationState(payload);
 
     if (
@@ -198,7 +229,8 @@ function openChat(commandId, payload) {
     resetDisplayState();
     appState.chat.active = true;
     appState.chat.commandId = commandId;
-    appState.chat.conversationId = payload.conversation_id || null;
+    setActiveConversationId(payload.conversation_id || null);
+    updateConversationSummaries(payload);
     addInitialImageAttachment(payload.initial_image_base64);
 
     appState.chat.composerText = typeof payload.initial_text === 'string' ? payload.initial_text : '';
@@ -209,9 +241,10 @@ function openChat(commandId, payload) {
 
 function syncSession(payload) {
     applyPresentationState(payload, { controlsVisible: true, interactionMode: 'chat' });
-    if (payload.conversation_id) {
-        appState.chat.conversationId = payload.conversation_id;
+    if (payload.conversation_id || payload.conversation_id === null) {
+        setActiveConversationId(payload.conversation_id || null);
     }
+    updateConversationSummaries(payload);
 }
 
 function shouldClearStatusForCommand(commandName) {
@@ -243,6 +276,7 @@ function renderDisplay(payload) {
     }
 
     setDisplayBlocks(blocks, normalizedActions, displayPresentation);
+    announceDisplayBlocks(blocks);
     applyPresentationState(payload, { controlsVisible: true, interactionMode: 'display' });
     setViewMode('display');
     setPendingFocus(displayPresentation.initialFocus);
@@ -271,6 +305,8 @@ function appendChatMessage(payload) {
     messages.forEach(message => {
         replaceMessageById(message);
     });
+
+    messages.forEach(announceAssistantMessage);
 
     const appendedUserMessage = messages.some(message => message?.role === 'user');
     if (appendedUserMessage) {
@@ -389,14 +425,16 @@ function endChatStream(payload) {
 
     const existingMessage = findStreamingMessage(messageId);
     if (!existingMessage) {
-        replaceMessageById({
+        const completedMessage = {
             id: messageId,
             role: 'assistant',
             content: payload.content || [],
             streaming: false,
             streamId,
             streamSequence: finalSequence,
-        });
+        };
+        replaceMessageById(completedMessage);
+        announceAssistantMessage(completedMessage);
         setViewMode('chat', resolveChatFocusTarget(payload));
         return;
     }
@@ -419,6 +457,13 @@ function endChatStream(payload) {
             streamSequence: finalSequence,
             streamAborted: false,
         };
+    });
+
+    announceAssistantMessage({
+        id: messageId,
+        role: existingMessage.role || 'assistant',
+        content: payload.content || existingMessage.content,
+        streaming: false,
     });
 
     setViewMode('chat', resolveChatFocusTarget(payload));

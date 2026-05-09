@@ -9,7 +9,7 @@ from ..context.collectors.page import ExtractionStructureCollector, ExtractionTe
 from ..context.pipeline import ContextPipeline
 from ..observability.reporter import FileMetricsReporter
 from ..providers.provider_proxy import ProviderProxy
-from ..service.chat import ChatCoordinator
+from ..service.chat import ChatCoordinator, ConversationService
 from ..service.llm import ProviderLLMService
 from ..tools import ToolExecutor, ToolRegistry
 from ..use_case.engine import UseCaseEngine
@@ -27,4 +27,5 @@ class PluginServices:
 	tool_executor: ToolExecutor
 	llm_service: ProviderLLMService
 	chat_coordinator: ChatCoordinator
+	conversation_service: ConversationService
 	use_case_engine: UseCaseEngine

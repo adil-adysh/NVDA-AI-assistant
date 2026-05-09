@@ -39,12 +39,21 @@ class SessionProviderStatus(TypedDict, total=False):
 	can_list_models: bool
 
 
+class SessionConversationSummary(TypedDict):
+	id: str
+	title: str
+	preview: str
+	message_count: int
+	updated_at: float
+
+
 class UISessionMetadata(TypedDict, total=False):
 	conversation_id: str
 	provider_state: SessionProviderInfo
 	provider_status: SessionProviderStatus
 	available_providers: list[SessionProviderOption]
 	available_models: list[str]
+	conversation_summaries: list[SessionConversationSummary]
 	localized_strings: dict[str, str]
 	think_enabled: bool
 	chat_enabled: bool
@@ -62,6 +71,7 @@ class UISessionState:
 	provider_status: SessionProviderStatus
 	available_providers: tuple[SessionProviderOption, ...]
 	available_models: tuple[str, ...]
+	conversation_summaries: tuple[SessionConversationSummary, ...]
 	localized_strings: dict[str, str]
 	think_enabled: bool
 	chat_enabled: bool
@@ -77,6 +87,7 @@ class UISessionState:
 			"provider_status": dict(self.provider_status),
 			"available_providers": [dict(option) for option in self.available_providers],
 			"available_models": list(self.available_models),
+			"conversation_summaries": [dict(item) for item in self.conversation_summaries],
 			"localized_strings": dict(self.localized_strings),
 			"think_enabled": self.think_enabled,
 			"chat_enabled": self.chat_enabled,
@@ -111,6 +122,20 @@ def build_localized_strings(translate: Translator) -> dict[str, str]:
 		"status_heading": translate("Status"),
 		# TRANSLATORS: Heading for the chat panel.
 		"chat_heading": translate("Chat"),
+		# TRANSLATORS: Heading for the recent conversations rail in the chat workspace.
+		"conversation_history_heading": translate("Recent conversations"),
+		# TRANSLATORS: Button text for starting a new stored conversation.
+		"new_conversation_button": translate("New conversation"),
+		# TRANSLATORS: Button text for collapsing the conversation history sidebar.
+		"collapse_conversation_sidebar_button": translate("Hide conversations"),
+		# TRANSLATORS: Button text for expanding the conversation history sidebar.
+		"expand_conversation_sidebar_button": translate("Show conversations"),
+		# TRANSLATORS: Label announcing the currently selected conversation in the chat workspace.
+		"current_conversation_label": translate("Current conversation"),
+		# TRANSLATORS: Button text for deleting a stored conversation.
+		"delete_conversation_button": translate("Delete"),
+		# TRANSLATORS: Empty-state text shown when no stored conversations exist yet.
+		"empty_conversations_state": translate("No stored conversations yet."),
 		# TRANSLATORS: Label for the chat composer field.
 		"message_label": translate("Message"),
 		# TRANSLATORS: Subtitle shown for assistant messages.
@@ -229,6 +254,7 @@ def build_session_state(
 	provider_state: ProviderState | None = None,
 	conversation_id: str | None = None,
 	available_models: tuple[str, ...] | list[str] | None = None,
+	conversation_summaries: tuple[SessionConversationSummary, ...] | list[SessionConversationSummary] | None = None,
 	readiness: ProviderReadiness | None = None,
 ) -> UISessionState:
 	active_provider_state = provider_state or get_provider_state()
@@ -253,6 +279,7 @@ def build_session_state(
 			{"id": "openai", "label": translate("OpenAI")},
 		),
 		available_models=resolved_available_models,
+		conversation_summaries=tuple(conversation_summaries or ()),
 		localized_strings=build_localized_strings(translate),
 		think_enabled=get_ollama_think(),
 		chat_enabled=resolved_readiness.can_infer,

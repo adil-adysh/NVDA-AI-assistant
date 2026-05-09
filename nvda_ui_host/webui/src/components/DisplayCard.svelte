@@ -29,7 +29,11 @@
             {#if appState.chat.messages.length === 0}
                 {t('no_chat_messages', 'No chat messages available.')}
             {:else}
-                <div class="chat-transcript">
+                <div
+                    class="chat-transcript"
+                    role="region"
+                    aria-labelledby="content-heading"
+                >
                     {#each appState.chat.messages as message (message.id || `${message.role}-${message.content}`)}
                         <MessageItem {message} />
                     {/each}

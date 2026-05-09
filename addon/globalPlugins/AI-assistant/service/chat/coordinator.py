@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import threading
 from typing import Any
+from uuid import uuid4
 
 from logHandler import log
 
@@ -15,7 +16,8 @@ from ...core.events import ProgressHandler
 from ..llm import ProviderLLMService
 from ...providers.interfaces import ProviderModelInfo
 from ...observability.reporter import MetricsReporter
-from .projector import project_chat_history
+from .projector import project_chat_history, project_chat_history_transport
+from .repository import ConversationRepository, ConversationSummary
 from .session import ConversationSession
 from .transaction import ChatTurnTransaction
 
@@ -26,14 +28,22 @@ class ChatCoordinator(BaseCoordinator):
 		client: ProviderLLMService,
 		metrics_reporter: MetricsReporter | None = None,
 		session_factory: Callable[[], ConversationSession] = ConversationSession,
+		repository: ConversationRepository | None = None,
+		conversation_id_factory: Callable[[], str] | None = None,
 		history_projector: Callable[[list[Message]], list[ChatMessage]] = project_chat_history,
+		history_transport_projector: Callable[[list[Message]], list[dict[str, Any]]] = project_chat_history_transport,
 	) -> None:
 		super().__init__(metrics_reporter)
 		self._llm_service = client
 		self._session = session_factory()
+		self._session_factory = session_factory
 		self._session_lock = threading.RLock()
 		self._session_generation = 0
+		self._repository = repository
+		self._conversation_id_factory = conversation_id_factory or (lambda: str(uuid4()))
+		self._active_conversation_id: str | None = None
 		self._history_projector = history_projector
+		self._history_transport_projector = history_transport_projector
 
 	def send(
 		self,
@@ -87,16 +97,65 @@ class ChatCoordinator(BaseCoordinator):
 		with self._session_lock:
 			return self._history_projector(self._session.snapshot())
 
+	def get_history_transport(self) -> list[dict[str, Any]]:
+		with self._session_lock:
+			return self._history_transport_projector(self._session.snapshot())
+
+	def get_active_conversation_id(self) -> str | None:
+		with self._session_lock:
+			return self._active_conversation_id
+
+	def activate_conversation(
+		self,
+		conversation_id: str | None = None,
+		seed_messages: Sequence[Message] = (),
+	) -> str:
+		with self._session_lock:
+			resolved_conversation_id = conversation_id.strip() if isinstance(conversation_id, str) and conversation_id.strip() else self._conversation_id_factory()
+			previous_conversation_id = self._active_conversation_id
+			previous_messages = self._session.snapshot()
+			if previous_conversation_id and previous_conversation_id != resolved_conversation_id:
+				self._persist_conversation_locked(previous_conversation_id, previous_messages, delete_if_empty=False)
+			self._active_conversation_id = resolved_conversation_id
+			self._session_generation += 1
+			if self._repository is not None and self._repository.exists(resolved_conversation_id):
+				self._session = self._repository.load(resolved_conversation_id)
+			else:
+				self._session = self._session_factory()
+			if seed_messages:
+				self._session.extend(seed_messages)
+			self._persist_locked()
+			return resolved_conversation_id
+
+	def list_conversations(self) -> list[ConversationSummary]:
+		if self._repository is None:
+			return []
+		with self._session_lock:
+			return self._repository.list_summaries()
+
+	def delete_conversation(self, conversation_id: str) -> bool:
+		if self._repository is None:
+			return False
+		with self._session_lock:
+			deleted = self._repository.delete(conversation_id)
+			if deleted and conversation_id == self._active_conversation_id:
+				self._active_conversation_id = None
+				self._session = self._session_factory()
+				self._session_generation += 1
+			return deleted
+
 	def reset(self) -> None:
 		with self._session_lock:
 			self._session.reset()
 			self._session_generation += 1
+			self._persist_locked()
 
 	def seed_history(self, messages: Sequence[Message]) -> None:
 		if not messages:
 			return
 		with self._session_lock:
 			self._session.extend(messages)
+			self._persist_locked()
 
 	def list_models(self) -> tuple[ProviderModelInfo, ...]:
 		return self._llm_service.list_models()
@@ -130,9 +189,30 @@ class ChatCoordinator(BaseCoordinator):
 		with self._session_lock:
 			if generation == self._session_generation:
 				self._session.extend(transaction.committed_messages(turn_result.messages))
+				self._persist_locked()
 			else:
 				log.debug("Discarding stale chat turn after session reset")
 		return turn_result.response
+
+	def _persist_locked(self) -> None:
+		if self._repository is None or not isinstance(self._active_conversation_id, str) or not self._active_conversation_id:
+			return
+		self._persist_conversation_locked(self._active_conversation_id, self._session.snapshot())
+
+	def _persist_conversation_locked(
+		self,
+		conversation_id: str,
+		messages: Sequence[Message],
+		*,
+		delete_if_empty: bool = True,
+	) -> None:
+		if self._repository is None or not conversation_id:
+			return
+		if messages:
+			self._repository.save(conversation_id, messages)
+			return
+		if delete_if_empty:
+			self._repository.delete(conversation_id)
 
 	def _build_user_message(self, text: str | None, image_base64: str | None) -> Message:
 		return build_user_message(text=text, image_base64=image_base64)

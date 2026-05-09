@@ -5,6 +5,7 @@
 
 import os
 import os.path
+import subprocess
 import sys
 from pathlib import Path
 from collections.abc import Iterable
@@ -107,21 +108,38 @@ pythonFiles = expandGlobs(buildVars.pythonSources)
 for file in pythonFiles:
 	env.Depends(addon, file)
 
-# Build and include the Rust UI host executable in the add-on package.
-host_build_script = Path("scripts/build_host.py")
-host_target_path = addonDir / "globalPlugins" / "AI-assistant" / "ui_host" / "nvda_ui_host.exe"
-host_target_path.parent.mkdir(parents=True, exist_ok=True)
+def buildRustArtifacts(target, source, env):
+	build_script = Path("scripts/build.py")
+	command = [sys.executable, str(build_script)]
+	if env["dev"]:
+		command.append("--debug")
+	subprocess.run(command, check=True)
+	Path(str(target[0])).write_text("ok\n", encoding="utf-8")
 
-build_cmd = f'"{sys.executable}" "{host_build_script}"'
-if env["dev"]:
-	build_cmd += " --debug"
 
-host_target = env.Command(
-	str(host_target_path),
-	str(host_build_script),
-	build_cmd,
+rust_build_stamp = Path(".scons-rust-build.stamp")
+rust_build_sources = [
+	Path("scripts/build.py"),
+	Path("nvda_ui_host/Cargo.toml"),
+	Path("nvda_ui_host/Cargo.lock"),
+	Path("nvda_ui_host/package.json"),
+	Path("nvda_ui_host/package-lock.json"),
+	Path("nvda_ui_host/svelte.config.js"),
+	Path("nvda_ui_host/vite.config.js"),
+	Path("memory_engine/Cargo.toml"),
+	Path("memory_engine/pyproject.toml"),
+]
+rust_build_sources.extend(Path("nvda_ui_host/src").glob("**/*.rs"))
+rust_build_sources.extend(Path("nvda_ui_host/webui/src").glob("**/*"))
+rust_build_sources.extend(Path("nvda_ui_host/assets").glob("**/*"))
+rust_build_sources.extend(Path("memory_engine/src").glob("**/*.rs"))
+
+rust_bundle = env.Command(
+	str(rust_build_stamp),
+	[str(path) for path in rust_build_sources if path.exists()],
+	buildRustArtifacts,
 )
-env.Depends(addon, host_target)
+env.Depends(addon, rust_bundle)
 
 # Convert markdown files to html
 # We need at least doc in English and should enable the Help button for the add-on in Add-ons Manager
@@ -168,4 +186,4 @@ env.Depends(manifest, "buildVars.py")
 
 env.Depends(addon, manifest)
 env.Default(addon)
-env.Clean(addon, [".sconsign.dblite", "addon/doc/" + buildVars.baseLanguage + "/"])
+env.Clean(addon, [".sconsign.dblite", str(rust_build_stamp), "addon/doc/" + buildVars.baseLanguage + "/"])
