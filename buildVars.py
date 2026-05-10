@@ -22,7 +22,20 @@ addon_info = AddonInfo(
 	# Add-on description
 	# Translators: Long description to be shown for this add-on on add-on information found in add-on store
 	addon_description=_(
-		"""NVDA AI assistant helps NVDA users by using AI to simplify complex information, summarize content, and provide contextual guidance for tasks that are otherwise hard to access."""
+		"""
+NVDA AI Assistant adds AI-powered summaries, chat, screenshot understanding, and contextual interaction directly into NVDA.
+
+Features include:
+
+* page and document summaries
+* image and screenshot description
+* persistent chat conversations
+* page content and screenshot attachment
+* runtime provider and model switching
+* support for Ollama, OpenAI-compatible APIs, and Gemini
+
+The add-on includes a WebView-based chat interface with streaming responses, conversation history, and contextual workflows designed for NVDA users.
+		"""
 	),
 	# version
 	addon_version="0.9.0",

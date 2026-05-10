@@ -1,105 +1,247 @@
 # NVDA AI Assistant
 
-A practical NVDA add-on that brings AI-driven summaries, chat, screenshot description, and page content interaction into the screen reader workflow.
+A practical AI assistant add-on for NVDA that adds summaries, chat, screenshot understanding, and contextual interaction directly into NVDA.
 
 ## Overview
 
-NVDA AI Assistant helps NVDA users understand web pages, applications, and visual content faster. It keeps you inside NVDA while adding a simple assistant layer for quick actions.
+NVDA AI Assistant helps you work with:
 
-## What it does
+* web pages
+* documents
+* applications
+* screenshots
+* visual interfaces
 
-- Summarizes the current page or active application content, including web browser pages and virtual page views.
-- Describes the current foreground window as an image.
-- Opens an AI chat window for questions and follow-up conversation.
-- Loads active page content into chat for more relevant answers.
-- Attaches screenshots to chat for screen-based interaction.
+without leaving NVDA.
+
+The add-on combines quick actions with a persistent chat workflow, allowing summaries, screenshots, and page content to continue naturally into follow-up conversation.
+
+---
+
+# Features
+
+## Summaries
+
+Summarize:
+
+* web pages
+* virtual buffers
+* documents
+* active application content
+
+Quick actions can continue directly into chat for follow-up interaction.
+
+---
+
+## Images and screenshots
+
+* Describe the current foreground window
+* Attach screenshots directly into chat
+* Upload image files for analysis
+* Continue discussing visual content in conversation
+
+Supported formats:
+
+* PNG
+* JPG / JPEG
+* WEBP
+* GIF
+* BMP
+* SVG
+
+---
+
+## Chat
+
+The WebView-based chat UI supports:
+
+* streaming responses
+* formatted chat output
+* keyboard navigation
+* conversation history
+* persistent conversations
+* conversation sidebar management
+* provider and model selection
+
+You can:
+
+* continue previous chats
+* switch conversations
+* attach screenshots and page context
+* continue the same conversation across different models
+
+---
+
+## Context injection
+
+Attach additional context into an active conversation.
+
+### Page content
+
+Inject:
+
+* page structure
+* accessibility information
+* virtual buffer content
+* active application content
+
+directly into chat.
+
+### Screenshot chat
+
+Capture the current screen and attach it to the active conversation.
+
+---
+
+## Provider support
+
+Supports:
+
+* Ollama
+* OpenAI-compatible APIs
+* Gemini
+
+Features include:
+
+* automatic model discovery
+* local and cloud inference
+* runtime provider switching
+* runtime model switching
+
+Providers and models can be changed directly from the chat interface without restarting the conversation.
+
+---
+
+## Think mode
+
+Some providers and models support optional think mode for extended reasoning workflows.
+
+---
+
+# Quick start
 
 ## Requirements
 
-- NVDA installed and running.
-- One of the following:
-  - Ollama installed locally on Windows and running.
-  - A Gemini API key configured in the AI Assistant settings panel.
-- If you use Ollama, a local model downloaded for inference.
-- If you use Gemini, no local model is required.
+* NVDA installed
+* One configured AI provider:
 
-If you are using Ollama on Windows:
+  * Ollama
+  * OpenAI-compatible API
+  * Gemini
 
-- Install it with `winget install Ollama.Ollama`.
-- List installed models with `ollama ls`.
-- Download a model with `ollama pull gemma4:e4b` or `ollama pull ministral-3:3b`.
-- Start the Ollama service before using the add-on.
+---
 
-## Quick start
+## Using Ollama
 
-1. Install NVDA and enable the AI Assistant add-on.
-2. Install Ollama on Windows with `winget install Ollama.Ollama`, then start the Ollama service; or set a Gemini API key in the AI Assistant settings panel.
-3. Download a local model for Ollama, such as `ollama pull gemma4:e4b` or `ollama pull ministral-3:3b`.
-4. Open the AI Assistant settings panel and choose your provider.
-5. Focus a page or application window in NVDA.
-6. Press NVDA+Shift+A and choose a command.
+Install Ollama:
 
-## How to use it
+```powershell id="55n8ws"
+winget install Ollama.Ollama
+```
 
-- Press NVDA+Shift+A to activate the assistant layer.
-- Then press:
-  - S for summary
-  - I for image description
-  - C for chat
-  - P for page content chat
-  - X for screenshot chat
-  - T to toggle the active provider
-  - H for help
-- In the chat window, type a message and press Send or Ctrl+Enter.
-- Use the chat history button inside the chat window to review prior conversation turns.
+Download a model:
 
-## Configuration
+```powershell id="oaq6xv"
+ollama pull gemma4:e4b
+```
 
-From the AI Assistant settings panel you can:
+or:
 
-- Choose the active provider.
-- Enable or disable streaming.
-- Enable or disable progress announcements.
-- Adjust request timeout and retry behavior.
-- Configure image size, format, and quality.
-- Enable optional think mode when your provider supports it.
+```powershell id="b7xti3"
+ollama pull ministral-3:3b
+```
 
-## Hardware and model guidance
+List installed models:
 
-For local inference, model size and hardware matter. A GPU gives better performance and lets you use larger models, while CPU-only systems work best with smaller models and will be slower.
+```powershell id="d62g3n"
+ollama ls
+```
 
-Recommended model choices:
+---
 
-- `ministral-3:3b` for moderate hardware. It supports completion, vision, and tool-based interactions, making it a solid local choice.
-- `gemma4:e2b` or `gemma4:e4b` for stronger systems with more memory. These models are better at richer chat and screen description, and `gemma4:e4b` also supports thinking-style responses.
-- `llama3.2:1b` for CPU-only inference, with lower output quality and simpler responses.
+# Setup
 
-If you use a GPU, choose a larger model for better results. If you only have a CPU, choose a smaller model and expect simpler responses.
+1. Install the NVDA AI Assistant add-on.
+2. Open the AI Assistant settings panel.
+3. Configure your provider.
+4. Choose a model or endpoint.
+5. Press `NVDA+Shift+A` to start using the assistant.
 
-You can inspect model capabilities from Ollama with:
+---
 
-- `ollama show gemma4:e4b`
-- `ollama show ministral-3:3b`
+# Commands
 
-This helps confirm the model supports the features you need.
+Press:
 
-## Troubleshooting
+```text id="7h19nm"
+NVDA+Shift+A
+```
 
-- If the assistant cannot connect, check your provider settings.
-- If a request fails, NVDA will announce the error and show a message.
-- If a model is missing, download it in Ollama or update your provider configuration.
-- Use the provider toggle from the assistant layer to switch providers quickly.
+Then press:
 
-## Notes
+| Key | Action                      |
+| --- | --------------------------- |
+| `C` | Open chat                   |
+| `S` | Summarize current content   |
+| `I` | Describe current window     |
+| `P` | Attach page content to chat |
+| `X` | Attach screenshot to chat   |
+| `T` | Toggle provider             |
+| `H` | Help                        |
 
-- Page summary works with browser content and virtual page views.
-- The add-on uses the current foreground window to identify the active application.
-- Image description captures the current screen and describes what is shown.
+---
 
-## Open source and contributions
+# Configuration
 
-This project is open source and welcomes issues, suggestions, and contributions. Open an issue or pull request on GitHub to contribute.
+The settings panel allows you to:
 
-## License
+* choose the active provider
+* configure API keys and endpoints
+* enable or disable streaming
+* configure image quality and size
+* adjust timeout behavior
+* enable optional think mode
+
+---
+
+# Recommended local models
+
+| Model            | Usage                                      |
+| ---------------- | ------------------------------------------ |
+| `ministral-3:3b` | General local chat and vision              |
+| `gemma4:e2b`     | Lightweight reasoning                      |
+| `gemma4:e4b`     | Stronger reasoning and image understanding |
+| `llama3.2:1b`    | Lightweight CPU inference                  |
+
+Inspect model details with:
+
+```powershell id="p2owd8"
+ollama show gemma4:e4b
+```
+
+---
+
+# Technical notes
+
+* A dedicated UI host keeps NVDA responsive during AI operations.
+* Chat sessions maintain contextual continuity during interaction.
+
+---
+
+# Troubleshooting
+
+* Verify provider configuration if requests fail.
+* Ensure Ollama is running for local inference.
+* Download required models before use.
+
+---
+
+# Open source and contributions
+
+Issues, suggestions, accessibility feedback, and pull requests are welcome.
+
+---
+
+# License
 
 See `COPYING.txt` for license details.
