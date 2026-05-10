@@ -1,13 +1,13 @@
 name: security-scan
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
       - master
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 jobs:
@@ -79,6 +79,12 @@ jobs:
           name: addon
           path: .
 
+      - name: Rename add-on package
+        run: |
+          $found = Get-ChildItem -Path . -Filter *.nvda-addon -File | Select-Object -First 1
+          if (-not $found) { throw 'No .nvda-addon package was found' }
+          Rename-Item -Path $found.FullName -NewName addon.nvda-addon
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
@@ -93,7 +99,7 @@ jobs:
         with:
           script: |
             const runVirusTotalAnalysis = require('./.github/workflows/virusTotalAnalysis.js');
-            runVirusTotalAnalysis({core}, ["${{ needs.package_addon.outputs.addonFileName }}"]);
+            runVirusTotalAnalysis({core}, ["addon.nvda-addon"]);
 
       - name: Upload VirusTotal results
         if: failure()
