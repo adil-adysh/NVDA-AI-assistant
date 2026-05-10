@@ -10,6 +10,11 @@
 
     let hasConversationHistory = $derived(appState.chat.conversations.length > 0);
 
+    let conversationHistoryHeading = $state('');
+    $effect(() => {
+        conversationHistoryHeading = t('conversation_history_heading', 'Recent conversations');
+    });
+
     function conversationTitle(conversation) {
         const title = typeof conversation?.title === 'string' ? conversation.title.trim() : '';
         return title || t('new_conversation_button', 'New conversation');
@@ -32,7 +37,8 @@
 <aside
     class:collapsed
     class="conversation-rail"
-    aria-label={t('conversation_history_heading', 'Recent conversations')}
+    role="navigation"
+    aria-label={conversationHistoryHeading}
 >
     <div class="conversation-rail-header">
         <div class="conversation-rail-heading">
@@ -48,7 +54,7 @@
                     : t('collapse_conversation_sidebar_button', 'Hide conversations')}
             </button>
             {#if !collapsed}
-                <h3>{t('conversation_history_heading', 'Recent conversations')}</h3>
+                <h3>{conversationHistoryHeading}</h3>
             {/if}
         </div>
         <button type="button" class="conversation-new-button" onclick={startNewConversation}>
@@ -73,13 +79,14 @@
     {:else if !hasConversationHistory}
         <p class="conversation-empty-state">{t('empty_conversations_state', 'No stored conversations yet.')}</p>
     {:else}
-        <div id="conversation-list" class="conversation-list">
+        <ul id="conversation-list" class="conversation-list">
             {#each appState.chat.conversations as conversation (conversation.id)}
-                <div class:active={conversation.id === appState.chat.conversationId} class="conversation-card">
+                <li class:active={conversation.id === appState.chat.conversationId} class="conversation-card">
                     <button
                         type="button"
                         class="conversation-select"
                         aria-pressed={conversation.id === appState.chat.conversationId}
+                        aria-current={conversation.id === appState.chat.conversationId ? 'true' : undefined}
                         onclick={() => openConversation(conversation.id)}
                     >
                         <span class="conversation-title">{conversationTitle(conversation)}</span>
@@ -95,8 +102,8 @@
                     >
                         {t('delete_conversation_button', 'Delete')}
                     </button>
-                </div>
+                </li>
             {/each}
-        </div>
+        </ul>
     {/if}
 </aside>

@@ -42,6 +42,7 @@ export const appState = $state({
         active: false,
         commandId: null,
         conversationId: null,
+        conversationSelectionState: 'none',
         conversations: [],
         messages: [],
         attachments: [],
@@ -115,6 +116,46 @@ export function setCopyBuffers(text = '', markdown = '') {
     appState.copy.markdown = markdown;
 }
 
+export const ConversationSelectionState = {
+    None: 'none',
+    SummariesAvailable: 'summaries_available',
+    SelectedEmpty: 'selected_empty',
+    SelectedLoaded: 'selected_loaded',
+};
+
+function getConversationById(conversationId) {
+    return appState.chat.conversations.find(conversation => conversation.id === conversationId) || null;
+}
+
+function evaluateConversationSelectionState() {
+    const hasConversations = appState.chat.conversations.length > 0;
+    const selectedConversation = typeof appState.chat.conversationId === 'string'
+        ? getConversationById(appState.chat.conversationId)
+        : null;
+
+    if (!hasConversations) {
+        appState.chat.conversationId = null;
+        appState.chat.conversationSelectionState = ConversationSelectionState.None;
+        return;
+    }
+
+    if (!selectedConversation) {
+        appState.chat.conversationId = null;
+        appState.chat.conversationSelectionState = ConversationSelectionState.SummariesAvailable;
+        return;
+    }
+
+    const hasMessages = Array.isArray(appState.chat.messages) && appState.chat.messages.length > 0;
+    appState.chat.conversationSelectionState = hasMessages
+        ? ConversationSelectionState.SelectedLoaded
+        : ConversationSelectionState.SelectedEmpty;
+}
+
+export function setChatMessages(messages = []) {
+    appState.chat.messages = Array.isArray(messages) ? messages : [];
+    evaluateConversationSelectionState();
+}
+
 export function setDisplayBlocks(blocks = [], actions = [], presentation = {}) {
     appState.display.blocks = blocks;
     appState.display.actions = actions;
@@ -138,26 +179,17 @@ export function setConversationSummaries(conversations = []) {
         seenConversationIds.add(conversationId);
         return true;
     });
-    syncActiveConversationSelection();
+    evaluateConversationSelectionState();
 }
 
 export function setActiveConversationId(conversationId = null) {
     const normalizedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
     appState.chat.conversationId = normalizedConversationId || null;
-    syncActiveConversationSelection();
+    evaluateConversationSelectionState();
 }
 
 export function syncActiveConversationSelection() {
-    if (!appState.chat.conversationId) {
-        return;
-    }
-
-    const stillExists = appState.chat.conversations.some(conversation => conversation.id === appState.chat.conversationId);
-    if (stillExists) {
-        return;
-    }
-
-    appState.chat.conversationId = appState.chat.conversations[0]?.id ?? null;
+    evaluateConversationSelectionState();
 }
 
 export function resetDisplayState() {
@@ -172,6 +204,7 @@ export function resetChatState() {
     appState.chat.active = false;
     appState.chat.commandId = null;
     appState.chat.conversationId = null;
+    appState.chat.conversationSelectionState = ConversationSelectionState.None;
     appState.chat.conversations = [];
     appState.chat.messages = [];
     appState.chat.attachments = [];

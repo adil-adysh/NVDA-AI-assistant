@@ -17,6 +17,7 @@
     });
 
     let isChatMode = $derived(appState.view.mode === 'chat');
+    let isSelectedConversationEmpty = $derived(appState.chat.conversationSelectionState === 'selected_empty');
 </script>
 
 <section class="workspace-card content-card" aria-labelledby="content-heading">
@@ -27,12 +28,17 @@
     <div id="content" bind:this={contentElement} role="main" tabindex="-1">
         {#if isChatMode}
             {#if appState.chat.messages.length === 0}
-                {t('no_chat_messages', 'No chat messages available.')}
+                {#if isSelectedConversationEmpty}
+                    {t('selected_conversation_empty', 'This conversation has no messages yet.')}
+                {:else}
+                    {t('no_chat_messages', 'No messages yet. Start the conversation by typing a message below.')}
+                {/if}
             {:else}
                 <div
                     class="chat-transcript"
-                    role="region"
-                    aria-labelledby="content-heading"
+                    role="log"
+                    aria-live="off"
+                    aria-label={t('chat_transcript_label', 'Chat messages')}
                 >
                     {#each appState.chat.messages as message (message.id || `${message.role}-${message.content}`)}
                         <MessageItem {message} />
