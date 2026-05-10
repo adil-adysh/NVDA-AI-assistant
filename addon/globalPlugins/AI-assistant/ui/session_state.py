@@ -181,7 +181,11 @@ def build_localized_strings(translate: Translator) -> dict[str, str]:
 		# TRANSLATORS: Message shown when no display content exists.
 		"no_content": translate("No content available."),
 		# TRANSLATORS: Message shown when the chat transcript is empty.
-		"no_chat_messages": translate("No chat messages available."),
+		"no_chat_messages": translate("No messages yet. Start the conversation by typing a message below."),
+		# TRANSLATORS: Message shown when the selected conversation contains no messages.
+		"selected_conversation_empty": translate("This conversation has no messages yet."),
+		# TRANSLATORS: Accessible label for the chat transcript live region.
+		"chat_transcript_label": translate("Chat messages"),
 		# TRANSLATORS: Label shown for a collapsed thinking block.
 		"thinking_label": translate("Thinking"),
 		# TRANSLATORS: Label for thinking trace content when present in a response.
