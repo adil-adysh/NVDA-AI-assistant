@@ -26,8 +26,7 @@ Use this skill when a host-backed UI string should be translator-owned and inclu
 - `addon/globalPlugins/AI-assistant/ui/session_state.py`
 - `buildVars.py`
 - `site_scons/site_tools/gettexttool/__init__.py`
-- `nvda_ui_host/webui/src/lib/state.svelte.js`
-- `nvda_ui_host/webui/src/lib/defaults.js`
+- `nvda_ui_host/webui/src/lib/state.svelte.ts`
 - `docs/ui-host-protocol.md`
 
 ## Workflow

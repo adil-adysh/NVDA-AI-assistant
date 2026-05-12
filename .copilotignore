@@ -1,0 +1,37 @@
+# Token reduction: exclude generated/built/lock files from Copilot context.
+# These files are never the target of edits and only consume tokens.
+
+# Built WebView bundles (minified JS, compiled CSS)
+nvda_ui_host/assets/host.js
+nvda_ui_host/assets/host.css
+addon/globalPlugins/AI-assistant/ui_host/assets/host.js
+addon/globalPlugins/AI-assistant/ui_host/assets/host.css
+
+# Package lock files (large JSON dependency trees)
+nvda_ui_host/package-lock.json
+
+# Rust build artifacts
+nvda_ui_host/target/
+memory_engine/target/
+
+# Node modules
+nvda_ui_host/node_modules/
+
+# Compiled Python / caches
+addon/globalPlugins/AI-assistant/lib/memory_engine.pyd
+**/__pycache__/
+**/*.pyc
+
+# Generated addon packages
+*.nvda-addon
+
+# Logs and databases
+*.log
+*.db
+
+# SCons artifacts
+.scons-rust-build.stamp
+.sconsign.dblite
+
+# Versioned artifact JSON
+/[0-9]*.[0-9]*.[0-9]*.json
