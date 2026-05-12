@@ -32,7 +32,7 @@ Use this skill when a request is unclear about which layer should own the behavi
 - Provider-specific adapters belong in `providers/`.
 - Native windowing, WebView, and pipes belong in `nvda_ui_host/src/`.
 - Browser rendering belongs in `nvda_ui_host/webui/src/`.
-- New commands should usually start from Python intent, then flow through `host_protocol.py`, `protocol.rs`, and `bridge.js`.
+- New commands should usually start from Python intent, then flow through `host_protocol.py`, `protocol.rs`, and `bridge.ts` (registered in `COMMANDS` table, with handler in `commands/`).
 - New UI-originated events should usually start from Web UI emission, then flow through `webview.rs`, the event pipe, and `host_renderer.py`.
 
 ## Expected Output

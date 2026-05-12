@@ -78,9 +78,42 @@ The IPC boundary must not own use-case behavior, provider behavior, or renderer-
 
 ### Web UI side
 
-- `nvda_ui_host/webui/src/lib/state.svelte.js` owns local presentation state only.
-- `nvda_ui_host/webui/src/lib/bridge.js` applies protocol commands through shared helpers and handler registries.
-- `nvda_ui_host/webui/src/components/` render generic content, controls, and chat primitives without provider-specific logic.
+The Web UI is a TypeScript + Svelte 5 application compiled by Vite into a single `host.js` bundle embedded in the Rust host binary. It follows a clean architecture with clear module boundaries:
+
+**Entrypoint and dispatch:**
+
+- `nvda_ui_host/webui/src/lib/bridge.ts` is the single inbound entrypoint. It validates the protocol envelope (schema/version), merges localized strings, conditionally extracts control state only for `CONTROL_COMMANDS` (`open_chat`, `sync_session`, `render_display`), and dispatches to typed command handlers via a `COMMANDS` table.
+
+**Command handlers (`webui/src/lib/commands/`):**
+
+- Each command (`open-chat`, `chat-history`, `chat-streaming`, `render-display`, `sync-session`, `error-progress-close`) is a pure function receiving `(commandId, payload)`.
+- `_shared.ts` provides shared helpers: `applyPresentationState`, `updateChatEnvelope`, `reportUiApplied`, `reportUiFailure`.
+- `_events.ts` owns the thin transport wrapper `emitUiEvent` for sending events back to the Rust host.
+
+**Operations (`webui/src/lib/operations/`):**
+
+- `control-ops.ts` owns `updateControlState`, `readPresentationValue`, and `getMetadata` — extracting providers, models, think mode, and presentation state from payload metadata.
+- `view-ops.ts` owns view lifecycle: conversation selection state evaluation, reset/clear, and summary deduplication.
+
+**State management:**
+
+- `state.svelte.ts` owns the reactive `appState` object (Svelte 5 `$state`) and simple setters. It does NOT own transcript mutations or control extraction.
+- `transcript.svelte.ts` owns the `Transcript` class with a `$state`-backed `_messages` array for inherent reactivity. Components access messages via `appState.chat.transcript.messages` directly.
+
+**Protocol types:**
+
+- `protocol-types.ts` is the single source of truth for WebView-side TypeScript payload types, matching `nvda_ui_host/src/protocol.rs`.
+
+**Supporting modules:**
+
+- `content.ts` — HTML sanitization, content block normalization, text/markdown extraction.
+- `actions.ts` — user-initiated actions (copy, submit, provider/model selection, focus).
+- `attachments.ts` — file attachment loading and management.
+- `shortcuts.ts` — keyboard shortcut registration.
+
+**Components:**
+
+- `webui/src/components/` renders generic content, controls, and chat primitives without provider-specific logic.
 
 ## IPC model
 
@@ -335,8 +368,9 @@ For that reason, the EXE and pipe architecture should be designed around chat, r
 1. document the command in `docs/ui-host-protocol.md`
 2. update the Python producer such as the presenter, view model, or adapter
 3. update Rust command parsing or dispatch in `nvda_ui_host/src/protocol.rs` and `nvda_ui_host/src/app.rs`
-4. update Web UI application in `nvda_ui_host/webui/src/lib/bridge.js`
-5. validate producer and consumer sides together
+4. update Web UI command handler in `nvda_ui_host/webui/src/lib/commands/` (add a new handler module and register it in `bridge.ts` `COMMANDS` table)
+5. update protocol types in `nvda_ui_host/webui/src/lib/protocol-types.ts`
+6. validate producer and consumer sides together
 
 ### Adding a UI-originated event
 

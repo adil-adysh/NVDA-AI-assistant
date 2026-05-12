@@ -1,57 +1,35 @@
 # GitHub Copilot Instructions — NVDA AI Assistant
 
-This repository is a layered NVDA add-on plus an external Rust UI host.
-
-Copilot must generate changes that:
-- respect the Python add-on, Rust host, and WebView boundary
-- route feature work through the existing abstractions instead of bypassing them
-- keep NVDA responsive by avoiding blocking work on the main thread
+Layered NVDA add-on + external Rust UI host + Svelte 5 WebView.
 
 ## System Model
 
-Primary application flow:
+```
+NVDA → GlobalPlugin → UseCaseEngine → ContextPipeline → LLMService → Provider
+                    → Result → Presenter → NVDA UI
 
-NVDA → GlobalPlugin → AIAssistantApplication → UseCaseEngine  
-→ ContextPipeline → LLMService → ProviderProxy → Provider  
-→ Result → Presenter → NVDA UI
-
-Host-backed UI flow:
-
-Python add-on → UI intent / host protocol → named-pipe IPC → Rust host  
-→ WebView / Svelte UI → typed UI event → Python add-on
-
-Never bypass those flows with direct provider calls, ad-hoc prompt assembly, or host-specific business logic in the wrong layer.
+Python add-on → host protocol → named-pipe IPC → Rust host → WebView / Svelte UI
+                                                              → UI event → Python
+```
 
 ## Layer Rules
 
-### Python add-on
+Layer-specific rules live in `.github/instructions/` (loaded via `applyTo` patterns):
+- `python-addon.instructions.md` — applies when editing `addon/.../**.py`
+- `rust-host.instructions.md` — applies when editing `nvda_ui_host/src/**/*.rs`
+- `webui.instructions.md` — applies when editing `nvda_ui_host/webui/src/**/*`
 
-- `plugin/` owns NVDA entrypoints, gestures, lifecycle, and background task scheduling.
-- `use_case/` owns feature orchestration and must go through `UseCaseEngine`.
-- `context/` owns structured context collection and must produce typed context instead of raw prompt strings.
-- `service/` owns model interaction, streaming, tool execution, and chat coordination.
-- `providers/` owns provider-specific implementation details behind `ProviderProxy`.
-- `ui/` and `ui_host/` own rendering contracts and adapters, not business logic.
-- `ui/intent.py` is the source of truth for host presentation intent such as `interaction_mode`, `attention_policy`, and `focus_target`.
-- `plugin/presenter.py` decides result-mode behavior such as `result_action_only` and generic follow-up actions like `Open Chat`.
-- `ui/adapter.py` should remain a coordinator; detailed stream projection or payload shaping should move into helpers when it grows.
+### Cross-cutting rules (all layers)
 
-### Rust host
-
-- `nvda_ui_host/src/protocol.rs` is the protocol source of truth.
-- `ipc.rs` owns transport only.
-- `app.rs` validates incoming commands and normalizes them for the UI thread.
-- `window.rs` and `webview.rs` own native window and WebView lifecycle.
-- `app.rs` owns command-to-activation-policy mapping.
-- `window.rs` owns foreground, focus, hide, and close behavior.
-
-### Web UI
-
-- `nvda_ui_host/webui/src/` renders generic host intents.
-- Keep provider logic, use-case branching, and NVDA behavior out of the browser layer.
-- Prefer typed protocol-driven UI state over hidden browser-only behavior.
-- `webui/src/lib/bridge.js` should use shared helpers or handler registries rather than repeated payload branches.
-- `webui/src/lib/state.svelte.js` owns local presentation state only.
+- Python owns: use-case orchestration, prompt logic, provider selection, conversation state, UI intent.
+- Rust owns: host process lifecycle, native window, WebView lifecycle, UI thread dispatch.
+- WebView owns: rendering generic host intents, emitting typed UI events.
+- IPC owns: framing, correlation IDs, acks/errors, typed command/event delivery.
+- Access providers through `LLMService` + `ProviderProxy`, never directly.
+- Keep host commands generic and protocol-backed.
+- Express UI behavior through protocol metadata (`interaction_mode`, `controls_visible`, `attention_policy`, `focus_target`).
+- Streaming updates must not change focus. Final answers may request foreground.
+- One-shot results use `result_action_only` views with generic result actions.
 
 ## Required Patterns
 
@@ -71,8 +49,9 @@ When adding a host command:
 1. document it in `docs/ui-host-protocol.md`
 2. update the Python producer such as `presenter.py`, `view_models.py`, or `adapter.py`
 3. update Rust parsing and dispatch in `nvda_ui_host/src/protocol.rs` and `nvda_ui_host/src/app.rs`
-4. update Web UI application in `nvda_ui_host/webui/src/lib/bridge.js`
-5. validate both the producer and consumer sides
+4. update Web UI command handler in `nvda_ui_host/webui/src/lib/commands/` (add a new handler module and register it in `bridge.ts` `COMMANDS` table)
+5. update protocol types in `nvda_ui_host/webui/src/lib/protocol-types.ts`
+6. validate both the producer and consumer sides
 
 When adding a UI-originated event:
 
@@ -91,6 +70,10 @@ When adding a UI-originated event:
 - Do not mix UI rendering concerns with business logic.
 - Do not introduce parallel abstractions when an existing `UseCase`, `ContextPipeline`, presenter, or host protocol type already fits.
 - Do not implement new result behavior by branching on use-case id in the Web UI when presentation intent metadata can express it.
+- Do not add new state properties directly on `appState.chat` for message data — use `appState.chat.transcript` (the `Transcript` instance).
+- Do not import `bumpChatRenderVersion` — it no longer exists. Auto-scroll derives from `appState.chat.transcript.count`.
+- Do not call `updateControlState` from individual command handlers — it is called centrally in `bridge.ts` only for `CONTROL_COMMANDS`.
+- Do not emit `ui_applied` manually from command handlers — use `reportUiApplied(commandId)` from `_shared.ts`.
 
 ## Validation Defaults
 
@@ -98,7 +81,7 @@ Match validation to the slice you changed:
 
 - Python add-on changes: `python -m ruff check .` and targeted type or runtime checks when available.
 - Rust host changes: `cargo check --manifest-path nvda_ui_host/Cargo.toml`.
-- Web UI changes: `npm --prefix nvda_ui_host run build:webui`.
+- Web UI changes: `npm --prefix nvda_ui_host run build:webui` (TypeScript + Vite build).
 - Cross-boundary protocol changes: validate both Python and Rust/Web UI sides.
 
 ## Supporting Docs

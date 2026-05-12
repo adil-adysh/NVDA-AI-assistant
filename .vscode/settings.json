@@ -12,5 +12,19 @@
         "../nvda/source",
         "../nvda/miscDeps/python"
     ],
-    "python.defaultInterpreterPath": "${workspaceFolder}/../nvda/.venv/scripts/python.exe"
+    "python.defaultInterpreterPath": "${workspaceFolder}/../nvda/.venv/scripts/python.exe",
+    "search.exclude": {
+        "**/node_modules": true,
+        "**/target": true,
+        "**/__pycache__": true,
+        "**/*.nvda-addon": true,
+        "nvda_ui_host/assets/host.js": true,
+        "nvda_ui_host/assets/host.css": true,
+        "addon/globalPlugins/AI-assistant/ui_host/assets": true
+    },
+    "files.watcherExclude": {
+        "**/target/**": true,
+        "**/node_modules/**": true,
+        "**/__pycache__/**": true
+    }
 }

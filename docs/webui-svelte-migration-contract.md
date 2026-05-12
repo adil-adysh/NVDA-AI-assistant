@@ -26,11 +26,15 @@ The migration must preserve behavior described by these existing sources:
 - `nvda_ui_host/src/protocol.rs`
 - `nvda_ui_host/src/webview.rs`
 - `nvda_ui_host/webui/src/App.svelte`
-- `nvda_ui_host/webui/src/lib/bridge.js`
-- `nvda_ui_host/webui/src/lib/actions.js`
-- `nvda_ui_host/webui/src/lib/content.js`
-- `nvda_ui_host/webui/src/lib/attachments.js`
-- `nvda_ui_host/webui/src/lib/defaults.js`
+- `nvda_ui_host/webui/src/lib/bridge.ts`
+- `nvda_ui_host/webui/src/lib/commands/`
+- `nvda_ui_host/webui/src/lib/operations/`
+- `nvda_ui_host/webui/src/lib/state.svelte.ts`
+- `nvda_ui_host/webui/src/lib/transcript.svelte.ts`
+- `nvda_ui_host/webui/src/lib/protocol-types.ts`
+- `nvda_ui_host/webui/src/lib/actions.ts`
+- `nvda_ui_host/webui/src/lib/content.ts`
+- `nvda_ui_host/webui/src/lib/attachments.ts`
 - `addon/globalPlugins/AI-assistant/ui/host_protocol.py`
 - `addon/globalPlugins/AI-assistant/ui/host_renderer.py`
 
@@ -380,7 +384,7 @@ The Svelte rewrite must preserve the existing localization model:
 - localized strings may arrive in `payload.localized_strings` or `payload.metadata.localized_strings`
 - incoming localized strings merge onto existing defaults rather than replacing the object wholesale
 
-At minimum, the rewrite must preserve all keys currently present in `nvda_ui_host/webui/src/lib/defaults.js`.
+At minimum, the rewrite must preserve all keys currently present in the `localizedStrings` initialization in `nvda_ui_host/webui/src/lib/state.svelte.ts` (the empty `Record<string, string>` is seeded by Python `localized_strings`).
 
 ## Keyboard and focus contract
 

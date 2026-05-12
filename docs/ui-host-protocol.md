@@ -406,5 +406,5 @@ Rust should treat this as the point where the browser UI is ready for queued hos
 Current implementation notes:
 
 - Python currently emits presentation intent through metadata in most flows
-- the Web UI reads payload and metadata values through shared helpers in `webui/src/lib/bridge.js`
+- the Web UI reads payload and metadata values through `readPresentationValue` in `webui/src/lib/operations/control-ops.ts`, dispatched from `webui/src/lib/bridge.ts`
 - Rust forwards Web UI event envelopes generically from `webview.rs` to the event pipe, and Python validates and dispatches the event names it consumes
