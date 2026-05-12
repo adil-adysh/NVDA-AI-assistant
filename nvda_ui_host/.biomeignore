@@ -1,0 +1,6 @@
+# Ignore node modules and build artifacts
+node_modules/
+.svelte-kit/
+build/
+dist/
+.git/

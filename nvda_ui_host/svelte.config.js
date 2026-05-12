@@ -1,7 +1,7 @@
 const config = {
-    compilerOptions: {
-        dev: false,
-    },
+	compilerOptions: {
+		dev: false,
+	},
 };
 
 export default config;

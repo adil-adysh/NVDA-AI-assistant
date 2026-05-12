@@ -1,6 +1,6 @@
 <script>
-    import { handleFileSelection } from '../lib/attachments.js';
     import { focusChatComposer, submitChatMessage } from '../lib/actions.js';
+    import { handleFileSelection } from '../lib/attachments.js';
     import { appState, t } from '../lib/state.svelte.js';
     import AttachmentStrip from './AttachmentStrip.svelte';
 
