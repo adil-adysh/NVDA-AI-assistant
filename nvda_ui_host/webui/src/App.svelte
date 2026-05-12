@@ -1,5 +1,12 @@
 <script>
     import { onMount } from 'svelte';
+    import AccessibilityAnnouncer from './components/AccessibilityAnnouncer.svelte';
+    import ChatComposer from './components/ChatComposer.svelte';
+    import ChatPanel from './components/ChatPanel.svelte';
+    import ControlPanel from './components/ControlPanel.svelte';
+    import DisplayCard from './components/DisplayCard.svelte';
+    import GlobalToolbar from './components/GlobalToolbar.svelte';
+    import StatusCard from './components/StatusCard.svelte';
     import {
         clearDisplayedContent,
         copyCurrentMarkdown,
@@ -11,13 +18,6 @@
     } from './lib/actions.js';
     import { initializeWebViewBridge } from './lib/bridge.js';
     import { appState, t } from './lib/state.svelte.js';
-    import AccessibilityAnnouncer from './components/AccessibilityAnnouncer.svelte';
-    import ChatComposer from './components/ChatComposer.svelte';
-    import ChatPanel from './components/ChatPanel.svelte';
-    import ControlPanel from './components/ControlPanel.svelte';
-    import DisplayCard from './components/DisplayCard.svelte';
-    import GlobalToolbar from './components/GlobalToolbar.svelte';
-    import StatusCard from './components/StatusCard.svelte';
 
     let statusElement = $state(null);
     let contentElement = $state(null);

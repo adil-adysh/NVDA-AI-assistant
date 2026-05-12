@@ -1,0 +1,98 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
+
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+
+	"files": {
+		"includes": [
+			"src/**",
+			"webui/src/**",
+			"package.json",
+			"vite.config.js",
+			"svelte.config.js",
+			"*.{js,ts,json,svelte,css}",
+			"*.config.{js,ts}",
+
+			"!**/node_modules",
+			"!**/.git",
+			"!**/.svelte-kit",
+			"!**/build",
+			"!**/dist"
+		]
+	},
+
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab"
+	},
+
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"recommended": true,
+			"a11y": "on",
+
+			"style": {
+				"useConst": "off"
+			}
+		}
+	},
+
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double"
+		},
+		"parser": {
+			"jsxEverywhere": false
+		}
+	},
+
+	"css": {
+		"parser": {
+			"cssModules": true
+		}
+	},
+
+	"html": {
+		"experimentalFullSupportEnabled": true
+	},
+
+	"assist": {
+		"enabled": true,
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	},
+
+	"overrides": [
+		{
+			"includes": ["**/*.svelte"],
+			"linter": {
+				"rules": {
+					"style": {
+						"useConst": "off"
+					},
+					"correctness": {
+						"noUnusedVariables": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["**/*.test.ts", "**/*.spec.ts"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noExplicitAny": "off"
+					}
+				}
+			}
+		}
+	]
+}
