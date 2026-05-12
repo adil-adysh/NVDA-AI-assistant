@@ -1,6 +1,6 @@
 <script>
-    import { sanitizeHtml } from '../lib/content.js';
-    import { t } from '../lib/state.svelte.js';
+    import { sanitizeHtml } from '../lib/content';
+    import { t } from '../lib/state.svelte';
 
     let { block } = $props();
     let sanitizedHtml = $derived(block?.type === 'html' ? sanitizeHtml(block.html || '') : '');

@@ -1,7 +1,7 @@
 <script>
-    import { copyMessageMarkdown, copyMessageTable, copyMessageText } from '../lib/actions.js';
-    import { formatRoleLabel, hasRenderedTables, normalizeContentBlocks } from '../lib/content.js';
-    import { t } from '../lib/state.svelte.js';
+    import { copyMessageMarkdown, copyMessageTable, copyMessageText } from '../lib/actions';
+    import { formatRoleLabel, hasRenderedTables, normalizeContentBlocks } from '../lib/content';
+    import { t } from '../lib/state.svelte';
     import ContentBlock from './ContentBlock.svelte';
 
     let { message } = $props();

@@ -1,5 +1,5 @@
 <script>
-    import { appState } from '../lib/state.svelte.js';
+    import { appState } from '../lib/state.svelte';
 </script>
 
 <div class="sr-only">

@@ -1,6 +1,6 @@
 <script>
-    import { clearDisplayedContent, copyCurrentMarkdown, copyCurrentText, requestCloseHost } from '../lib/actions.js';
-    import { appState, t } from '../lib/state.svelte.js';
+    import { clearDisplayedContent, copyCurrentMarkdown, copyCurrentText, requestCloseHost } from '../lib/actions';
+    import { appState, t } from '../lib/state.svelte';
 
     let isChatMode = $derived(appState.view.mode === 'chat');
     let toolbarActions = $derived(new Set(appState.display.toolbarActions));

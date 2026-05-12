@@ -285,7 +285,6 @@ fn to_wide(s: &str) -> Vec<u16> {
 }
 
 fn handle_js_event(message: &str, _hwnd: HWND) -> Result<()> {
-    logger::debug(&format!("WebView JS event received: {}", message));
     let payload: Value = match serde_json::from_str(message) {
         Ok(value) => value,
         Err(err) => {
@@ -293,6 +292,20 @@ fn handle_js_event(message: &str, _hwnd: HWND) -> Result<()> {
             return Ok(());
         }
     };
+
+    // Forward JS console.log/warn/error to the Rust log file
+    let msg_type = payload.get("type").and_then(Value::as_str);
+    if msg_type == Some("log") {
+        let level = payload.get("level").and_then(Value::as_str).unwrap_or("log");
+        let js_message = payload.get("message").and_then(Value::as_str).unwrap_or("");
+        let line = format!("[WEBUI] {}", js_message);
+        match level {
+            "error" => logger::error(&line),
+            "warn" => logger::warn(&line),
+            _ => logger::info(&line),
+        }
+        return Ok(());
+    }
 
     let schema = payload.get("schema").and_then(Value::as_str);
     let message_type = payload.get("type").and_then(Value::as_str);
@@ -592,6 +605,43 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
                                     window.__sendHostEvent = payload => {
                                         window.chrome.webview.postMessage(JSON.stringify(payload));
                                     };
+                                    // Listen for incoming host commands sent via PostWebMessageAsString.
+                                    // The bridge also registers its own listener, but this one runs early
+                                    // (before page scripts) so no message is ever dropped.
+                                    window.chrome.webview.addEventListener('message', function(event) {
+                                        if (typeof event.data === 'string' && event.data.length > 0) {
+                                            if (window.__receiveHostCommand) {
+                                                window.__receiveHostCommand(event.data);
+                                            }
+                                        }
+                                    });
+                                    (function() {
+                                        var _orig = {
+                                            log: console.log.bind(console),
+                                            warn: console.warn.bind(console),
+                                            error: console.error.bind(console)
+                                        };
+                                        function forward(level, args) {
+                                            try {
+                                                var msg = Array.from(args).map(function(a) {
+                                                    if (a instanceof Error) return a.message + (a.stack ? '\n' + a.stack : '');
+                                                    if (typeof a === 'object') {
+                                                        try { return JSON.stringify(a); } catch(_) { return String(a); }
+                                                    }
+                                                    return String(a);
+                                                }).join(' ');
+                                                window.chrome.webview.postMessage(JSON.stringify({
+                                                    type: 'log',
+                                                    level: level,
+                                                    message: msg
+                                                }));
+                                            } catch(_) {}
+                                            _orig[level].apply(console, args);
+                                        }
+                                        console.log = function() { forward('log', arguments); };
+                                        console.warn = function() { forward('warn', arguments); };
+                                        console.error = function() { forward('error', arguments); };
+                                    })();
                                 "#),
                                 &AddScriptToExecuteOnDocumentCreatedCompletedHandler::create(
                                     Box::new(move |_hr: Result<()>, _script: String| {
@@ -637,6 +687,10 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
                             &NavigationCompletedEventHandler::create(Box::new(move |_sender: Option<ICoreWebView2>, _args: Option<ICoreWebView2NavigationCompletedEventArgs>| {
                                 logger::debug("Navigation completed");
                                 let _ = focus_webview();
+                                // Safety net: if the web_ui_ready event arrived before
+                                // this callback fired (or was missed), try to transition
+                                // to Ready so queued commands are flushed.
+                                maybe_transition_to_ready();
                                 Ok(())
                             })),
                             &mut nav_token,

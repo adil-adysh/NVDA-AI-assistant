@@ -11,7 +11,7 @@ export default defineConfig({
 		emptyOutDir: false,
 		cssCodeSplit: false,
 		lib: {
-			entry: path.resolve(__dirname, "webui/src/main.js"),
+			entry: path.resolve(__dirname, "webui/src/main.ts"),
 			formats: ["iife"],
 			name: "NvdaUiHostWebUi",
 			fileName: () => "host.js",

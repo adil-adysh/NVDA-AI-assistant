@@ -1,5 +1,5 @@
 <script>
-    import { appState, t } from '../lib/state.svelte.js';
+    import { appState, t } from '../lib/state.svelte';
 
     let { registerStatus = () => {} } = $props();
     let statusElement = $state(null);
