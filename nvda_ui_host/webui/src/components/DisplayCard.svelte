@@ -1,6 +1,6 @@
 <script>
-    import { invokeResultAction } from '../lib/actions.js';
-    import { appState, t } from '../lib/state.svelte.js';
+    import { invokeResultAction } from '../lib/actions';
+    import { appState, t } from '../lib/state.svelte';
     import ContentBlock from './ContentBlock.svelte';
     import MessageItem from './MessageItem.svelte';
 
@@ -18,6 +18,12 @@
 
     let isChatMode = $derived(appState.view.mode === 'chat');
     let isSelectedConversationEmpty = $derived(appState.chat.conversationSelectionState === 'selected_empty');
+
+    $effect(() => {
+        if (isChatMode) {
+            console.log(`[DisplayCard] chat mode - messages: ${appState.chat.transcript.messages.length}, transcript count: ${appState.chat.transcript.count}`);
+        }
+    });
 </script>
 
 <section class="workspace-card content-card" aria-labelledby="content-heading">
@@ -27,7 +33,7 @@
 
     <div id="content" bind:this={contentElement} role="main" tabindex="-1">
         {#if isChatMode}
-            {#if appState.chat.messages.length === 0}
+            {#if appState.chat.transcript.messages.length === 0}
                 {#if isSelectedConversationEmpty}
                     {t('selected_conversation_empty', 'This conversation has no messages yet.')}
                 {:else}
@@ -40,7 +46,7 @@
                     aria-live="off"
                     aria-label={t('chat_transcript_label', 'Chat messages')}
                 >
-                    {#each appState.chat.messages as message (message.id || `${message.role}-${message.content}`)}
+                    {#each appState.chat.transcript.messages as message (message.id || `${message.role}-${message.content}`)}
                         <MessageItem {message} />
                     {/each}
                 </div>

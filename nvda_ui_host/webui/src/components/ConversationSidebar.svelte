@@ -1,6 +1,6 @@
 <script>
-    import { deleteConversation, openConversation, startNewConversation } from '../lib/actions.js';
-    import { appState, t } from '../lib/state.svelte.js';
+    import { deleteConversation, openConversation, startNewConversation } from '../lib/actions';
+    import { appState, t } from '../lib/state.svelte';
 
     let { collapsed = false, onToggle = () => {} } = $props();
 

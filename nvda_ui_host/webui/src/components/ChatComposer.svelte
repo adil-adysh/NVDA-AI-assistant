@@ -1,7 +1,7 @@
 <script>
-    import { focusChatComposer, submitChatMessage } from '../lib/actions.js';
-    import { handleFileSelection } from '../lib/attachments.js';
-    import { appState, t } from '../lib/state.svelte.js';
+    import { focusChatComposer, submitChatMessage } from '../lib/actions';
+    import { handleFileSelection } from '../lib/attachments';
+    import { appState, t } from '../lib/state.svelte';
     import AttachmentStrip from './AttachmentStrip.svelte';
 
     let { registerComposer = () => {}, registerFileInput = () => {} } = $props();

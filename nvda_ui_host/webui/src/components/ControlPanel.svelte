@@ -1,6 +1,6 @@
 <script>
-    import { submitModelSelection, submitProviderSelection, submitThinkModeToggle } from '../lib/actions.js';
-    import { appState, t } from '../lib/state.svelte.js';
+    import { submitModelSelection, submitProviderSelection, submitThinkModeToggle } from '../lib/actions';
+    import { appState, t } from '../lib/state.svelte';
 
     const DEFERRED_COMMIT_KEYS = new Set(['ArrowDown', 'ArrowUp', 'Home', 'End', 'PageDown', 'PageUp']);
 

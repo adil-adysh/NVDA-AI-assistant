@@ -1,0 +1,17 @@
+{
+	"compilerOptions": {
+		"target": "ES2020",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"strict": true,
+		"noEmit": true,
+		"isolatedModules": true,
+		"skipLibCheck": true,
+		"allowImportingTsExtensions": true,
+		"verbatimModuleSyntax": true,
+		"lib": ["ES2020", "DOM", "DOM.Iterable"],
+		"types": ["svelte"]
+	},
+	"include": ["webui/src/**/*.ts", "webui/src/**/*.svelte"],
+	"exclude": ["node_modules", "assets"]
+}

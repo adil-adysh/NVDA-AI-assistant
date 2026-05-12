@@ -1,6 +1,6 @@
 <script>
-    import { removeAttachment } from '../lib/attachments.js';
-    import { appState, t } from '../lib/state.svelte.js';
+    import { removeAttachment } from '../lib/attachments';
+    import { appState, t } from '../lib/state.svelte';
 </script>
 
 {#if appState.chat.attachments.length > 0}
