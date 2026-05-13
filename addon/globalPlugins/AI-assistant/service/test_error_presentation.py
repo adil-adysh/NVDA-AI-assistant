@@ -39,6 +39,10 @@ interfaces_module = _load_module(
 	f"{PACKAGE_NAME}.providers.interfaces",
 	ROOT_DIR / "providers" / "interfaces.py",
 )
+error_mapping_module = _load_module(
+	f"{PACKAGE_NAME}.providers.error_mapping",
+	ROOT_DIR / "providers" / "error_mapping.py",
+)
 error_presentation_module = _load_module(
 	f"{PACKAGE_NAME}.service.error_presentation",
 	ROOT_DIR / "service" / "error_presentation.py",
@@ -48,6 +52,7 @@ LLMProviderError = interfaces_module.LLMProviderError
 MissingCredentialsError = interfaces_module.MissingCredentialsError
 UnsupportedModelError = interfaces_module.UnsupportedModelError
 present_error = error_presentation_module.present_error
+suggest_for_status = error_mapping_module.suggest_for_status
 
 
 class ErrorPresentationTests(unittest.TestCase):
@@ -76,6 +81,38 @@ class ErrorPresentationTests(unittest.TestCase):
 		self.assertEqual(presentation.title, "Internal error")
 		self.assertEqual(presentation.message, "Something went wrong inside the add-on. Please try again.")
 		self.assertTrue(presentation.is_internal)
+
+	def test_rate_limit_mapped_to_actionable(self) -> None:
+		suggestion = suggest_for_status(429)
+		self.assertEqual(suggestion.summary, "Rate limit exceeded")
+		self.assertTrue(suggestion.actionable)
+
+	def test_server_error_mapped_to_actionable(self) -> None:
+		suggestion = suggest_for_status(500)
+		self.assertEqual(suggestion.summary, "Server error")
+		self.assertTrue(suggestion.actionable)
+
+	def test_timeout_error_mapped_correctly(self) -> None:
+		suggestion = suggest_for_status(504)
+		self.assertEqual(suggestion.summary, "Request timed out")
+		self.assertTrue(suggestion.actionable)
+
+	def test_unknown_status_code_falls_back_gracefully(self) -> None:
+		suggestion = suggest_for_status(418)
+		self.assertEqual(suggestion.summary, "Provider request failed")
+		self.assertTrue(suggestion.actionable)
+
+	def test_none_status_falls_back_gracefully(self) -> None:
+		suggestion = suggest_for_status(None, fallback_detail="Custom error detail")
+		self.assertEqual(suggestion.summary, "Provider request failed")
+		self.assertIn("Custom error detail", suggestion.detail)
+
+	def test_llm_provider_error_with_status_code_uses_mapping(self) -> None:
+		error = LLMProviderError("Gemini request failed with status 429.")
+		presentation = present_error(error)
+		# LLMProviderError has no status_code attr, so uses generic message
+		self.assertEqual(presentation.title, "Provider request failed")
+		self.assertFalse(presentation.is_internal)
 
 
 if __name__ == "__main__":

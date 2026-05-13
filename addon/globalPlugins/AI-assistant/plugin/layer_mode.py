@@ -43,6 +43,7 @@ class AssistantLayerController:
 			self._bind_gesture(f"kb:{gesture_key}", handler.__name__[7:])
 		self._active = True
 		nvda_ui.message(
+			# TRANSLATORS: Message spoken when the AI assistant command layer is activated, listing available key shortcuts.
 			_(
 				"AI assistant layer active. Press S for summary, I for image describe, C for chat, P for page content, X for screenshot, T for provider toggle, or H for help."
 			)
@@ -64,6 +65,7 @@ class AssistantLayerController:
 			if self._layered_script_to_run is not None:
 				self._layered_script_to_run(gesture)
 			else:
+				# TRANSLATORS: Message spoken when the assistant layer cannot find the matching script for a key press.
 				nvda_ui.message(_("Can't find this assistant layer script."))
 		finally:
 			self.finish()
@@ -75,5 +77,6 @@ class AssistantLayerController:
 		self._restore_default_gestures()
 
 	def script_error(self, gesture: Any):
+		# TRANSLATORS: Message spoken when an invalid key is pressed in the AI assistant command layer.
 		nvda_ui.message(_("Can't find this assistant layer script."))
 		self.finish()

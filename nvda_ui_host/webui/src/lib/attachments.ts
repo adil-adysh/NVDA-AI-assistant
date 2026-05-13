@@ -109,17 +109,17 @@ export async function handleFileSelection(fileList: FileList | null): Promise<vo
 			attachments.push(attachment);
 		} catch (error) {
 			console.error('Failed to load attachment:', error);
-			setStatus(t('attachment_load_failed', `Failed to load ${file.name}`), true);
+			setStatus(
+				t('attachment_load_failed', 'Failed to load {file_name}').replace('{file_name}', file.name),
+				true,
+			);
 		}
 	}
 
 	if (attachments.length > 0) {
 		appState.chat.attachments = [...appState.chat.attachments, ...attachments];
 		setStatus(
-			t(
-				'attachments_added_status',
-				`${attachments.length} attachment(s) added.`,
-			),
+			t('attachments_added_status', '{count} attachment(s) added.').replace('{count}', String(attachments.length)),
 			true,
 		);
 		setPendingFocus('composer');

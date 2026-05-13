@@ -110,7 +110,9 @@ class AIAssistantApplication:
 		log.debug("AIAssistantApplication.run_summary called")
 		self.background.run_use_case_in_background(
 			SUMMARY,
-			title=_("Page summary"),
+			# TRANSLATORS: Title shown for the page summary result.
+		title=_("Page summary"),
+			# TRANSLATORS: Title shown for the page summary result.
 			render_result=lambda result: self.presenter.present_use_case_result(result, title=_("Page summary")),
 		)
 
@@ -118,14 +120,18 @@ class AIAssistantApplication:
 		log.debug("AIAssistantApplication.run_structure_summary called")
 		self.background.run_use_case_in_background(
 			STRUCTURE_SUMMARY,
-			title=_("Structure summary"),
+			# TRANSLATORS: Title shown for the structure summary result.
+		title=_("Structure summary"),
+			# TRANSLATORS: Title shown for the structure summary result.
 			render_result=lambda result: self.presenter.present_use_case_result(result, title=_("Structure summary")),
 		)
 
 	def describe_current_window(self) -> None:
 		self.background.run_use_case_in_background(
 			DESCRIBE_IMAGE,
-			title=_("Image description"),
+			# TRANSLATORS: Title shown for the image description result.
+		title=_("Image description"),
+			# TRANSLATORS: Title shown for the image description result.
 			render_result=lambda result: self.presenter.present_use_case_result(result, title=_("Image description")),
 		)
 
@@ -142,6 +148,7 @@ class AIAssistantApplication:
 	def open_chat(self) -> None:
 		self.background.run_use_case_in_background(
 			OPEN_CHAT,
+			# TRANSLATORS: Title shown for the AI chat window.
 			title=_("AI Chat"),
 			render_result=lambda result: self.open_chat_window(
 				initial_text=result.initial_text,
@@ -152,6 +159,7 @@ class AIAssistantApplication:
 	def open_chat_with_page_content(self) -> None:
 		self.background.run_use_case_in_background(
 			OPEN_CHAT_WITH_PAGE_CONTENT,
+			# TRANSLATORS: Title shown for the AI chat window.
 			title=_("AI Chat"),
 			render_result=lambda result: self.open_chat_window(initial_text=result.initial_text),
 		)
@@ -159,6 +167,7 @@ class AIAssistantApplication:
 	def open_chat_with_screenshot(self) -> None:
 		self.background.run_use_case_in_background(
 			OPEN_CHAT_WITH_SCREENSHOT,
+			# TRANSLATORS: Title shown for the AI chat window.
 			title=_("AI Chat"),
 			render_result=lambda result: self.open_chat_window(
 				initial_text=result.initial_text,
@@ -179,6 +188,7 @@ class AIAssistantApplication:
 			return
 
 		provider_label = get_provider_display_name(result.provider_state.provider)
+		# TRANSLATORS: Message spoken when the AI provider is switched.
 		message = _("AI provider switched to {provider}.").format(provider=provider_label)
 		guidance = build_provider_status_message(_, result.readiness)
 		if guidance:
@@ -187,6 +197,7 @@ class AIAssistantApplication:
 
 	def show_assistant_layer_help(self) -> None:
 		nvda_ui.message(
+			# TRANSLATORS: Help message listing all available AI assistant layer commands.
 			_(
 				"Assistant layer commands: S for summary, O for structure summary, I for image describe, C for chat, P for page content, X for screenshot, T for provider toggle, H for help. Press the key after activating the layer with NVDA+Shift+A."
 			)
