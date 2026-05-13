@@ -123,11 +123,11 @@ class HostProtocolTests(unittest.TestCase):
 
 	def test_host_closed_event_roundtrip(self) -> None:
 		payload = {"reason": "user_escape"}
-		event = HostEvent(event=host_protocol.EVENT_HOST_CLOSED, payload=payload, correlation_id="req-2")
+		event = HostEvent(event=host_protocol.EVENT_CLOSE_HOST, payload=payload, correlation_id="req-2")
 		payload_json = event.to_json()
 		parsed = HostEvent.from_json(payload_json)
 
-		self.assertEqual(parsed.event, host_protocol.EVENT_HOST_CLOSED)
+		self.assertEqual(parsed.event, host_protocol.EVENT_CLOSE_HOST)
 		self.assertEqual(parsed.payload["reason"], "user_escape")
 		self.assertEqual(parsed.correlation_id, "req-2")
 
