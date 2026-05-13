@@ -40,6 +40,7 @@ from ..ui.session_state import build_session_state, merge_session_metadata
 from ..ui.view_models import ChatWindowViewModel, DisplayResultViewModel, ResultActionViewModel
 from ..utils.markdown import render_markdown_to_html
 from .ui_actions import (
+	AttachToCurrentAction,
 	ConversationDeleteAction,
 	ConversationNewAction,
 	ConversationOpenAction,
@@ -332,21 +333,32 @@ class UseCasePresenter:
 			return []
 		if use_case_id not in {"summary", "structure_summary", "describe_image"}:
 			return []
+		# ── Open Chat (new conversation, seed text via token store) ──
 		stored_action = OpenChatAction(
 			assistant_seed_text=output_text.strip(),
 			initial_image_base64=getattr(use_case_result, "initial_image_base64", None),
 			force_new_conversation=True,
 		)
-		stored_action_id, stored_payload = serialize_ui_action(stored_action)
-		action_token = self._result_action_store.put(stored_payload)
-		transport_action = OpenChatAction(token=action_token)
-		action_id, action_payload = serialize_ui_action(transport_action)
-		return [ResultActionViewModel(
-			id=action_id,
-			label=_("Open Chat"),
-			kind=action_id,
-			payload=action_payload,
-		)]
+		_stored_id, stored_payload = serialize_ui_action(stored_action)
+		token = self._result_action_store.put(stored_payload)
+		transport = OpenChatAction(token=token)
+		open_chat_id, open_chat_payload = serialize_ui_action(transport)
+		# ── Attach to Current (no seed → zero token overhead) ──
+		attach_id, attach_payload = serialize_ui_action(AttachToCurrentAction())
+		return [
+			ResultActionViewModel(
+				id=attach_id,
+				label=_("Attach to Current"),
+				kind=attach_id,
+				payload=attach_payload,
+			),
+			ResultActionViewModel(
+				id=open_chat_id,
+				label=_("Open Chat"),
+				kind=open_chat_id,
+				payload=open_chat_payload,
+			),
+		]
 
 	def _handle_result_action(self, action_id: str, payload: dict[str, Any] | None) -> None:
 		action = parse_ui_action(action_id, payload)
@@ -356,13 +368,16 @@ class UseCasePresenter:
 
 	def _dispatch_ui_action(
 		self,
-		action: ConversationNewAction | ConversationOpenAction | ConversationDeleteAction | OpenChatAction,
+		action: ConversationNewAction | ConversationOpenAction | ConversationDeleteAction | OpenChatAction | AttachToCurrentAction,
 	) -> None:
 		if isinstance(action, ConversationNewAction):
 			self.open_chat_window(force_new_conversation=True)
 			return
 		if isinstance(action, ConversationOpenAction):
 			self.open_chat_window(conversation_id=action.conversation_id)
+			return
+		if isinstance(action, AttachToCurrentAction):
+			self.open_chat_window(force_new_conversation=False)
 			return
 		if isinstance(action, ConversationDeleteAction):
 			delete_result = self._conversation_service.delete_conversation(action.conversation_id)

@@ -307,16 +307,22 @@ class PresenterUIActionTests(unittest.TestCase):
 			[{"conversation_id": None, "initial_assistant_text": None, "force_new": False}],
 		)
 
-	def test_build_result_actions_returns_open_chat_label(self) -> None:
+	def test_build_result_actions_returns_two_buttons(self) -> None:
 		actions = self.presenter._build_result_actions(
 			"describe_image",
 			"Image description text",
 			types.SimpleNamespace(initial_image_base64="img-123"),
 		)
 
-		self.assertEqual(len(actions), 1)
-		self.assertEqual(actions[0].label, "Open Chat")
-		self.assertEqual(actions[0].id, "open_chat")
+		self.assertEqual(len(actions), 2)
+		# attach_to_current comes first — zero payload, no token cost
+		self.assertEqual(actions[0].label, "Attach to Current")
+		self.assertEqual(actions[0].id, "attach_to_current")
+		self.assertEqual(actions[0].payload, {})
+		# open_chat comes second — carries token for seed text
+		self.assertEqual(actions[1].label, "Open Chat")
+		self.assertEqual(actions[1].id, "open_chat")
+		self.assertIsNotNone(actions[1].payload.get("token"))
 
 	def test_present_use_case_result_focuses_content_for_describe_image(self) -> None:
 		ui_adapter_module.ui_adapter.render_display_calls.clear()
