@@ -10,8 +10,7 @@ from urllib import error as urllibError
 from urllib import request as urllibRequest
 from urllib.parse import quote
 
-from logHandler import log
-
+from ..providers._http_utils import parse_json_response, read_error_body, request_json_with_retry
 from .errors import OpenAIClientConfigurationError, OpenAIClientError
 
 
@@ -213,38 +212,12 @@ class OpenAIClient:
 
     def _parse_json(self, raw: str, path: str) -> dict[str, Any]:
         try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as error:
-            snippet = raw[:240].strip().replace("\n", " ")
-            if snippet:
-                raise OpenAIClientError(
-                    f"OpenAI returned invalid JSON for {path}: {error}. Response starts with: {snippet}"
-                )
-            raise OpenAIClientError(f"OpenAI returned invalid JSON for {path}: {error}")
-
-        if not isinstance(parsed, dict):
-            raise OpenAIClientError(f"OpenAI returned an unexpected payload for {path}.")
-        return parsed
+            return parse_json_response(raw, path, "OpenAI")
+        except ValueError as error:
+            raise OpenAIClientError(str(error)) from error
 
     def _read_error_body(self, error: urllibError.HTTPError) -> str:
-        try:
-            raw = error.read().decode("utf-8").strip()
-        except Exception:
-            raw = ""
-        if not raw:
-            return ""
-
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            return raw[:500]
-
-        if isinstance(parsed, dict):
-            error_message = parsed.get("error")
-            if isinstance(error_message, dict):
-                return str(error_message.get("message", "")) or raw[:500]
-            return str(error_message)
-        return raw[:500]
+        return read_error_body(error)
 
     def _parse_sse(self, response: Any) -> Generator[dict[str, Any], None, None]:
         buffer = ""
@@ -357,52 +330,26 @@ class OpenAIClient:
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
         headers = self._build_headers()
 
-        request = urllibRequest.Request(
-            url=self._build_url(path),
-            data=body,
-            headers=headers,
-            method=method,
-        )
+        def make_request() -> urllibRequest.Request:
+            return urllibRequest.Request(
+                url=self._build_url(path),
+                data=body,
+                headers=headers,
+                method=method,
+            )
 
-        attempts = 3
-        last_error_message = ""
-        last_status_code: int | None = None
-
-        for attempt in range(1, attempts + 1):
-            try:
-                with urllibRequest.urlopen(request, timeout=self._timeout_seconds) as response:
-                    raw = response.read().decode("utf-8")
-                    return self._parse_json(raw, path)
-            except urllibError.HTTPError as error:
-                details = self._read_error_body(error)
-                code = getattr(error, "code", "?")
-                last_status_code = code if isinstance(code, int) else None
-                last_error_message = f"HTTP {code}. {details}" if details else f"HTTP {code}."
-            except urllibError.URLError as error:
-                reason = getattr(error, "reason", None)
-                if isinstance(reason, socket.timeout) or "timed out" in str(reason or "").lower():
-                    last_error_message = (
-                        f"Timed out waiting for response from {self._build_url(path)} "
-                        f"after {self._timeout_seconds:.1f}s."
-                    )
-                else:
-                    last_error_message = (
-                        f"Unable to reach OpenAI at {self._build_url(path)}. Reason: "
-                        f"{str(reason or error).strip() or 'unknown network error'}."
-                    )
-            except socket.timeout:
-                last_error_message = (
-                    f"Timed out waiting for response from {self._build_url(path)} "
-                    f"after {self._timeout_seconds:.1f}s."
-                )
-            except OSError as error:
-                last_error_message = f"OpenAI request failed: {error}"
-
-            if attempt >= attempts:
-                raise OpenAIClientError(
-                    f"OpenAI request failed for {path} after {attempt} attempt(s): {last_error_message}",
-                    status_code=last_status_code,
-                    path=path,
-                )
-
-            time.sleep(0.5)
+        try:
+            return request_json_with_retry(
+                make_request=make_request,
+                timeout=self._timeout_seconds,
+                provider="OpenAI",
+                path=path,
+                attempts=3,
+                backoff=0.5,
+            )
+        except ValueError as error:
+            raise OpenAIClientError(
+                str(error),
+                status_code=None,
+                path=path,
+            ) from error
