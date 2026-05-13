@@ -93,15 +93,11 @@ fn test_command(payload: protocol::UiCommand) -> ParsedCommand {
 }
 
 pub fn handle_raw_message(raw: &str, writer: &mut impl Write) -> Result<()> {
-    logger::debug(&format!(
-        "Host app received raw message len={} preview={}",
-        raw.len(),
-        logger::preview(raw, 160)
-    ));
+    logger::debug(&format!("app recv raw len={} {}", raw.len(), logger::preview(raw, 160)));
     match protocol::parse_inbound_command(raw) {
         Ok(command) => handle_command(command, writer),
         Err(error) => {
-            logger::warn(&format!("Host app failed to parse inbound message: {:?}", error));
+            logger::warn(&format!("app parse failed: {:?}", error));
             let response_mode = infer_response_mode(raw);
             write_json_value(&protocol::build_error(response_mode, error.request_id.clone(), &error), writer)
         }
@@ -109,9 +105,11 @@ pub fn handle_raw_message(raw: &str, writer: &mut impl Write) -> Result<()> {
 }
 
 pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result<()> {
-    logger::debug(&format!("Host app handling message_id={} command={}", command.message_id, command.payload.as_legacy_action()));
+    let cmd_name = command.payload.as_legacy_action();
+    let msg_id = &command.message_id;
+
     if matches!(command.payload, protocol::UiCommand::HealthCheck) {
-        logger::debug(&format!("Host app responding to health_check for message_id={}", command.message_id));
+        logger::debug(&format!("app health_check {}", msg_id));
         return write_json_value(&protocol::build_ack(&command, AckStage::Accepted, None), writer);
     }
 
@@ -136,26 +134,13 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
 
     let webview_message = serde_json::to_string(&protocol::to_webview_envelope(&command))
         .map_err(|error| windows::core::Error::new(windows::core::HRESULT(0), error.to_string()))?;
-    logger::info(&format!("Host app forwarding normalized command to UI thread: message_id={} payload={}", command.message_id, command.payload.as_legacy_action()));
-    logger::debug(&format!(
-        "Host app normalized UI thread command len={} preview={}",
-        webview_message.len(),
-        logger::preview(&webview_message, 160)
-    ));
+    logger::debug(&format!("app webview msg len={} {}", webview_message.len(), logger::preview(&webview_message, 160)));
+
     let policy = activation_policy(&command);
     let focus_request = requests_webview_focus(&command);
-    logger::info(&format!(
-        "Host app command policy: message_id={} command={} activation_policy={:?} request_webview_focus={}",
-        command.message_id,
-        command.payload.as_legacy_action(),
-        policy,
-        focus_request,
-    ));
-    if let Err(dispatch_error) = window::post_host_command(
-        webview_message,
-        policy,
-        focus_request,
-    ) {
+    logger::info(&format!("app dispatch {} id={} policy={:?} focus={}", cmd_name, msg_id, policy, focus_request));
+
+    if let Err(dispatch_error) = window::post_host_command(webview_message, policy, focus_request) {
         let (kind, message) = match dispatch_error {
             window::DispatchError::QueueFull => (protocol::ProtocolErrorKind::QueueFull, "Host dispatch queue is full"),
             window::DispatchError::QueueDisconnected => (protocol::ProtocolErrorKind::UiDispatchFailed, "Host dispatch queue is disconnected"),
@@ -170,11 +155,7 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
 fn write_json_value(value: &serde_json::Value, writer: &mut impl Write) -> Result<()> {
     let serialized = serde_json::to_string(value)
         .map_err(|error| windows::core::Error::new(windows::core::HRESULT(0), error.to_string()))?;
-    logger::debug(&format!(
-        "Host app sending response len={} preview={}",
-        serialized.len(),
-        logger::preview(&serialized, 160)
-    ));
+    logger::debug(&format!("app send resp len={} {}", serialized.len(), logger::preview(&serialized, 160)));
     serde_json::to_writer(&mut *writer, value)
         .map_err(|error| windows::core::Error::new(windows::core::HRESULT(0), error.to_string()))?;
     writer
