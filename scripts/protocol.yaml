@@ -1,0 +1,145 @@
+# Canonical UI Host Protocol Definition
+#
+# Single source of truth for all command names and event names.
+# Generated code:
+#   Python: addon/globalPlugins/AI-assistant/ui/host_protocol_constants.py
+#   Rust:   nvda_ui_host/src/protocol_commands.rs
+#   TS:     nvda_ui_host/webui/src/lib/protocol-commands.ts
+#
+# To regenerate after changing this file:
+#   python scripts/generate_protocol.py
+
+commands:
+  - id: health_check
+    rust: HealthCheck
+    snake: health_check
+    legacy_action: health_check
+    chat: false
+
+  - id: render_display
+    rust: RenderDisplay
+    snake: render_display
+    legacy_action: display_result
+    chat: false
+
+  - id: open_chat
+    rust: OpenChat
+    snake: open_chat
+    legacy_action: open_chat
+    chat: true
+
+  - id: sync_session
+    rust: SyncSession
+    snake: sync_session
+    legacy_action: sync_session
+    chat: false
+
+  - id: chat_set_history
+    rust: ChatSetHistory
+    snake: chat_set_history
+    chat: true
+
+  - id: chat_append
+    rust: ChatAppend
+    snake: chat_append
+    chat: true
+
+  - id: chat_update
+    rust: ChatUpdate
+    snake: chat_update
+    chat: true
+
+  - id: chat_stream_begin
+    rust: ChatStreamBegin
+    snake: chat_stream_begin
+    chat: true
+
+  - id: chat_stream_delta
+    rust: ChatStreamDelta
+    snake: chat_stream_delta
+    chat: true
+
+  - id: chat_stream_end
+    rust: ChatStreamEnd
+    snake: chat_stream_end
+    chat: true
+
+  - id: chat_stream_abort
+    rust: ChatStreamAbort
+    snake: chat_stream_abort
+    chat: true
+
+  - id: show_error
+    rust: ShowError
+    snake: show_error
+    legacy_action: show_error
+    chat: false
+
+  - id: update_progress
+    rust: UpdateProgress
+    snake: update_progress
+    legacy_action: progress_update
+    chat: false
+
+  - id: close_window
+    rust: CloseWindow
+    snake: close_window
+    legacy_action: close_window
+    chat: false
+
+events:
+  - id: web_ui_ready
+    rust: UiReady
+    snake: web_ui_ready
+
+  - id: ui_applied
+    rust: UiApplied
+    snake: ui_applied
+
+  - id: ui_failed
+    rust: UiFailed
+    snake: ui_failed
+
+  - id: window_closed
+    rust: WindowClosed
+    snake: window_closed
+
+  - id: host_log
+    rust: HostLog
+    snake: host_log
+
+  - id: chat_submitted
+    rust: ChatSubmitted
+    snake: chat_submitted
+
+  - id: chat_attachment_added
+    rust: ChatAttachmentAdded
+    snake: chat_attachment_added
+
+  - id: chat_closed
+    rust: ChatClosed
+    snake: chat_closed
+
+  - id: provider_selected
+    rust: ProviderSelected
+    snake: provider_selected
+
+  - id: model_selected
+    rust: ModelSelected
+    snake: model_selected
+
+  - id: think_mode_toggled
+    rust: ThinkModeToggled
+    snake: think_mode_toggled
+
+  - id: ui_action_invoked
+    rust: UiActionInvoked
+    snake: ui_action_invoked
+
+  - id: escape_pressed
+    rust: EscapePressed
+    snake: escape_pressed
+
+  - id: close_host
+    rust: CloseHost
+    snake: close_host
