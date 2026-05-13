@@ -6,6 +6,71 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, TypedDict
 from uuid import uuid4
 
+try:
+	from .host_protocol_constants import (
+		COMMAND_CHAT_APPEND,
+		COMMAND_CHAT_SET_HISTORY,
+		COMMAND_CHAT_STREAM_ABORT,
+		COMMAND_CHAT_STREAM_BEGIN,
+		COMMAND_CHAT_STREAM_DELTA,
+		COMMAND_CHAT_STREAM_END,
+		COMMAND_CHAT_UPDATE,
+		EVENT_CHAT_ATTACHMENT_ADDED,
+		EVENT_CHAT_CLOSED,
+		EVENT_CHAT_SUBMITTED,
+		EVENT_MODEL_SELECTED,
+		EVENT_PROVIDER_SELECTED,
+		EVENT_THINK_MODE_TOGGLED,
+		EVENT_UI_ACTION_INVOKED,
+		EVENT_WINDOW_CLOSED,
+	)
+except ImportError:
+	from host_protocol_constants import (  # type: ignore[no-redef]
+		COMMAND_CHAT_APPEND,
+		COMMAND_CHAT_SET_HISTORY,
+		COMMAND_CHAT_STREAM_ABORT,
+		COMMAND_CHAT_STREAM_BEGIN,
+		COMMAND_CHAT_STREAM_DELTA,
+		COMMAND_CHAT_STREAM_END,
+		COMMAND_CHAT_UPDATE,
+		EVENT_CHAT_ATTACHMENT_ADDED,
+		EVENT_CHAT_CLOSED,
+		EVENT_CHAT_SUBMITTED,
+		EVENT_MODEL_SELECTED,
+		EVENT_PROVIDER_SELECTED,
+		EVENT_THINK_MODE_TOGGLED,
+		EVENT_UI_ACTION_INVOKED,
+		EVENT_WINDOW_CLOSED,
+	)
+
+# Legacy event emitted as raw string by the Rust host, not via EventName enum.
+EVENT_HOST_CLOSED = "host_closed"
+
+# Re-exported for backward compatibility (consumers import from host_protocol).
+__all__ = [
+	"COMMAND_CHAT_APPEND",
+	"COMMAND_CHAT_SET_HISTORY",
+	"COMMAND_CHAT_STREAM_ABORT",
+	"COMMAND_CHAT_STREAM_BEGIN",
+	"COMMAND_CHAT_STREAM_DELTA",
+	"COMMAND_CHAT_STREAM_END",
+	"COMMAND_CHAT_UPDATE",
+	"EVENT_CHAT_ATTACHMENT_ADDED",
+	"EVENT_CHAT_CLOSED",
+	"EVENT_CHAT_SUBMITTED",
+	"EVENT_HOST_CLOSED",
+	"EVENT_MODEL_SELECTED",
+	"EVENT_PROVIDER_SELECTED",
+	"EVENT_THINK_MODE_TOGGLED",
+	"EVENT_UI_ACTION_INVOKED",
+	"EVENT_WINDOW_CLOSED",
+	"HostCommand",
+	"HostCommandPayload",
+	"HostEvent",
+	"HostResponse",
+	"HostUnavailableError",
+]
+
 COMMAND_TYPE = "command"
 RESPONSE_TYPE = "response"
 EVENT_TYPE = "event"
@@ -15,23 +80,6 @@ SCHEMA = "nvda.ui_host"
 PROTOCOL_VERSION = 2
 SOURCE_NVDA_ADDON = "nvda_addon"
 VALID_RESPONSE_STATUSES = {"ack", "nack"}
-
-COMMAND_CHAT_SET_HISTORY = "chat_set_history"
-COMMAND_CHAT_APPEND = "chat_append"
-COMMAND_CHAT_UPDATE = "chat_update"
-COMMAND_CHAT_STREAM_BEGIN = "chat_stream_begin"
-COMMAND_CHAT_STREAM_DELTA = "chat_stream_delta"
-COMMAND_CHAT_STREAM_END = "chat_stream_end"
-COMMAND_CHAT_STREAM_ABORT = "chat_stream_abort"
-
-EVENT_CHAT_SUBMITTED = "chat_submitted"
-EVENT_CHAT_ATTACHMENT_ADDED = "chat_attachment_added"
-EVENT_CHAT_CLOSED = "chat_closed"
-EVENT_HOST_CLOSED = "host_closed"
-EVENT_UI_ACTION_INVOKED = "ui_action_invoked"
-EVENT_PROVIDER_SELECTED = "provider_selected"
-EVENT_MODEL_SELECTED = "model_selected"
-EVENT_THINK_MODE_TOGGLED = "think_mode_toggled"
 
 
 class HostCommandPayload(TypedDict, total=False):
