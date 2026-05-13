@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import Any
 from dataclasses import dataclass
-from typing import Any, TypedDict
 
 from ..config.state import ProviderState
 from ..config.settings import (
@@ -17,51 +16,13 @@ from ..service.provider_readiness import (
 	ProviderReadinessState,
 	get_provider_display_name,
 )
-from .intent import AttentionPolicy, FocusTarget, InteractionMode
-
-Translator = Callable[[str], str]
-
-
-class SessionProviderInfo(TypedDict):
-	provider: str
-	model: str
-
-
-class SessionProviderOption(TypedDict):
-	id: str
-	label: str
-
-
-class SessionProviderStatus(TypedDict, total=False):
-	state: str
-	reason: str
-	can_infer: bool
-	can_list_models: bool
-
-
-class SessionConversationSummary(TypedDict):
-	id: str
-	title: str
-	preview: str
-	message_count: int
-	updated_at: float
-
-
-class UISessionMetadata(TypedDict, total=False):
-	conversation_id: str
-	provider_state: SessionProviderInfo
-	provider_status: SessionProviderStatus
-	available_providers: list[SessionProviderOption]
-	available_models: list[str]
-	conversation_summaries: list[SessionConversationSummary]
-	localized_strings: dict[str, str]
-	think_enabled: bool
-	chat_enabled: bool
-	status_message: str
-	interaction_mode: InteractionMode
-	controls_visible: bool
-	attention_policy: AttentionPolicy
-	focus_target: FocusTarget
+from .session_types import (
+	SessionConversationSummary,
+	SessionProviderOption,
+	SessionProviderStatus,
+	Translator,
+	UISessionMetadata,
+)
 
 
 @dataclass(frozen=True, slots=True)
