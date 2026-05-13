@@ -196,7 +196,12 @@ class UseCasePresenter:
 		metadata = merge_session_metadata(getattr(use_case_result, "metadata", None), session_state)
 		self._result_action_store.clear()
 		actions = self._build_result_actions(use_case_id, output_text, use_case_result)
-		is_result_action_screen = bool(actions) and use_case_id in {"summary", "structure_summary", "describe_image"}
+		# result_actions flag is set by UseCaseSpec and auto-injected into
+		# metadata by UseCase.execute_prompted_use_case; avoids hardcoded lists.
+		has_result_actions = bool(
+			actions and (metadata or {}).get("result_actions")
+		)
+		is_result_action_screen = has_result_actions
 		display_presentation = build_display_presentation(
 			variant=DISPLAY_VARIANT_RESULT_ACTIONS if is_result_action_screen else DISPLAY_VARIANT_STANDARD,
 			initial_focus=FOCUS_TARGET_CONTENT if is_result_action_screen or not actions else FOCUS_TARGET_PRIMARY_ACTION,
@@ -295,7 +300,12 @@ class UseCasePresenter:
 	def _build_result_actions(self, use_case_id: str | None, output_text: str | None, use_case_result: Any) -> list[ResultActionViewModel]:
 		if not isinstance(output_text, str) or not output_text.strip():
 			return []
-		if use_case_id not in {"summary", "structure_summary", "describe_image"}:
+		# Check the flag auto-injected by UseCase.execute_prompted_use_case
+		# from UseCaseSpec.result_actions.  Avoids hardcoded use-case-ID lists.
+		result_metadata = (
+			getattr(use_case_result, "metadata", None) or {}
+		)
+		if not result_metadata.get("result_actions"):
 			return []
 		# ── Open Chat (new conversation, seed text via token store) ──
 		stored_action = OpenChatAction(

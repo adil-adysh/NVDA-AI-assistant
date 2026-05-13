@@ -25,6 +25,7 @@ class DescribeFocusedImageUseCase(UseCase):
 			prompt_key="image_description",
 			tools=(),
 			requires_input=False,
+			result_actions=True,
 		)
 
 	def execute(

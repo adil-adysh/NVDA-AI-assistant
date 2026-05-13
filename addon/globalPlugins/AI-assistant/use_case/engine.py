@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 from typing import Any
 
@@ -51,6 +52,17 @@ class UseCaseEngine:
 		except Exception as error:
 			emit("error", present_error(error).message)
 			raise
+
+		# Inject result_actions flag from the spec into metadata so the
+		# presenter never needs a hardcoded use-case-ID list.  Done at the
+		# engine level so it covers all use cases, even those that implement
+		# execute() directly instead of using execute_prompted_use_case.
+		spec = self._specs.get(use_case_id)
+		if spec is not None and spec.result_actions and result is not None:
+			meta = dict(result.metadata) if result.metadata else {}
+			if not meta.get("result_actions"):
+				meta["result_actions"] = True
+				result = dataclasses.replace(result, metadata=meta)
 
 		emit("complete", result.message or f"{use_case_id} complete")
 		return result

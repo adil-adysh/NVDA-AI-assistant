@@ -36,6 +36,9 @@ class UseCaseSpec:
 	prompt_key: str
 	tools: tuple[str, ...] = ()
 	requires_input: bool = False
+	# If True, the UseCaseResult will carry "result_actions" in metadata,
+	# signalling the presenter to show "Open Chat" / "Add to current chat" buttons.
+	result_actions: bool = False
 
 
 @dataclass(frozen=True, slots=True)
