@@ -80,7 +80,7 @@ mod tests {
 	fn queue_ui_event_buffers_messages_until_sender_is_available() {
 		reset_ui_event_state();
 
-		queue_ui_event("{\"event\":\"host_closed\"}".to_string());
+		queue_ui_event("{\"event\":\"close_host\"}".to_string());
 
 		let state = ui_event_state().lock().unwrap();
 		assert_eq!(state.pending.len(), 1);

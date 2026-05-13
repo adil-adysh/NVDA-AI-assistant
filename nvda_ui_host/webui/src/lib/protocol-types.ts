@@ -4,6 +4,10 @@
 // These are the single source of truth for WebView-side payload shapes.
 // Keep additive — the host and Python side must stay compatible.
 
+// Re-export canonical command/event names from the generated spec.
+export type { CommandName, EventName } from './protocol-commands';
+export { CHAT_COMMANDS } from './protocol-commands';
+
 // ---------------------------------------------------------------------------
 // Common / shared
 // ---------------------------------------------------------------------------

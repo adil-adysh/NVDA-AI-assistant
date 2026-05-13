@@ -10,7 +10,7 @@ from .host_lifecycle import HostLifecycleService
 from .host_process import start_host_if_needed
 from .host_protocol import (
 	EVENT_CHAT_SUBMITTED,
-	EVENT_HOST_CLOSED,
+	EVENT_CLOSE_HOST,
 	EVENT_MODEL_SELECTED,
 	EVENT_PROVIDER_SELECTED,
 	EVENT_THINK_MODE_TOGGLED,
@@ -51,7 +51,7 @@ class HostRenderer(UIHostRenderer):
 			EVENT_PROVIDER_SELECTED: self._handle_provider_selected_event,
 			EVENT_MODEL_SELECTED: self._handle_model_selected_event,
 			EVENT_THINK_MODE_TOGGLED: self._handle_think_mode_toggled_event,
-			EVENT_HOST_CLOSED: self._handle_host_closed_event,
+			EVENT_CLOSE_HOST: self._handle_host_closed_event,
 		}
 
 	def render_display_result(

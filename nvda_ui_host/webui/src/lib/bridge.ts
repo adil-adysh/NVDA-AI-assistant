@@ -8,6 +8,7 @@ import { showError, updateProgress, closeWindow } from './commands/error-progres
 import { reportUiFailure } from './commands/_shared';
 import { updateControlState } from './operations/control-ops';
 import { emitUiEvent } from './commands/_events';
+import type { CommandName, EventName } from './protocol-commands';
 import {
 	appState,
 	mergeLocalizedStrings,
@@ -21,7 +22,7 @@ import {
 
 type CommandHandler = (commandId: string, payload: Record<string, unknown>) => void;
 
-const COMMANDS: Record<string, CommandHandler> = {
+const COMMANDS: Record<CommandName, CommandHandler> = {
 	render_display: renderDisplay as CommandHandler,
 	open_chat: openChat as CommandHandler,
 	sync_session: syncSession as CommandHandler,
@@ -37,11 +38,11 @@ const COMMANDS: Record<string, CommandHandler> = {
 };
 
 // Commands that should clear the status before executing
-const CLEAR_STATUS_COMMANDS = new Set(['sync_session']);
+const CLEAR_STATUS_COMMANDS = new Set<CommandName>(['sync_session']);
 
 // Commands that carry control state (providers, models, think mode, etc.).
 // Content-only commands like chat_stream_delta do NOT trigger control extraction.
-const CONTROL_COMMANDS = new Set([
+const CONTROL_COMMANDS = new Set<CommandName>([
 	'open_chat',
 	'sync_session',
 	'render_display',

@@ -279,7 +279,7 @@ fn handle_window_close(hwnd: HWND, source: &str) -> LRESULT {
         "version": 2,
         "type": "event",
         "event": {
-            "name": "host_closed",
+            "name": "close_host",
             "payload": {
                 "reason": reason,
                 "source": source,
