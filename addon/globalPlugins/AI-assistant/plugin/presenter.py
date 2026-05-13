@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import builtins
-import threading
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -39,6 +38,7 @@ from ..ui import nvda_ui
 from ..ui.session_state import build_session_state, merge_session_metadata
 from ..ui.view_models import ChatWindowViewModel, DisplayResultViewModel, ResultActionViewModel
 from ..utils.markdown import render_markdown_to_html
+from .model_cache import ModelCache
 from .ui_actions import (
 	AttachToCurrentAction,
 	ConversationDeleteAction,
@@ -71,13 +71,16 @@ class UseCasePresenter:
 		self._tool_registry = tool_registry
 		self._provider_catalog = provider_catalog or ProviderCatalogService()
 		self._readiness_service = readiness_service or ProviderReadinessService()
-		self._available_models_by_provider: dict[str, tuple[str, ...]] = {}
-		self._model_cache_lock = threading.RLock()
+		self._model_cache = ModelCache(
+			provider_catalog=self._provider_catalog,
+			on_models_updated=self._on_models_cached,
+		)
 		self._result_action_store = ResultActionStore()
 		ui_adapter.register_result_action_handler(self._handle_result_action)
 		ui_adapter.register_session_metadata_provider(self._build_chat_metadata)
 
 	def close(self) -> None:
+		self._model_cache.close()
 		try:
 			ui_adapter.close()
 		except Exception:
@@ -271,56 +274,16 @@ class UseCasePresenter:
 		return self._conversation_service.list_conversation_summaries()
 
 	def _get_cached_models(self, provider_state: ProviderState) -> tuple[str, ...]:
-		with self._model_cache_lock:
-			return self._available_models_by_provider.get(provider_state.provider, ())
+		return self._model_cache.get(provider_state)
 
 	def _refresh_available_models_async(self, provider_state: ProviderState) -> None:
-		threading.Thread(
-			target=self._refresh_available_models,
-			args=(provider_state,),
-			name=f"ModelCatalogRefresh-{provider_state.provider}",
-			daemon=True,
-		).start()
+		self._model_cache.refresh_async(provider_state)
 
-	def _refresh_available_models(self, provider_state: ProviderState) -> None:
-		current_provider_state = get_provider_state()
-		if current_provider_state.provider != provider_state.provider:
-			log.debug(
-				"Skipping stale model refresh for %s; active provider is %s",
-				provider_state.provider,
-				current_provider_state.provider,
-			)
-			return
-
-		try:
-			models = tuple(
-				model.id
-				for model in self._provider_catalog.list_active_models()
-				if isinstance(model.id, str) and model.id.strip()
-			)
-		except Exception:
-			log.exception("Error refreshing provider models for %s", provider_state.provider)
-			return
-
-		if not models:
-			return
-
-		current_provider_state = get_provider_state()
-		if current_provider_state.provider != provider_state.provider:
-			log.debug(
-				"Discarding stale model refresh result for %s; active provider is %s",
-				provider_state.provider,
-				current_provider_state.provider,
-			)
-			return
-
-		with self._model_cache_lock:
-			self._available_models_by_provider[provider_state.provider] = models
-
+	def _on_models_cached(self, provider: str, models: tuple[str, ...]) -> None:
 		ui_adapter.sync_session_state(
 			build_session_state(
 				_,
-				current_provider_state,
+				get_provider_state(),
 				conversation_id=self._conversation_service.current_conversation_id(),
 				available_models=models,
 				conversation_summaries=self._build_conversation_summaries(),
