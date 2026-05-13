@@ -46,6 +46,8 @@ The add-on includes a WebView-based chat interface with streaming responses, con
 Added
 • API key encryption at rest via Windows DPAPI — Gemini and OpenAI keys are now encrypted instead of stored as plaintext (existing keys migrated automatically on save)
 • Add to current chat action for attaching chat without a token roundtrip
+• Describe focused NVDA object — captures the screen region of the currently focused element and describes it via AI (layer key: F)
+• Attach focused object image to chat — captures the focused element's image and opens a chat with it attached (layer key: Z)
 Changed
 • WebView UI migrated from JavaScript to TypeScript with Svelte 5 clean architecture for improved reliability
 • Protocol layer unified under a single canonical YAML spec across Python, Rust, and TypeScript for fewer cross-layer inconsistencies

@@ -36,7 +36,9 @@ Quick actions can continue directly into chat for follow-up interaction.
 ## Images and screenshots
 
 * Describe the current foreground window
+* Describe the focused NVDA object — captures only the currently focused element's screen region
 * Attach screenshots directly into chat
+* Attach the focused object's image into chat
 * Upload image files for analysis
 * Continue discussing visual content in conversation
 
@@ -179,15 +181,18 @@ NVDA+Shift+A
 
 Then press:
 
-| Key | Action                      |
-| --- | --------------------------- |
-| `C` | Open chat                   |
-| `S` | Summarize current content   |
-| `I` | Describe current window     |
-| `P` | Attach page content to chat |
-| `X` | Attach screenshot to chat   |
-| `T` | Toggle provider             |
-| `H` | Help                        |
+| Key | Action                             |
+| --- | ---------------------------------- |
+| `C` | Open chat                          |
+| `S` | Summarize current content          |
+| `O` | Summarize page structure           |
+| `I` | Describe current window            |
+| `F` | Describe focused object            |
+| `P` | Attach page content to chat        |
+| `X` | Attach screenshot to chat          |
+| `Z` | Attach focused object image to chat|
+| `T` | Toggle provider                    |
+| `H` | Help                               |
 
 ---
 
