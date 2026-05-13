@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import dataclasses
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -76,7 +77,16 @@ class UseCase(ABC):
 		if response_text is not None:
 			logger.debug("UseCase %s response.text=%s", self.spec.id, response_text)
 
-		return build_result(prompt_context, response, prompt)
+		result = build_result(prompt_context, response, prompt)
+
+		# Automatically propagate the spec's result_actions flag into result
+		# metadata so the presenter never needs a hardcoded use-case-ID list.
+		if self.spec.result_actions:
+			meta = dict(result.metadata) if result.metadata else {}
+			meta.setdefault("result_actions", True)
+			result = dataclasses.replace(result, metadata=meta)
+
+		return result
 
 	def markdown_to_html(self, text: str) -> str:
 		"""Convert markdown-style LLM output to HTML for browseable rendering."""

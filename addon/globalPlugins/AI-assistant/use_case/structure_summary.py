@@ -21,6 +21,7 @@ class StructureSummaryUseCase(UseCase):
 			prompt_key="page_structure_summary",
 			tools=(),
 			requires_input=False,
+			result_actions=True,
 		)
 
 	def execute(

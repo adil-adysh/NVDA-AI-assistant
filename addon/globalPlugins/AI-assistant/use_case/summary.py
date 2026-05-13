@@ -21,6 +21,7 @@ class SummaryUseCase(UseCase):
 			prompt_key="page_summary",
 			tools=(),
 			requires_input=False,
+			result_actions=True,
 		)
 
 	def execute(
