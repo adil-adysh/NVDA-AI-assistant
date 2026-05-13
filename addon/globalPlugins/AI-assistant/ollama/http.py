@@ -1,49 +1,26 @@
 # -*- coding: utf-8 -*-
 import json
 import socket
-import time
 from typing import Any, Callable
 from urllib import error as urllibError
 from urllib import request as urllibRequest
 
 from logHandler import log
+from ..providers._http_utils import parse_json_response, read_error_body, request_json_with_retry
 from .errors import OllamaClientError
 
 
 def _parseJSON(raw: str, path: str) -> dict[str, Any]:
+    """Parse Ollama JSON response (delegates to shared utility)."""
     try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as error:
-        snippet = raw[:240].strip().replace("\n", " ")
-        if snippet:
-            raise OllamaClientError(
-                f"Ollama returned invalid JSON for {path}: {error}. Response starts with: {snippet}"
-            )
-        raise OllamaClientError(f"Ollama returned invalid JSON for {path}: {error}")
-
-    if not isinstance(parsed, dict):
-        raise OllamaClientError(f"Ollama returned an unexpected response payload for {path}.")
-    return parsed
+        return parse_json_response(raw, path, "Ollama")
+    except ValueError as error:
+        raise OllamaClientError(str(error)) from error
 
 
 def _readErrorBody(error: urllibError.HTTPError) -> str:
-    try:
-        raw = error.read().decode("utf-8").strip()
-    except Exception:
-        raw = ""
-    if not raw:
-        return ""
-
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return raw[:500]
-
-    if isinstance(parsed, dict):
-        message = str(parsed.get("error", "")).strip()
-        if message:
-            return message
-    return raw[:500]
+    """Extract error message from Ollama HTTPError (delegates to shared utility)."""
+    return read_error_body(error)
 
 
 def _requestJSON(
@@ -60,57 +37,25 @@ def _requestJSON(
         body = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
 
-    request = urllibRequest.Request(
-        url=baseURL + path,
-        data=body,
-        headers=headers,
-        method=method,
-    )
-    lastErrorMessage = ""
-    attempts = 3
+    def make_request() -> urllibRequest.Request:
+        return urllibRequest.Request(
+            url=baseURL + path,
+            data=body,
+            headers=headers,
+            method=method,
+        )
 
-    for attempt in range(1, attempts + 1):
-        started = time.monotonic()
-        try:
-            with urllibRequest.urlopen(request, timeout=timeoutSeconds) as response:
-                try:
-                    raw = response.read().decode("utf-8")
-                except UnicodeDecodeError as error:
-                    raise OllamaClientError(
-                        f"Ollama returned non-UTF-8 content for {path}: {error}"
-                    )
-                return _parseJSON(raw, path)
-        except urllibError.HTTPError as error:
-            details = _readErrorBody(error)
-            lastErrorMessage = f"HTTP {error.code}. {details}" if details else f"HTTP {error.code}."
-            if attempt >= attempts:
-                raise OllamaClientError(f"Ollama request failed for {path} after {attempt} attempt(s): {lastErrorMessage}")
-        except urllibError.URLError as error:
-            reason = getattr(error, "reason", None)
-            if isinstance(reason, socket.timeout) or "timed out" in str(reason or "").lower():
-                lastErrorMessage = (
-                    f"Timed out waiting for response from {baseURL}{path} "
-                    f"after {timeoutSeconds:.1f}s (timeout={timeoutSeconds:.1f}s)."
-                )
-            else:
-                lastErrorMessage = (
-                    f"Unable to reach Ollama at {baseURL}. Reason: {str(reason or error).strip() or 'unknown network error'}."
-                )
-            if attempt >= attempts:
-                raise OllamaClientError(lastErrorMessage)
-        except socket.timeout:
-            lastErrorMessage = (
-                f"Timed out waiting for response from {baseURL}{path} "
-                f"after {timeoutSeconds:.1f}s (timeout={timeoutSeconds:.1f}s)."
-            )
-            if attempt >= attempts:
-                raise OllamaClientError(lastErrorMessage)
-        except OSError as error:
-            lastErrorMessage = f"Ollama request failed: {error}"
-            if attempt >= attempts:
-                raise OllamaClientError(lastErrorMessage)
-
-        time.sleep(0.5)
+    try:
+        return request_json_with_retry(
+            make_request=make_request,
+            timeout=timeoutSeconds,
+            provider="Ollama",
+            path=path,
+            attempts=3,
+            backoff=0.5,
+        )
+    except ValueError as error:
+        raise OllamaClientError(str(error)) from error
 
 
 def _requestPullStream(
