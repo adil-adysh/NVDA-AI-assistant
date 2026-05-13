@@ -306,12 +306,24 @@ class UseCasePresenter:
 		token = self._result_action_store.put(stored_payload)
 		transport = OpenChatAction(token=token)
 		open_chat_id, open_chat_payload = serialize_ui_action(transport)
-		# ── Attach to Current (no seed → zero token overhead) ──
-		attach_id, attach_payload = serialize_ui_action(AttachToCurrentAction())
+		# ── Attach to Current (seed text stored, resolved on dispatch) ──
+		attach_stored_action = AttachToCurrentAction()
+		_attach_stored_id, attach_stored_payload = serialize_ui_action(attach_stored_action)
+		# Store the seed text payload under a new token so the resolved action
+		# carries the summary/description to inject into the current conversation.
+		attach_seed_payload: dict[str, object] = {
+			"initial_assistant_text": output_text.strip(),
+		}
+		image_b64 = getattr(use_case_result, "initial_image_base64", None)
+		if image_b64:
+			attach_seed_payload["initial_image_base64"] = image_b64
+		attach_token = self._result_action_store.put(attach_seed_payload)
+		attach_transport = AttachToCurrentAction(token=attach_token)
+		attach_id, attach_payload = serialize_ui_action(attach_transport)
 		return [
 			ResultActionViewModel(
 				id=attach_id,
-				label=_("Attach to Current"),
+				label=_("Add to current chat"),
 				kind=attach_id,
 				payload=attach_payload,
 			),
@@ -340,7 +352,18 @@ class UseCasePresenter:
 			self.open_chat_window(conversation_id=action.conversation_id)
 			return
 		if isinstance(action, AttachToCurrentAction):
-			self.open_chat_window(force_new_conversation=False)
+			initial_text = None
+			initial_image = None
+			if action.token:
+				stored_payload = self._result_action_store.pop(action.token)
+				if isinstance(stored_payload, dict):
+					initial_text = stored_payload.get("initial_assistant_text")
+					initial_image = stored_payload.get("initial_image_base64")
+			self.open_chat_window(
+				initial_assistant_text=initial_text,
+				initial_image_base64=initial_image,
+				force_new_conversation=False,
+			)
 			return
 		if isinstance(action, ConversationDeleteAction):
 			delete_result = self._conversation_service.delete_conversation(action.conversation_id)

@@ -10,7 +10,7 @@ from uuid import uuid4
 from logHandler import log
 
 from ..config.settings import is_streaming_enabled
-from ..service.error_presentation import present_error
+from ..service.error_presentation import ErrorPresentation, present_error
 from ..service.provider_controls import provider_control_service
 from .host_lifecycle import HostLifecycleService, HostLifecycleState
 from .intent import ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND, merge_presentation_intent
@@ -316,7 +316,25 @@ class UIAdapter:
 				queue_response_announcement(nvda_ui.queue, nvda_ui.message, assistant_text)
 		except Exception as error:
 			presentation = present_error(error)
-			self._host_renderer.show_error(presentation.title, details=presentation.message)
+			# ── Clean up streaming state if it had started ──
+			assistant_projection.abort(reason=presentation.message)
+			# ── Append error as an assistant message in the transcript ──
+			#     The metadata carries restore_text so the WebView can restore
+			#     the user's message in the composer for retry.
+			error_content = self._build_error_content_blocks(presentation, localized_strings)
+			error_metadata = dict(assistant_projection.final_metadata_factory())
+			if message_text:
+				error_metadata["restore_text"] = message_text
+			self._host_renderer.chat_append(
+				use_case_id,
+				conversation_id or "",
+				{
+					"id": assistant_projection.message_id,
+					"role": "assistant",
+					"content": error_content,
+				},
+				metadata=error_metadata,
+			)
 			nvda_ui.message(presentation.message)
 
 	def _build_user_content(
@@ -362,6 +380,25 @@ class UIAdapter:
 					"collapsed": True,
 				}
 			)
+		return content
+
+	def _build_error_content_blocks(
+		self,
+		presentation: ErrorPresentation,
+		localized_strings: dict[str, str],
+	) -> list[dict[str, Any]]:
+		"""Build a content block list that renders as an inline error message in the chat transcript."""
+		content: list[dict[str, Any]] = []
+		error_label = localized_strings.get("error_prefix", "Error")
+		error_summary = "{0}: {1}".format(error_label, presentation.title) if presentation.title else error_label
+		content.append(
+			{
+				"type": "error",
+				"text": presentation.message,
+				"summary": error_summary,
+				"is_internal": presentation.is_internal,
+			}
+		)
 		return content
 
 	def _extract_thinking_trace(self, response: Any) -> str | None:

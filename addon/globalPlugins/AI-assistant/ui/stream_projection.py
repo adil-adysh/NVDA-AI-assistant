@@ -161,6 +161,31 @@ class StreamProjection:
 					pass
 			log.exception("Final host chat update failed after streaming; preserving backend response")
 
+	def abort(self, reason: str | None = None) -> None:
+		"""Abort an in-flight stream and clean up UI state.
+
+		If streaming had started, sends ``chat_stream_abort`` to tear down
+		the streaming message in the UI.  If streaming had not yet started,
+		this is a no-op (no UI state to clean up).
+
+		Safe to call regardless of whether streaming started — the method
+		no-ops cleanly if ``streaming_started`` is False.
+		"""
+		if not self.streaming_started:
+			return
+		try:
+			self.renderer.chat_stream_abort(
+				self.use_case_id,
+				self.conversation_id,
+				self.message_id,
+				self.stream_id,
+				self.stream_sequence - 1,
+				reason=reason,
+			)
+		except Exception:
+			log.exception("Stream abort delivery failed; streaming state may be dangling in the UI")
+		self.host_stream_updates_enabled = False
+
 	def _clear_pending_delta(self) -> None:
 		self.pending_stream_delta_chunks = []
 		self.pending_stream_delta_char_count = 0
