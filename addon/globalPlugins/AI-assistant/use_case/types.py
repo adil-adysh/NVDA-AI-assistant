@@ -11,17 +11,21 @@ UseCaseId = Literal[
 	"summary",
 	"structure_summary",
 	"describe_image",
+	"describe_focused_image",
 	"open_chat",
 	"open_chat_with_page_content",
 	"open_chat_with_screenshot",
+	"attach_focused_image_to_chat",
 ]
 
 SUMMARY: Final[UseCaseId] = "summary"
 STRUCTURE_SUMMARY: Final[UseCaseId] = "structure_summary"
 DESCRIBE_IMAGE: Final[UseCaseId] = "describe_image"
+DESCRIBE_FOCUSED_IMAGE: Final[UseCaseId] = "describe_focused_image"
 OPEN_CHAT: Final[UseCaseId] = "open_chat"
 OPEN_CHAT_WITH_PAGE_CONTENT: Final[UseCaseId] = "open_chat_with_page_content"
 OPEN_CHAT_WITH_SCREENSHOT: Final[UseCaseId] = "open_chat_with_screenshot"
+ATTACH_FOCUSED_IMAGE_TO_CHAT: Final[UseCaseId] = "attach_focused_image_to_chat"
 
 
 @dataclass(frozen=True, slots=True)

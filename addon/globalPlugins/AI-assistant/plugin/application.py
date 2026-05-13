@@ -18,6 +18,8 @@ from ..ui.settings_panel import AIAssistantSettingsPanel
 from ..ui import nvda_ui
 from ..ui.session_state import build_provider_status_message
 from ..use_case.types import (
+	ATTACH_FOCUSED_IMAGE_TO_CHAT,
+	DESCRIBE_FOCUSED_IMAGE,
 	DESCRIBE_IMAGE,
 	OPEN_CHAT,
 	OPEN_CHAT_WITH_PAGE_CONTENT,
@@ -62,9 +64,11 @@ class AIAssistantApplication:
 				("s", host.script_summarizeCurrentPage),
 				("o", host.script_summarizePageStructure),
 				("i", host.script_describeCurrentWindow),
+				("f", host.script_describeFocusedObject),
 				("c", host.script_openChatWindow),
 				("p", host.script_openChatWithPageContent),
 				("x", host.script_openChatWithScreenshot),
+				("z", host.script_attachFocusedObjectToChat),
 				("t", host.script_toggleAIProvider),
 				("h", host.script_assistantLayerHelp),
 			),
@@ -175,6 +179,26 @@ class AIAssistantApplication:
 			),
 		)
 
+	def describe_focused_object(self) -> None:
+		self.background.run_use_case_in_background(
+			DESCRIBE_FOCUSED_IMAGE,
+			# TRANSLATORS: Title shown for the focused object image description result.
+			title=_("Focused object description"),
+			# TRANSLATORS: Title shown for the focused object image description result.
+			render_result=lambda result: self.presenter.present_use_case_result(result, title=_("Focused object description")),
+		)
+
+	def attach_focused_object_to_chat(self) -> None:
+		self.background.run_use_case_in_background(
+			ATTACH_FOCUSED_IMAGE_TO_CHAT,
+			# TRANSLATORS: Title shown for the AI chat window.
+			title=_("AI Chat"),
+			render_result=lambda result: self.open_chat_window(
+				initial_text=result.initial_text,
+				initial_image_base64=result.initial_image_base64,
+			),
+		)
+
 	def activate_assistant_layer(self) -> None:
 		self.layer_mode.activate()
 
@@ -199,7 +223,7 @@ class AIAssistantApplication:
 		nvda_ui.message(
 			# TRANSLATORS: Help message listing all available AI assistant layer commands.
 			_(
-				"Assistant layer commands: S for summary, O for structure summary, I for image describe, C for chat, P for page content, X for screenshot, T for provider toggle, H for help. Press the key after activating the layer with NVDA+Shift+A."
+				"Assistant layer commands: S for summary, O for structure summary, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object to chat, T for provider toggle, H for help. Press the key after activating the layer with NVDA+Shift+A."
 			)
 		)
 

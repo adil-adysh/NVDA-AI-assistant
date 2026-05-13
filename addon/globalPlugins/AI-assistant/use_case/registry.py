@@ -7,6 +7,10 @@ from .chat import (
 	OpenChatWithPageContentUseCase,
 	OpenChatWithScreenshotUseCase,
 )
+from .focus_image import (
+	AttachFocusedImageToChatUseCase,
+	DescribeFocusedImageUseCase,
+)
 from .image import ImageDescriptionUseCase
 from .summary import SummaryUseCase
 from .structure_summary import StructureSummaryUseCase
@@ -18,9 +22,11 @@ def build_default_use_cases() -> tuple[UseCase, ...]:
 		SummaryUseCase(),
 		StructureSummaryUseCase(),
 		ImageDescriptionUseCase(),
+		DescribeFocusedImageUseCase(),
 		OpenChatUseCase(),
 		OpenChatWithPageContentUseCase(),
 		OpenChatWithScreenshotUseCase(),
+		AttachFocusedImageToChatUseCase(),
 	)
 
 
