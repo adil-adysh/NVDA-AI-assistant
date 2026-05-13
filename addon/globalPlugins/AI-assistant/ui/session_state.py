@@ -211,6 +211,12 @@ def build_localized_strings(translate: Translator) -> dict[str, str]:
 		"think_mode_updating_status": translate("Updating think mode..."),
 		# TRANSLATORS: Status text shown when control updates fail.
 		"control_update_failed_status": translate("Unable to update session controls."),
+		# TRANSLATORS: Subtitle shown for assistant messages that are still being streamed.
+		"response_streaming_subtitle": translate("Response in progress"),
+		# TRANSLATORS: Status text shown when file attachment loading fails.
+		"attachment_load_failed": translate("Failed to load {file_name}"),
+		# TRANSLATORS: Status text shown when one or more file attachments have been added.
+		"attachments_added_status": translate("{count} attachment(s) added."),
 	}
 
 
@@ -239,8 +245,11 @@ def build_session_state(
 			**({"reason": resolved_readiness.reason.value} if resolved_readiness.reason is not None else {}),
 		},
 		available_providers=(
+			# TRANSLATORS: Provider option label for Ollama in the session controls.
 			{"id": "ollama", "label": translate("Ollama")},
+			# TRANSLATORS: Provider option label for Gemini in the session controls.
 			{"id": "gemini", "label": translate("Gemini")},
+			# TRANSLATORS: Provider option label for OpenAI in the session controls.
 			{"id": "openai", "label": translate("OpenAI")},
 		),
 		available_models=resolved_available_models,
@@ -279,6 +288,7 @@ def build_provider_status_message(translate: Translator, readiness: ProviderRead
 	if readiness is None or readiness.state is ProviderReadinessState.READY or readiness.can_infer:
 		return None
 
+	# TRANSLATORS: Provider display name used in status messages.
 	provider_label = translate(get_provider_display_name(readiness.provider))
 	if readiness.reason is ProviderReadinessReason.MISSING_CREDENTIALS:
 		if readiness.provider == "gemini":

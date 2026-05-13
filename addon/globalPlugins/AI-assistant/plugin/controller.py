@@ -21,6 +21,7 @@ _ = cast(Callable[[str], str], getattr(builtins, "_", _translate))
 
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
+	# TRANSLATORS: Category name for AI assistant scripts shown in NVDA's input gestures dialog.
 	scriptCategory = _("AI assistant")
 
 	def __init__(self) -> None:
@@ -38,6 +39,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		super().terminate()
 
 	@script(
+		# TRANSLATORS: Description for the script that summarizes the current page using an AI provider.
 		description=_("Summarizes the current page using the selected AI provider."),
 	)
 	def script_summarizeCurrentPage(self, gesture: Any):
@@ -45,6 +47,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._app.run_summary()
 
 	@script(
+		# TRANSLATORS: Description for the script that summarizes page structure, including headings, links, and interactive elements.
 		description=_("Summarizes page structure, including headings, links, and interactive elements."),
 	)
 	def script_summarizePageStructure(self, gesture: Any):
@@ -52,6 +55,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._app.run_structure_summary()
 
 	@script(
+		# TRANSLATORS: Description for the script that describes the current foreground window using an AI provider.
 		description=_("Captures and describes the current foreground window using the selected AI provider."),
 	)
 	def script_describeCurrentWindow(self, gesture: Any):
@@ -59,6 +63,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._app.describe_current_window()
 
 	@script(
+		# TRANSLATORS: Description for the script that opens the AI chat window.
 		description=_("Opens the AI chat window."),
 	)
 	def script_openChatWindow(self, gesture: Any):
@@ -66,6 +71,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._app.open_chat()
 
 	@script(
+		# TRANSLATORS: Description for the script that opens the AI chat window with the current page content preloaded.
 		description=_("Opens the AI chat window with current page content preloaded."),
 	)
 	def script_openChatWithPageContent(self, gesture: Any):
@@ -73,6 +79,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._app.open_chat_with_page_content()
 
 	@script(
+		# TRANSLATORS: Description for the script that opens the AI chat window with a screenshot attached.
 		description=_("Opens the AI chat window with a screenshot attached."),
 	)
 	def script_openChatWithScreenshot(self, gesture: Any):
@@ -80,6 +87,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._app.open_chat_with_screenshot()
 
 	@script(
+		# TRANSLATORS: Description for the script that activates the AI assistant command layer.
 		description=_(
 			"Activate the AI assistant command layer. "
 			"Press S for summary, O for structure summary, I for image describe, C for chat, H for help."
@@ -94,6 +102,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._app.activate_assistant_layer()
 
 	@script(
+		# TRANSLATORS: Description for the script that toggles the active AI provider.
 		description=_("Toggles the active AI provider."),
 	)
 	def script_toggleAIProvider(self, gesture: Any):
@@ -101,6 +110,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._app.toggle_provider()
 
 	@script(
+		# TRANSLATORS: Description for the script that lists available AI assistant layer commands.
 		description=_("Lists available AI assistant layer commands."),
 	)
 	def script_assistantLayerHelp(self, gesture: Any):

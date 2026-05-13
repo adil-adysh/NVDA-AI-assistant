@@ -25,10 +25,13 @@ class ProviderReadinessReason(str, Enum):
 
 def get_provider_display_name(provider: str) -> str:
 	normalized = str(provider or "").strip().lower()
+	# TRANSLATORS: Display name for the OpenAI provider shown in status messages.
 	if normalized == "openai":
 		return "OpenAI"
+	# TRANSLATORS: Display name for the Gemini provider shown in status messages.
 	if normalized == "gemini":
 		return "Gemini"
+	# TRANSLATORS: Display name for the Ollama provider shown in status messages.
 	return "Ollama"
 
 

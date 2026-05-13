@@ -47,7 +47,8 @@ class BackgroundTaskRunner:
 					log.debug("Skipping model preload for %s; provider is not ready", readiness.provider)
 					return
 				provider_name = get_provider_display_name(readiness.provider)
-				nvda_ui.queue(nvda_ui.message, f"Checking {provider_name} model availability.")
+				# TRANSLATORS: Message spoken while checking model availability for a provider. {provider} is replaced with the provider name.
+				nvda_ui.queue(nvda_ui.message, _("Checking {provider} model availability.").format(provider=provider_name))
 				model = self._llm_service.ensure_model_available(on_progress=lambda text: nvda_ui.queue(nvda_ui.message, text))
 			except LLMProviderError as error:
 				nvda_ui.queue(nvda_ui.message, present_error(error, _).message)
@@ -55,7 +56,8 @@ class BackgroundTaskRunner:
 				log.exception("Unexpected error during model preload")
 				nvda_ui.queue(nvda_ui.message, present_error(error, _).message)
 			else:
-				nvda_ui.queue(nvda_ui.message, f"{provider_name.capitalize()} model {model} is ready.")
+				# TRANSLATORS: Message spoken when a provider model is confirmed ready. {provider} and {model} are replaced with the provider and model names.
+				nvda_ui.queue(nvda_ui.message, _("{provider} model {model} is ready.").format(provider=provider_name, model=model))
 
 		thread = threading.Thread(
 			target=worker,
@@ -72,6 +74,7 @@ class BackgroundTaskRunner:
 			except ProviderConfigurationError:
 				log.exception("BackgroundTaskRunner blocked by provider configuration for use case %s", use_case_id)
 				readiness = self._readiness_service.evaluate_active()
+				# TRANSLATORS: Message spoken when the selected provider is not fully configured for the requested operation.
 				message = build_provider_status_message(_, readiness) or _("The selected provider is not fully configured.")
 				nvda_ui.queue(nvda_ui.message, message)
 				return

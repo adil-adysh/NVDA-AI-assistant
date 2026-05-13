@@ -180,6 +180,7 @@ class UseCasePresenter:
 			if isinstance(error_message, str) and error_message.strip():
 				nvda_ui.message(error_message)
 				return
+			# TRANSLATORS: Message spoken when a use case returns no content to display.
 			nvda_ui.message(_("No result to display."))
 			return
 
