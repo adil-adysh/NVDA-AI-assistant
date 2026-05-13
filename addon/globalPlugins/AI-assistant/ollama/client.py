@@ -433,16 +433,10 @@ class OllamaClient:
             self._model = normalized[modelName.lower()]
             return self._model
 
-        log.info("Ollama model %s not installed; pulling it now.", modelName)
-        self._pullModel(modelName, onProgress=onProgress)
-
-        installed = self._listModels()
-        normalized = self._normalizeModelNames(installed)
-        if modelName.lower() not in normalized:
-            raise OllamaClientError(f"Ollama model {modelName} could not be installed.")
-
-        self._model = normalized[modelName.lower()]
-        return self._model
+        raise OllamaClientError(
+            f"Ollama model \"{modelName}\" not found locally. "
+            f"Use 'ollama pull {modelName}' to download it first."
+        )
 
     def _pullModel(
         self,
