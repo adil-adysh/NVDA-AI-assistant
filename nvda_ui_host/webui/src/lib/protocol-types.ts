@@ -119,7 +119,14 @@ export interface ImageBlock {
 	alt?: string;
 }
 
-export type ContentBlock = TextBlock | HtmlBlock | ThinkingBlock | ImageBlock;
+export interface ErrorBlock {
+	type: 'error';
+	text: string;
+	summary?: string;
+	is_internal?: boolean;
+}
+
+export type ContentBlock = TextBlock | HtmlBlock | ThinkingBlock | ImageBlock | ErrorBlock;
 
 // ---------------------------------------------------------------------------
 // Chat messages

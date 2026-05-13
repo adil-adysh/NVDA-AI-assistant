@@ -24,6 +24,11 @@
     </figure>
 {:else if block?.type === 'html'}
     <div class="content-block html">{@html sanitizedHtml}</div>
+{:else if block?.type === 'error'}
+    <div class="content-block error" role="alert">
+        <strong class="error-summary">{block.summary || t('error_prefix', 'Error')}</strong>
+        <p class="error-detail">{block.text || ''}</p>
+    </div>
 {:else}
     <div class="content-block text">{block?.text || ''}</div>
 {/if}

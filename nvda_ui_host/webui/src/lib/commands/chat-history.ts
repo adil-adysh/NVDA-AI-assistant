@@ -69,6 +69,12 @@ export function appendChatMessage(commandId: string, payload: ChatAppendPayload)
 		appState.chat.composerText = '';
 	}
 
+	// Restore user's message in composer from error metadata so they can retry
+	const meta = payload.metadata as Record<string, unknown> | undefined;
+	if (typeof meta?.restore_text === 'string') {
+		appState.chat.composerText = meta.restore_text;
+	}
+
 	setViewMode('chat', resolvePresentationFocusTarget(payload as Record<string, unknown>));
 	reportUiApplied(commandId);
 }

@@ -307,6 +307,85 @@ class PresenterUIActionTests(unittest.TestCase):
 			[{"conversation_id": None, "initial_assistant_text": None, "force_new": False}],
 		)
 
+	def test_attach_to_current_resolves_token_and_injects_text(self) -> None:
+		captured: list[dict[str, object | None]] = []
+		self.presenter.open_chat_window = lambda **kwargs: captured.append(kwargs)
+		# Store seed text in action store, then dispatch via attach_to_current
+		token = self.presenter._result_action_store.put(
+			{"initial_assistant_text": "Summary text", "initial_image_base64": "img-123"}
+		)
+
+		self.presenter._handle_result_action("attach_to_current", {"token": token})
+
+		self.assertEqual(
+			captured,
+			[
+				{
+					"initial_assistant_text": "Summary text",
+					"initial_image_base64": "img-123",
+					"force_new_conversation": False,
+				}
+			],
+		)
+
+	def test_attach_to_current_with_expired_token_opens_current_conversation(self) -> None:
+		"""When the token has already been consumed, open chat without seed text."""
+		captured: list[dict[str, object | None]] = []
+		self.presenter.open_chat_window = lambda **kwargs: captured.append(kwargs)
+		# Use a non-existent token
+		self.presenter._handle_result_action("attach_to_current", {"token": "token-gone"})
+
+		self.assertEqual(
+			captured,
+			[
+				{
+					"initial_assistant_text": None,
+					"initial_image_base64": None,
+					"force_new_conversation": False,
+				}
+			],
+		)
+
+	def test_attach_to_current_without_token_opens_current_conversation(self) -> None:
+		"""Legacy/malformed payload with no token — open current conversation silently."""
+		captured: list[dict[str, object | None]] = []
+		self.presenter.open_chat_window = lambda **kwargs: captured.append(kwargs)
+
+		self.presenter._handle_result_action("attach_to_current", {})
+
+		self.assertEqual(
+			captured,
+			[
+				{
+					"initial_assistant_text": None,
+					"initial_image_base64": None,
+					"force_new_conversation": False,
+				}
+			],
+		)
+
+	def test_attach_to_current_resolves_token_with_text_only(self) -> None:
+		"""Image-optional: stored payload without image still injects text."""
+		captured: list[dict[str, object | None]] = []
+		self.presenter.open_chat_window = lambda **kwargs: captured.append(kwargs)
+		# Store payload with text but no image
+		token = self.presenter._result_action_store.put(
+			{"initial_assistant_text": "Just text summary"}
+		)
+
+		self.presenter._handle_result_action("attach_to_current", {"token": token})
+
+		self.assertEqual(
+			captured,
+			[
+				{
+					"initial_assistant_text": "Just text summary",
+					"initial_image_base64": None,
+					"force_new_conversation": False,
+				}
+			],
+		)
+
 	def test_build_result_actions_returns_two_buttons(self) -> None:
 		actions = self.presenter._build_result_actions(
 			"describe_image",
@@ -315,10 +394,10 @@ class PresenterUIActionTests(unittest.TestCase):
 		)
 
 		self.assertEqual(len(actions), 2)
-		# attach_to_current comes first — zero payload, no token cost
-		self.assertEqual(actions[0].label, "Attach to Current")
+		# attach_to_current comes first — carries token for seed text
+		self.assertEqual(actions[0].label, "Add to current chat")
 		self.assertEqual(actions[0].id, "attach_to_current")
-		self.assertEqual(actions[0].payload, {})
+		self.assertIsNotNone(actions[0].payload.get("token"))
 		# open_chat comes second — carries token for seed text
 		self.assertEqual(actions[1].label, "Open Chat")
 		self.assertEqual(actions[1].id, "open_chat")

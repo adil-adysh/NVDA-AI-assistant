@@ -30,8 +30,8 @@ class OpenChatAction:
 
 @dataclass(frozen=True, slots=True)
 class AttachToCurrentAction:
-	"""Open chat attached to the current conversation — no seed text, no token cost."""
-	pass
+	"""Open chat attached to the current conversation — injected assistant text via token."""
+	token: str | None = None
 
 
 UIAction = ConversationNewAction | ConversationOpenAction | ConversationDeleteAction | OpenChatAction | AttachToCurrentAction
@@ -45,7 +45,7 @@ def serialize_ui_action(action: UIAction) -> tuple[str, dict[str, object]]:
 	if isinstance(action, ConversationDeleteAction):
 		return "conversation_delete", {"conversation_id": action.conversation_id}
 	if isinstance(action, AttachToCurrentAction):
-		return "attach_to_current", {}
+		return "attach_to_current", _compact_payload(token=action.token)
 	return "open_chat", _compact_payload(
 		token=action.token,
 		assistant_seed_text=action.assistant_seed_text,
@@ -69,7 +69,9 @@ def parse_ui_action(action_id: str, payload: dict[str, Any] | None) -> UIAction 
 			return None
 		return ConversationDeleteAction(conversation_id=conversation_id)
 	if action_id == "attach_to_current":
-		return AttachToCurrentAction()
+		return AttachToCurrentAction(
+			token=_read_non_empty_string(resolved_payload, "token"),
+		)
 	if action_id == "open_chat":
 		return OpenChatAction(
 			token=_read_non_empty_string(resolved_payload, "token"),
