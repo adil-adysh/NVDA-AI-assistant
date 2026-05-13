@@ -38,15 +38,22 @@ The add-on includes a WebView-based chat interface with streaming responses, con
 		"""
 	),
 	# version
-	addon_version="0.9.1",
+	addon_version="0.10.0",
 	# Brief changelog for this version
 	# Translators: what's new content for this add-on version to be shown in the add-on store
 	addon_changelog=_(
 		"""
-• Persistent Chat History: Your conversations are now automatically saved, allowing you to pick up exactly where you left off even after restarting NVDA.
-• New Conversation Manager: Easily start new chats, switch between multiple saved sessions, and delete old ones using the new sidebar interface.
-• Automatic Message Announcements: AI responses are now automatically read aloud as they arrive, providing a more seamless, hands-free experience.
-		  """
+Added
+• API key encryption at rest via Windows DPAPI — Gemini and OpenAI keys are now encrypted instead of stored as plaintext (existing keys migrated automatically on save)
+• Add to current chat action for attaching chat without a token roundtrip
+Changed
+• WebView UI migrated from JavaScript to TypeScript with Svelte 5 clean architecture for improved reliability
+• Protocol layer unified under a single canonical YAML spec across Python, Rust, and TypeScript for fewer cross-layer inconsistencies
+Improved
+• Streaming and state management performance through simplified reactivity chain
+Fixed
+• Legacy EVENT_HOST_CLOSED naming aligned with canonical close_host spec
+		"""
 	),
 	# Author(s)
 	addon_author="adil shaikh <ah.shaikh97@gmail.com>",
@@ -57,7 +64,7 @@ The add-on includes a WebView-based chat interface with streaming responses, con
 	# Documentation file name
 	addon_docFileName="readme.html",
 	# Minimum NVDA version supported (e.g. "2019.3.0", minor version is optional)
-	addon_minimumNVDAVersion=2025.3,
+	addon_minimumNVDAVersion=2026.1,
 	# Last NVDA version supported/tested (e.g. "2024.4.0", ideally more recent than minimum version)
 	addon_lastTestedNVDAVersion=2026.1,
 	# Add-on update channel (default is None, denoting stable releases,

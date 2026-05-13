@@ -1,4 +1,4 @@
-v0.9.3
+v0.10.0
 Added
 • 
 API key encryption at rest via Windows DPAPI — Gemini and OpenAI keys are now encrypted in config.yaml instead of stored as plaintext (existing keys migrated automatically on save)
