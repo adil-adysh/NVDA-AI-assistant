@@ -90,7 +90,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		# TRANSLATORS: Description for the script that activates the AI assistant command layer.
 		description=_(
 			"Activate the AI assistant command layer. "
-			"Press S for summary, O for structure summary, I for image describe, C for chat, H for help."
+			"Press S for summary, O for structure summary, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object, H for help."
 		),
 		gesture="kb:NVDA+Shift+A",
 	)
@@ -115,6 +115,22 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	)
 	def script_assistantLayerHelp(self, gesture: Any):
 		self._app.show_assistant_layer_help()
+
+	@script(
+		# TRANSLATORS: Description for the script that captures and describes the currently focused NVDA object.
+		description=_("Captures and describes the currently focused NVDA object using the selected AI provider."),
+	)
+	def script_describeFocusedObject(self, gesture: Any):
+		log.debug("Script describeFocusedObject invoked gesture=%s", gesture)
+		self._app.describe_focused_object()
+
+	@script(
+		# TRANSLATORS: Description for the script that opens the AI chat with the focused NVDA object image attached.
+		description=_("Opens the AI chat window with the focused NVDA object image attached."),
+	)
+	def script_attachFocusedObjectToChat(self, gesture: Any):
+		log.debug("Script attachFocusedObjectToChat invoked gesture=%s", gesture)
+		self._app.attach_focused_object_to_chat()
 
 	def getScript(self, gesture: Any):
 		if not self._app.layer_mode.active:

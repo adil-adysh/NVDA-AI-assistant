@@ -45,7 +45,7 @@ class AssistantLayerController:
 		nvda_ui.message(
 			# TRANSLATORS: Message spoken when the AI assistant command layer is activated, listing available key shortcuts.
 			_(
-				"AI assistant layer active. Press S for summary, I for image describe, C for chat, P for page content, X for screenshot, T for provider toggle, or H for help."
+				"AI assistant layer active. Press S for summary, O for structure, I for window image, F for focus describe, C for chat, P for page, X for screenshot, Z for attach focus image, T for toggle provider, H for help."
 			)
 		)
 
