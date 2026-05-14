@@ -29,10 +29,17 @@ class HostLifecycleService:
 			if self._state == HostLifecycleState.FAILED:
 				self._state = HostLifecycleState.STOPPED
 
-	def ensure_started(self, starter: Callable[[], None]) -> None:
+	def ensure_started(
+		self,
+		starter: Callable[[], None],
+		alive_check: Callable[[], bool] | None = None,
+	) -> None:
 		with self._lock:
 			if self._state in {HostLifecycleState.READY, HostLifecycleState.HIDDEN}:
-				return
+				if alive_check is not None and not alive_check():
+					self._state = HostLifecycleState.STOPPED
+				else:
+					return
 			self._state = HostLifecycleState.STARTING
 		try:
 			starter()

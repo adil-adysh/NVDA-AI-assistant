@@ -6,8 +6,8 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from .host_interface import HostTransport, UIHostRenderer
-from .host_lifecycle import HostLifecycleService
-from .host_process import start_host_if_needed
+from .host_lifecycle import HostLifecycleService, HostLifecycleState
+from .host_process import is_host_process_alive, start_host_if_needed
 from .host_protocol import (
 	EVENT_CHAT_SUBMITTED,
 	EVENT_CLOSE_HOST,
@@ -461,13 +461,13 @@ class HostRenderer(UIHostRenderer):
 
 	def _ensure_host_running(self) -> None:
 		try:
-			self._lifecycle.ensure_started(start_host_if_needed)
+			self._lifecycle.ensure_started(start_host_if_needed, alive_check=is_host_process_alive)
 		except HostUnavailableError:
 			raise
 		start_event_listener = getattr(self._transport, "start_event_listener", None)
 		if callable(start_event_listener):
 			start_event_listener()
-		if self._lifecycle.state.name not in {"READY", "HIDDEN"}:
+		if self._lifecycle.state not in {HostLifecycleState.READY, HostLifecycleState.HIDDEN}:
 			try:
 				self._probe_host()
 			except Exception as error:
