@@ -1,107 +1,15 @@
 import { appState, t } from './state.svelte';
 
-// ---------------------------------------------------------------------------
-// HTML sanitization
-// ---------------------------------------------------------------------------
-
-const ALLOWED_TAGS = new Set([
-	'a', 'article', 'aside', 'b', 'blockquote', 'br', 'caption', 'code',
-	'dd', 'del', 'details', 'div', 'dl', 'dt', 'em', 'figcaption', 'figure',
-	'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'img', 'kbd', 'li',
-	'main', 'ol', 'p', 'pre', 's', 'section', 'small', 'span', 'strong',
-	'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'tfoot', 'th', 'thead',
-	'tr', 'u', 'ul',
-	// MathML tags — latex2mathml converts LaTeX math to MathML via Python
-	'math', 'maction', 'maligngroup', 'malignmark', 'menclose', 'merror',
-	'mfenced', 'mfrac', 'mi', 'mmultiscripts', 'mn', 'mo', 'mover', 'mpadded',
-	'mphantom', 'mprescripts', 'mroot', 'mrow', 'ms', 'mscarry', 'mscarries',
-	'msgroup', 'msline', 'msqrt', 'msrow', 'mstack', 'mstyle', 'msub',
-	'msubsup', 'msup', 'mtable', 'mtd', 'mtext', 'mtr', 'munder',
-	'munderover', 'none', 'semantics', 'annotation', 'annotation-xml',
-]);
-
-const ALLOWED_ATTRIBUTES = new Set([
-	'alt', 'aria-label', 'aria-labelledby', 'aria-describedby',
-	'class', 'colspan', 'display', 'href', 'linethickness', 'lspace',
-	'mathbackground', 'mathcolor', 'mathvariant', 'role', 'rowspan',
-	'rspace', 'scope', 'scriptlevel', 'src', 'target', 'title',
-]);
-
-function isSafeUrl(attributeName: string, value: string): boolean {
-	const normalized = String(value || '').trim().toLowerCase();
-	if (!normalized) return true;
-	if (attributeName === 'href') {
-		return (
-			normalized.startsWith('#') ||
-			normalized.startsWith('http://') ||
-			normalized.startsWith('https://') ||
-			normalized.startsWith('mailto:')
-		);
-	}
-	if (attributeName === 'src') {
-		return (
-			normalized.startsWith('http://') ||
-			normalized.startsWith('https://') ||
-			normalized.startsWith('data:image/')
-		);
-	}
-	return true;
-}
+// ── Sanitizer disabled ──────────────────────────────────────────────
+// HTML from the Python side is considered trusted (goes through
+// Python-Markdown which may pass raw HTML). If sanitization is needed
+// in the future, restore the tag/attribute allowlists below and
+// re-implement sanitizeHtml() with DOMParser-based filtering.
+// ────────────────────────────────────────────────────────────────────
 
 export function sanitizeHtml(html: string | null | undefined): string {
 	if (!html) return '';
-
-	const parser = new DOMParser();
-	const doc = parser.parseFromString(html, 'text/html');
-
-	function walk(node: Node): string {
-		if (node.nodeType === Node.TEXT_NODE) {
-			return node.textContent || '';
-		}
-
-		if (node.nodeType !== Node.ELEMENT_NODE) return '';
-
-		const el = node as Element;
-		const tagName = el.tagName.toLowerCase();
-
-		if (!ALLOWED_TAGS.has(tagName)) {
-			let result = '';
-			for (const child of Array.from(el.childNodes)) {
-				result += walk(child);
-			}
-			return result;
-		}
-
-		const attrs: string[] = [];
-		for (const attr of Array.from(el.attributes)) {
-			const attrName = attr.name.toLowerCase();
-			if (
-				ALLOWED_ATTRIBUTES.has(attrName) &&
-				isSafeUrl(attrName, attr.value)
-			) {
-				attrs.push(`${attrName}="${attr.value.replace(/"/g, '&quot;')}"`);
-			}
-		}
-
-		let inner = '';
-		for (const child of Array.from(el.childNodes)) {
-			inner += walk(child);
-		}
-
-		const attrStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
-
-		if (tagName === 'img' || tagName === 'br' || tagName === 'hr') {
-			return `<${tagName}${attrStr} />`;
-		}
-
-		return `<${tagName}${attrStr}>${inner}</${tagName}>`;
-	}
-
-	let result = '';
-	for (const child of Array.from(doc.body.childNodes)) {
-		result += walk(child);
-	}
-	return result;
+	return html;
 }
 
 // ---------------------------------------------------------------------------

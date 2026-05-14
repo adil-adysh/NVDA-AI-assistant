@@ -2,43 +2,63 @@
 from __future__ import annotations
 
 import base64
-import ctypes
-from ctypes import wintypes
 from io import BytesIO
+from typing import Literal
 
 from PIL import Image, ImageGrab
 
+from .objects import clip_location_to_containers, get_object_location, get_object_safe
+from .screen_curtain import check_screen_curtain
 from .types import ImageFormat
+
+CaptureSource = Literal["foreground", "focus", "navigator", "desktop"]
 
 
 class ImageCaptureService:
-    def capture(self) -> bytes:
-        return self._capture_foreground_window_bytes()
+	"""Screen capture through NVDA's object model.
 
-    def _get_foreground_window_rect(self) -> tuple[int, int, int, int]:
-        user32 = ctypes.windll.user32
-        hwnd = user32.GetForegroundWindow()
-        if not hwnd:
-            raise RuntimeError("Unable to locate the current foreground window.")
+	Supports the same 4 capture sources as the Screenshots Wizard add-on:
+	- ``"desktop"`` — full virtual desktop
+	- ``"foreground"`` — foreground window (default)
+	- ``"focus"`` — keyboard focus object
+	- ``"navigator"`` — NVDA navigator object
 
-        rect = wintypes.RECT()
-        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-            raise RuntimeError("Unable to read the foreground window bounds.")
+	Object-based sources (foreground, focus, navigator) use container-clipped
+	bounding boxes so scroll-cropped or window-overflowing portions are excluded.
+	"""
 
-        if rect.right <= rect.left or rect.bottom <= rect.top:
-            raise RuntimeError("Foreground window bounds are invalid.")
+	def capture(self, source: CaptureSource = "foreground") -> bytes:
+		check_screen_curtain()
 
-        return rect.left, rect.top, rect.right, rect.bottom
+		if source == "desktop":
+			return self._capture_full_screen()
 
-    def _capture_foreground_window_png(self) -> bytes:
-        bbox = self._get_foreground_window_rect()
-        image = ImageGrab.grab(bbox=bbox)
-        buffer = BytesIO()
-        image.save(buffer, format="PNG")
-        return buffer.getvalue()
+		obj = get_object_safe(source)
+		if obj is None:
+			raise RuntimeError(
+				f"Unable to locate the {source} object for capture."
+			)
 
-    def _capture_foreground_window_bytes(self) -> bytes:
-        return self._capture_foreground_window_png()
+		location = get_object_location(obj)
+		if location is None:
+			raise RuntimeError(
+				f"The {source} object has no usable screen location."
+			)
+
+		# Clip to visible area like the Screenshots Wizard add-on does
+		location = clip_location_to_containers(obj, location)
+		left, top, width, height = location
+		bbox = (left, top, left + width, top + height)
+		image = ImageGrab.grab(bbox=bbox)
+		buffer = BytesIO()
+		image.save(buffer, format="PNG")
+		return buffer.getvalue()
+
+	def _capture_full_screen(self) -> bytes:
+		image = ImageGrab.grab()
+		buffer = BytesIO()
+		image.save(buffer, format="PNG")
+		return buffer.getvalue()
 
 
 class ImagePreprocessor:
