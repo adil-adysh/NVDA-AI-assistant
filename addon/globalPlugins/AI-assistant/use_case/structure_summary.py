@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 from ..context.pipeline import ContextPipeline
 from ..prompts import build_extraction_structure_summary_prompt
-from ..context.types import APP, PAGE, ExtractionResult, PromptContext
+from ..context.types import ExtractionIntent, ExtractionResult, PageStructureRequest, PageTextRequest, PromptContext
 from ..service.llm import LLMService
 from .base import UseCase
 from .types import UseCaseResult, UseCaseSpec
@@ -17,7 +17,10 @@ class StructureSummaryUseCase(UseCase):
 		return UseCaseSpec(
 			id="structure_summary",
 			description="Summarize page structure, including headings, links, and interactive elements.",
-			context_profile=(APP, PAGE),
+			extraction_intent=ExtractionIntent(requests=(
+				PageTextRequest(),
+				PageStructureRequest(),
+			)),
 			prompt_key="page_structure_summary",
 			tools=(),
 			requires_input=False,

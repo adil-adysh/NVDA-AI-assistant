@@ -13,7 +13,7 @@ try:
 except Exception:  # pragma: no cover
 	treeInterceptorHandler = None
 
-from .candidate_base import CandidateProvider, CandidateExtractionContext
+from .candidate_base import CandidateProvider, CandidateExtractionContext, is_usable_tree_interceptor
 
 
 class BrowserCandidateProvider(CandidateProvider):
@@ -125,25 +125,8 @@ class BrowserCandidateProvider(CandidateProvider):
 		return None
 
 	def _isUsableTreeInterceptor(self, interceptor: object | None) -> bool:
-		if interceptor is None:
+		if not is_usable_tree_interceptor(interceptor):
 			return False
-		if not hasattr(interceptor, "makeTextInfo"):
-			return False
-
-		try:
-			isAlive = getattr(interceptor, "isAlive", True)
-			if isAlive is False:
-				return False
-		except Exception:
-			return False
-
-		try:
-			isReady = getattr(interceptor, "isReady", True)
-			if isReady is False:
-				return False
-		except Exception:
-			pass
-
 		root = getattr(interceptor, "rootNVDAObject", None)
 		return root is not None
 

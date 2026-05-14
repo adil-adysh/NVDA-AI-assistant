@@ -2,22 +2,34 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from ..extractors.base import TreeExtractor
 from ...context.protocols import CollectorInput, PageContextFragment
-from ...context.types import APP, ContextCollectionError, ContextProfileList, PAGE, ExtractionSnapshot, ExtractionStructure
+from ...context.types import (
+	ALL_STRUCTURED_FIELDS,
+	ContextCollectionError,
+	ContentRequest,
+	ExtractionSnapshot,
+	PageStructureRequest,
+	PageTextRequest,
+	StructuredField,
+)
+
+
+def _field_value(snapshot: object, field: StructuredField) -> tuple[str, ...] | tuple[tuple[int | None, str], ...]:
+	"""Read a structured field from a snapshot via getattr, returning a tuple."""
+	value = getattr(snapshot, field, ())
+	return value if isinstance(value, tuple) else ()
 
 
 @dataclass(frozen=True, slots=True)
 class ExtractionTextCollector:
 	extractor: TreeExtractor | None = None
 
-	@property
-	def profiles(self) -> ContextProfileList:
-		return (APP, PAGE)
+	def handles_request(self, request: ContentRequest) -> bool:
+		return isinstance(request, PageTextRequest)
 
-	def collect(self, input: CollectorInput) -> PageContextFragment:
+	def collect_for_request(self, request: PageTextRequest, input: CollectorInput) -> PageContextFragment:
 		if self.extractor is None and input.extraction_snapshot is None:
 			raise ContextCollectionError("ExtractionTextCollector requires an extraction snapshot or extractor")
 
@@ -44,44 +56,28 @@ class ExtractionTextCollector:
 class ExtractionStructureCollector:
 	extractor: TreeExtractor | None = None
 
-	@property
-	def profiles(self) -> ContextProfileList:
-		return (PAGE,)
+	_STRUCTURED_ATTRS: tuple[StructuredField, ...] = ALL_STRUCTURED_FIELDS
 
-	def collect(self, input: CollectorInput) -> PageContextFragment:
-		if self.extractor is None and input.extraction_snapshot is None:
-			raise ContextCollectionError("ExtractionStructureCollector requires an extraction snapshot or extractor")
+	def handles_request(self, request: ContentRequest) -> bool:
+		return isinstance(request, PageStructureRequest)
 
-		snapshot = input.extraction_snapshot
-		if not isinstance(snapshot, ExtractionSnapshot):
-			raise ContextCollectionError("ExtractionStructureCollector requires an extraction snapshot")
+	def collect_for_request(self, request: PageStructureRequest, input: CollectorInput) -> PageContextFragment:
+		snapshot = self._require_snapshot(input)
+		requested = set(request.fields) if request.fields else set(self._STRUCTURED_ATTRS)
 
-		page_structure = ExtractionStructure(
-			headings=getattr(snapshot, "headings", ()),
-			links=getattr(snapshot, "links", ()),
-			buttons=getattr(snapshot, "buttons", ()),
-			landmarks=getattr(snapshot, "landmarks", ()),
-			inputs=getattr(snapshot, "inputs", ()),
-			comboboxes=getattr(snapshot, "comboboxes", ()),
-			checkboxes=getattr(snapshot, "checkboxes", ()),
-			radios=getattr(snapshot, "radios", ()),
-		)
+		facts: dict[str, object] = {
+			"extraction_snapshot": snapshot,
+			"extraction_title": snapshot.title,
+			"extraction_app_title": snapshot.appTitle,
+			"extraction_truncated": snapshot.truncated,
+		}
+
+		for field in self._STRUCTURED_ATTRS:
+			if field in requested:
+				facts[f"extraction_{field}"] = _field_value(snapshot, field)
+
 		return PageContextFragment(
-			facts={
-				"extraction_snapshot": snapshot,
-				"extraction_title": snapshot.title,
-				"extraction_app_title": snapshot.appTitle,
-				"extraction_truncated": snapshot.truncated,
-				"extraction_structure": page_structure,
-				"extraction_headings": page_structure.headings,
-				"extraction_links": page_structure.links,
-				"extraction_buttons": page_structure.buttons,
-				"extraction_landmarks": page_structure.landmarks,
-				"extraction_inputs": page_structure.inputs,
-				"extraction_comboboxes": page_structure.comboboxes,
-				"extraction_checkboxes": page_structure.checkboxes,
-				"extraction_radios": page_structure.radios,
-			},
+			facts=facts,
 			metadata={
 				"use_case_id": input.use_case_id,
 				"title": snapshot.title,
@@ -89,3 +85,15 @@ class ExtractionStructureCollector:
 				"truncated": snapshot.truncated,
 			},
 		)
+
+	def _require_snapshot(self, input: CollectorInput) -> ExtractionSnapshot:
+		if self.extractor is None and input.extraction_snapshot is None:
+			raise ContextCollectionError(
+				"ExtractionStructureCollector requires an extraction snapshot or extractor"
+			)
+		snapshot = input.extraction_snapshot
+		if not isinstance(snapshot, ExtractionSnapshot):
+			raise ContextCollectionError(
+				"ExtractionStructureCollector requires an extraction snapshot"
+			)
+		return snapshot

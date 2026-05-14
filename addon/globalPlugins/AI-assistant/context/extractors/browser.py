@@ -1,12 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import hashlib
-import re
 from collections.abc import Sequence
 
-import api
-import controlTypes
 from logHandler import log
 
 try:
@@ -17,15 +13,21 @@ except Exception:  # pragma: no cover
 from ...context.types import BrowserExtractionSnapshot
 from .base import TreeExtractor
 from .browser_candidates import BrowserCandidateProvider
+from .candidate_base import is_usable_tree_interceptor
 from .browser_field_parser import BrowserFieldParser
 from .browser_target_resolver import BrowserTargetResolver
 from .text_extractor import TextExtractor
 from .candidates import CandidateProvider, CandidateExtractionContext
-
-MAX_PAGE_TEXT_CHARS = 120000
-MIN_PAGE_TEXT_CHARS = 120
-
-_ELLIPSIS_BLOCK = "\n\n[Content trimmed before summarization]\n\n"
+from .extraction_utils import (
+	MIN_PAGE_TEXT_CHARS,
+	extract_app_title,
+	extract_text_from_object,
+	extract_title,
+	is_meaningful_text,
+	normalize_extracted_text,
+	text_signature,
+	trim_text,
+)
 
 
 class PageExtractionError(RuntimeError):
@@ -278,26 +280,7 @@ class BrowserAwarePageExtractor(TreeExtractor):
 		return interceptor
 
 	def _isUsableTreeInterceptor(self, interceptor: object | None) -> bool:
-		if interceptor is None:
-			return False
-		if not hasattr(interceptor, "makeTextInfo"):
-			return False
-
-		try:
-			isAlive = getattr(interceptor, "isAlive", True)
-			if isAlive is False:
-				return False
-		except Exception:
-			return False
-
-		try:
-			isReady = getattr(interceptor, "isReady", True)
-			if isReady is False:
-				return False
-		except Exception:
-			pass
-
-		return True
+		return is_usable_tree_interceptor(interceptor)
 
 	def _buildSnapshot(
 		self,
@@ -517,7 +500,7 @@ class BrowserAwarePageExtractor(TreeExtractor):
 		return False
 
 	def _extractText(self, obj: object):
-		return self._text_extractor.extract_text(obj) or ""
+		return extract_text_from_object(obj, self._text_extractor)
 
 	def _extractionTargets(self, obj: object):
 		yield obj
@@ -543,43 +526,22 @@ class BrowserAwarePageExtractor(TreeExtractor):
 		return tuple(unique)
 
 	def _extractTitle(self, obj: object, context: CandidateExtractionContext) -> str:
-		for attr in ("name", "title", "description"):
-			try:
-				value = getattr(obj, attr, None)
-			except Exception:
-				value = None
-			if isinstance(value, str) and value.strip():
-				return value.strip()
-		if context.foreground is not None:
-			for attr in ("name", "title", "description"):
-				try:
-					value = getattr(context.foreground, attr, None)
-				except Exception:
-					value = None
-				if isinstance(value, str) and value.strip():
-					return value.strip()
-		return ""
+		return extract_title(obj, context)
 
 	def _extractAppTitle(self, context: CandidateExtractionContext) -> str:
-		if context.appName:
-			return context.appName
-		return ""
+		return extract_app_title(context)
 
 	def _normalizeText(self, text: str) -> str:
-		text = re.sub(r"[ \t]+", " ", text)
-		text = re.sub(r"\n{3,}", "\n\n", text)
-		return text.strip()
+		return normalize_extracted_text(text)
 
 	def _isMeaningfulText(self, text: str) -> bool:
-		return len(text.strip()) >= MIN_PAGE_TEXT_CHARS
+		return is_meaningful_text(text)
 
 	def _trimText(self, text: str) -> tuple[str, bool]:
-		if len(text) <= MAX_PAGE_TEXT_CHARS:
-			return text, False
-		return text[:MAX_PAGE_TEXT_CHARS] + _ELLIPSIS_BLOCK, True
+		return trim_text(text)
 
 	def _textSignature(self, text: str) -> str:
-		return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
+		return text_signature(text)
 
 	def _describeObject(self, obj: object | None) -> str:
 		if obj is None:

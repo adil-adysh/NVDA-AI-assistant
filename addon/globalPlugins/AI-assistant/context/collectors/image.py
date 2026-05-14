@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import api
 from PIL import Image
 
 from ...context.protocols import CollectorInput, ImageContextFragment
-from ...context.types import ContextProfileList, IMAGE, ImageContext
+from ...context.types import (
+	ContentRequest, ForegroundImageRequest, FocusedElementImageRequest,
+	NavigatorImageRequest, ImageCaptureSource, ImageContext,
+)
 from ...image.services import ImageCaptureService, ImageEncoder, ImagePreprocessor
 from ...image.types import ImageFormat
 from ...config.settings import get_image_format, get_image_max_side, get_image_quality
@@ -22,15 +25,28 @@ class ImageContextCollector:
 	preprocessor: ImagePreprocessor | None = None
 	encoder: ImageEncoder | None = None
 
-	@property
-	def profiles(self) -> ContextProfileList:
-		return (IMAGE,)
+	_SOURCE_MAP: ClassVar[dict[type, ImageCaptureSource]] = {
+		ForegroundImageRequest: "foreground",
+		FocusedElementImageRequest: "focus",
+		NavigatorImageRequest: "navigator",
+	}
 
-	def collect(self, input: CollectorInput) -> ImageContextFragment:
+	def handles_request(self, request: ContentRequest) -> bool:
+		return type(request) in self._SOURCE_MAP
+
+	def collect_for_request(self, request: ContentRequest, input: CollectorInput) -> ImageContextFragment:
+		source = self._SOURCE_MAP.get(type(request), "foreground")
+		return self._capture_and_build(source, input)
+
+	# ── Shared capture logic ────────────────────────────────────────
+	# TODO: move api.getForegroundObject() call for title metadata into the
+	#       capture service so the collector no longer directly accesses NVDA APIs.
+
+	def _capture_and_build(self, source: ImageCaptureSource, input: CollectorInput) -> ImageContextFragment:
 		if self.capture_service is None or self.preprocessor is None or self.encoder is None:
 			raise ValueError("ImageContextCollector requires capture, preprocessor, and encoder services")
 
-		raw_image_bytes = self.capture_service.capture()
+		raw_image_bytes = self.capture_service.capture(source=source)
 		processed_bytes = self.preprocessor.preprocess(
 			image_bytes=raw_image_bytes,
 			max_side=get_image_max_side(),
