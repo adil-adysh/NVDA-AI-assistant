@@ -19,7 +19,9 @@ import {
 } from './_shared';
 
 export function openChat(commandId: string, payload: OpenChatPayload): void {
-	resetChatState();
+	if (!payload.preserve_conversation) {
+		resetChatState();
+	}
 	resetDisplayState();
 	appState.chat.active = true;
 	appState.chat.commandId = commandId;

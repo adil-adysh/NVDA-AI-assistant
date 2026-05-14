@@ -174,6 +174,14 @@ class UIAdapter:
 		metadata = dict(view_model.metadata)
 		conversation_id = metadata.get("conversation_id") if isinstance(metadata.get("conversation_id"), str) else None
 		self._remember_session_metadata(metadata)
+
+		# When the host was previously shown and is now hidden (not restarted),
+		# the WebView still has the conversation loaded. Tell the WebView to
+		# preserve the existing transcript and skip re-sending history.
+		is_hidden = self._host_lifecycle.state == HostLifecycleState.HIDDEN
+		if is_hidden:
+			metadata = {**metadata, "preserve_conversation": True}
+
 		if coordinator is not None:
 			def handle_chat_submission(message: str, conversation_id: str | None, event_payload: dict[str, Any] | None) -> None:
 				threading.Thread(
@@ -199,7 +207,7 @@ class UIAdapter:
 			),
 			self._notify_host_unavailable,
 		)
-		if history_messages and conversation_id:
+		if history_messages and conversation_id and not is_hidden:
 			self._dispatch_host_command(
 				lambda conv_id=conversation_id: self._host_renderer.chat_set_history(
 					view_model.use_case_id,
