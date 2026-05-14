@@ -19,7 +19,9 @@ import {
 } from './_shared';
 
 export function openChat(commandId: string, payload: OpenChatPayload): void {
-	if (!payload.preserve_conversation) {
+	const preserveConversation = !!(payload.preserve_conversation
+		?? (payload.metadata as Record<string, unknown>)?.preserve_conversation);
+	if (!preserveConversation) {
 		resetChatState();
 	}
 	resetDisplayState();
