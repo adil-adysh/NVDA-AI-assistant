@@ -11,12 +11,20 @@ const ALLOWED_TAGS = new Set([
 	'main', 'ol', 'p', 'pre', 's', 'section', 'small', 'span', 'strong',
 	'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'tfoot', 'th', 'thead',
 	'tr', 'u', 'ul',
+	// MathML tags — latex2mathml converts LaTeX math to MathML via Python
+	'math', 'maction', 'maligngroup', 'malignmark', 'menclose', 'merror',
+	'mfenced', 'mfrac', 'mi', 'mmultiscripts', 'mn', 'mo', 'mover', 'mpadded',
+	'mphantom', 'mprescripts', 'mroot', 'mrow', 'ms', 'mscarry', 'mscarries',
+	'msgroup', 'msline', 'msqrt', 'msrow', 'mstack', 'mstyle', 'msub',
+	'msubsup', 'msup', 'mtable', 'mtd', 'mtext', 'mtr', 'munder',
+	'munderover', 'none', 'semantics', 'annotation', 'annotation-xml',
 ]);
 
 const ALLOWED_ATTRIBUTES = new Set([
 	'alt', 'aria-label', 'aria-labelledby', 'aria-describedby',
-	'class', 'colspan', 'href', 'role', 'rowspan', 'scope', 'src',
-	'target', 'title',
+	'class', 'colspan', 'display', 'href', 'linethickness', 'lspace',
+	'mathbackground', 'mathcolor', 'mathvariant', 'role', 'rowspan',
+	'rspace', 'scope', 'scriptlevel', 'src', 'target', 'title',
 ]);
 
 function isSafeUrl(attributeName: string, value: string): boolean {
