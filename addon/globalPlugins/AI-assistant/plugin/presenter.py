@@ -94,9 +94,19 @@ class UseCasePresenter:
 		conversation_id: str | None = None,
 		force_new_conversation: bool = False,
 	) -> None:
+		# When carrying both an image and its description into the conversation,
+		# inject the image as a user message seed so it appears in the transcript.
+		# When only an image is provided (e.g. open_chat_with_screenshot shortcut),
+		# keep it as a composer attachment — the user decides when to send it.
+		carry_image_into_history = bool(
+			initial_image_base64 and initial_assistant_text
+		)
+		seed_image = initial_image_base64 if carry_image_into_history else None
+		composer_image = None if carry_image_into_history else initial_image_base64
 		active_conversation_id = self._conversation_service.open_conversation(
 			conversation_id=conversation_id,
 			initial_assistant_text=initial_assistant_text,
+			initial_image_base64=seed_image,
 			force_new=force_new_conversation,
 		)
 		provider_state = get_provider_state()
@@ -113,7 +123,7 @@ class UseCasePresenter:
 				use_case_id=None,
 				title=_("AI Chat"),
 				initial_text=initial_text,
-				initial_image_base64=initial_image_base64,
+				initial_image_base64=composer_image,
 				metadata=merge_presentation_intent(
 					session_state.to_metadata(),
 					interaction_mode=INTERACTION_MODE_CHAT,
