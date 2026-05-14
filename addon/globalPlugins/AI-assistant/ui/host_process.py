@@ -121,6 +121,12 @@ def start_host_if_needed() -> None:
 		raise
 
 
+def is_host_process_alive() -> bool:
+	"""Return True if the host subprocess is still running."""
+	with _process_lock:
+		return _host_process is not None and _host_process.poll() is None
+
+
 def stop_host() -> None:
 	global _host_process
 	with _process_lock:
