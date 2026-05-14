@@ -1,5 +1,6 @@
 mod state;
 mod transport;
+pub(crate) mod watchdog;
 
 pub(crate) use state::queue_ui_event;
 

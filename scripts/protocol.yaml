@@ -136,10 +136,6 @@ events:
     rust: UiActionInvoked
     snake: ui_action_invoked
 
-  - id: escape_pressed
-    rust: EscapePressed
-    snake: escape_pressed
-
   - id: close_host
     rust: CloseHost
     snake: close_host
