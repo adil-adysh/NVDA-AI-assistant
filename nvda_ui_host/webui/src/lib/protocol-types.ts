@@ -240,6 +240,8 @@ export interface ChatStreamEndPayload {
 	message_id: string;
 	id?: string;
 	stream_id: string;
+	content?: ContentBlock[];
+	answer_section?: ContentBlock[];
 	conversation_id?: string;
 	command_id?: string;
 	metadata?: PresentationMetadata;

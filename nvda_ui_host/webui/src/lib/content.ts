@@ -115,8 +115,22 @@ export function normalizeContentBlocks(content: unknown): NormalizedBlock[] {
 
 export function extractTextFromBlocks(content: unknown): string {
 	return normalizeContentBlocks(content)
-		.filter((b) => b.type === 'text' && typeof b.text === 'string')
-		.map((b) => b.text!)
+		.filter((b) => {
+			if (b.type === 'text' && typeof b.text === 'string') return true;
+			if (b.type === 'html' && typeof b.html === 'string') return true;
+			return false;
+		})
+		.map((b) => {
+			if (b.type === 'html') {
+				try {
+					const doc = new DOMParser().parseFromString(b.html || '', 'text/html');
+					return doc.body.textContent || '';
+				} catch {
+					return '';
+				}
+			}
+			return b.text || '';
+		})
 		.join('\n')
 		.trim();
 }

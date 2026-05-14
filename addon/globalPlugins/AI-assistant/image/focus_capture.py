@@ -35,6 +35,25 @@ def _get_focus_object_safe() -> Any | None:
 		return None
 
 
+def _coerce_location_tuple(location: Any) -> tuple[int, int, int, int] | None:
+	"""Coerce a location-like value to (left, top, width, height)."""
+	try:
+		if hasattr(location, "left"):
+			left = int(location.left)
+			top = int(location.top)
+			width = int(location.width)
+			height = int(location.height)
+		else:
+			left, top, width, height = (int(v) for v in location)
+	except (TypeError, ValueError, AttributeError):
+		return None
+
+	if width <= 0 or height <= 0:
+		return None
+
+	return left, top, width, height
+
+
 def _get_object_location(obj: Any) -> tuple[int, int, int, int] | None:
 	"""Get the screen location (left, top, width, height) of an NVDA object."""
 	try:
@@ -45,24 +64,25 @@ def _get_object_location(obj: Any) -> tuple[int, int, int, int] | None:
 	if location is None:
 		return None
 
-	# location may be an object with .left, .top, .width, .height
-	# or a tuple (left, top, width, height)
-	try:
-		if hasattr(location, "left"):
-			left = int(location.left)
-			top = int(location.top)
-			width = int(location.width)
-			height = int(location.height)
-		else:
-			# Assume tuple-like
-			left, top, width, height = (int(v) for v in location)
-	except (TypeError, ValueError, AttributeError):
-		return None
+	return _coerce_location_tuple(location)
 
-	if width <= 0 or height <= 0:
-		return None
 
-	return left, top, width, height
+def _resolve_capture_location(focus_obj: Any) -> tuple[int, int, int, int] | None:
+	"""Resolve capture bounds from focused object location only."""
+	return _get_object_location(focus_obj)
+
+
+def _resolve_capture_location_with_retry(max_attempts: int = 4) -> tuple[Any, tuple[int, int, int, int]] | None:
+	"""Retry focus-bound resolution to tolerate transient focus/object location failures."""
+	for _ in range(max_attempts):
+		focus_obj = _get_focus_object_safe()
+		if focus_obj is None:
+			continue
+		location = _resolve_capture_location(focus_obj)
+		if location is None:
+			continue
+		return focus_obj, location
+	return None
 
 
 def _get_object_name(obj: Any) -> str | None:
@@ -117,13 +137,10 @@ def capture_focused_object(
 	Raises:
 		RuntimeError: If no focus object is available or its location cannot be determined.
 	"""
-	focus_obj = _get_focus_object_safe()
-	if focus_obj is None:
-		raise RuntimeError("Unable to obtain the current focus object.")
-
-	location = _get_object_location(focus_obj)
-	if location is None:
-		raise RuntimeError("The focused object does not have a valid screen location.")
+	resolved = _resolve_capture_location_with_retry()
+	if resolved is None:
+		raise RuntimeError("Unable to resolve usable bounds for the current focused object.")
+	focus_obj, location = resolved
 
 	left, top, width, height = location
 

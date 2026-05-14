@@ -14,11 +14,26 @@ def project_chat_history(messages: Sequence[Message]) -> list[ChatMessage]:
 
 
 def project_chat_history_transport(messages: Sequence[Message]) -> list[dict[str, Any]]:
+	"""Project chat history into transport format with HTML-rendered content.
+
+	Assistant message text is converted to HTML blocks so that old conversations
+	render identically to newly streamed responses in the WebView.
+	"""
+	from ...utils.markdown import render_markdown_to_html
+
 	projected_messages: list[dict[str, Any]] = []
 	for index, message in enumerate(project_chat_history(messages)):
 		content: list[dict[str, Any]] = []
 		if isinstance(message.content, str) and message.content.strip():
-			content.append({"type": "text", "text": message.content})
+			text = message.content.strip()
+			if message.role == "assistant":
+				html = render_markdown_to_html(text).strip()
+				if html:
+					content.append({"type": "html", "html": html})
+				else:
+					content.append({"type": "text", "text": text})
+			else:
+				content.append({"type": "text", "text": text})
 		if isinstance(message.image_base64, str) and message.image_base64.strip():
 			content.append(
 				{

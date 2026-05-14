@@ -82,7 +82,20 @@ export function endChatStream(commandId: string, payload: ChatStreamEndPayload):
 	if (!messageId || !streamId) return;
 
 	updateChatEnvelope(payload as Record<string, unknown>);
-	appState.chat.transcript.endStream(messageId, streamId);
+
+	// If the Python side computed HTML blocks (via `_build_assistant_content_blocks`),
+	// the final structured content is carried in `payload.content` or `payload.answer_section`.
+	// Pass it to endStream so the placeholder text-delta content is replaced by
+	// the authoritative HTML blocks — making old messages and new streamed messages
+	// render identically with proper HTML formatting.
+	const finalContent =
+		Array.isArray(payload.content) && payload.content.length > 0
+			? payload.content
+			: Array.isArray(payload.answer_section) && payload.answer_section.length > 0
+				? payload.answer_section
+				: undefined;
+
+	appState.chat.transcript.endStream(messageId, streamId, finalContent);
 	reportUiApplied(commandId);
 }
 

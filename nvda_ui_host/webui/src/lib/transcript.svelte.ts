@@ -152,12 +152,24 @@ export class Transcript {
 		}));
 	}
 
-	endStream(messageId: string, streamId: string): boolean {
+	/**
+	 * End a streaming message and optionally replace its content with final structured blocks.
+	 * When `content` is provided (e.g. HTML blocks from Python-side markdown rendering),
+	 * the accumulated text-delta content is replaced by the authoritative final content.
+	 */
+	endStream(
+		messageId: string,
+		streamId: string,
+		content?: ContentBlock[],
+	): boolean {
 		const msg = this.findById(messageId);
 		if (!msg || msg.streamId !== streamId) return false;
 
 		return this.updateMessage(messageId, (m) => ({
 			...m,
+			...(Array.isArray(content) && content.length > 0
+				? { content }
+				: {}),
 			streaming: false,
 			streamId: null,
 		}));
