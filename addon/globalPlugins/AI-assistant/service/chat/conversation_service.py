@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ...core.message_transforms import build_assistant_message
+from ...core.message_transforms import build_assistant_message, build_user_message
 from .coordinator import ChatCoordinator
 
 
@@ -24,9 +24,10 @@ class ConversationService:
 		*,
 		conversation_id: str | None = None,
 		initial_assistant_text: str | None = None,
+		initial_image_base64: str | None = None,
 		force_new: bool = False,
 	) -> str:
-		seed_messages = self._build_seed_messages(initial_assistant_text)
+		seed_messages = self._build_seed_messages(initial_assistant_text, initial_image_base64)
 		resolved_conversation_id = conversation_id
 		if resolved_conversation_id is None and not force_new:
 			resolved_conversation_id = self._chat_coordinator.get_active_conversation_id()
@@ -54,7 +55,10 @@ class ConversationService:
 			active_conversation_id=resolved_active_id,
 		)
 
-	def _build_seed_messages(self, initial_assistant_text: str | None) -> tuple[Any, ...]:
-		if not isinstance(initial_assistant_text, str) or not initial_assistant_text.strip():
-			return ()
-		return (build_assistant_message(text=initial_assistant_text.strip()),)
+	def _build_seed_messages(self, initial_assistant_text: str | None, initial_image_base64: str | None = None) -> tuple[Any, ...]:
+		messages: list[Any] = []
+		if isinstance(initial_image_base64, str) and initial_image_base64.strip():
+			messages.append(build_user_message(image_base64=initial_image_base64))
+		if isinstance(initial_assistant_text, str) and initial_assistant_text.strip():
+			messages.append(build_assistant_message(text=initial_assistant_text.strip()))
+		return tuple(messages)
