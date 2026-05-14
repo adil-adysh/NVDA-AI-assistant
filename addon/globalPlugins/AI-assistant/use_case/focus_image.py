@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from ..context.pipeline import ContextPipeline
-from ..context.types import ImageContext, PromptContext
+from ..context.types import ExtractionIntent, ImageContext, PromptContext
 from ..image import capture_focused_object
 from ..image.services import ImageEncoder, ImagePreprocessor
 from ..prompts import build_image_description_prompt
@@ -21,7 +21,7 @@ class DescribeFocusedImageUseCase(UseCase):
 		return UseCaseSpec(
 			id="describe_focused_image",
 			description="Describe the currently focused NVDA object image.",
-			context_profile=(),
+			extraction_intent=ExtractionIntent(),
 			prompt_key="image_description",
 			tools=(),
 			requires_input=False,
@@ -129,7 +129,7 @@ class AttachFocusedImageToChatUseCase(UseCase):
 		return UseCaseSpec(
 			id="attach_focused_image_to_chat",
 			description="Open chat with the focused NVDA object image attached.",
-			context_profile=(),
+			extraction_intent=ExtractionIntent(),
 			prompt_key="chat_with_image_context",
 			tools=(),
 			requires_input=True,

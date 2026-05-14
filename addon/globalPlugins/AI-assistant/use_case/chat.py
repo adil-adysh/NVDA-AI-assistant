@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from ..context.pipeline import ContextPipeline
-from ..context.types import APP, IMAGE, PAGE, ExtractionResult, PromptContext
+from ..context.types import ExtractionIntent, ForegroundImageRequest, PageTextRequest, PromptContext
 from ..service.llm import LLMService
 from .base import UseCase
 from .types import UseCaseResult, UseCaseSpec
@@ -16,7 +16,7 @@ class OpenChatUseCase(UseCase):
 		return UseCaseSpec(
 			id="open_chat",
 			description="Open a blank chat session.",
-			context_profile=(),
+			extraction_intent=ExtractionIntent(),
 			prompt_key="chat",
 			tools=(),
 			requires_input=False,
@@ -57,7 +57,9 @@ class OpenChatWithPageContentUseCase(UseCase):
 		return UseCaseSpec(
 			id="open_chat_with_page_content",
 			description="Open chat with the current page content preloaded.",
-			context_profile=(APP, PAGE),
+			extraction_intent=ExtractionIntent(requests=(
+				PageTextRequest(),
+			)),
 			prompt_key="chat_with_page_context",
 			tools=(),
 			requires_input=True,
@@ -113,7 +115,9 @@ class OpenChatWithScreenshotUseCase(UseCase):
 		return UseCaseSpec(
 			id="open_chat_with_screenshot",
 			description="Open chat with a screenshot attached.",
-			context_profile=(IMAGE,),
+			extraction_intent=ExtractionIntent(requests=(
+				ForegroundImageRequest(),
+			)),
 			prompt_key="chat_with_image_context",
 			tools=(),
 			requires_input=True,

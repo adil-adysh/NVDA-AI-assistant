@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Final, Literal
 
-from ..context.types import ContextProfileList, PromptContext
+from ..context.types import ExtractionIntent, PromptContext
 
 
 UseCaseId = Literal[
@@ -32,7 +32,7 @@ ATTACH_FOCUSED_IMAGE_TO_CHAT: Final[UseCaseId] = "attach_focused_image_to_chat"
 class UseCaseSpec:
 	id: UseCaseId
 	description: str
-	context_profile: ContextProfileList
+	extraction_intent: ExtractionIntent
 	prompt_key: str
 	tools: tuple[str, ...] = ()
 	requires_input: bool = False

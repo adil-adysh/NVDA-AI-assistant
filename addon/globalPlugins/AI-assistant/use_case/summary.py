@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 from ..context.pipeline import ContextPipeline
 from ..prompts import build_extraction_summary_prompt
-from ..context.types import APP, PAGE, ExtractionResult, PromptContext
+from ..context.types import ExtractionIntent, ExtractionResult, PageStructureRequest, PageTextRequest, PromptContext
 from ..service.llm import LLMService
 from .base import UseCase
 from .types import UseCaseResult, UseCaseSpec
@@ -17,7 +17,10 @@ class SummaryUseCase(UseCase):
 		return UseCaseSpec(
 			id="summary",
 			description="Summarize the current page content.",
-			context_profile=(APP, PAGE),
+			extraction_intent=ExtractionIntent(requests=(
+				PageTextRequest(),
+				PageStructureRequest(),
+			)),
 			prompt_key="page_summary",
 			tools=(),
 			requires_input=False,

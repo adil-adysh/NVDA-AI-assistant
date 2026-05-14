@@ -1,22 +1,25 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import hashlib
-import re
 from collections.abc import Sequence
-from typing import Any
 
 from logHandler import log
 
 from .base import TreeExtractor
-from .text_extractor import TextExtractor
 from .candidate_base import CandidateProvider, CandidateExtractionContext
 from .candidates import buildGenericCandidateProviders
+from .extraction_utils import (
+	MIN_PAGE_TEXT_CHARS,
+	extract_app_title,
+	extract_text_from_object,
+	extract_title,
+	is_meaningful_text,
+	normalize_extracted_text,
+	text_signature,
+	trim_text,
+)
+from .text_extractor import TextExtractor
 from ...context.types import ExtractionSnapshot, GENERIC, TERMINAL, PromptSource
-
-MAX_PAGE_TEXT_CHARS = 120000
-MIN_PAGE_TEXT_CHARS = 120
-_ELLIPSIS_BLOCK = "\n\n[Content trimmed before summarization]\n\n"
 
 
 class GenericPageExtractor(TreeExtractor):
@@ -79,23 +82,19 @@ class GenericPageExtractor(TreeExtractor):
 		return None
 
 	def _extractText(self, obj: object) -> str:
-		return self._text_extractor.extract_text(obj) or ""
+		return extract_text_from_object(obj, self._text_extractor)
 
 	def _normalizeText(self, text: str) -> str:
-		text = re.sub(r"[ \t]+", " ", text)
-		text = re.sub(r"\n{3,}", "\n\n", text)
-		return text.strip()
+		return normalize_extracted_text(text)
 
 	def _isMeaningfulText(self, text: str) -> bool:
-		return len(text.strip()) >= MIN_PAGE_TEXT_CHARS
+		return is_meaningful_text(text)
 
 	def _trimText(self, text: str) -> tuple[str, bool]:
-		if len(text) <= MAX_PAGE_TEXT_CHARS:
-			return text, False
-		return text[:MAX_PAGE_TEXT_CHARS] + _ELLIPSIS_BLOCK, True
+		return trim_text(text)
 
 	def _textSignature(self, text: str) -> str:
-		return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
+		return text_signature(text)
 
 	def _buildSnapshot(
 		self,
@@ -164,24 +163,7 @@ class GenericPageExtractor(TreeExtractor):
 		return score
 
 	def _extractTitle(self, obj: object, context: CandidateExtractionContext) -> str:
-		for attr in ("name", "title", "description"):
-			try:
-				value = getattr(obj, attr, None)
-			except Exception:
-				value = None
-			if isinstance(value, str) and value.strip():
-				return value.strip()
-		if context.foreground is not None:
-			for attr in ("name", "title", "description"):
-				try:
-					value = getattr(context.foreground, attr, None)
-				except Exception:
-					value = None
-				if isinstance(value, str) and value.strip():
-					return value.strip()
-		return ""
+		return extract_title(obj, context)
 
 	def _extractAppTitle(self, context: CandidateExtractionContext) -> str:
-		if context.appName:
-			return context.appName
-		return ""
+		return extract_app_title(context)

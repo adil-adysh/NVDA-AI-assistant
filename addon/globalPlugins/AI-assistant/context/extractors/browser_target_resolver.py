@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import api
-from .candidate_base import CandidateExtractionContext
+from .candidate_base import CandidateExtractionContext, is_usable_tree_interceptor
 
 try:
 	import treeInterceptorHandler
@@ -65,26 +64,7 @@ class BrowserTargetResolver:
 		return getattr(candidate, "treeInterceptor", None)
 
 	def _isUsableTreeInterceptor(self, interceptor: object | None) -> bool:
-		if interceptor is None:
-			return False
-		if not hasattr(interceptor, "makeTextInfo"):
-			return False
-
-		try:
-			isAlive = getattr(interceptor, "isAlive", True)
-			if isAlive is False:
-				return False
-		except Exception:
-			return False
-
-		try:
-			isReady = getattr(interceptor, "isReady", True)
-			if isReady is False:
-				return False
-		except Exception:
-			pass
-
-		return True
+		return is_usable_tree_interceptor(interceptor)
 
 	def _hasDocumentRole(self, obj: object) -> bool:
 		try:

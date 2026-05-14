@@ -2,14 +2,42 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Final, Literal, TypeAlias
+# summary.py
+class SummaryUseCase(UseCase):
+    @property
+    def spec(self) -> UseCaseSpec:
+        return UseCaseSpec(
+            id="summary",
+            extraction_intent=ExtractionIntent(requests=(
+                PageTextRequest(),
+                PageStructureRequest(),
+            )),
+            ...
+        )
+# image.py — just a screenshot, no text
+class ImageDescriptionUseCase(UseCase):
+    @property
+    def spec(self) -> UseCaseSpec:
+        return UseCaseSpec(
+            id="describe_image",
+            extraction_intent=ExtractionIntent(requests=(
+                ForegroundImageRequest(),
+            )),
+            ...
+        )
+# future: focused element description
+class DescribeFocusedElementUseCase(UseCase):
+    @property
+    def spec(self) -> UseCaseSpec:
+        return UseCaseSpec(
+            id="describe_focused_element",
+            extraction_intent=ExtractionIntent(requests=(
+                FocusedElementImageRequest(),
+                FocusedElementTextRequest(),
+            )),
+            ...
+        )from typing import Any, Final, Literal, TypeAlias
 
-
-ContextProfile = Literal["app", "page", "image"]
-APP: Final[ContextProfile] = "app"
-PAGE: Final[ContextProfile] = "page"
-IMAGE: Final[ContextProfile] = "image"
-ContextProfileList: TypeAlias = tuple[ContextProfile, ...]
 
 ContextFacts: TypeAlias = dict[str, object]
 PromptMetadata: TypeAlias = dict[str, object]
@@ -78,81 +106,17 @@ class ExtractionFacts:
 	snapshot: ExtractionSnapshot | None = None
 
 
-def _normalize_str(value: Any) -> str:
-	return value if isinstance(value, str) else ""
-
-
-def _normalize_optional_bool(value: Any) -> bool | None:
-	return value if isinstance(value, bool) else None
-
-
-def _normalize_headings(value: Any) -> tuple[tuple[int | None, str], ...]:
-	if not isinstance(value, tuple):
-		return ()
-
-	normalized: list[tuple[int | None, str]] = []
-	for item in value:
-		if not isinstance(item, tuple) or len(item) != 2:
-			continue
-		level, text = item
-		if not (isinstance(level, int) or level is None):
-			continue
-		if not isinstance(text, str):
-			continue
-		normalized.append((level, text))
-
-	return tuple(normalized)
-
-
-def _normalize_str_tuple(value: Any) -> tuple[str, ...]:
-	if not isinstance(value, tuple):
-		return ()
-	if not all(isinstance(item, str) for item in value):
-		return ()
-	return value
-
-
 def build_extraction_facts_from_facts(facts: dict[str, Any]) -> ExtractionFacts | None:
-	snapshot = facts.get("extraction_snapshot") if "extraction_snapshot" in facts else facts.get("page_snapshot")
-	page_text = facts.get("extraction_text") if "extraction_text" in facts else facts.get("page_text")
-	if (
-		not isinstance(snapshot, ExtractionSnapshot)
-		and not isinstance(page_text, str)
-		and not any(
-			key in facts
-			for key in (
-				"extraction_title",
-				"page_title",
-				"extraction_app_title",
-				"page_app_title",
-				"extraction_truncated",
-				"page_truncated",
-				"extraction_headings",
-				"page_headings",
-				"extraction_links",
-				"page_links",
-				"extraction_buttons",
-				"page_buttons",
-				"extraction_landmarks",
-				"page_landmarks",
-			)
-		)
-	):
+	snapshot = facts.get("extraction_snapshot")
+	extraction_text = facts.get("extraction_text")
+
+	if not isinstance(snapshot, ExtractionSnapshot) and not isinstance(extraction_text, str):
 		return None
 
 	title: str | None = None
 	app_title: str | None = None
 	truncated: bool | None = None
-	headings: tuple[tuple[int | None, str], ...] = ()
-	links: tuple[str, ...] = ()
-	buttons: tuple[str, ...] = ()
-	landmarks: tuple[str, ...] = ()
-	inputs: tuple[str, ...] = ()
-	comboboxes: tuple[str, ...] = ()
-	checkboxes: tuple[str, ...] = ()
-	radios: tuple[str, ...] = ()
 	text: str | None = None
-
 	structure: ExtractionStructure | None = None
 
 	if isinstance(snapshot, ExtractionSnapshot):
@@ -172,36 +136,8 @@ def build_extraction_facts_from_facts(facts: dict[str, Any]) -> ExtractionFacts 
 				radios=snapshot.radios,
 			)
 
-	if isinstance(page_text, str):
-		text = page_text
-
-	if title is None:
-		title = _normalize_str(facts.get("page_title")) or None
-	if app_title is None:
-		app_title = _normalize_str(facts.get("page_app_title")) or None
-	if truncated is None:
-		truncated = _normalize_optional_bool(facts.get("page_truncated"))
-	page_structure = facts.get("extraction_structure") if "extraction_structure" in facts else facts.get("page_structure")
-	if page_structure is None:
-		headings = _normalize_headings(facts.get("extraction_headings") if "extraction_headings" in facts else facts.get("page_headings"))
-		links = _normalize_str_tuple(facts.get("extraction_links") if "extraction_links" in facts else facts.get("page_links"))
-		buttons = _normalize_str_tuple(facts.get("extraction_buttons") if "extraction_buttons" in facts else facts.get("page_buttons"))
-		landmarks = _normalize_str_tuple(facts.get("extraction_landmarks") if "extraction_landmarks" in facts else facts.get("page_landmarks"))
-		inputs = _normalize_str_tuple(facts.get("extraction_inputs") if "extraction_inputs" in facts else facts.get("page_inputs"))
-		comboboxes = _normalize_str_tuple(facts.get("extraction_comboboxes") if "extraction_comboboxes" in facts else facts.get("page_comboboxes"))
-		checkboxes = _normalize_str_tuple(facts.get("extraction_checkboxes") if "extraction_checkboxes" in facts else facts.get("page_checkboxes"))
-		radios = _normalize_str_tuple(facts.get("extraction_radios") if "extraction_radios" in facts else facts.get("page_radios"))
-		if any((headings, links, buttons, landmarks, inputs, comboboxes, checkboxes, radios)):
-			page_structure = ExtractionStructure(
-				headings=headings,
-				links=links,
-				buttons=buttons,
-				landmarks=landmarks,
-				inputs=inputs,
-				comboboxes=comboboxes,
-				checkboxes=checkboxes,
-				radios=radios,
-			)
+	if isinstance(extraction_text, str):
+		text = extraction_text
 
 	if text is None:
 		return None
@@ -211,7 +147,7 @@ def build_extraction_facts_from_facts(facts: dict[str, Any]) -> ExtractionFacts 
 		app_title=app_title,
 		text=text,
 		truncated=truncated,
-		structure=page_structure if isinstance(page_structure, ExtractionStructure) else None,
+		structure=structure,
 		snapshot=snapshot if isinstance(snapshot, ExtractionSnapshot) else None,
 	)
 
@@ -254,3 +190,77 @@ class PromptContext:
 	image_base64: str | None = None
 	language: str | None = None
 	metadata: PromptMetadata = field(default_factory=dict)
+
+
+# ── Extraction Intent model ──────────────────────────────────────────
+# The core architectural shift: UseCase → ExtractionIntent → Request Graph → Collectors.
+# Instead of coarse context_profile tuples, use cases express semantic intent
+# through typed ContentRequest objects.  Each collector declares which request
+# types it handles via handles_request() / collect_for_request().
+
+StructuredField = Literal[
+	"headings", "links", "buttons", "landmarks",
+	"inputs", "comboboxes", "checkboxes", "radios",
+]
+
+ALL_STRUCTURED_FIELDS: tuple[StructuredField, ...] = (
+	"headings", "links", "buttons", "landmarks",
+	"inputs", "comboboxes", "checkboxes", "radios",
+)
+
+# Source type for image capture — mirrors image/services.py:CaptureSource.
+ImageCaptureSource = Literal["foreground", "focus", "navigator", "desktop"]
+
+
+# ── Content request types ──────────────────────────────────────────
+# Each concrete type represents a specific piece of context a use case
+# wants extracted.  Collectors dispatch on the type via isinstance().
+# Adding a new capability = adding a new request type + a collector
+# that handles it.  No enum branching, no hidden composition.
+
+@dataclass(frozen=True, slots=True)
+class PageTextRequest:
+	"""Full text content of the current page/document."""
+
+@dataclass(frozen=True, slots=True)
+class PageStructureRequest:
+	"""Structured semantic elements (headings, links, buttons, etc.)."""
+	fields: tuple[StructuredField, ...] = ()  # () = all fields
+
+@dataclass(frozen=True, slots=True)
+class FocusedElementTextRequest:
+	"""Text content of only the focused NVDA object."""
+
+@dataclass(frozen=True, slots=True)
+class ForegroundImageRequest:
+	"""Screenshot of the foreground window."""
+
+@dataclass(frozen=True, slots=True)
+class FocusedElementImageRequest:
+	"""Screenshot of the focused NVDA element."""
+
+@dataclass(frozen=True, slots=True)
+class NavigatorImageRequest:
+	"""Screenshot of the NVDA navigator object."""
+
+
+ContentRequest = (
+	PageTextRequest | PageStructureRequest |
+	FocusedElementTextRequest |
+	ForegroundImageRequest | FocusedElementImageRequest | NavigatorImageRequest
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractionIntent:
+	"""What a use case wants the context pipeline to extract.
+
+	This is the contract between UseCase and ContextPipeline.
+	It carries explicit ContentRequest objects — the requests
+	THEMSELVES document what data flows to the LLM.
+
+	No convenience constructors.  Use cases assemble their own
+	requests tuple.  That way you can read a use case and see
+	exactly what it extracts.
+	"""
+	requests: tuple[ContentRequest, ...] = ()

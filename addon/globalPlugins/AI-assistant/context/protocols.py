@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from .types import ContextProfileList, ExtractionSnapshot
+from .types import ContentRequest, ExtractionSnapshot
 
 
 ContextFacts = dict[str, object]
@@ -51,9 +51,8 @@ class CollectorInput:
 
 
 class ContextCollector(Protocol):
-	@property
-	def profiles(self) -> ContextProfileList:
+	def handles_request(self, request: ContentRequest) -> bool:
 		...
 
-	def collect(self, input: CollectorInput) -> ContextFragment:
+	def collect_for_request(self, request: ContentRequest, input: CollectorInput) -> ContextFragment:
 		...

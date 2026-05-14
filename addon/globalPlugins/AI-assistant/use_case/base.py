@@ -36,9 +36,9 @@ class UseCase(ABC):
 		raise NotImplementedError
 
 	def collect_prompt_context(self, context_pipeline: ContextPipeline | None, emit: ContextEmitter = None) -> PromptContext | None:
-		if context_pipeline is None or not self.spec.context_profile:
+		if context_pipeline is None or not self.spec.extraction_intent.requests:
 			return None
-		return context_pipeline.collect(use_case_id=self.spec.id, context_profile=self.spec.context_profile)
+		return context_pipeline.collect(use_case_id=self.spec.id, extraction_intent=self.spec.extraction_intent)
 
 	def execute_prompted_use_case(
 		self,
