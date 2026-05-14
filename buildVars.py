@@ -38,23 +38,15 @@ The add-on includes a WebView-based chat interface with streaming responses, con
 		"""
 	),
 	# version
-	addon_version="0.11.1",
+	addon_version="0.11.3",
 	# Brief changelog for this version
 	# Translators: what's new content for this add-on version to be shown in the add-on store
 	addon_changelog=_(
 		"""
-Added
-• API key encryption at rest via Windows DPAPI — Gemini and OpenAI keys are now encrypted instead of stored as plaintext (existing keys migrated automatically on save)
-• Add to current chat action for attaching chat without a token roundtrip
-• Describe focused NVDA object — captures the screen region of the currently focused element and describes it via AI (layer key: F)
-• Attach focused object image to chat — captures the focused element's image and opens a chat with it attached (layer key: Z)
 Changed
-• WebView UI migrated from JavaScript to TypeScript with Svelte 5 clean architecture for improved reliability
-• Protocol layer unified under a single canonical YAML spec across Python, Rust, and TypeScript for fewer cross-layer inconsistencies
-Improved
-• Streaming and state management performance through simplified reactivity chain
-Fixed
-• Legacy EVENT_HOST_CLOSED naming aligned with canonical close_host spec
+• HTML content rendering — assistant messages are now rendered as HTML in the WebView for proper formatting of tables, code blocks, and structured content
+• Keyboard shortcuts simplified to Alt+Key only — all Alt+Shift combinations replaced with single-modifier shortcuts (Alt+I focus input, Alt+P focus provider, Alt+M focus model, Alt+A attach, Alt+S send, Alt+K copy markdown)
+• Conversation persistence on host hide — re-opening a hidden chat window preserves the transcript instead of re-syncing history
 		"""
 	),
 	# Author(s)
