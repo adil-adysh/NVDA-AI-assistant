@@ -49,7 +49,7 @@ fn handle_js_event(message: &str, _hwnd: HWND) -> Result<()> {
             }
             maybe_transition_to_ready();
         }
-        Some(WebViewEvent::CloseHost) | Some(WebViewEvent::EscapePressed) => {
+        Some(WebViewEvent::CloseHost) => {
             logger::info("WebView close event received, requesting host close");
             if let Err(dispatch_error) = request_close_window("user_escape") {
                 logger::error(&format!("Failed to request host close from WebView event: {:?}", dispatch_error));

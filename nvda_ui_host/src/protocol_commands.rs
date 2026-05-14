@@ -39,7 +39,6 @@ pub enum EventName {
     ModelSelected,
     ThinkModeToggled,
     UiActionInvoked,
-    EscapePressed,
     CloseHost,
 }
 

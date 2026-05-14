@@ -16,6 +16,7 @@ use crate::logger;
 use crate::protocol::HostResponse;
 
 use super::state::{clear_ui_event_sender, install_ui_event_sender, requeue_ui_events_after_disconnect};
+use super::watchdog;
 
 const COMMAND_PIPE_NAME: &str = r"\\.\pipe\nvda_ai_assistant_ui_cmd";
 const EVENT_PIPE_NAME: &str = r"\\.\pipe\nvda_ai_assistant_ui_evt";
@@ -84,6 +85,7 @@ fn start_command_pipe_listener() {
 					continue;
 				}
 				logger::info("IPC command client connected");
+				watchdog::touch();
 
 				let raw_handle = pipe_handle.0 as RawHandle;
 				let file = unsafe { File::from_raw_handle(raw_handle) };
@@ -128,6 +130,7 @@ fn start_command_pipe_listener() {
 
 					reader_line.clear();
 				}
+				watchdog::touch(); // client disconnected — reset idle timer
 			}
 			Err(err) => {
 				logger::error(&format!("IPC failed to create command pipe: {:?}", err));
