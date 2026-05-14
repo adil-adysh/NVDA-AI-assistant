@@ -196,6 +196,26 @@ Then press:
 
 ---
 
+# Chat keyboard shortcuts
+
+The following shortcuts are available inside the chat window:
+
+| Shortcut | Action |
+| -------- | ------ |
+| `Escape` | Close the chat window |
+| `Alt+I` | Focus the message input box |
+| `Alt+S` | Send the current message |
+| `Shift+Enter` | Insert a new line in the message input |
+| `Alt+T` | Copy response text to clipboard |
+| `Alt+K` | Copy response as formatted markdown |
+| `Alt+R` | Clear the current view |
+| `Alt+L` | Focus the response content area |
+| `Alt+P` | Focus the provider selector |
+| `Alt+M` | Focus the model selector |
+| `Alt+A` | Attach an image file |
+
+---
+
 # Configuration
 
 The settings panel allows you to:
