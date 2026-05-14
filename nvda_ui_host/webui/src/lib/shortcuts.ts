@@ -4,6 +4,8 @@ import {
 	copyCurrentText,
 	focusChatComposer,
 	focusContentRegion,
+	focusModelSelect,
+	focusProviderSelect,
 	requestCloseHost,
 	submitChatMessage,
 } from './actions';
@@ -20,6 +22,8 @@ export interface ShortcutActions {
 	onClear: () => void;
 	onFocusContent: () => void;
 	onFocusComposer: () => void;
+	onFocusProvider: () => void;
+	onFocusModel: () => void;
 	onAttachFile: () => void;
 	onSubmit: (fileInputElement: HTMLInputElement | null) => void;
 }
@@ -27,15 +31,6 @@ export interface ShortcutActions {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function isTextEntryTarget(target: EventTarget | null): boolean {
-	return (
-		target instanceof HTMLInputElement ||
-		target instanceof HTMLTextAreaElement ||
-		target instanceof HTMLSelectElement ||
-		(target as HTMLElement | null)?.isContentEditable === true
-	);
-}
 
 function hasToolbarAction(actionId: string): boolean {
 	return (
@@ -53,20 +48,19 @@ export function registerGlobalShortcuts(
 	fileInputElement: HTMLInputElement | null,
 ): () => void {
 	function handler(event: KeyboardEvent): void {
+		if (event.repeat) return;
+
+		// Escape: close / dismiss
 		if (event.key === 'Escape') {
-			if (event.repeat) return;
 			event.preventDefault();
 			actions.onClose();
 			return;
 		}
 
-		if (!(event.altKey && event.shiftKey) || event.repeat) return;
+		// All shortcuts use Alt+Key only — no Shift, Ctrl, or Meta modifiers.
+		if (!event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) return;
 
 		const shortcut = event.key.toLowerCase();
-		const activeTarget = document.activeElement;
-		if (isTextEntryTarget(activeTarget) && shortcut !== 'i' && shortcut !== 's') {
-			return;
-		}
 
 		switch (shortcut) {
 			case 't':
@@ -74,7 +68,7 @@ export function registerGlobalShortcuts(
 				event.preventDefault();
 				actions.onCopyText();
 				break;
-			case 'm':
+			case 'k':
 				if (!hasToolbarAction('copy_markdown')) return;
 				event.preventDefault();
 				actions.onCopyMarkdown();
@@ -92,6 +86,14 @@ export function registerGlobalShortcuts(
 				if (appState.view.mode !== 'chat') return;
 				event.preventDefault();
 				actions.onFocusComposer();
+				break;
+			case 'p':
+				event.preventDefault();
+				actions.onFocusProvider();
+				break;
+			case 'm':
+				event.preventDefault();
+				actions.onFocusModel();
 				break;
 			case 'a':
 				if (appState.view.mode !== 'chat') return;

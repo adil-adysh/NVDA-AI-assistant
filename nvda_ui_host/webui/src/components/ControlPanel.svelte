@@ -81,6 +81,7 @@
         <span id="provider-label">{t('provider_label', 'Provider')}</span>
         <select
             id="provider-select"
+            aria-keyshortcuts="Alt+P"
             bind:value={appState.control.providerDraft}
             onchange={handleProviderChange}
             onkeydown={handleProviderKeydown}
@@ -97,6 +98,7 @@
         <span id="model-label">{t('model_label', 'Model')}</span>
         <select
             id="model-select"
+            aria-keyshortcuts="Alt+M"
             bind:value={appState.control.modelDraft}
             onchange={handleModelInputChange}
             onkeydown={handleModelKeydown}

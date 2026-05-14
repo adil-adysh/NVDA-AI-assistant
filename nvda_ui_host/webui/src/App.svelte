@@ -13,6 +13,8 @@
         copyCurrentText,
         focusChatComposer,
         focusContentRegion,
+        focusModelSelect,
+        focusProviderSelect,
         requestCloseHost,
         submitChatMessage,
     } from './lib/actions';
@@ -43,16 +45,14 @@
                 onClear: clearDisplayedContent,
                 onFocusContent: focusContentRegion,
                 onFocusComposer: focusChatComposer,
+                onFocusProvider: focusProviderSelect,
+                onFocusModel: focusModelSelect,
                 onAttachFile: () => fileInputElement?.click(),
                 onSubmit: submitChatMessage,
             },
             fileInputElement,
         );
         return cleanupShortcuts;
-    });
-
-    $effect(() => {
-        document.title = appState.title;
     });
 
     $effect(() => {

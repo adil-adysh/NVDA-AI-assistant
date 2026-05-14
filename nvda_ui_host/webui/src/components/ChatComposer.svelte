@@ -47,7 +47,7 @@
                     bind:value={appState.chat.composerText}
                     placeholder={t('chat_placeholder', 'Type your message...')}
                     rows="3"
-                    aria-keyshortcuts="Alt+Shift+I"
+                    aria-keyshortcuts="Alt+I, Shift+Enter"
                     onkeydown={handleKeydown}
                     onfocus={focusChatComposer}
                     disabled={chatDisabled}
@@ -55,10 +55,10 @@
             </label>
 
             <div class="composer-toolbar">
-                <button id="attach-files" type="button" aria-keyshortcuts="Alt+Shift+A" onclick={() => fileInputElement?.click()} disabled={chatDisabled}>{t('attach_button', 'Upload image')}</button>
+                <button id="attach-files" type="button" aria-keyshortcuts="Alt+A" onclick={() => fileInputElement?.click()} disabled={chatDisabled}>{t('attach_button', 'Upload image')}</button>
             </div>
 
-            <button id="chat-send" type="button" aria-keyshortcuts="Enter,Alt+Shift+S" onclick={() => submitChatMessage(fileInputElement)} disabled={chatDisabled}>{t('send_button', 'Send')}</button>
+            <button id="chat-send" type="button" aria-keyshortcuts="Enter,Alt+S" onclick={() => submitChatMessage(fileInputElement)} disabled={chatDisabled}>{t('send_button', 'Send')}</button>
         </div>
     </section>
 {/if}
