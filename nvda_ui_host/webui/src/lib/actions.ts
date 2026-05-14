@@ -227,3 +227,17 @@ export function focusContentRegion(): void {
 export function focusChatComposer(): void {
 	setPendingFocus('composer');
 }
+
+export function focusProviderSelect(): void {
+	const el = document.getElementById('provider-select');
+	if (el) {
+		(el as HTMLElement).focus();
+	}
+}
+
+export function focusModelSelect(): void {
+	const el = document.getElementById('model-select');
+	if (el) {
+		(el as HTMLElement).focus();
+	}
+}
