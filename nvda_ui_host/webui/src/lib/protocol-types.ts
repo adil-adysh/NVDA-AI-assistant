@@ -183,6 +183,7 @@ export interface OpenChatPayload {
 	conversation_id?: string | null;
 	initial_text?: string;
 	initial_image_base64?: string;
+	preserve_conversation?: boolean;
 	metadata?: PresentationMetadata;
 }
 
