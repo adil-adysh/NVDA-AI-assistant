@@ -38,8 +38,6 @@ class UseCase(ABC):
 	def collect_prompt_context(self, context_pipeline: ContextPipeline | None, emit: ContextEmitter = None) -> PromptContext | None:
 		if context_pipeline is None or not self.spec.context_profile:
 			return None
-		if emit is not None:
-			emit("collecting_context", f"Collecting context for {self.spec.id}...")
 		return context_pipeline.collect(use_case_id=self.spec.id, context_profile=self.spec.context_profile)
 
 	def execute_prompted_use_case(

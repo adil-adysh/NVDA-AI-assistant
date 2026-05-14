@@ -502,14 +502,12 @@ class UIAdapter:
 		nvda_ui.message(error_message)
 
 	def show_progress(self, message: str) -> None:
+		nvda_ui.queue(nvda_ui.message, message)
 		if self._host_lifecycle.should_dispatch_background_command():
 			self._dispatch_host_command(
 				lambda: self._host_renderer.show_progress(message),
-				lambda: nvda_ui.queue(nvda_ui.message, message),
+				lambda: None,
 			)
-			return
-
-		nvda_ui.queue(nvda_ui.message, message)
 
 	def close_window(self, reason: str | None = None) -> None:
 		if self._host_lifecycle.should_dispatch_background_command():

@@ -273,7 +273,6 @@ class UseCasePresenter:
 
 		if event.stage in {"start", "collecting_context", "building_prompt", "llm_request", "tool_execution", "complete"}:
 			ui_adapter.show_progress(event.message)
-			nvda_ui.queue(nvda_ui.message, event.message)
 
 	def _build_chat_metadata(self) -> dict[str, Any]:
 		provider_state = get_provider_state()
