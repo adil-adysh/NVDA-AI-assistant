@@ -6,10 +6,15 @@ import dataclasses
 from io import BytesIO
 from typing import Any
 
-import api
 from PIL import ImageGrab
 
 from ..config.settings import get_image_format, get_image_max_side, get_image_quality
+from .objects import (
+	clip_location_to_containers,
+	get_object_location,
+	get_object_safe,
+)
+from .screen_curtain import check_screen_curtain
 from .services import ImageEncoder, ImagePreprocessor
 
 
@@ -25,63 +30,47 @@ class FocusCaptureResult:
 	top: int
 	width: int
 	height: int
-
-
-def _get_focus_object_safe() -> Any | None:
-	"""Get the current focus NVDA object, returning None on failure."""
-	try:
-		return api.getFocusObject()
-	except Exception:
-		return None
-
-
-def _coerce_location_tuple(location: Any) -> tuple[int, int, int, int] | None:
-	"""Coerce a location-like value to (left, top, width, height)."""
-	try:
-		if hasattr(location, "left"):
-			left = int(location.left)
-			top = int(location.top)
-			width = int(location.width)
-			height = int(location.height)
-		else:
-			left, top, width, height = (int(v) for v in location)
-	except (TypeError, ValueError, AttributeError):
-		return None
-
-	if width <= 0 or height <= 0:
-		return None
-
-	return left, top, width, height
-
-
-def _get_object_location(obj: Any) -> tuple[int, int, int, int] | None:
-	"""Get the screen location (left, top, width, height) of an NVDA object."""
-	try:
-		location = obj.location
-	except Exception:
-		return None
-
-	if location is None:
-		return None
-
-	return _coerce_location_tuple(location)
+	capture_source: str = "focus"
 
 
 def _resolve_capture_location(focus_obj: Any) -> tuple[int, int, int, int] | None:
-	"""Resolve capture bounds from focused object location only."""
-	return _get_object_location(focus_obj)
+	"""Resolve capture bounds from a focused/navigator object.
+
+	Clipped to visible area via parent container intersection so that
+	scroll-cropped or window-overflowing portions are excluded.
+	"""
+	raw = get_object_location(focus_obj)
+	if raw is None:
+		return None
+	return clip_location_to_containers(focus_obj, raw)
 
 
-def _resolve_capture_location_with_retry(max_attempts: int = 4) -> tuple[Any, tuple[int, int, int, int]] | None:
-	"""Retry focus-bound resolution to tolerate transient focus/object location failures."""
+def _resolve_capture_location_with_retry(
+	max_attempts: int = 4,
+) -> tuple[Any, tuple[int, int, int, int], str] | None:
+	"""Resolve capture bounds, falling back to navigator object on failure.
+
+	Tries the focus object first (with retries for transient failures),
+	then falls back to the navigator object if focus cannot be resolved.
+	Returns (obj, location, source) where source is ``"focus"`` or ``"navigator"``.
+	"""
+	# Phase 1: try focus object with retries
 	for _ in range(max_attempts):
-		focus_obj = _get_focus_object_safe()
+		focus_obj = get_object_safe("focus")
 		if focus_obj is None:
 			continue
 		location = _resolve_capture_location(focus_obj)
 		if location is None:
 			continue
-		return focus_obj, location
+		return focus_obj, location, "focus"
+
+	# Phase 2: fall back to navigator object
+	nav_obj = get_object_safe("navigator")
+	if nav_obj is not None:
+		location = _resolve_capture_location(nav_obj)
+		if location is not None:
+			return nav_obj, location, "navigator"
+
 	return None
 
 
@@ -131,16 +120,24 @@ def capture_focused_object(
 ) -> FocusCaptureResult:
 	"""Capture the currently focused NVDA object as a base64-encoded image.
 
-	Returns a FocusCaptureResult with the image data and metadata about the
-	focused object.
+	First attempts to capture from the focus object (``api.getFocusObject()``),
+	then falls back to the navigator object (``api.getNavigatorObject()``) if
+	the focus object's location cannot be resolved.
+
+	Returns a FocusCaptureResult with the image data, metadata, and the
+	capture source (``"focus"`` or ``"navigator"``).
 
 	Raises:
-		RuntimeError: If no focus object is available or its location cannot be determined.
+		RuntimeError: If the screen curtain is active, or if no focus or
+			navigator object is available, or if their location cannot be
+			determined.
 	"""
+	check_screen_curtain()
+
 	resolved = _resolve_capture_location_with_retry()
 	if resolved is None:
 		raise RuntimeError("Unable to resolve usable bounds for the current focused object.")
-	focus_obj, location = resolved
+	capture_obj, location, capture_source = resolved
 
 	left, top, width, height = location
 
@@ -172,10 +169,10 @@ def capture_focused_object(
 	image_base64 = encoder.encode(processed_bytes)
 
 	# Metadata
-	object_name = _get_object_name(focus_obj)
-	object_role = _get_object_role(focus_obj)
-	app_name = _get_app_name(focus_obj)
-	window_title = _get_window_title(focus_obj)
+	object_name = _get_object_name(capture_obj)
+	object_role = _get_object_role(capture_obj)
+	app_name = _get_app_name(capture_obj)
+	window_title = _get_window_title(capture_obj)
 
 	return FocusCaptureResult(
 		image_base64=image_base64,
@@ -187,4 +184,5 @@ def capture_focused_object(
 		top=top,
 		width=width,
 		height=height,
+		capture_source=capture_source,
 	)
