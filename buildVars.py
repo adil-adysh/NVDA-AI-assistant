@@ -38,16 +38,16 @@ The add-on includes a WebView-based chat interface with streaming responses, con
 		"""
 	),
 	# version
-	addon_version="0.11.4",
+	addon_version="0.11.6",
 	# Brief changelog for this version
 	# Translators: what's new content for this add-on version to be shown in the add-on store
 	addon_changelog=_(
 		"""
+Improved
+• Context pipeline refactored with explicit typed content requests — collectors now declare which request types they handle via typed dispatch instead of coarse profiles, making extraction more predictable and easier to extend
+• Image capture moved to the pipeline snapshot resolution phase on the NVDA main thread — image collectors only perform thread-safe preprocessing and encoding, eliminating potential race conditions with NVDA APIs
 Changed
-• Image carry-over from result actions — when "Open Chat" or "Add to current chat" is selected from an image description result, the screenshot is now included as a message seed in the conversation transcript alongside the description
-• Process-level idle timeout — the Rust UI host now exits automatically after 10 minutes without a command client, preventing orphaned processes if NVDA crashes
-Fixed
-• NVDA announcing pipeline steps twice — removed duplicate speech announcements during use-case progress, ensuring each "collecting context" and progress event is spoken only once
+• Extraction snapshot resolution now follows a two-phase design: main-thread capture (Phase 1) followed by thread-safe collector dispatch (Phase 2), providing a cleaner separation between NVDA API access and post-processing
 		"""
 	),
 	# Author(s)
