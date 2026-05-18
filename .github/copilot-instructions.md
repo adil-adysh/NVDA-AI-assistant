@@ -34,7 +34,7 @@ Layer-specific rules live in `.github/instructions/` (loaded via `applyTo` patte
 ## Required Patterns
 
 - New features should usually be implemented as a `UseCase` and registered in `use_case/registry.py`.
-- Use `ContextPipeline` and the existing collector/extractor structure instead of hand-building prompt context in a feature.
+- Use `ContextPipeline` with `ExtractionIntent` (carrying typed `ContentRequest` objects like `PageTextRequest`, `ForegroundImageRequest`) instead of hand-building prompt context in a feature.
 - Access providers through `LLMService` and `ProviderProxy`, never directly from `use_case/` or `ui/`.
 - Register tool behavior in the tool registry/executor path instead of invoking tools directly from a feature.
 - Keep host commands generic and protocol-backed. If Python and Rust both change, update the protocol contract deliberately.
