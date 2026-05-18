@@ -2,41 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-# summary.py
-class SummaryUseCase(UseCase):
-    @property
-    def spec(self) -> UseCaseSpec:
-        return UseCaseSpec(
-            id="summary",
-            extraction_intent=ExtractionIntent(requests=(
-                PageTextRequest(),
-                PageStructureRequest(),
-            )),
-            ...
-        )
-# image.py — just a screenshot, no text
-class ImageDescriptionUseCase(UseCase):
-    @property
-    def spec(self) -> UseCaseSpec:
-        return UseCaseSpec(
-            id="describe_image",
-            extraction_intent=ExtractionIntent(requests=(
-                ForegroundImageRequest(),
-            )),
-            ...
-        )
-# future: focused element description
-class DescribeFocusedElementUseCase(UseCase):
-    @property
-    def spec(self) -> UseCaseSpec:
-        return UseCaseSpec(
-            id="describe_focused_element",
-            extraction_intent=ExtractionIntent(requests=(
-                FocusedElementImageRequest(),
-                FocusedElementTextRequest(),
-            )),
-            ...
-        )from typing import Any, Final, Literal, TypeAlias
+from typing import Any, Final, Literal, TypeAlias
 
 
 ContextFacts: TypeAlias = dict[str, object]
@@ -173,30 +139,7 @@ def build_extraction_result_from_facts(extraction_facts: ExtractionFacts | None)
 	)
 
 
-@dataclass(frozen=True, slots=True)
-class ImageContext:
-	app_title: str | None = None
-	window_title: str | None = None
-	image_base64: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class PromptContext:
-	use_case_id: str
-	facts: ContextFacts = field(default_factory=dict)
-	extraction_facts: ExtractionFacts | None = None
-	extraction_result: ExtractionResult | None = None
-	text: str | None = None
-	image_base64: str | None = None
-	language: str | None = None
-	metadata: PromptMetadata = field(default_factory=dict)
-
-
-# ── Extraction Intent model ──────────────────────────────────────────
-# The core architectural shift: UseCase → ExtractionIntent → Request Graph → Collectors.
-# Instead of coarse context_profile tuples, use cases express semantic intent
-# through typed ContentRequest objects.  Each collector declares which request
-# types it handles via handles_request() / collect_for_request().
+# ── Structured field selection ─────────────────────────────────────
 
 StructuredField = Literal[
 	"headings", "links", "buttons", "landmarks",
@@ -213,10 +156,6 @@ ImageCaptureSource = Literal["foreground", "focus", "navigator", "desktop"]
 
 
 # ── Content request types ──────────────────────────────────────────
-# Each concrete type represents a specific piece of context a use case
-# wants extracted.  Collectors dispatch on the type via isinstance().
-# Adding a new capability = adding a new request type + a collector
-# that handles it.  No enum branching, no hidden composition.
 
 @dataclass(frozen=True, slots=True)
 class PageTextRequest:
@@ -255,12 +194,45 @@ ContentRequest = (
 class ExtractionIntent:
 	"""What a use case wants the context pipeline to extract.
 
-	This is the contract between UseCase and ContextPipeline.
-	It carries explicit ContentRequest objects — the requests
-	THEMSELVES document what data flows to the LLM.
-
-	No convenience constructors.  Use cases assemble their own
-	requests tuple.  That way you can read a use case and see
-	exactly what it extracts.
+	Carries explicit ContentRequest objects.  The requests themselves
+	document what data flows to the LLM — no convenience constructors,
+	no hidden composition.
 	"""
 	requests: tuple[ContentRequest, ...] = ()
+
+
+# ── Image capture snapshot (main-thread-safe) ──────────────────────
+
+@dataclass(frozen=True, slots=True)
+class ImageCaptureSnapshot:
+	"""Raw image bytes captured on the NVDA main thread.
+
+	Collectors read from this snapshot for preprocessing/encoding
+	instead of calling NVDA APIs directly.  This enforces the invariant
+	that only extractor-phase code runs on the main thread.
+	"""
+	raw_bytes: bytes
+	source: ImageCaptureSource
+	app_title: str | None = None
+	window_title: str | None = None
+
+
+# ── Output types ───────────────────────────────────────────────────
+
+@dataclass(frozen=True, slots=True)
+class ImageContext:
+	app_title: str | None = None
+	window_title: str | None = None
+	image_base64: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PromptContext:
+	use_case_id: str
+	facts: ContextFacts = field(default_factory=dict)
+	extraction_facts: ExtractionFacts | None = None
+	extraction_result: ExtractionResult | None = None
+	text: str | None = None
+	image_base64: str | None = None
+	language: str | None = None
+	metadata: PromptMetadata = field(default_factory=dict)

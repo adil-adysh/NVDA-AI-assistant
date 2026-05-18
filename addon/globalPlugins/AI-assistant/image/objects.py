@@ -66,6 +66,78 @@ def get_object_location(obj: Any) -> tuple[int, int, int, int] | None:
 	return coerce_location_tuple(location)
 
 
+def get_object_location_with_parent_fallback(
+	obj: Any,
+	max_depth: int = 8,
+) -> tuple[int, int, int, int] | None:
+	"""Get the screen location of an NVDA object, walking up parents if needed.
+
+	When the leaf object (e.g. an Ia2Web element inside a WebView) has no
+	location, this walks up the container hierarchy to find the nearest
+	ancestor with a usable location.  The ancestor's location is returned
+	unclipped so that :func:`clip_location_to_containers` can still refine it
+	later.
+
+	If the container chain yields nothing, this falls back to
+	``api.getFocusAncestors()`` which returns NVDA's own tracked focus
+	ancestor chain — this chain may include non-IA2 objects (UIA wrappers,
+	``Window`` objects) that provide reliable bounding rectangles even when
+	the IA2 tree does not.  This pattern mirrors Developer Toolkit's
+	``isFocusAncestor`` validation in ``shared.py``.
+
+	Returns ``None`` if no ancestor within *max_depth* steps has a location.
+	"""
+	from logHandler import log
+
+	# Try the object itself first
+	loc = get_object_location(obj)
+	if loc is not None:
+		return loc
+
+	# Walk up the container chain
+	current = obj
+	for depth in range(max_depth):
+		try:
+			current = current.container
+		except Exception:
+			break
+		if current is None:
+			break
+		loc = get_object_location(current)
+		if loc is not None:
+			log.debug(
+				"Location resolved via container chain: leaf=%s depth=%d ancestor=%s loc=%s",
+				type(obj).__name__,
+				depth + 1,
+				type(current).__name__,
+				loc,
+			)
+			return loc
+
+	# Fall back to NVDA's focus-ancestor chain (may include UIA / Window
+	# objects that the container chain missed).  Pattern from Developer
+	# Toolkit's shared.py isFocusAncestor validation.
+	try:
+		ancestors = api.getFocusAncestors()
+	except Exception:
+		ancestors = []
+	for depth, ancestor in enumerate(reversed(ancestors)):
+		if ancestor is obj:
+			continue
+		loc = get_object_location(ancestor)
+		if loc is not None:
+			log.debug(
+				"Location resolved via focus-ancestor chain: leaf=%s depth=%d ancestor=%s loc=%s",
+				type(obj).__name__,
+				depth + 1,
+				type(ancestor).__name__,
+				loc,
+			)
+			return loc
+
+	return None
+
+
 def validate_object_location(obj: Any) -> None:
 	"""Validate that an NVDA object has a usable screen location.
 
@@ -121,4 +193,10 @@ def clip_location_to_containers(obj: Any, location: tuple[int, int, int, int]) -
 		current = container
 
 	result = coerce_location_tuple((clipped.left, clipped.top, clipped.width, clipped.height))
+	if result is None:
+		from logHandler import log
+		log.debug(
+			"Container clipping reduced location to zero: raw=%s object=%s",
+			location, type(obj).__name__,
+		)
 	return result if result is not None else location

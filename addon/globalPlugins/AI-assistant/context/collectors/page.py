@@ -17,7 +17,6 @@ from ...context.types import (
 
 
 def _field_value(snapshot: object, field: StructuredField) -> tuple[str, ...] | tuple[tuple[int | None, str], ...]:
-	"""Read a structured field from a snapshot via getattr, returning a tuple."""
 	value = getattr(snapshot, field, ())
 	return value if isinstance(value, tuple) else ()
 
