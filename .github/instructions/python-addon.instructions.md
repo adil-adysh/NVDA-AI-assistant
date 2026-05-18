@@ -11,7 +11,7 @@ Use the existing layered architecture before adding new abstractions.
 
 - `plugin/` handles NVDA gestures, lifecycle, and background scheduling only.
 - `use_case/` orchestrates a feature and should stay free of provider-specific or NVDA API logic.
-- `context/` collects structured context through collectors and extractors.
+- `context/` collects structured context through the `ContextPipeline` which uses `ExtractionIntent` (carrying typed `ContentRequest` objects) and resolves snapshots in two phases: Phase 1 (NVDA main thread) for extraction and image capture, Phase 2 (thread-safe) for collector dispatch via `CollectorInput`. New collectors implement the `ContextCollector` protocol with `handles_request()` and `collect_for_request()`.
 - `service/` owns chat coordination, tool execution, and provider-facing workflows.
 - `providers/` contains provider-specific behavior behind shared protocols and proxy layers.
 - `ui/` and `ui_host/` adapt results into UI intents and protocol messages.
@@ -21,6 +21,7 @@ Use the existing layered architecture before adding new abstractions.
 - Prefer extending an existing `UseCase`, presenter, context collector, or service before creating a new top-level concept.
 - Register new use cases in `use_case/registry.py` and route them through `UseCaseEngine`.
 - Keep prompt context typed and structured. Do not manually concatenate large prompt strings in arbitrary layers.
+- Express what a use case needs from the context as an `ExtractionIntent` containing explicit `ContentRequest` typed requests rather than building ad-hoc context or passing raw prompts.
 - Use the provider proxy and service layer rather than calling Gemini, Ollama, or OpenAI clients from feature code.
 - Keep long-running work off the NVDA main thread and preserve graceful failure behavior.
 - Follow the repository typing posture: strict type hints, explicit data shapes, and minimal dynamic behavior.

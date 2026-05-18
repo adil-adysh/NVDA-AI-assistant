@@ -1,43 +1,33 @@
 ---
 name: route-change
-description: "Use when deciding where a requested change belongs in the NVDA AI Assistant, mapping a task to the correct layer, files, abstractions, and validation steps. Keywords: architecture, where should this go, correct layer, route feature, use case or service, protocol boundary."
+description: "**UTILITY SKILL** — Decide where a change belongs in the NVDA AI Assistant. USE FOR: determining which layer owns a feature; scoping cross-boundary protocol work; identifying owning abstraction before editing. DO NOT USE FOR: implementing features; writing code; general coding questions. INVOKES: file reads (docs/architecture.md), grep. FOR SINGLE OPERATIONS: skip this skill and edit directly."
 ---
 
 # Route Change
 
-Use this skill when a request is unclear about which layer should own the behavior.
-
-## Goals
-
-- map the request to the smallest correct layer
-- identify the main files or directories to inspect first
-- avoid bypassing `UseCaseEngine`, `ContextPipeline`, `LLMService`, `ProviderProxy`, or the host protocol
-- propose the narrowest useful validation step
+Use when unclear which layer should own the behavior.
 
 ## Workflow
 
-1. Classify the request as one of: NVDA plugin, use case, context, service, provider, Python UI adapter, Rust host, Web UI, or documentation.
-2. Check `docs/architecture.md` when the change crosses Python, Rust, and Web UI boundaries.
-3. Name the owning abstraction before editing. Examples: `UseCase`, presenter, collector, protocol model, host command handler, Svelte component.
-4. If the request spans Python and Rust or Web UI, treat it as a protocol-backed change rather than a local patch.
-5. For host-backed UI work, decide whether the change belongs in Python presentation intent, Rust activation/window behavior, or Web UI presentation-only state.
-6. Recommend the cheapest validation that can falsify the implementation.
+1. Classify: NVDA plugin, use case, context, service, provider, Python UI adapter, Rust host, Web UI, or docs.
+2. Check `docs/architecture.md` for cross-boundary changes.
+3. Name the owning abstraction first (e.g., `UseCase`, presenter, collector, protocol model, host command handler, Svelte component).
+4. Spanning Python + Rust/Web UI → treat as protocol-backed change.
+5. Host-backed UI → decide: Python presentation intent, Rust window behavior, or Web UI presentation state.
+6. Recommend cheapest validation that can falsify.
 
-## Decision Hints
+## Layer Map
 
-- Gesture, NVDA lifecycle, and background scheduling belong in `plugin/`.
-- Feature intent and orchestration belong in `use_case/`.
-- Structured data gathering belongs in `context/`.
-- Streaming, chat sessions, providers, and tool execution belong in `service/`.
-- Provider-specific adapters belong in `providers/`.
-- Native windowing, WebView, and pipes belong in `nvda_ui_host/src/`.
-- Browser rendering belongs in `nvda_ui_host/webui/src/`.
-- New commands should usually start from Python intent, then flow through `host_protocol.py`, `protocol.rs`, and `bridge.ts` (registered in `COMMANDS` table, with handler in `commands/`).
-- New UI-originated events should usually start from Web UI emission, then flow through `webview.rs`, the event pipe, and `host_renderer.py`.
+- Gesture, NVDA lifecycle, scheduling → `plugin/`
+- Feature intent, orchestration → `use_case/`
+- Data gathering → `context/` (use `ExtractionIntent` + `ContentRequest` via `ContextPipeline`)
+- Streaming, chat, providers, tools → `service/`
+- Provider adapters → `providers/`
+- Windowing, WebView, pipes → `nvda_ui_host/src/`
+- Browser rendering → `nvda_ui_host/webui/src/`
+- New commands: Python intent → `host_protocol.py` → `protocol.rs` → `bridge.ts`
+- New UI events: Web UI → `webview.rs` → event pipe → `host_renderer.py`
 
 ## Expected Output
 
-- owning layer
-- likely files to inspect
-- constraints to preserve
-- validation command or check
+owning layer, likely files, constraints to preserve, validation check
