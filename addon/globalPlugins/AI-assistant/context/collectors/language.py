@@ -7,8 +7,9 @@ from ..types import ContentRequest
 
 
 class LanguageContextCollector:
+	"""Language metadata collector — always runs for every request."""
+
 	def handles_request(self, _request: ContentRequest) -> bool:
-		"""Language metadata is always collected — it is not request-specific."""
 		return True
 
 	def collect_for_request(self, _request: ContentRequest, input: CollectorInput) -> ContextFragment:

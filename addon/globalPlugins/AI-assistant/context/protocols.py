@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from .types import ContentRequest, ExtractionSnapshot
+from .types import ContentRequest, ExtractionSnapshot, ImageCaptureSnapshot, ImageCaptureSource
 
 
 ContextFacts = dict[str, object]
@@ -48,6 +48,8 @@ class ImageContextFragment(ContextFragment):
 class CollectorInput:
 	use_case_id: str
 	extraction_snapshot: ExtractionSnapshot | None = None
+	# Image snapshots captured on the main thread, keyed by source.
+	image_snapshots: dict[ImageCaptureSource, ImageCaptureSnapshot] = field(default_factory=dict)
 
 
 class ContextCollector(Protocol):

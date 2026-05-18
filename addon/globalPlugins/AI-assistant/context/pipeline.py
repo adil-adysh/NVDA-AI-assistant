@@ -9,6 +9,11 @@ from .types import (
 	ContextFacts,
 	ExtractionIntent,
 	ExtractionSnapshot,
+	FocusedElementImageRequest,
+	ForegroundImageRequest,
+	ImageCaptureSnapshot,
+	ImageCaptureSource,
+	NavigatorImageRequest,
 	PageTextRequest,
 	PromptContext,
 	PromptMetadata,
@@ -18,6 +23,13 @@ from .types import (
 
 T = TypeVar("T")
 MainThreadExecutor = Callable[[Callable[..., T]], T]
+
+# Map image request types to capture sources.
+_IMAGE_SOURCES: dict[type, ImageCaptureSource] = {
+	ForegroundImageRequest: "foreground",
+	FocusedElementImageRequest: "focus",
+	NavigatorImageRequest: "navigator",
+}
 
 
 class ContextPipeline:
@@ -29,11 +41,16 @@ class ContextPipeline:
 		if not extraction_intent.requests:
 			return PromptContext(use_case_id=use_case_id, metadata={})
 
-		shared_snapshot = self._resolve_shared_extraction_snapshot(extraction_intent, kwargs)
-		if self._needs_page_text(extraction_intent) and shared_snapshot is None:
-			raise ContextCollectionError("Unable to obtain page snapshot for requested text extraction")
+		# ── Phase 1: resolve shared snapshots on the NVDA main thread ──
+		text_snapshot = self._resolve_text_snapshot(extraction_intent)
+		image_snapshots = self._resolve_image_snapshots(extraction_intent)
 
-		collector_input = CollectorInput(use_case_id=use_case_id, extraction_snapshot=shared_snapshot)
+		# ── Phase 2: dispatch requests to collectors (thread-safe) ──
+		collector_input = CollectorInput(
+			use_case_id=use_case_id,
+			extraction_snapshot=text_snapshot,
+			image_snapshots=image_snapshots,
+		)
 		merged_facts: ContextFacts = {}
 		merged_metadata: PromptMetadata = {}
 		text_parts: list[str] = []
@@ -69,18 +86,28 @@ class ContextPipeline:
 			metadata=merged_metadata,
 		)
 
-	def _needs_page_text(self, intent: ExtractionIntent) -> bool:
-		"""Return True if any request needs text extraction from the page tree."""
+	# ── Snapshot resolution (NVDA main thread) ─────────────────────
+
+	def _needs_text_snapshot(self, intent: ExtractionIntent) -> bool:
 		for request in intent.requests:
 			if isinstance(request, PageTextRequest):
 				return True
 		return False
 
-	def _resolve_shared_extraction_snapshot(self, intent: ExtractionIntent, kwargs: dict[str, Any]) -> ExtractionSnapshot | None:
-		extraction_snapshot = kwargs.get("extraction_snapshot")
-		if isinstance(extraction_snapshot, ExtractionSnapshot):
-			return extraction_snapshot
+	def _image_requests(self, intent: ExtractionIntent) -> list[type]:
+		"""Return distinct image request types present in the intent."""
+		seen: set[type] = set()
+		result: list[type] = []
+		for request in intent.requests:
+			t = type(request)
+			if t in _IMAGE_SOURCES and t not in seen:
+				seen.add(t)
+				result.append(t)
+		return result
 
+	def _resolve_text_snapshot(self, intent: ExtractionIntent) -> ExtractionSnapshot | None:
+		if not self._needs_text_snapshot(intent):
+			return None
 		for collector in self._collectors:
 			extractor = getattr(collector, "extractor", None)
 			if extractor is None:
@@ -91,4 +118,40 @@ class ContextPipeline:
 				continue
 			if isinstance(snapshot, ExtractionSnapshot):
 				return snapshot
-		return None
+		raise ContextCollectionError("Unable to obtain page snapshot for requested text extraction")
+
+	def _resolve_image_snapshots(self, intent: ExtractionIntent) -> dict[ImageCaptureSource, ImageCaptureSnapshot]:
+		"""Capture images on the main thread for all image request types."""
+		result: dict[ImageCaptureSource, ImageCaptureSnapshot] = {}
+		request_types = self._image_requests(intent)
+		if not request_types:
+			return result
+
+		# Import lazily so the image package is not loaded on context import.
+		from ..image.services import ImageCaptureService
+		from ..image.screen_curtain import check_screen_curtain
+
+		def _capture_all() -> list[ImageCaptureSnapshot]:
+			check_screen_curtain()
+			capture_service = ImageCaptureService()
+			snapshots: list[ImageCaptureSnapshot] = []
+			for req_type in request_types:
+				source = _IMAGE_SOURCES[req_type]
+				try:
+					raw_bytes = capture_service.capture(source=source)
+				except Exception:
+					continue
+				snapshots.append(ImageCaptureSnapshot(
+					raw_bytes=raw_bytes,
+					source=source,
+				))
+			return snapshots
+
+		try:
+			snapshots = self._main_thread_executor(_capture_all)
+		except Exception:
+			return result
+
+		for snap in snapshots:
+			result[snap.source] = snap
+		return result

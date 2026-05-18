@@ -12,7 +12,7 @@ from ..context.extractors.browser import BrowserAwarePageExtractor
 from ..context.extractors.generic_extractor import GenericPageExtractor
 from ..context.extractors.manager import ExtractionManager
 from ..context.pipeline import ContextPipeline
-from ..image.services import ImageCaptureService, ImageEncoder, ImagePreprocessor
+from ..image.services import ImageEncoder, ImagePreprocessor
 from ..observability.reporter import FileMetricsReporter
 from ..ui import nvda_ui
 from ..providers.provider_proxy import ProviderProxy
@@ -39,7 +39,6 @@ def build_plugin_services() -> PluginServices:
 	page_text_collector = ExtractionTextCollector(extractor=page_extractor)
 	page_structure_collector = ExtractionStructureCollector(extractor=page_extractor)
 	image_context_collector = ImageContextCollector(
-		capture_service=ImageCaptureService(),
 		preprocessor=ImagePreprocessor(),
 		encoder=ImageEncoder(),
 	)
