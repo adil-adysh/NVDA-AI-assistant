@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .browser import BrowserAwarePageExtractor, PageExtractionError
+from .selection import safe_extract_selection
 from .candidates import (
 	BrowserCandidateProvider,
 	CandidateProvider,
@@ -33,4 +34,5 @@ __all__ = [
 	"buildGenericCandidateProviders",
 	"Extractor",
 	"TreeExtractor",
+	"safe_extract_selection",
 ]
