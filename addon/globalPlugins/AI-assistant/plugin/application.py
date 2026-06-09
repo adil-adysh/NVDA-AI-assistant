@@ -69,6 +69,8 @@ class AIAssistantApplication:
 				("p", host.script_openChatWithPageContent),
 				("x", host.script_openChatWithScreenshot),
 				("z", host.script_attachFocusedObjectToChat),
+				("v", host.script_attachSelectionToChat),
+				("b", host.script_attachClipboardToChat),
 				("t", host.script_toggleAIProvider),
 				("h", host.script_assistantLayerHelp),
 			),
@@ -199,6 +201,34 @@ class AIAssistantApplication:
 			),
 		)
 
+	def attach_selection_to_chat(self) -> None:
+		"""Extract selected text from the focused NVDA object and inject it into the current chat conversation."""
+		selected_text = _safe_extract_selection()
+		if selected_text is None:
+			# TRANSLATORS: Message spoken when nothing is selected in the current focus.
+			nvda_ui.message(_("No text is currently selected."))
+			return
+
+		# TRANSLATORS: Message spoken when selected text is extracted and injected into chat.
+		nvda_ui.message(_("Adding selected text to chat."))
+		self.open_chat_window(
+			initial_text=selected_text,
+		)
+
+	def attach_clipboard_to_chat(self) -> None:
+		"""Read text from the system clipboard and inject it into the current chat conversation."""
+		clipboard_text = _safe_read_clipboard()
+		if clipboard_text is None:
+			# TRANSLATORS: Message spoken when the clipboard is empty or contains non-text content.
+			nvda_ui.message(_("No text content found in clipboard."))
+			return
+
+		# TRANSLATORS: Message spoken when clipboard text is read and injected into chat.
+		nvda_ui.message(_("Adding clipboard content to chat."))
+		self.open_chat_window(
+			initial_text=clipboard_text,
+		)
+
 	def activate_assistant_layer(self) -> None:
 		self.layer_mode.activate()
 
@@ -223,7 +253,7 @@ class AIAssistantApplication:
 		nvda_ui.message(
 			# TRANSLATORS: Help message listing all available AI assistant layer commands.
 			_(
-				"Assistant layer commands: S for summary, O for structure summary, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object to chat, T for provider toggle, H for help. Press the key after activating the layer with NVDA+Shift+A."
+				"Assistant layer commands: S for summary, O for structure summary, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object to chat, V for attach selection to chat, B for attach clipboard to chat, T for provider toggle, H for help. Press the key after activating the layer with NVDA+Shift+A."
 			)
 		)
 
@@ -239,3 +269,67 @@ class AIAssistantApplication:
 		category_classes = gui.settingsDialogs.NVDASettingsDialog.categoryClasses
 		if AIAssistantSettingsPanel in category_classes:
 			category_classes.remove(AIAssistantSettingsPanel)
+
+
+def _safe_extract_selection() -> str | None:
+	"""Extract user-highlighted text from the currently focused NVDA object.
+
+	Returns the selected text string, or None if there is no selection or
+	the extraction fails.
+	"""
+	try:
+		import api
+		from textInfos import POSITION_SELECTION
+
+		focus = api.getFocusObject()
+		if focus is None:
+			return None
+
+		# Follow NVDA's canonical pattern from GlobalCommands._getSelection:
+		# check tree interceptor first (browser virtual buffer), then fall back
+		# to the focus object itself.
+		tree_interceptor = getattr(focus, "treeInterceptor", None)
+		if (
+			isinstance(tree_interceptor, object)
+			and hasattr(tree_interceptor, "makeTextInfo")
+		):
+			try:
+				info = tree_interceptor.makeTextInfo(POSITION_SELECTION)
+				text = info.text
+				if isinstance(text, str) and text.strip():
+					return text.strip()
+			except (RuntimeError, NotImplementedError):
+				pass
+
+		# Fall back to the focus object itself
+		if hasattr(focus, "makeTextInfo"):
+			try:
+				info = focus.makeTextInfo(POSITION_SELECTION)
+				text = info.text
+				if isinstance(text, str) and text.strip():
+					return text.strip()
+			except (RuntimeError, NotImplementedError):
+				pass
+
+		return None
+	except Exception:
+		log.exception("Error extracting selection from focus")
+		return None
+
+
+def _safe_read_clipboard() -> str | None:
+	"""Read text from the system clipboard.
+
+	Uses NVDA's built-in api.getClipData() which internally uses the
+	winUser.openClipboard context manager — the canonical NVDA pattern.
+
+	Returns the clipboard text string, or None if the clipboard is empty,
+	contains non-text content, or cannot be read.
+	"""
+	try:
+		import api
+
+		return api.getClipData() or None
+	except Exception:
+		log.exception("Error reading clipboard via api.getClipData")
+		return None

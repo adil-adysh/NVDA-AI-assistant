@@ -191,6 +191,8 @@ Then press:
 | `P` | Attach page content to chat        |
 | `X` | Attach screenshot to chat          |
 | `Z` | Attach focused object image to chat|
+| `V` | Attach selected text to chat       |
+| `B` | Attach clipboard content to chat   |
 | `T` | Toggle provider                    |
 | `H` | Help                               |
 

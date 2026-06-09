@@ -90,7 +90,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		# TRANSLATORS: Description for the script that activates the AI assistant command layer.
 		description=_(
 			"Activate the AI assistant command layer. "
-			"Press S for summary, O for structure summary, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object, H for help."
+			"Press S for summary, O for structure summary, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object, V for attach selection, B for attach clipboard, H for help."
 		),
 		gesture="kb:NVDA+Shift+A",
 	)
@@ -131,6 +131,22 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	def script_attachFocusedObjectToChat(self, gesture: Any):
 		log.debug("Script attachFocusedObjectToChat invoked gesture=%s", gesture)
 		self._app.attach_focused_object_to_chat()
+
+	@script(
+		# TRANSLATORS: Description for the script that adds the currently selected text to the chat conversation.
+		description=_("Adds the currently selected text to the current chat conversation."),
+	)
+	def script_attachSelectionToChat(self, gesture: Any):
+		log.debug("Script attachSelectionToChat invoked gesture=%s", gesture)
+		self._app.attach_selection_to_chat()
+
+	@script(
+		# TRANSLATORS: Description for the script that adds clipboard content to the chat conversation.
+		description=_("Adds text from the system clipboard to the current chat conversation."),
+	)
+	def script_attachClipboardToChat(self, gesture: Any):
+		log.debug("Script attachClipboardToChat invoked gesture=%s", gesture)
+		self._app.attach_clipboard_to_chat()
 
 	def getScript(self, gesture: Any):
 		if not self._app.layer_mode.active:
