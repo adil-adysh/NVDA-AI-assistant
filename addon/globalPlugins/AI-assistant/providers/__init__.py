@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from .runtime import ProviderRuntime
+from ._provider_runtime import ProviderRuntime
 
 __all__ = [
 	"ProviderRuntime",

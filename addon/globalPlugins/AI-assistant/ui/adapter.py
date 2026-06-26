@@ -9,7 +9,6 @@ from uuid import uuid4
 
 from logHandler import log
 
-from ..config.settings import is_streaming_enabled
 from ..service.error_presentation import ErrorPresentation, present_error
 from ..service.provider_controls import provider_control_service
 from .host_lifecycle import HostLifecycleService, HostLifecycleState
@@ -310,7 +309,7 @@ class UIAdapter:
 			response = coordinator.send_message(
 				text=message_text or None,
 				image_base64=image_base64,
-				progress_callback=assistant_projection.update if is_streaming_enabled() else None,
+				progress_callback=assistant_projection.update,
 			)
 			assistant_text = getattr(response, "text", None)
 			thinking_trace = self._extract_thinking_trace(response)

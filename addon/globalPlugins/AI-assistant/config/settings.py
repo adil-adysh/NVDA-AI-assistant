@@ -11,13 +11,11 @@ from .state import (
 	ProviderState,
 	_notify_provider_state_changed as _notify_provider_state_changed_impl,
 	get_provider_state as _build_provider_state,
-	subscribe_provider_state_change,
-	unsubscribe_provider_state_change,
 )
 from .yaml_store import YamlConfigStore
 
 if TYPE_CHECKING:
-	from ..providers.config import GeminiConfig, OllamaConfig, OpenAIConfig, ProviderConfig
+	from ..providers.config import GeminiConfig, LiteRTConfig, OllamaConfig, OpenAIConfig, ProviderConfig
 
 
 _config_store = YamlConfigStore()
@@ -107,7 +105,7 @@ def get_provider() -> str:
 
 def set_provider(provider: str) -> None:
 	provider_value = str(provider or "").strip().lower()
-	if provider_value not in {"ollama", "gemini", "openai"}:
+	if provider_value not in {"ollama", "gemini", "openai", "litert-lm"}:
 		raise ValueError(f"Unsupported provider: {provider}")
 	_set_value("provider", provider_value, notify=True)
 
@@ -182,6 +180,14 @@ def get_openai_chat_path() -> str:
 	return _read_string("openaiChatPath", defaults.DEFAULT_OPENAI_CHAT_PATH)
 
 
+def get_litert_model_name() -> str:
+	return _read_string("litertModelName", defaults.DEFAULT_LITERT_MODEL)
+
+
+def get_litert_runtime_version() -> str:
+	return _read_string("litertRuntimeVersion", defaults.DEFAULT_LITERT_RUNTIME_VERSION)
+
+
 def get_openai_config() -> "OpenAIConfig":
 	from ..providers.config import OpenAIConfig
 
@@ -189,7 +195,6 @@ def get_openai_config() -> "OpenAIConfig":
 		provider="openai",
 		model_name=get_openai_model_name(),
 		timeout_seconds=get_timeout_seconds(),
-		enable_streaming=is_streaming_enabled(),
 		enable_progress=is_progress_enabled(),
 		num_ctx=get_num_ctx(),
 		max_retries=get_max_retries(),
@@ -212,7 +217,6 @@ def get_ollama_config() -> "OllamaConfig":
 		provider="ollama",
 		model_name=get_ollama_model_name(),
 		timeout_seconds=get_timeout_seconds(),
-		enable_streaming=is_streaming_enabled(),
 		enable_progress=is_progress_enabled(),
 		num_ctx=get_num_ctx(),
 		max_retries=get_max_retries(),
@@ -235,7 +239,6 @@ def get_gemini_config() -> "GeminiConfig":
 		provider="gemini",
 		model_name=get_gemini_model_name(),
 		timeout_seconds=get_timeout_seconds(),
-		enable_streaming=is_streaming_enabled(),
 		enable_progress=is_progress_enabled(),
 		num_ctx=get_num_ctx(),
 		max_retries=get_max_retries(),
@@ -250,12 +253,33 @@ def get_gemini_config() -> "GeminiConfig":
 	)
 
 
+def get_litert_config() -> "LiteRTConfig":
+	from ..providers.config import LiteRTConfig
+
+	return LiteRTConfig(
+		provider="litert-lm",
+		model_name=get_litert_model_name(),
+		timeout_seconds=get_timeout_seconds(),
+		enable_progress=is_progress_enabled(),
+		num_ctx=get_num_ctx(),
+		max_retries=get_max_retries(),
+		retry_backoff_seconds=get_retry_backoff_seconds(),
+		generate_temperature=get_generate_temperature(),
+		generate_top_k=get_generate_top_k(),
+		generate_top_p=get_generate_top_p(),
+		generate_max_tokens=get_generate_max_tokens(),
+		runtime_version=get_litert_runtime_version(),
+	)
+
+
 def get_active_provider_config() -> "ProviderConfig":
 	provider = get_provider()
 	if provider == "gemini":
 		return get_gemini_config()
 	if provider == "openai":
 		return get_openai_config()
+	if provider == "litert-lm":
+		return get_litert_config()
 	return get_ollama_config()
 
 
@@ -271,13 +295,15 @@ def get_provider_state() -> "ProviderState":
 
 def get_server_url() -> str:
 	"""Return the configured backend URL for the selected provider."""
-	from ..providers.config import GeminiConfig, OllamaConfig
+	from ..providers.config import GeminiConfig, LiteRTConfig, OllamaConfig
 
 	active = get_active_provider_config()
 	if isinstance(active, GeminiConfig):
 		return active.base_url
 	if isinstance(active, OllamaConfig):
 		return active.server_url
+	if isinstance(active, LiteRTConfig):
+		return "local"
 	return ""
 
 
@@ -406,6 +432,35 @@ def set_gemini_api_token(apiToken: str | None) -> None:
 	_set_value("geminiApiToken", str(apiToken or "").strip())
 
 
+def set_litert_model_name(modelName: str) -> None:
+	_set_value("litertModelName", str(modelName).strip(), notify=True)
+
+
+def set_litert_runtime_version(version: str) -> None:
+	_set_value("litertRuntimeVersion", str(version).strip(), notify=True)
+
+
+def set_litert_config(config: LiteRTConfig) -> None:
+	_set_values(
+		{
+			"provider": config.provider,
+			"litertModelName": config.model_name,
+			"litertRuntimeVersion": config.runtime_version,
+			"timeoutSeconds": config.timeout_seconds,
+			"numCtx": config.num_ctx,
+			"maxRetries": config.max_retries,
+			"retryBackoffSeconds": config.retry_backoff_seconds,
+			"generateTemperature": config.generate_temperature,
+			"generateTopK": config.generate_top_k,
+			"generateTopP": config.generate_top_p,
+			"generateMaxTokens": config.generate_max_tokens,
+			"enableProgressAnnouncements": config.enable_progress,
+		},
+		notify=False,
+	)
+	_notify_provider_state_changed()
+
+
 def set_gemini_base_url(baseUrl: str) -> None:
 	_set_value("geminiBaseUrl", str(baseUrl).strip(), notify=True)
 
@@ -427,7 +482,6 @@ def set_ollama_config(config: OllamaConfig) -> None:
 			"generateTopP": config.generate_top_p,
 			"generateMaxTokens": config.generate_max_tokens,
 			"generatePresencePenalty": config.generate_presence_penalty,
-			"enableStreaming": config.enable_streaming,
 			"enableProgressAnnouncements": config.enable_progress,
 		},
 		notify=False,
@@ -451,7 +505,6 @@ def set_gemini_config(config: GeminiConfig) -> None:
 			"generateTopK": config.generate_top_k,
 			"generateTopP": config.generate_top_p,
 			"generateMaxTokens": config.generate_max_tokens,
-			"enableStreaming": config.enable_streaming,
 			"enableProgressAnnouncements": config.enable_progress,
 		},
 		notify=False,
@@ -475,7 +528,6 @@ def set_openai_config(config: OpenAIConfig) -> None:
 			"generateTopK": config.generate_top_k,
 			"generateTopP": config.generate_top_p,
 			"generateMaxTokens": config.generate_max_tokens,
-			"enableStreaming": config.enable_streaming,
 			"enableProgressAnnouncements": config.enable_progress,
 		},
 		notify=False,

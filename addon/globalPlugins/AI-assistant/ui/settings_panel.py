@@ -18,8 +18,8 @@ from ..config.settings import (
     get_image_format,
     get_image_quality,
     get_image_max_side,
-    get_keep_alive,
     get_language,
+    get_litert_config,
     get_max_retries,
     get_num_ctx,
     get_progress_enabled,
@@ -32,31 +32,20 @@ from ..config.settings import (
     get_streaming_enabled,
     get_timeout_seconds,
     get_streaming_tone_enabled,
-    save,
-    set_generate_max_tokens,
-    set_generate_presence_penalty,
-    set_generate_top_k,
-    set_generate_top_p,
-    set_generate_temperature,
     set_gemini_config,
     set_image_format,
     set_image_max_side,
     set_image_quality,
-    set_keep_alive,
     set_language,
-    set_max_retries,
-    set_num_ctx,
-    set_progress_enabled,
-    set_provider,
+    set_litert_config,
     set_ollama_config,
     set_openai_config,
     set_request_metrics_log_path,
     set_request_metrics_logging_enabled,
     set_streaming_enabled,
     set_streaming_tone_enabled,
-    set_timeout_seconds,
 )
-from ..providers.config import GeminiConfig, OllamaConfig, OpenAIConfig
+from ..providers.config import GeminiConfig, LiteRTConfig, OllamaConfig, OpenAIConfig
 
 addonHandler.initTranslation()
 
@@ -74,7 +63,7 @@ class AIAssistantSettingsPanel(SettingsPanel):
         openai_config = get_openai_config()
         # TRANSLATORS: Provider option label for Ollama.
         # TRANSLATORS: Provider option label for Gemini.
-        self._providerOptions = [("ollama", _("Ollama")), ("gemini", _("Gemini")), ("openai", _("OpenAI"))]
+        self._providerOptions = [("ollama", _("Ollama")), ("gemini", _("Gemini")), ("openai", _("OpenAI")), ("litert-lm", _("LiteRT-LM"))]
         providerChoices = [label for _, label in self._providerOptions]
         selectedProviderIndex = next(
             (index for index, (value, _) in enumerate(self._providerOptions) if value == provider),
@@ -94,6 +83,7 @@ class AIAssistantSettingsPanel(SettingsPanel):
         self.ollamaGroupSizer = self._build_ollama_settings(sHelper, ollama_config)
         self.geminiGroupSizer = self._build_gemini_settings(sHelper, gemini_config)
         self.openaiGroupSizer = self._build_openai_settings(sHelper, openai_config)
+        self.litertGroupSizer = self._build_litert_settings(sHelper)
         self.sharedGroupSizer = self._build_advanced_settings(sHelper)
         self.ollamaExpertGroupSizer = self._build_ollama_expert_settings(sHelper, ollama_config)
         self._build_expert_settings(sHelper)
@@ -227,6 +217,25 @@ class AIAssistantSettingsPanel(SettingsPanel):
             groupHelper,
             _("OpenAI max tokens:"),
             str(config.generate_max_tokens if config.generate_max_tokens is not None else defaults.DEFAULT_GENERATE_MAX_TOKENS),
+        )
+        return groupSizer
+
+    def _build_litert_settings(self, parentHelper):
+        # TRANSLATORS: Section label for LiteRT-LM-specific settings.
+        groupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("LiteRT-LM Settings"))
+        groupHelper = parentHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=groupSizer))
+        litert_config = get_litert_config()
+        # TRANSLATORS: Label for the LiteRT-LM model name setting.
+        self.litertModelNameEdit = self._add_labeled_text_ctrl(
+            groupHelper,
+            _("LiteRT-LM model name:"),
+            litert_config.model_name or defaults.DEFAULT_LITERT_MODEL,
+        )
+        # TRANSLATORS: Label for the LiteRT-LM runtime version setting.
+        self.litertRuntimeVersionEdit = self._add_labeled_text_ctrl(
+            groupHelper,
+            _("LiteRT-LM runtime version:"),
+            litert_config.runtime_version or defaults.DEFAULT_LITERT_RUNTIME_VERSION,
         )
         return groupSizer
 
@@ -480,7 +489,6 @@ class AIAssistantSettingsPanel(SettingsPanel):
                 provider="ollama",
                 model_name=ollamaModelName,
                 timeout_seconds=timeoutSeconds,
-                enable_streaming=self.streamingCheckbox.Value,
                 enable_progress=self.progressCheckbox.Value,
                 num_ctx=ollamaNumCtx,
                 max_retries=get_max_retries(),
@@ -519,7 +527,6 @@ class AIAssistantSettingsPanel(SettingsPanel):
                 provider="gemini",
                 model_name=geminiModelName,
                 timeout_seconds=timeoutSeconds,
-                enable_streaming=self.streamingCheckbox.Value,
                 enable_progress=self.progressCheckbox.Value,
                 num_ctx=current_config.num_ctx,
                 max_retries=get_max_retries(),
@@ -533,7 +540,7 @@ class AIAssistantSettingsPanel(SettingsPanel):
                 base_url=geminiBaseUrl,
             )
             set_gemini_config(config)
-        else:
+        elif provider == "openai":
             openaiModelName = self.openaiModelNameEdit.Value.strip()
             openaiApiKey = self.openaiApiKeyEdit.Value.strip()
             openaiBaseUrl = self.openaiBaseUrlEdit.Value.strip()
@@ -564,7 +571,6 @@ class AIAssistantSettingsPanel(SettingsPanel):
                 provider="openai",
                 model_name=openaiModelName,
                 timeout_seconds=timeoutSeconds,
-                enable_streaming=self.streamingCheckbox.Value,
                 enable_progress=self.progressCheckbox.Value,
                 num_ctx=get_num_ctx(),
                 max_retries=get_max_retries(),
@@ -579,6 +585,32 @@ class AIAssistantSettingsPanel(SettingsPanel):
                 organization=None,
             )
             set_openai_config(config)
+        else:  # litert-lm
+            litertModelName = self.litertModelNameEdit.Value.strip()
+            litertRuntimeVersion = self.litertRuntimeVersionEdit.Value.strip()
+
+            if not litertModelName:
+                self._show_error(_("LiteRT-LM model name cannot be empty"))
+                return
+            if not litertRuntimeVersion:
+                self._show_error(_("LiteRT-LM runtime version cannot be empty"))
+                return
+
+            config = LiteRTConfig(
+                provider="litert-lm",
+                model_name=litertModelName,
+                timeout_seconds=timeoutSeconds,
+                enable_progress=self.progressCheckbox.Value,
+                num_ctx=get_num_ctx(),
+                max_retries=get_max_retries(),
+                retry_backoff_seconds=get_retry_backoff_seconds(),
+                generate_temperature=temperature,
+                generate_top_k=topK,
+                generate_top_p=topP,
+                generate_max_tokens=maxTokens,
+                runtime_version=litertRuntimeVersion,
+            )
+            set_litert_config(config)
 
         set_image_max_side(imageMaxSide)
         set_image_format(imageFormat)
@@ -591,6 +623,7 @@ class AIAssistantSettingsPanel(SettingsPanel):
         else:
             prompt_language_value = get_language()
         set_language(prompt_language_value)
+        set_streaming_enabled(self.streamingCheckbox.Value)
         set_streaming_tone_enabled(self.streamingToneCheckbox.Value)
 
     def _selected_provider(self) -> str:
@@ -607,10 +640,12 @@ class AIAssistantSettingsPanel(SettingsPanel):
         is_ollama = provider == "ollama"
         is_gemini = provider == "gemini"
         is_openai = provider == "openai"
+        is_litert = provider == "litert-lm"
 
         self.ollamaGroupSizer.ShowItems(is_ollama)
         self.geminiGroupSizer.ShowItems(is_gemini)
         self.openaiGroupSizer.ShowItems(is_openai)
+        self.litertGroupSizer.ShowItems(is_litert)
         self.ollamaExpertGroupSizer.ShowItems(is_ollama)
 
         self.ollamaModelNameEdit.Enable(is_ollama)
@@ -624,6 +659,8 @@ class AIAssistantSettingsPanel(SettingsPanel):
         self.openaiBaseUrlEdit.Enable(is_openai)
         self.openaiChatPathEdit.Enable(is_openai)
         self.openaiMaxTokensEdit.Enable(is_openai)
+        self.litertModelNameEdit.Enable(is_litert)
+        self.litertRuntimeVersionEdit.Enable(is_litert)
         self.presencePenaltyEdit.Enable(is_ollama)
         self.ollamaThinkCheckbox.Enable(is_ollama)
 

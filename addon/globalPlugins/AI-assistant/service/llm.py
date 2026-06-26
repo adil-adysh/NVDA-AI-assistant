@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Protocol
 
+from ..config.settings import is_streaming_enabled
 from ..core.events import ProgressEvent, ProgressHandler
 from ..core.canonical import Message, Tool
 from ..core.message_transforms import build_assistant_message, build_tool_result_message
@@ -79,7 +80,8 @@ class ProviderLLMService:
 		return self._provider.get_model_info(model_name=model_name)
 
 	def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
-		return self._provider.summarize(prompt, stream_handler=stream_handler)
+		effective = stream_handler if is_streaming_enabled() else None
+		return self._provider.summarize(prompt, stream_handler=effective)
 
 	def describe_image(
 		self,
@@ -87,10 +89,11 @@ class ProviderLLMService:
 		prompt: str,
 		stream_handler: PartialCallback | None = None,
 	) -> SummaryResponse:
+		effective = stream_handler if is_streaming_enabled() else None
 		return self._provider.describe_image(
 			image_base64=image_base64,
 			prompt=prompt,
-			stream_handler=stream_handler,
+			stream_handler=effective,
 		)
 
 	def generate(
@@ -121,17 +124,21 @@ class ProviderLLMService:
 			if progress is not None:
 				progress(ProgressEvent(stage=stage, message=message))
 
+		_streaming_enabled = is_streaming_enabled()
+
 		def stream_adapter(partial_text: str, generated_chars: int) -> None:
 			if progress is not None:
 				emit("streaming", partial_text)
 			if stream_handler is not None:
 				stream_handler(partial_text, generated_chars)
 
+		_use_streaming = _streaming_enabled and (stream_handler is not None or progress is not None)
+
 		emit("llm_request", f"Generating response with {self.provider_name()}...")
 		response = self._provider.generate(
 			messages=canonical_messages,
 			tools=tools,
-			stream_handler=stream_adapter if (stream_handler is not None or progress is not None) else None,
+			stream_handler=stream_adapter if _use_streaming else None,
 		)
 		generated_messages.append(build_assistant_message(text=response.text, tool_calls=response.tool_calls))
 		if self._tool_executor is None:
@@ -149,7 +156,7 @@ class ProviderLLMService:
 			response = self._provider.generate(
 				messages=canonical_messages,
 				tools=tools,
-				stream_handler=stream_adapter if (stream_handler is not None or progress is not None) else None,
+				stream_handler=stream_adapter if _use_streaming else None,
 			)
 			generated_messages.append(build_assistant_message(text=response.text, tool_calls=response.tool_calls))
 			steps += 1

@@ -251,6 +251,8 @@ def build_session_state(
 			{"id": "gemini", "label": translate("Gemini")},
 			# TRANSLATORS: Provider option label for OpenAI in the session controls.
 			{"id": "openai", "label": translate("OpenAI")},
+			# TRANSLATORS: Provider option label for LiteRT-LM in the session controls.
+			{"id": "litert-lm", "label": translate("LiteRT-LM")},
 		),
 		available_models=resolved_available_models,
 		conversation_summaries=tuple(conversation_summaries or ()),

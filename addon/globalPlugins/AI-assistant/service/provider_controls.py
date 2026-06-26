@@ -22,7 +22,7 @@ class ProviderControlResult:
 
 
 class ProviderControlService:
-	PROVIDER_ORDER = ("ollama", "gemini", "openai")
+	PROVIDER_ORDER = ("ollama", "gemini", "openai", "litert-lm")
 
 	def __init__(self, readiness_service: ProviderReadinessService | None = None) -> None:
 		self._readiness_service = readiness_service or ProviderReadinessService()

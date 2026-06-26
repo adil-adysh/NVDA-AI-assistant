@@ -148,7 +148,6 @@ class GeminiProviderModelCatalogTests(unittest.TestCase):
                 provider="gemini",
                 model_name=model_name,
                 timeout_seconds=30.0,
-                enable_streaming=True,
                 enable_progress=False,
                 num_ctx=0,
                 max_retries=1,

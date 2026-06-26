@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from ..config.settings import get_active_provider_config
-from ..providers.config import GeminiConfig, OllamaConfig, OpenAIConfig, ProviderConfig
+from ..providers.config import GeminiConfig, LiteRTConfig, OllamaConfig, OpenAIConfig, ProviderConfig
 
 
 class ProviderReadinessState(str, Enum):
@@ -31,6 +31,9 @@ def get_provider_display_name(provider: str) -> str:
 	# TRANSLATORS: Display name for the Gemini provider shown in status messages.
 	if normalized == "gemini":
 		return "Gemini"
+	# TRANSLATORS: Display name for the LiteRT-LM provider shown in status messages.
+	if normalized == "litert-lm":
+		return "LiteRT-LM"
 	# TRANSLATORS: Display name for the Ollama provider shown in status messages.
 	return "Ollama"
 
@@ -72,6 +75,8 @@ class ProviderReadinessService:
 			return self._evaluate_gemini(config)
 		if isinstance(config, OpenAIConfig):
 			return self._evaluate_openai(config)
+		if isinstance(config, LiteRTConfig):
+			return self._evaluate_litert(config)
 		raise ValueError(f"Unsupported provider config type: {type(config).__name__}")
 
 	def evaluate_active(self) -> ProviderReadiness:
@@ -159,4 +164,23 @@ class ProviderReadinessService:
 			reason=reason,
 			can_infer=False,
 			can_list_models=False,
+		)
+
+	def _evaluate_litert(self, config: LiteRTConfig) -> ProviderReadiness:
+		model_name = str(config.model_name or "").strip()
+		if not model_name:
+			# Model not configured — can still list known models, can't infer.
+			return ProviderReadiness(
+				provider=config.provider,
+				state=ProviderReadinessState.UNCONFIGURED,
+				reason=ProviderReadinessReason.MISSING_MODEL,
+				can_infer=False,
+				can_list_models=True,  # known litert-lm models are always listable
+			)
+		return ProviderReadiness(
+			provider=config.provider,
+			state=ProviderReadinessState.READY,
+			reason=None,
+			can_infer=True,
+			can_list_models=True,
 		)

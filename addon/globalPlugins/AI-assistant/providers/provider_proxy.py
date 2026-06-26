@@ -10,7 +10,7 @@ from ..config.state import ProviderState, subscribe_provider_state_change, unsub
 from ..core.canonical import Message, Tool
 from ..core.messages import LLMResponse, SummaryResponse
 from .interfaces import LLMProvider, PartialCallback, ProgressCallback, ProviderModelInfo
-from .runtime import ProviderRuntime
+from ._provider_runtime import ProviderRuntime
 
 
 class ProviderProxy(LLMProvider):

@@ -9,7 +9,6 @@ class ProviderConfig:
     provider: str
     model_name: str
     timeout_seconds: float
-    enable_streaming: bool
     enable_progress: bool
     num_ctx: int
     max_retries: int
@@ -41,3 +40,14 @@ class OpenAIConfig(ProviderConfig):
     base_url: str
     chat_path: str
     organization: str | None
+
+
+@dataclass(frozen=True)
+class LiteRTConfig(ProviderConfig):
+    """Configuration for the on-device LiteRT-LM runtime.
+
+    Uses RuntimeManager to download the native runtime on first use.
+    The model_name field holds the path to a .litertlm model file.
+    """
+
+    runtime_version: str

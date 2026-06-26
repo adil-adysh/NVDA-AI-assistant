@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Type
 
 from ..config.settings import get_active_provider_config
 from .adapters.gemini import GeminiProvider
+from .adapters.litert import LiteRTLMProvider
 from .adapters.ollama import OllamaProvider
-from .config import GeminiConfig, OllamaConfig, OpenAIConfig, ProviderConfig
+from .config import GeminiConfig, LiteRTConfig, OllamaConfig, OpenAIConfig, ProviderConfig
 from .interfaces import LLMProvider, LLMProviderError
 
 
@@ -33,8 +33,9 @@ class ProviderFactory:
 
 ProviderFactory.register_provider(GeminiConfig, GeminiProvider)
 ProviderFactory.register_provider(OllamaConfig, OllamaProvider)
-from .adapters.openai import OpenAIProvider
+from .adapters.openai import OpenAIProvider  # noqa: E402 — cyclic import
 ProviderFactory.register_provider(OpenAIConfig, OpenAIProvider)
+ProviderFactory.register_provider(LiteRTConfig, LiteRTLMProvider)
 
 
 Provider = LLMProvider
