@@ -13,6 +13,7 @@ under ``%APPDATA%/nvda/AIAssistant/models/litert-lm/``.
 from __future__ import annotations
 
 import base64
+import re
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -32,15 +33,23 @@ from ..interfaces import (
     SamplingDefaults,
 )
 from ..litert_models import KNOWN_MODELS, LiteRTModelDef, download_url, lookup_model
+from ..model_manager import (
+    DownloadProgressCallback,
+    ManagedModel,
+    ModelManagerProvider,
+    ModelState,
+    ProviderFeatures,
+)
 from ..runtime import (
     ModelDownloadError,
     ModelDownloadService,
     RuntimeConfig,
     RuntimeManager,
 )
+from ...config.settings import set_litert_model_name
 
 
-class LiteRTLMProvider(LLMProvider):
+class LiteRTLMProvider(LLMProvider, ModelManagerProvider):
     """Provider wrapping the litert-lm local inference engine.
 
     Parameters:
@@ -70,6 +79,7 @@ class LiteRTLMProvider(LLMProvider):
         self._litert_lm: Any = None  # The imported litert_lm module
         self._engine: Any = None  # litert_lm.Engine instance
         self._loaded = False
+        self._last_thinking_trace: str | None = None
 
     # ── LLMProvider interface ────────────────────────────────────────
 
@@ -92,8 +102,9 @@ class LiteRTLMProvider(LLMProvider):
         seen: set[str] = set()
 
         # 1. Known models (registry)
+        think_enabled = self._config.think
         for known in KNOWN_MODELS:
-            info = _model_def_to_info(known)
+            info = _model_def_to_info(known, think_enabled=think_enabled)
             result.append(info)
             seen.add(known.model_id)
 
@@ -126,7 +137,7 @@ class LiteRTLMProvider(LLMProvider):
         # Known model?
         known = lookup_model(resolved)
         if known:
-            return _model_def_to_info(known)
+            return _model_def_to_info(known, think_enabled=self._config.think)
 
         # Local file?
         p = Path(resolved)
@@ -240,6 +251,108 @@ class LiteRTLMProvider(LLMProvider):
     def close(self) -> None:
         self._close_engine()
 
+    # ── ModelManagerProvider interface ──────────────────────────────
+
+    provider_id: str = "litert-lm"
+
+    @property
+    def features(self) -> ProviderFeatures:
+        return ProviderFeatures(download=True, delete=True)
+
+    @property
+    def active_model_id(self) -> str | None:
+        return self._config.model_name or None
+
+    def list_managed_models(self) -> list[ManagedModel]:
+        """Return the complete catalog with download state."""
+        svc = self._model_download_service or ModelDownloadService()
+        from ...ui.enabled_models import EnabledModelsStore
+        _enabled_store = EnabledModelsStore()
+        enabled_ids = _enabled_store.get_enabled("litert-lm")
+
+        # Ensure default model is enabled on first run
+        if not enabled_ids:
+            default = lookup_model("litert-community/gemma-4-E2B-it-litert-lm")
+            if default is not None:
+                _enabled_store.set_enabled(
+                    "litert-lm", default.filename, True,
+                )
+                enabled_ids = {default.filename}
+
+        result: list[ManagedModel] = []
+
+        think_enabled = self._config.think
+        for model in KNOWN_MODELS:
+            is_downloaded = svc.is_downloaded(model.filename)
+            capabilities = _capabilities_for_model(model, think_enabled=think_enabled)
+
+            result.append(ManagedModel(
+                id=model.filename,
+                display_name=model.display_name,
+                state=ModelState.DOWNLOADED if is_downloaded else ModelState.NOT_DOWNLOADED,
+                priority=model.priority,
+                size_hint=model.size_hint_human,
+                capabilities=capabilities,
+            ))
+
+        return result
+
+    def download_model(
+        self,
+        model_id: str,
+        on_progress: DownloadProgressCallback,
+    ) -> None:
+        """Download model file in a background thread."""
+        model = lookup_model(model_id)
+        if model is None:
+            raise LLMProviderError(
+                f"Unknown model for download: {model_id}"
+            )
+        url = download_url(model)
+        svc = self._model_download_service or ModelDownloadService()
+
+        # Build a bytes-progress callback that also updates the string
+        # callback with a human-friendly message.
+        def _on_bytes(downloaded: int, total: int) -> None:
+            if total > 0:
+                pct = downloaded * 100 // total
+                on_progress(
+                    f"Downloading {model.filename} ({pct}%)",
+                    downloaded,
+                    total,
+                )
+            else:
+                mb = downloaded / 1024 / 1024
+                on_progress(
+                    f"Downloading {model.filename} ({mb:.0f} MB)",
+                    downloaded,
+                    total,
+                )
+
+        # Only wire bytes progress — the text-only on_progress messages
+        # ("Downloading...", "...ready") are redundant since _on_bytes
+        # already provides richer status via the DownloadProgressCallback.
+        svc.download(
+            model_name=model.filename,
+            url=url,
+            on_progress=None,
+            on_bytes_progress=_on_bytes,
+        )
+
+    def delete_model(self, model_id: str) -> None:
+        """Remove cached model file."""
+        svc = self._model_download_service or ModelDownloadService()
+        path = svc.model_path(model_id)
+        if path.exists():
+            path.unlink()
+            log.info("Deleted model: %s", path)
+        else:
+            log.debug("Model not found for deletion: %s", path)
+
+    def set_active_model(self, model_id: str) -> None:
+        """Persist the active model ID."""
+        set_litert_model_name(model_id)
+
     # ── Internal helpers ─────────────────────────────────────────────
 
     def _ensure_runtime_loaded(
@@ -300,11 +413,27 @@ class LiteRTLMProvider(LLMProvider):
             )
             raise MissingModelError("No LiteRT-LM model path configured")
 
-        backend = self._build_backend()
-        vision_backend = self._build_vision_backend(backend)
+        # Check model/backend compatibility before building backends
+        effective_backend_name = (self._config.backend or "cpu").strip().lower()
+        known_model = lookup_model(self._config.model_name or "")
+        if known_model is not None and known_model.platform_hint != "universal":
+            hint = known_model.platform_hint
+            if effective_backend_name != hint:
+                log.warning(
+                    "Model %r has platform_hint=%r but backend=%r — "
+                    "auto-falling back to %r backend. "
+                    "Set backend to %r in the LiteRT-LM settings for best results.",
+                    known_model.display_name,
+                    hint, effective_backend_name,
+                    hint, hint,
+                )
+                effective_backend_name = hint
 
-        log.debug(
-            "Creating LiteRT-LM Engine — path=%s, backend=%s, vision_backend=%s, "
+        backend = self._build_backend(effective_backend_name)
+        vision_backend = self._build_vision_backend(effective_backend_name)
+
+        log.info(
+            "LiteRT-LM engine — model=%s, backend=%s, vision_backend=%s, "
             "num_ctx=%s, max_output_tokens=%s",
             model_path,
             backend.get_name() if backend else "default",
@@ -319,11 +448,14 @@ class LiteRTLMProvider(LLMProvider):
                 max_num_tokens=self._config.num_ctx,
                 vision_backend=vision_backend,
             )
-            log.debug("LiteRT-LM engine created for %s", model_path)
+            log.info("LiteRT-LM engine created — model=%s, backend=%s", model_path, effective_backend_name)
         except Exception as exc:
             log.error(
-                "LiteRT-LM engine creation FAILED — path=%s, backend=%s, error=%s",
-                model_path, self._config.backend, exc,
+                "LiteRT-LM engine creation FAILED — path=%s, backend=%s, "
+                "model_platform_hint=%s, error=%s",
+                model_path, effective_backend_name,
+                known_model.platform_hint if known_model else "unknown",
+                exc,
             )
             import traceback
             log.error("Traceback:\n%s", traceback.format_exc())
@@ -331,23 +463,38 @@ class LiteRTLMProvider(LLMProvider):
                 f"Failed to create LiteRT-LM engine: {exc}"
             ) from exc
 
-    def _build_backend(self) -> Any:
-        """Build the litert-lm Backend from config."""
-        backend_name = (self._config.backend or "cpu").strip().lower()
+    def _build_backend(
+        self, backend_name: str | None = None,
+    ) -> Any:
+        """Build the litert-lm Backend from config or override.
+
+        Args:
+            backend_name: Override backend name.  If ``None`` (default),
+                reads from ``self._config.backend``.
+        """
+        if backend_name is None:
+            backend_name = (self._config.backend or "cpu").strip().lower()
         if backend_name == "gpu":
             log.debug("Using GPU backend")
             return self._litert_lm.Backend.GPU()
         log.debug("Using CPU backend")
         return self._litert_lm.Backend.CPU()
 
-    def _build_vision_backend(self, backend: Any) -> Any | None:
+    def _build_vision_backend(
+        self, backend_name: str | None = None,
+    ) -> Any | None:
         """Build vision backend — separate GPU for vision when using GPU.
 
         When GPU is selected, uses a dedicated GPU backend for vision
         encoding.  When CPU is selected, vision uses the same CPU backend
         (pass ``None`` so the Engine defaults to the main backend).
+
+        Args:
+            backend_name: Override backend name.  If ``None`` (default),
+                reads from ``self._config.backend``.
         """
-        backend_name = (self._config.backend or "cpu").strip().lower()
+        if backend_name is None:
+            backend_name = (self._config.backend or "cpu").strip().lower()
         if backend_name == "gpu":
             log.debug("Using separate GPU vision backend")
             return self._litert_lm.Backend.GPU()
@@ -496,10 +643,14 @@ class LiteRTLMProvider(LLMProvider):
     ) -> str:
         """Run inference with full conversation history and optional tools.
 
+        Returns the response text with ``<think>`` tags stripped.
+        The thinking trace is stored in ``self._last_thinking_trace``.
+
         * All messages except the last are passed as conversation preface.
         * The last message is sent as the active turn.
         * Tools are wired to the conversation so the model can use them.
         """
+        self._last_thinking_trace: str | None = None
         self._ensure_engine_created()
 
         # Build conversation with history and tools
@@ -543,7 +694,14 @@ class LiteRTLMProvider(LLMProvider):
                     "Streaming done: %d chars in %d chunks",
                     len(combined), len(full_text),
                 )
-                return combined
+                cleaned, thinking = _separate_thinking(combined)
+                if thinking:
+                    self._last_thinking_trace = thinking
+                    log.info(
+                        "Extracted thinking trace (%d chars) from streaming response",
+                        len(thinking),
+                    )
+                return cleaned
             else:
                 result = conversation.send_message(last_msg)
                 text = self._extract_response_text(result)
@@ -551,7 +709,14 @@ class LiteRTLMProvider(LLMProvider):
                     "Non-streaming done: %d chars, response keys=%s",
                     len(text), list(result.keys()),
                 )
-                return text
+                cleaned, thinking = _separate_thinking(text)
+                if thinking:
+                    self._last_thinking_trace = thinking
+                    log.info(
+                        "Extracted thinking trace (%d chars) from response",
+                        len(thinking),
+                    )
+                return cleaned
 
     def _generate_image_internal(
         self,
@@ -583,10 +748,14 @@ class LiteRTLMProvider(LLMProvider):
         text = self._generate_text(
             [msg], stream_handler=stream_handler,
         )
+        metadata: dict[str, Any] | None = None
+        if self._last_thinking_trace:
+            metadata = {"thinking_trace": self._last_thinking_trace}
         return SummaryResponse(
             text=text,
             model=model_name,
             provider=self.provider_name(),
+            metadata=metadata,
         )
 
     def _generate_internal(
@@ -604,10 +773,14 @@ class LiteRTLMProvider(LLMProvider):
         text = self._generate_text(
             messages, tools=tools, stream_handler=stream_handler,
         )
+        metadata: dict[str, Any] | None = None
+        if self._last_thinking_trace:
+            metadata = {"thinking_trace": self._last_thinking_trace}
         return SummaryResponse(
             text=text,
             model=model_name,
             provider=self.provider_name(),
+            metadata=metadata,
         )
 
     def _generate_chat(
@@ -693,9 +866,38 @@ def _is_vision_model(model_name: str | None) -> bool:
     return known is not None and known.vision
 
 
-def _model_def_to_info(model: LiteRTModelDef) -> ProviderModelInfo:
+def _think_tag_pattern() -> re.Pattern:
+    """Compiled regex to match ``<think>...</think>`` blocks."""
+    return re.compile(r"<think>(.*?)</think>", re.DOTALL)
+
+
+def _separate_thinking(text: str) -> tuple[str, str]:
+    """Separate thinking content from response text.
+
+    LiteRT-LM models that support reasoning may emit
+    ``<think>...</think>`` blocks inline in the output text.
+    This function strips them and returns ``(cleaned_text, thinking_trace)``.
+
+    Returns:
+        Tuple of ``(text_without_think_tags, thinking_content)``.
+        ``thinking_content`` is empty string if no thinking was found.
+    """
+    pattern = _think_tag_pattern()
+    match = pattern.search(text)
+    if not match:
+        return text, ""
+
+    thinking = match.group(1).strip()
+    # Remove all think blocks from the text
+    cleaned = pattern.sub("", text).strip()
+    return cleaned, thinking
+
+
+def _model_def_to_info(model: LiteRTModelDef, think_enabled: bool = False) -> ProviderModelInfo:
     """Convert a model definition to ``ProviderModelInfo``."""
     capabilities = _vision_capabilities() if model.vision else _text_capabilities()
+    if think_enabled and model.thinking:
+        capabilities = capabilities + ("thinking",)
     return ProviderModelInfo(
         id=model.model_id,
         provider="litert-lm",
@@ -704,3 +906,11 @@ def _model_def_to_info(model: LiteRTModelDef) -> ProviderModelInfo:
         capabilities=capabilities,
         sampling_defaults=SamplingDefaults(),
     )
+
+
+def _capabilities_for_model(model: LiteRTModelDef, think_enabled: bool = False) -> tuple[str, ...]:
+    """Return a capabilities tuple for a model definition."""
+    caps: tuple[str, ...] = _vision_capabilities() if model.vision else _text_capabilities()
+    if think_enabled and model.thinking:
+        caps = caps + ("thinking",)
+    return caps

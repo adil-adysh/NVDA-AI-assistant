@@ -17,15 +17,19 @@ class LiteRTModelDef:
     """Description of a downloadable LiteRT-LM model.
 
     Attributes:
-        model_id: Hugging Face repo id, e.g. ``"litert-community/gemma-4-E2B-it-litert-lm"``.
+        model_id: Hugging Face repo id.
         filename: Name of the ``.litertlm`` file inside the repo.
         display_name: Human-readable label shown in the UI.
         description: Short summary of the model.
         size_hint_human: Human-readable size (e.g. ``"~2.1 GB"``).
         gated: Whether the model requires Hugging Face authentication.
         vision: Whether the model supports image (vision) input.
+        thinking: Whether the model supports reasoning/thinking tokens
+            (e.g. via ``<think>`` tags in the output).
+        priority: Display ordering — lower = more recommended.
+            Values ≤ 50 are shown in the "Recommended" group.
         license_: SPDX license identifier.
-        platform_hint: Target platform / architecture hint (e.g. ``"cpu"``).
+        platform_hint: Target platform / architecture hint.
     """
 
     model_id: str
@@ -35,6 +39,8 @@ class LiteRTModelDef:
     size_hint_human: str = ""
     gated: bool = False
     vision: bool = False
+    thinking: bool = False
+    priority: int = 100
     license_: str = "apache-2.0"
     platform_hint: Literal["cpu", "gpu", "universal"] = "universal"
 
@@ -49,6 +55,7 @@ GEMMA_4_E2B = LiteRTModelDef(
     size_hint_human="~2.1 GB",
     gated=False,
     vision=True,
+    priority=10,
     platform_hint="cpu",
 )
 
@@ -60,6 +67,7 @@ GEMMA_4_E4B = LiteRTModelDef(
     size_hint_human="~3.5 GB",
     gated=False,
     vision=True,
+    priority=20,
     platform_hint="cpu",
 )
 
@@ -73,6 +81,7 @@ PEPPX_UNCENSORED = LiteRTModelDef(
     size_hint_human="~2.4 GB",
     gated=False,
     vision=False,
+    priority=100,
     platform_hint="gpu",
 )
 
@@ -85,7 +94,7 @@ GEMMA_4_12B = LiteRTModelDef(
     description="Google Gemma 4 12B — large instruction-tuned model for desktop use, text+audio, 32K context, Apache 2.0.",
     size_hint_human="~6.6 GB",
     gated=False,
-    vision=False,
+    vision=False,    thinking=True,    priority=50,
     platform_hint="gpu",
 )
 
@@ -99,6 +108,8 @@ QWEN3_0_6B = LiteRTModelDef(
     size_hint_human="~586 MB",
     gated=False,
     vision=False,
+    thinking=True,
+    priority=30,
     platform_hint="cpu",
 )
 
@@ -110,6 +121,8 @@ QWEN3_1_7B = LiteRTModelDef(
     size_hint_human="~2.1 GB",
     gated=False,
     vision=False,
+    thinking=True,
+    priority=30,
     platform_hint="cpu",
 )
 
@@ -121,6 +134,8 @@ QWEN3_4B = LiteRTModelDef(
     size_hint_human="~2.5 GB",
     gated=False,
     vision=False,
+    thinking=True,
+    priority=20,
     platform_hint="cpu",
 )
 
@@ -132,6 +147,8 @@ QWEN3_8B = LiteRTModelDef(
     size_hint_human="~4.7 GB",
     gated=False,
     vision=False,
+    thinking=True,
+    priority=50,
     platform_hint="gpu",
 )
 
@@ -143,6 +160,8 @@ QWEN3_14B = LiteRTModelDef(
     size_hint_human="~8.3 GB",
     gated=False,
     vision=False,
+    thinking=True,
+    priority=100,
     platform_hint="gpu",
 )
 

@@ -188,6 +188,10 @@ def get_litert_backend() -> str:
 	return _read_string("litertBackend", defaults.DEFAULT_LITERT_BACKEND)
 
 
+def get_litert_think() -> bool:
+	return _read_bool("litertThink", defaults.DEFAULT_LITERT_THINK)
+
+
 def get_openai_config() -> "OpenAIConfig":
 	from ..providers.config import OpenAIConfig
 
@@ -269,6 +273,7 @@ def get_litert_config() -> "LiteRTConfig":
 		generate_top_p=get_generate_top_p(),
 		generate_max_tokens=get_generate_max_tokens(),
 		backend=get_litert_backend(),
+		think=get_litert_think(),
 	)
 
 
@@ -440,12 +445,17 @@ def set_litert_backend(backend: str) -> None:
 	_set_value("litertBackend", str(backend).strip().lower(), notify=True)
 
 
+def set_litert_think(think: bool) -> None:
+	_set_value("litertThink", bool(think), notify=True)
+
+
 def set_litert_config(config: LiteRTConfig) -> None:
 	_set_values(
 		{
 			"provider": config.provider,
 			"litertModelName": config.model_name,
 			"litertBackend": config.backend,
+			"litertThink": config.think,
 			"timeoutSeconds": config.timeout_seconds,
 			"numCtx": config.num_ctx,
 			"maxRetries": config.max_retries,
@@ -541,6 +551,8 @@ def set_model_name(modelName: str) -> None:
 		set_gemini_model_name(modelName)
 	elif provider == "openai":
 		_set_value("openaiModelName", str(modelName).strip(), notify=True)
+	elif provider == "litert-lm":
+		set_litert_model_name(modelName)
 	else:
 		set_ollama_model_name(modelName)
 

@@ -51,3 +51,4 @@ class LiteRTConfig(ProviderConfig):
     """
 
     backend: str = "cpu"
+    think: bool = False

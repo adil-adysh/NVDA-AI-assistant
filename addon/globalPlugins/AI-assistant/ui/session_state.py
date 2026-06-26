@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from ..config.state import ProviderState
 from ..config.settings import (
+	get_litert_think,
 	get_ollama_think,
 	get_provider_state,
 )
@@ -61,6 +62,13 @@ class UISessionState:
 
 
 _READINESS_SERVICE = ProviderReadinessService()
+
+
+def _resolve_think_enabled(provider: str) -> bool:
+	"""Return the think-mode setting for the active provider."""
+	if provider == "litert-lm":
+		return get_litert_think()
+	return get_ollama_think()
 
 
 # TRANSLATORS: Strings sent from the Python add-on to the WebView UI.
@@ -235,6 +243,11 @@ def build_session_state(
 		current_model,
 		*(available_models or ()),
 	)
+	# Filter models to only show enabled ones in the host UI
+	resolved_available_models = _filter_available_models(
+		resolved_available_models,
+		active_provider_state.provider,
+	)
 	return UISessionState(
 		provider=active_provider_state.provider,
 		model=active_provider_state.model_name,
@@ -257,7 +270,7 @@ def build_session_state(
 		available_models=resolved_available_models,
 		conversation_summaries=tuple(conversation_summaries or ()),
 		localized_strings=build_localized_strings(translate),
-		think_enabled=get_ollama_think(),
+		think_enabled=_resolve_think_enabled(provider_state.provider),
 		chat_enabled=resolved_readiness.can_infer,
 		status_message=build_provider_status_message(translate, resolved_readiness),
 		conversation_id=conversation_id,
@@ -318,3 +331,45 @@ def build_provider_status_message(translate: Translator, readiness: ProviderRead
 		return translate("The selected {provider} model is not supported for this workflow.").format(provider=provider_label)
 	# TRANSLATORS: Guidance shown when the selected provider is not ready but no specific reason is available.
 	return translate("{provider} is selected but not fully configured.").format(provider=provider_label)
+
+
+def _filter_available_models(
+	available_models: tuple[str, ...],
+	provider: str,
+) -> tuple[str, ...]:
+	"""Only show models that the user has enabled in the model manager.
+
+	For ``litert-lm`` additionally requires the model file to be on disk
+	(``state.is_ready()``).  For cloud providers the check is purely
+	against the enabled-IDs store — they are always "ready".
+	"""
+	from .enabled_models import EnabledModelsStore
+
+	store = EnabledModelsStore()
+	enabled_ids = store.get_enabled(provider)
+	if not enabled_ids:
+		return available_models  # First run — nothing disabled yet
+
+	if provider == "litert-lm":
+		from ..providers.litert_models import KNOWN_MODELS
+		from ..providers.runtime.model_download import ModelDownloadService
+
+		# available_models uses model_id (e.g. "litert-community/gemma-4-E2B-it-litert-lm")
+		# but enabled_ids and download check use model.filename.
+		known_map = {m.model_id: m for m in KNOWN_MODELS}
+		svc = ModelDownloadService()
+
+		filtered: list[str] = []
+		for model_str in available_models:
+			known = known_map.get(model_str)
+			if known is not None:
+				# Known catalog model — check enabled + downloaded
+				if known.filename in enabled_ids and svc.is_downloaded(known.filename):
+					filtered.append(model_str)
+			else:
+				# Not a known catalog model (e.g. custom .litertlm file)
+				filtered.append(model_str)
+		return tuple(filtered)
+
+	# Cloud providers: exact match against enabled IDs
+	return tuple(m for m in available_models if m in enabled_ids)

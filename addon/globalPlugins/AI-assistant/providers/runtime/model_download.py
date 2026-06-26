@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from logHandler import log
@@ -58,6 +59,7 @@ class ModelDownloadService:
         url: str,
         expected_sha256: str | None = None,
         on_progress: ProgressCallback | None = None,
+        on_bytes_progress: Callable[[int, int], None] | None = None,
     ) -> Path:
         """Download a model file to the cache directory.
 
@@ -65,7 +67,9 @@ class ModelDownloadService:
             model_name: Local filename for the model (e.g. ``"gemma-4-E2B-it.litertlm"``).
             url: Direct download URL.
             expected_sha256: Optional SHA-256 hex digest for verification.
-            on_progress: Optional progress callback.
+            on_progress: Optional progress callback receiving text messages.
+            on_bytes_progress: Optional callback ``(downloaded_bytes, total_bytes)``
+                driven by ``urllib.request.urlretrieve``'s ``reporthook``.
 
         Returns:
             Path to the downloaded and verified model file.
@@ -91,7 +95,7 @@ class ModelDownloadService:
                 delete=False, suffix=".litertlm", dir=tmp_dir
             ) as tmp:
                 tmp_path = Path(tmp.name)
-                _download_url(url, tmp)
+                _download_url(url, tmp, on_bytes_progress=on_bytes_progress)
         except Exception as exc:
             _cleanup(tmp_path)
             raise ModelDownloadError(
@@ -139,11 +143,27 @@ def _default_model_dir() -> Path:
     return base / "nvda" / "AIAssistant" / "models" / "litert-lm"
 
 
-def _download_url(url: str, tmp_file) -> None:  # noqa: ANN001
-    """Stream *url* into *tmp_file*."""
+def _download_url(
+    url: str,
+    tmp_file,
+    on_bytes_progress: Callable[[int, int], None] | None = None,
+) -> None:  # noqa: ANN001
+    """Stream *url* into *tmp_file* using ``urlretrieve``.
+
+    When *on_bytes_progress* is provided a ``reporthook`` is wired up
+    that calls it with ``(downloaded_bytes, total_bytes)``.
+    """
     import urllib.request
 
-    urllib.request.urlretrieve(url, tmp_file.name)
+    if on_bytes_progress is None:
+        urllib.request.urlretrieve(url, tmp_file.name)
+        return
+
+    def _reporthook(block_count: int, block_size: int, total_size: int) -> None:
+        downloaded = block_count * block_size
+        on_bytes_progress(downloaded, total_size)
+
+    urllib.request.urlretrieve(url, tmp_file.name, reporthook=_reporthook)
 
 
 def _cleanup(path: Path | None) -> None:

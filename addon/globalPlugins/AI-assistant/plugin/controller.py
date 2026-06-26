@@ -7,6 +7,8 @@ from collections.abc import Callable
 from typing import Any, cast
 
 import globalPluginHandler
+import gui
+import wx
 from logHandler import log
 from scriptHandler import script
 
@@ -27,11 +29,29 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	def __init__(self) -> None:
 		super().__init__()
 		self._app = AIAssistantApplication(self)
+		self._tools_menu = gui.mainFrame.sysTrayIcon.toolsMenu
+		# TRANSLATORS: Name of the menu item in NVDA's Tools menu to open the model manager.
+		self._model_manager_item = self._tools_menu.Append(
+			wx.ID_ANY, _("&Manage AI Models..."),
+		)
+		gui.mainFrame.sysTrayIcon.Bind(
+			wx.EVT_MENU, self._on_tools_manage_models, self._model_manager_item,
+		)
 
 	def _restore_default_gesture_bindings(self) -> None:
 		self.bindGestures(self.__gestures)
 
+	def _on_tools_manage_models(self, event: wx.CommandEvent) -> None:
+		from ..ui.model_manager import open_model_manager
+		gui.mainFrame.prePopup()
+		open_model_manager(gui.mainFrame)
+		gui.mainFrame.postPopup()
+
 	def terminate(self) -> None:
+		try:
+			self._tools_menu.Remove(self._model_manager_item)
+		except Exception:
+			log.exception("Error removing model manager menu item")
 		try:
 			self._app.terminate()
 		except Exception:

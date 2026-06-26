@@ -7,6 +7,7 @@ from ..config.settings import (
 	get_provider,
 	get_provider_state,
 	save,
+	set_litert_think,
 	set_model_name,
 	set_ollama_think,
 	set_provider,
@@ -54,7 +55,11 @@ class ProviderControlService:
 		return self.current_state()
 
 	def set_think_mode(self, enabled: bool) -> ProviderControlResult:
-		set_ollama_think(enabled)
+		provider = get_provider()
+		if provider == "litert-lm":
+			set_litert_think(enabled)
+		else:
+			set_ollama_think(enabled)
 		save()
 		return self.current_state()
 
