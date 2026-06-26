@@ -51,6 +51,8 @@ class LiteRTLMProvider(LLMProvider):
             Created on first use if omitted.
     """
 
+    _RUNTIME_VERSION = "0.13.1"
+
     _SUPPORTED_CAPABILITIES = (
         "completion", "chat", "streaming",
         "text_input", "text_output",
@@ -248,7 +250,7 @@ class LiteRTLMProvider(LLMProvider):
             log.debug("LiteRT-LM runtime already loaded")
             return
 
-        version = self._config.runtime_version
+        version = self._RUNTIME_VERSION
         log.debug("LiteRT-LM runtime NOT loaded; loading version %s", version)
 
         if self._runtime_manager is None:
@@ -298,27 +300,58 @@ class LiteRTLMProvider(LLMProvider):
             )
             raise MissingModelError("No LiteRT-LM model path configured")
 
+        backend = self._build_backend()
+        vision_backend = self._build_vision_backend(backend)
+
         log.debug(
-            "Creating LiteRT-LM Engine — path=%s, num_ctx=%s, max_output_tokens=%s",
-            model_path, self._config.num_ctx, self._config.generate_max_tokens,
+            "Creating LiteRT-LM Engine — path=%s, backend=%s, vision_backend=%s, "
+            "num_ctx=%s, max_output_tokens=%s",
+            model_path,
+            backend.get_name() if backend else "default",
+            vision_backend.get_name() if vision_backend else "same-as-backend",
+            self._config.num_ctx, self._config.generate_max_tokens,
         )
 
         try:
             self._engine = self._litert_lm.Engine(
                 str(model_path),
+                backend=backend,
                 max_num_tokens=self._config.num_ctx,
+                vision_backend=vision_backend,
             )
             log.debug("LiteRT-LM engine created for %s", model_path)
         except Exception as exc:
             log.error(
-                "LiteRT-LM engine creation FAILED — path=%s, error=%s",
-                model_path, exc,
+                "LiteRT-LM engine creation FAILED — path=%s, backend=%s, error=%s",
+                model_path, self._config.backend, exc,
             )
             import traceback
             log.error("Traceback:\n%s", traceback.format_exc())
             raise LLMProviderError(
                 f"Failed to create LiteRT-LM engine: {exc}"
             ) from exc
+
+    def _build_backend(self) -> Any:
+        """Build the litert-lm Backend from config."""
+        backend_name = (self._config.backend or "cpu").strip().lower()
+        if backend_name == "gpu":
+            log.debug("Using GPU backend")
+            return self._litert_lm.Backend.GPU()
+        log.debug("Using CPU backend")
+        return self._litert_lm.Backend.CPU()
+
+    def _build_vision_backend(self, backend: Any) -> Any | None:
+        """Build vision backend — separate GPU for vision when using GPU.
+
+        When GPU is selected, uses a dedicated GPU backend for vision
+        encoding.  When CPU is selected, vision uses the same CPU backend
+        (pass ``None`` so the Engine defaults to the main backend).
+        """
+        backend_name = (self._config.backend or "cpu").strip().lower()
+        if backend_name == "gpu":
+            log.debug("Using separate GPU vision backend")
+            return self._litert_lm.Backend.GPU()
+        return None
 
     def _close_engine(self) -> None:
         if self._engine is not None:

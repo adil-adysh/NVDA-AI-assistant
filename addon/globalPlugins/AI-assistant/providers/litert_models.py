@@ -65,24 +65,85 @@ GEMMA_4_E4B = LiteRTModelDef(
 
 # ── Community models (popular) ────────────────────────────────────
 
-QWEN_CODER_3B = LiteRTModelDef(
-    model_id="4ntoine/Qwen2.5-Coder-3B-Instruct-LiteRTLM",
-    filename="qwen2.5-coder-3b-instruct-litertlm.litertlm",
-    display_name="Qwen 2.5 Coder 3B",
-    description="Qwen 2.5 Coder 3B — code-specialised instruction model converted to LiteRT-LM.",
-    size_hint_human="~1.8 GB",
+PEPPX_UNCENSORED = LiteRTModelDef(
+    model_id="PeppX/gemma-4-e2b-uncensored-litertlm",
+    filename="gemma-4-E2B-it-Uncensored-MAX.litertlm",
+    display_name="Gemma 4 E2B Uncensored",
+    description="Community uncensored fine-tune of Gemma 4 E2B — text-only (vision stripped), 2.37 GB, 32K context, Apache 2.0.",
+    size_hint_human="~2.4 GB",
     gated=False,
+    vision=False,
+    platform_hint="gpu",
+)
+
+# ── Gemma 4 12B (litert-community, ungated) ───────────────────────
+
+GEMMA_4_12B = LiteRTModelDef(
+    model_id="litert-community/gemma-4-12B-it-litert-lm",
+    filename="gemma-4-12B-it.litertlm",
+    display_name="Gemma 4 12B",
+    description="Google Gemma 4 12B — large instruction-tuned model for desktop use, text+audio, 32K context, Apache 2.0.",
+    size_hint_human="~6.6 GB",
+    gated=False,
+    vision=False,
+    platform_hint="gpu",
+)
+
+# ── Qwen3 family (litert-community, ungated) ──────────────────────
+
+QWEN3_0_6B = LiteRTModelDef(
+    model_id="litert-community/Qwen3-0.6B",
+    filename="Qwen3-0.6B.litertlm",
+    display_name="Qwen3 0.6B",
+    description="Alibaba Qwen3 0.6B — tiny efficient model, dynamic INT8, 4K context, 586 MB, Apache 2.0.",
+    size_hint_human="~586 MB",
+    gated=False,
+    vision=False,
     platform_hint="cpu",
 )
 
-LOCO_OPERATOR_4B = LiteRTModelDef(
-    model_id="4ntoine/LocoOperator-4B-LiteRTLM",
-    filename="loco-operator-4b-litertlm.litertlm",
-    display_name="LocoOperator 4B",
-    description="LocoOperator 4B — general instruction model in LiteRT-LM format.",
+QWEN3_1_7B = LiteRTModelDef(
+    model_id="litert-community/Qwen3-1.7B",
+    filename="Qwen3_1.7B.litertlm",
+    display_name="Qwen3 1.7B",
+    description="Alibaba Qwen3 1.7B — lightweight instruction model, dynamic INT8, 2.1 GB, Apache 2.0.",
+    size_hint_human="~2.1 GB",
+    gated=False,
+    vision=False,
+    platform_hint="cpu",
+)
+
+QWEN3_4B = LiteRTModelDef(
+    model_id="litert-community/Qwen3-4B",
+    filename="qwen3_4b_mixed_int4.litertlm",
+    display_name="Qwen3 4B",
+    description="Alibaba Qwen3 4B — balanced model, mixed INT4, 2.5 GB, competitive with Gemma 4 E4B, Apache 2.0.",
     size_hint_human="~2.5 GB",
     gated=False,
+    vision=False,
     platform_hint="cpu",
+)
+
+QWEN3_8B = LiteRTModelDef(
+    model_id="litert-community/Qwen3-8B",
+    filename="qwen3_8b_mixed_int4.litertlm",
+    display_name="Qwen3 8B",
+    description="Alibaba Qwen3 8B — large desktop model, mixed INT4, 4.7 GB, strong reasoning, Apache 2.0.",
+    size_hint_human="~4.7 GB",
+    gated=False,
+    vision=False,
+    platform_hint="gpu",
+)
+
+QWEN3_14B = LiteRTModelDef(
+    model_id="litert-community/Qwen3-14B",
+    filename="qwen3_14b_mixed_int4.litertlm",
+    display_name="Qwen3 14B",
+    description="Alibaba Qwen3 14B — largest Qwen3 for LiteRT-LM, mixed INT4, 8.3 GB, best quality, Apache 2.0.",
+    size_hint_human="~8.3 GB",
+    gated=False,
+    vision=False,
+    platform_hint="gpu",
 )
 
 # Register all known models here so the provider can enumerate them.
@@ -90,8 +151,13 @@ LOCO_OPERATOR_4B = LiteRTModelDef(
 KNOWN_MODELS: tuple[LiteRTModelDef, ...] = (
     GEMMA_4_E2B,
     GEMMA_4_E4B,
-    QWEN_CODER_3B,
-    LOCO_OPERATOR_4B,
+    GEMMA_4_12B,
+    QWEN3_0_6B,
+    QWEN3_1_7B,
+    QWEN3_4B,
+    QWEN3_8B,
+    QWEN3_14B,
+    PEPPX_UNCENSORED,
 )
 
 

@@ -40,6 +40,7 @@ from ..config.settings import (
     set_litert_config,
     set_ollama_config,
     set_openai_config,
+    set_num_ctx,
     set_request_metrics_log_path,
     set_request_metrics_logging_enabled,
     set_streaming_enabled,
@@ -231,11 +232,18 @@ class AIAssistantSettingsPanel(SettingsPanel):
             _("LiteRT-LM model name:"),
             litert_config.model_name or defaults.DEFAULT_LITERT_MODEL,
         )
-        # TRANSLATORS: Label for the LiteRT-LM runtime version setting.
-        self.litertRuntimeVersionEdit = self._add_labeled_text_ctrl(
+        # TRANSLATORS: Label for the LiteRT-LM context window size setting.
+        self.litertNumCtxEdit = self._add_labeled_text_ctrl(
             groupHelper,
-            _("LiteRT-LM runtime version:"),
-            litert_config.runtime_version or defaults.DEFAULT_LITERT_RUNTIME_VERSION,
+            _("LiteRT-LM context window size (may affect performance):"),
+            str(get_num_ctx()),
+        )
+        # TRANSLATORS: Label for the LiteRT-LM backend selection.
+        self.litertBackendChoice = self._add_labeled_combo_box(
+            groupHelper,
+            _("LiteRT-LM backend:"),
+            ["cpu", "gpu"],
+            litert_config.backend or defaults.DEFAULT_LITERT_BACKEND,
         )
         return groupSizer
 
@@ -587,30 +595,39 @@ class AIAssistantSettingsPanel(SettingsPanel):
             set_openai_config(config)
         else:  # litert-lm
             litertModelName = self.litertModelNameEdit.Value.strip()
-            litertRuntimeVersion = self.litertRuntimeVersionEdit.Value.strip()
 
             if not litertModelName:
                 self._show_error(_("LiteRT-LM model name cannot be empty"))
                 return
-            if not litertRuntimeVersion:
-                self._show_error(_("LiteRT-LM runtime version cannot be empty"))
+
+            litertNumCtx = self._parse_int(
+                self.litertNumCtxEdit,
+                _("Context window size must be an integer of at least 256."),
+                minimum=256,
+            )
+            if litertNumCtx is None:
                 return
+
+            litertBackend = self.litertBackendChoice.GetStringSelection().strip().lower()
+            if litertBackend not in ("cpu", "gpu"):
+                litertBackend = defaults.DEFAULT_LITERT_BACKEND
 
             config = LiteRTConfig(
                 provider="litert-lm",
                 model_name=litertModelName,
                 timeout_seconds=timeoutSeconds,
                 enable_progress=self.progressCheckbox.Value,
-                num_ctx=get_num_ctx(),
+                num_ctx=litertNumCtx,
                 max_retries=get_max_retries(),
                 retry_backoff_seconds=get_retry_backoff_seconds(),
                 generate_temperature=temperature,
                 generate_top_k=topK,
                 generate_top_p=topP,
                 generate_max_tokens=maxTokens,
-                runtime_version=litertRuntimeVersion,
+                backend=litertBackend,
             )
             set_litert_config(config)
+            set_num_ctx(litertNumCtx)
 
         set_image_max_side(imageMaxSide)
         set_image_format(imageFormat)
@@ -660,7 +677,8 @@ class AIAssistantSettingsPanel(SettingsPanel):
         self.openaiChatPathEdit.Enable(is_openai)
         self.openaiMaxTokensEdit.Enable(is_openai)
         self.litertModelNameEdit.Enable(is_litert)
-        self.litertRuntimeVersionEdit.Enable(is_litert)
+        self.litertNumCtxEdit.Enable(is_litert)
+        self.litertBackendChoice.Enable(is_litert)
         self.presencePenaltyEdit.Enable(is_ollama)
         self.ollamaThinkCheckbox.Enable(is_ollama)
 

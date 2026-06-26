@@ -184,8 +184,8 @@ def get_litert_model_name() -> str:
 	return _read_string("litertModelName", defaults.DEFAULT_LITERT_MODEL)
 
 
-def get_litert_runtime_version() -> str:
-	return _read_string("litertRuntimeVersion", defaults.DEFAULT_LITERT_RUNTIME_VERSION)
+def get_litert_backend() -> str:
+	return _read_string("litertBackend", defaults.DEFAULT_LITERT_BACKEND)
 
 
 def get_openai_config() -> "OpenAIConfig":
@@ -268,7 +268,7 @@ def get_litert_config() -> "LiteRTConfig":
 		generate_top_k=get_generate_top_k(),
 		generate_top_p=get_generate_top_p(),
 		generate_max_tokens=get_generate_max_tokens(),
-		runtime_version=get_litert_runtime_version(),
+		backend=get_litert_backend(),
 	)
 
 
@@ -436,8 +436,8 @@ def set_litert_model_name(modelName: str) -> None:
 	_set_value("litertModelName", str(modelName).strip(), notify=True)
 
 
-def set_litert_runtime_version(version: str) -> None:
-	_set_value("litertRuntimeVersion", str(version).strip(), notify=True)
+def set_litert_backend(backend: str) -> None:
+	_set_value("litertBackend", str(backend).strip().lower(), notify=True)
 
 
 def set_litert_config(config: LiteRTConfig) -> None:
@@ -445,7 +445,7 @@ def set_litert_config(config: LiteRTConfig) -> None:
 		{
 			"provider": config.provider,
 			"litertModelName": config.model_name,
-			"litertRuntimeVersion": config.runtime_version,
+			"litertBackend": config.backend,
 			"timeoutSeconds": config.timeout_seconds,
 			"numCtx": config.num_ctx,
 			"maxRetries": config.max_retries,

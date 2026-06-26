@@ -50,4 +50,4 @@ class LiteRTConfig(ProviderConfig):
     The model_name field holds the path to a .litertlm model file.
     """
 
-    runtime_version: str
+    backend: str = "cpu"
