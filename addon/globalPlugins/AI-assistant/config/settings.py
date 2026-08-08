@@ -111,6 +111,22 @@ def set_provider(provider: str) -> None:
 	_set_value("provider", provider_value, notify=True)
 
 
+def get_enabled_providers() -> list[str]:
+	"""Return the list of enabled provider IDs."""
+	raw = _get_raw_setting("enabledProviders", None)
+	if isinstance(raw, list) and raw:
+		return [str(p).strip().lower() for p in raw if str(p).strip().lower() in {"ollama", "gemini", "openai", "litert-lm"}]
+	return list(defaults.DEFAULT_ENABLED_PROVIDERS)
+
+
+def set_enabled_providers(providers: list[str]) -> None:
+	"""Persist the list of enabled provider IDs."""
+	valid = [str(p).strip().lower() for p in providers if str(p).strip().lower() in {"ollama", "gemini", "openai", "litert-lm"}]
+	if not valid:
+		valid = ["ollama"]  # at least one must be enabled
+	_set_value("enabledProviders", valid, notify=True)
+
+
 def get_language() -> str:
 	"""Return the stored prompt language setting.
 

@@ -30,16 +30,42 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		super().__init__()
 		self._app = AIAssistantApplication(self)
 		self._tools_menu = gui.mainFrame.sysTrayIcon.toolsMenu
-		# TRANSLATORS: Name of the menu item in NVDA's Tools menu to open the model manager.
-		self._model_manager_item = self._tools_menu.Append(
+		self._build_tools_submenu()
+
+	def _build_tools_submenu(self) -> None:
+		"""Create the AI Assistant submenu under NVDA's Tools menu."""
+		self._submenu = wx.Menu()
+		# TRANSLATORS: Name of the menu item to open the AI provider management panel.
+		self._providers_item = self._submenu.Append(
+			wx.ID_ANY, _("&Manage AI Providers..."),
+		)
+		# TRANSLATORS: Name of the menu item to open the AI model manager.
+		self._models_item = self._submenu.Append(
 			wx.ID_ANY, _("&Manage AI Models..."),
 		)
+		# TRANSLATORS: Name of the submenu in NVDA's Tools menu for AI Assistant features.
+		self._submenu_parent_item = self._tools_menu.AppendSubMenu(
+			self._submenu, _("AI Assistant"),
+		)
 		gui.mainFrame.sysTrayIcon.Bind(
-			wx.EVT_MENU, self._on_tools_manage_models, self._model_manager_item,
+			wx.EVT_MENU, self._on_tools_manage_providers, self._providers_item,
+		)
+		gui.mainFrame.sysTrayIcon.Bind(
+			wx.EVT_MENU, self._on_tools_manage_models, self._models_item,
 		)
 
 	def _restore_default_gesture_bindings(self) -> None:
 		self.bindGestures(self.__gestures)
+
+	def _on_tools_manage_providers(self, event: wx.CommandEvent) -> None:
+		"""Open the NVDA Settings dialog focused on the AI Assistant panel."""
+		from gui.settingsDialogs import NVDASettingsDialog
+		from ..ui.settings_panel import AIAssistantSettingsPanel
+		gui.mainFrame.prePopup()
+		gui.mainFrame.popupSettingsDialog(
+			NVDASettingsDialog, AIAssistantSettingsPanel,
+		)
+		gui.mainFrame.postPopup()
 
 	def _on_tools_manage_models(self, event: wx.CommandEvent) -> None:
 		from ..ui.model_manager import open_model_manager
@@ -49,9 +75,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	def terminate(self) -> None:
 		try:
-			self._tools_menu.Remove(self._model_manager_item)
+			if hasattr(self, "_submenu_parent_item"):
+				self._tools_menu.Remove(self._submenu_parent_item)
 		except Exception:
-			log.exception("Error removing model manager menu item")
+			log.exception("Error removing AI Assistant submenu")
 		try:
 			self._app.terminate()
 		except Exception:

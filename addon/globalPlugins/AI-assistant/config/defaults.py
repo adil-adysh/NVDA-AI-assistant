@@ -36,6 +36,8 @@ DEFAULT_LITERT_MODEL = "litert-community/gemma-4-E2B-it-litert-lm"
 DEFAULT_LITERT_URL = "http://127.0.0.1:9379"
 DEFAULT_LITERT_THINK = False
 
+DEFAULT_ENABLED_PROVIDERS = ["ollama", "gemini", "openai", "litert-lm"]
+
 DEFAULT_IMAGE_MAX_SIDE = 1024
 DEFAULT_IMAGE_FORMAT = "PNG"
 DEFAULT_IMAGE_QUALITY = 80

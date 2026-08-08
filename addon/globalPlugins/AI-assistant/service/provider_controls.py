@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..config.settings import (
+	get_enabled_providers,
 	get_provider,
 	get_provider_state,
 	save,
@@ -35,21 +36,32 @@ class ProviderControlService:
 		)
 
 	def select_provider(self, provider: str) -> ProviderControlResult:
+		enabled = get_enabled_providers()
+		if provider not in enabled:
+			raise ValueError(
+				f"Provider '{provider}' is disabled. Enabled providers: {enabled}"
+			)
 		set_provider(provider)
 		save()
 		return self.current_state()
 
 	def cycle_provider(self) -> ProviderControlResult:
 		current_provider = get_provider()
-		if current_provider not in self.PROVIDER_ORDER:
-			target_provider = self.PROVIDER_ORDER[0]
+		enabled = get_enabled_providers()
+		# Build cycle order from PROVIDER_ORDER, filtering to enabled providers only.
+		cycle_order = [p for p in self.PROVIDER_ORDER if p in enabled]
+		if not cycle_order:
+			return self.current_state()
+		if current_provider not in cycle_order:
+			target_provider = cycle_order[0]
 		else:
-			target_provider = self.PROVIDER_ORDER[(self.PROVIDER_ORDER.index(current_provider) + 1) % len(self.PROVIDER_ORDER)]
+			idx = cycle_order.index(current_provider)
+			target_provider = cycle_order[(idx + 1) % len(cycle_order)]
 		return self.select_provider(target_provider)
 
 	def select_model(self, model: str, provider: str | None = None) -> ProviderControlResult:
 		if provider:
-			set_provider(provider)
+			self.select_provider(provider)
 		set_model_name(model)
 		save()
 		return self.current_state()
