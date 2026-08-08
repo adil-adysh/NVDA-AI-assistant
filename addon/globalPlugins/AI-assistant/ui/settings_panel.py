@@ -276,6 +276,9 @@ class AIAssistantSettingsPanel(SettingsPanel):
         self.litertProgressLabel = wx.StaticText(self, label="")
         self.litertProgressLabel.Hide()
         groupHelper.addItem(self.litertProgressLabel)
+        self.litertProgressGauge = wx.Gauge(self, range=100, size=(-1, 20))
+        self.litertProgressGauge.Hide()
+        groupHelper.addItem(self.litertProgressGauge, flag=wx.EXPAND)
 
         self._refresh_litert_runtime_status()
         return groupSizer
@@ -332,6 +335,9 @@ class AIAssistantSettingsPanel(SettingsPanel):
         # TRANSLATORS: Progress message shown while the LiteRT-LM runtime is downloading.
         self.litertProgressLabel.SetLabel(_("Downloading LiteRT-LM runtime..."))
         self.litertProgressLabel.Show()
+        self.litertProgressGauge.SetValue(0)
+        self.litertProgressGauge.SetRange(100)
+        self.litertProgressGauge.Show()
         self.Layout()
 
         def worker() -> None:
@@ -339,7 +345,14 @@ class AIAssistantSettingsPanel(SettingsPanel):
             try:
                 def progress(msg: str) -> None:
                     wx.CallAfter(self.litertProgressLabel.SetLabel, msg)
-                supervisor.install(on_progress=progress)
+
+                def bytes_progress(downloaded: int, total: int) -> None:
+                    wx.CallAfter(self._on_litert_bytes_progress, downloaded, total)
+
+                supervisor.install(
+                    on_progress=progress,
+                    on_bytes_progress=bytes_progress,
+                )
                 wx.CallAfter(self._on_litert_download_complete, True, "")
             except Exception as exc:
                 log.error("LiteRT runtime download failed: %s", exc)
@@ -350,9 +363,22 @@ class AIAssistantSettingsPanel(SettingsPanel):
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
 
+    def _on_litert_bytes_progress(self, downloaded: int, total: int) -> None:
+        """Update the progress gauge from byte-level progress."""
+        if total and total > 0:
+            pct = min(downloaded * 100 // total, 100)
+            if self.litertProgressGauge.GetRange() != 100:
+                self.litertProgressGauge.SetRange(100)
+            self.litertProgressGauge.SetValue(pct)
+        else:
+            # Indeterminate: pulse the gauge
+            val = self.litertProgressGauge.GetValue()
+            self.litertProgressGauge.SetValue(0 if val >= 100 else val + 5)
+
     def _on_litert_download_complete(self, success: bool, error_msg: str) -> None:
         """Handle completion of the LiteRT runtime download."""
         self.litertProgressLabel.Hide()
+        self.litertProgressGauge.Hide()
         if success:
             self._refresh_litert_runtime_status()
         else:

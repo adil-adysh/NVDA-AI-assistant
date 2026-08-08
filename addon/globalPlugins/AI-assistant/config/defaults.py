@@ -10,11 +10,14 @@ DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 DEFAULT_OLLAMA_CLI = "ollama"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 
-DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
 DEFAULT_LANGUAGE = "auto"
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_OPENAI_CHAT_PATH = "/v1/chat/completions"
+DEFAULT_OPENAI_MODELS_PATH = "/v1/models"
+DEFAULT_GEMINI_CHAT_PATH = "/v1beta/openai/chat/completions"
+DEFAULT_GEMINI_MODELS_PATH = "/v1beta/openai/models"
 DEFAULT_ENABLE_STREAMING = True
 DEFAULT_ENABLE_PROGRESS_ANNOUNCEMENTS = True
 DEFAULT_ENABLE_STREAMING_TONE = True

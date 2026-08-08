@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from typing import Any
 
 from logHandler import log
@@ -26,6 +27,7 @@ from ...core.messages import LLMResponse, SummaryResponse
 from ...core.tooling import ToolCall
 from ...tools import build_function_tool_definition, normalize_tool_calls
 from ..config import OpenAICompatConfig
+from ..endpoints import EndpointConfigurationError, resolve_openai_endpoints
 from ..interfaces import (
     LLMProvider,
     LLMProviderError,
@@ -59,6 +61,13 @@ _OPENAI_VISION_FAMILIES = (
 # OpenAI model families that support thinking/reasoning.
 _OPENAI_THINKING_FAMILIES = ("gpt-5", "o1", "o3", "o4")
 
+# Streaming engines can deliver a large burst of already-buffered SSE events.
+# Keep UI callbacks useful without allowing a worker to monopolize the GIL and
+# starve NVDA's main event loop.
+_STREAM_CALLBACK_MIN_CHARS = 128
+_STREAM_CALLBACK_MIN_INTERVAL = 0.05
+_STREAM_COOPERATIVE_YIELD_INTERVAL = 0.01
+
 # ---------------------------------------------------------------------------
 # Provider
 # ---------------------------------------------------------------------------
@@ -76,16 +85,27 @@ class OpenAICompatProvider(LLMProvider):
 
         self._config = config
         self._provider_id = str(config.provider or "").strip() or "openai_compat"
+        try:
+            self._endpoints = resolve_openai_endpoints(
+                config.base_url,
+                config.chat_path,
+                config.models_path,
+            )
+        except EndpointConfigurationError as exc:
+            raise LLMProviderError(str(exc)) from exc
 
-        # Main client — talks to the OpenAI-compatible /v1 endpoint.
+        # Main client uses explicitly resolved endpoints. This supports API
+        # roots such as /v1, Gemini's /v1beta/openai, and custom gateways.
         self._client = llm_client.OpenAiClient(
-            base_url=config.base_url,
+            base_url=self._endpoints.service_url,
             api_key=config.api_key or "",
             timeout_seconds=config.timeout_seconds,
+            chat_url=self._endpoints.chat_url,
+            models_url=self._endpoints.models_url,
         )
 
         # Lazy native client for Ollama-specific endpoints (/api/tags, /api/chat).
-        self._native_base_url = config.base_url.rstrip("/").removesuffix("/v1")
+        self._native_base_url = self._endpoints.service_url.rstrip("/").removesuffix("/v1")
         self._native_client_cache: Any = None
         self._is_ollama: bool | None = None  # tri-state: None = not probed yet
 
@@ -617,6 +637,9 @@ class OpenAICompatProvider(LLMProvider):
         accumulated = ""
         chunks: list[dict[str, Any]] = []
         streamed_tool_calls: dict[int, dict[str, Any]] = {}
+        reported_chars = 0
+        last_callback_at = time.monotonic()
+        last_yield_at = last_callback_at
 
         try:
             for chunk in self._client.chat_completion_stream(
@@ -642,13 +665,38 @@ class OpenAICompatProvider(LLMProvider):
                     content = delta.get("content")
                     if isinstance(content, str) and content:
                         accumulated = f"{accumulated}{content}"
-                        stream_handler(accumulated, len(accumulated))
+                        now = time.monotonic()
+                        if (
+                            reported_chars == 0
+                            or len(accumulated) - reported_chars >= _STREAM_CALLBACK_MIN_CHARS
+                            or now - last_callback_at >= _STREAM_CALLBACK_MIN_INTERVAL
+                        ):
+                            stream_handler(accumulated, len(accumulated))
+                            reported_chars = len(accumulated)
+                            last_callback_at = now
 
                     self._merge_streamed_tool_calls(
                         streamed_tool_calls, delta.get("tool_calls")
                     )
+
+                # ``time.sleep(0)`` releases the GIL and lets NVDA's main
+                # thread service speech, input, and watchdog callbacks when
+                # a local server has already buffered many SSE events.
+                now = time.monotonic()
+                if now - last_yield_at >= _STREAM_COOPERATIVE_YIELD_INTERVAL:
+                    time.sleep(0)
+                    last_yield_at = time.monotonic()
         except Exception as exc:
+            log.error(
+                "_stream_chat failed: model=%s base_url=%s error=%s",
+                model,
+                self._config.base_url,
+                exc,
+            )
             raise LLMProviderError(str(exc)) from exc
+
+        if len(accumulated) > reported_chars:
+            stream_handler(accumulated, len(accumulated))
 
         tool_calls = normalize_tool_calls(
             [

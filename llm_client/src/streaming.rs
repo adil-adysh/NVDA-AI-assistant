@@ -23,59 +23,43 @@ impl StreamingResponse {
         }
     }
 
-    /// Read one SSE event from the stream. Returns the parsed JSON value
-    /// or None when the stream ends (`data: [DONE]`).
-    fn read_next_chunk(&mut self) -> PyResult<Option<Value>> {
-        let mut line = String::new();
+}
 
-        loop {
-            line.clear();
-            let bytes_read = self
-                .reader
-                .read_line(&mut line)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                    format!("SSE read error: {}", e)
-                ))?;
+/// Read one chunk without borrowing the Python wrapper.  This lets the
+/// iterator move its blocking socket read outside the Python GIL.
+fn read_next_chunk_from_reader(
+    reader: &mut BufReader<Box<dyn Read + Send>>,
+) -> PyResult<Option<Value>> {
+    let mut line = String::new();
 
-            if bytes_read == 0 {
-                // EOF
+    loop {
+        line.clear();
+        let bytes_read = reader
+            .read_line(&mut line)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                format!("SSE read error: {}", e),
+            ))?;
+
+        if bytes_read == 0 {
+            return Ok(None);
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with(':') {
+            continue;
+        }
+        if let Some(data) = trimmed.strip_prefix("data:") {
+            let data = data.trim();
+            if data == "[DONE]" {
                 return Ok(None);
             }
-
-            let trimmed = line.trim();
-
-            // Empty line between events — continue reading
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            // Comment line — skip
-            if trimmed.starts_with(':') {
-                continue;
-            }
-
-            // Must be a `data:` line
-            if let Some(data) = trimmed.strip_prefix("data:") {
-                let data = data.trim();
-
-                // End of stream marker
-                if data == "[DONE]" {
-                    return Ok(None);
-                }
-
-                // Try parsing as a stream chunk
-                let chunk: Value = serde_json::from_str(data).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "SSE JSON parse error: {} — data: {}",
-                        e,
-                        data.chars().take(200).collect::<String>()
-                    ))
-                })?;
-
-                return Ok(Some(chunk));
-            }
-
-            // Unknown line prefix — skip
+            let chunk: Value = serde_json::from_str(data).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "SSE JSON parse error: {} — data: {}",
+                    e,
+                    data.chars().take(200).collect::<String>()
+                ))
+            })?;
+            return Ok(Some(chunk));
         }
     }
 }
@@ -94,7 +78,17 @@ impl StreamingResponse {
             return Ok(None);
         }
 
-        match slf.read_next_chunk()? {
+        // PyRefMut cannot cross the GIL-release closure. Temporarily move the
+        // reader out of the Python wrapper, perform the blocking read, then
+        // put it back before converting the result to a Python object.
+        let mut reader = std::mem::replace(
+            &mut slf.reader,
+            BufReader::new(Box::new(std::io::empty())),
+        );
+        let result = slf.py().allow_threads(|| read_next_chunk_from_reader(&mut reader));
+        slf.reader = reader;
+
+        match result? {
             Some(value) => {
                 let py = slf.py();
                 Ok(Some(value_to_py(py, &value)))

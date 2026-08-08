@@ -9,14 +9,25 @@ use crate::types::*;
 /// Synchronous HTTP client for OpenAI-compatible chat completion and model listing.
 pub(crate) struct HttpClient {
     base_url: String,
+    chat_url: String,
+    models_url: String,
     api_key: String,
     timeout: Duration,
 }
 
 impl HttpClient {
-    pub fn new(base_url: String, api_key: String, timeout_seconds: f64) -> Self {
+    pub fn new(
+        base_url: String,
+        api_key: String,
+        timeout_seconds: f64,
+        chat_url: Option<String>,
+        models_url: Option<String>,
+    ) -> Self {
+        let base_url = base_url.trim_end_matches('/').to_string();
         Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
+            chat_url: chat_url.unwrap_or_else(|| format!("{}/v1/chat/completions", base_url)),
+            models_url: models_url.unwrap_or_else(|| format!("{}/v1/models", base_url)),
+            base_url,
             api_key,
             timeout: Duration::from_secs_f64(timeout_seconds.max(1.0)),
         }
@@ -24,10 +35,9 @@ impl HttpClient {
 
     // ── Public API ──────────────────────────────────────────────
 
-    /// GET /v1/models — returns raw JSON model objects.
+    /// GET the configured models endpoint — returns raw JSON model objects.
     pub fn list_models(&self) -> PyResult<Vec<Value>> {
-        let url = format!("{}/models", self.base_url);
-        let (status, body) = self.get(&url)?;
+        let (status, body) = self.get(&self.models_url)?;
         self.raise_for_status("list_models", status, &body)?;
 
         let parsed: ModelListResponse =
@@ -41,7 +51,7 @@ impl HttpClient {
             .collect())
     }
 
-    /// POST /v1/chat/completions (non-streaming).
+    /// POST the configured chat-completions endpoint (non-streaming).
     pub fn chat_completion(
         &self,
         model: &str,
@@ -67,8 +77,7 @@ impl HttpClient {
         let request_body = serde_json::to_string(&request)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
-        let url = format!("{}/chat/completions", self.base_url);
-        let (status, body) = self.post_json(&url, &request_body)?;
+        let (status, body) = self.post_json(&self.chat_url, &request_body)?;
         self.raise_for_status("chat_completion", status, &body)?;
 
         let value: Value = serde_json::from_str(&body)
@@ -77,7 +86,7 @@ impl HttpClient {
         Ok(value)
     }
 
-    /// POST /v1/chat/completions (streaming) — returns iterator over SSE chunks.
+    /// POST the configured chat-completions endpoint (streaming).
     pub fn chat_completion_stream(
         &self,
         model: &str,
@@ -105,11 +114,9 @@ impl HttpClient {
         let request_body = serde_json::to_string(&request)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
-        let url = format!("{}/chat/completions", self.base_url);
-
         // For streaming, we check status before passing the reader.
         let response = self
-            .build_post(&url)?
+            .build_post(&self.chat_url)?
             .set("Content-Type", "application/json")
             .send_string(&request_body)
             .map_err(|e| http_error("chat_completion_stream", e))?;

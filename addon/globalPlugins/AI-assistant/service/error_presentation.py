@@ -72,6 +72,21 @@ def _make_presentation(title: str, suggestion: ErrorSuggestion, translate: Trans
 	)
 
 
+def _is_connection_refused(message: str) -> bool:
+	"""Detect connection-refused / server-not-running errors from the error message."""
+	lowered = message.lower()
+	# OS-level connection refused patterns (cross-platform).
+	if "connection refused" in lowered:
+		return True
+	if "actively refused" in lowered:
+		return True
+	if "connect error" in lowered:
+		return True
+	if "cannot assign requested address" in lowered:
+		return True
+	return False
+
+
 def present_error(error: Exception, translate: Translator | None = None) -> ErrorPresentation:
 	translate = translate or _
 	message_text = str(error).strip()
@@ -124,6 +139,17 @@ def present_error(error: Exception, translate: Translator | None = None) -> Erro
 		status_code = getattr(error, "status_code", None)
 		if isinstance(status_code, int):
 			suggestion = suggest_for_status(status_code, fallback_detail=message_text or None)
+		elif _is_connection_refused(message_text):
+			suggestion = ErrorSuggestion(
+				# TRANSLATORS: Summary shown when the local AI model server is unreachable.
+				summary=translate("Local server not reachable"),
+				# TRANSLATORS: Detail shown when the local AI inference server is not running.
+				detail=translate(
+					"The local AI inference server could not be reached. "
+					"Please verify the server is running and the port is correct "
+					"in your provider settings."
+				),
+			)
 		else:
 			suggestion = ErrorSuggestion(
 				# TRANSLATORS: Summary shown when a provider request fails without a specific error code.

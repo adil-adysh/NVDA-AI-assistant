@@ -128,11 +128,14 @@ rust_build_sources = [
 	Path("nvda_ui_host/vite.config.js"),
 	Path("memory_engine/Cargo.toml"),
 	Path("memory_engine/pyproject.toml"),
+	Path("llm_client/Cargo.toml"),
+	Path("llm_client/Cargo.lock"),
 ]
 rust_build_sources.extend(Path("nvda_ui_host/src").glob("**/*.rs"))
 rust_build_sources.extend(Path("nvda_ui_host/webui/src").glob("**/*"))
 rust_build_sources.extend(Path("nvda_ui_host/assets").glob("**/*"))
 rust_build_sources.extend(Path("memory_engine/src").glob("**/*.rs"))
+rust_build_sources.extend(Path("llm_client/src").glob("**/*.rs"))
 
 rust_bundle = env.Command(
 	str(rust_build_stamp),

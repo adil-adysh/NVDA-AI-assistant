@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import threading
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -105,6 +106,17 @@ class AIAssistantApplication:
 			stop_host()
 		except Exception:
 			log.exception("Error stopping UI host during terminate")
+		try:
+			from ..providers.runtime.server import get_litert_supervisor
+			# Process termination may wait for a slow/inference-busy server.
+			# Never hold up NVDA shutdown on that wait.
+			threading.Thread(
+				target=get_litert_supervisor().stop,
+				name="LiteRTServerShutdown",
+				daemon=True,
+			).start()
+		except Exception:
+			log.exception("Error stopping LiteRT server during terminate")
 		self._unregister_settings_panel()
 
 	def _on_provider_state_change(self, provider_state: ProviderState) -> None:

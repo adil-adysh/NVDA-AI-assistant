@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from logHandler import log
 
+from ..plugin.background import ensure_litert_server_ready
+from ..providers.runtime.server import LiteRTServerError
 from ..service.error_presentation import ErrorPresentation, present_error
 from ..service.provider_controls import provider_control_service
 from .host_lifecycle import HostLifecycleService, HostLifecycleState
@@ -306,6 +308,9 @@ class UIAdapter:
 		)
 
 		try:
+			ensure_litert_server_ready(
+				on_progress=lambda msg: nvda_ui.queue(nvda_ui.message, msg),
+			)
 			response = coordinator.send_message(
 				text=message_text or None,
 				image_base64=image_base64,
@@ -321,6 +326,24 @@ class UIAdapter:
 				)
 				assistant_projection.finish(assistant_content)
 				queue_response_announcement(nvda_ui.queue, nvda_ui.message, assistant_text)
+		except LiteRTServerError as error:
+			presentation = present_error(error)
+			assistant_projection.abort(reason=presentation.message)
+			error_content = self._build_error_content_blocks(presentation, localized_strings)
+			error_metadata = dict(assistant_projection.final_metadata_factory())
+			if message_text:
+				error_metadata["restore_text"] = message_text
+			self._host_renderer.chat_append(
+				use_case_id,
+				conversation_id or "",
+				{
+					"id": assistant_projection.message_id,
+					"role": "assistant",
+					"content": error_content,
+				},
+				metadata=error_metadata,
+			)
+			nvda_ui.message(presentation.message)
 		except Exception as error:
 			presentation = present_error(error)
 			# ── Clean up streaming state if it had started ──

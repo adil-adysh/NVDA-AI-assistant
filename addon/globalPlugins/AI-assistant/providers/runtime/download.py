@@ -3,6 +3,10 @@
 
 Downloads runtime ZIPs from a configurable URL, verifies SHA-256,
 and extracts them to the versioned runtime directory.
+
+Also provides a shared streaming HTTP download utility with byte-level
+progress and HTTP Range resume support, used by both runtime and model
+downloads.
 """
 
 from __future__ import annotations
@@ -12,6 +16,8 @@ import json
 import os
 import shutil
 import tempfile
+import time
+import urllib.request
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
@@ -31,8 +37,9 @@ class RuntimeDownloadError(RuntimeError):
 def _default_url_builder(config: RuntimeConfig) -> str:
     """Default URL builder for runtime ZIPs hosted on GitHub Releases."""
     return (
-        f"https://github.com/nvda-addons/NVDA-AI-assistant/releases/download/"
-        f"runtimes/{config.runtime}-{config.version}-{config.platform}-runtime.zip"
+        f"https://github.com/adil-adysh/NVDA-AI-assistant/releases/download/"
+        f"{config.runtime}-v{config.version}/"
+        f"{config.runtime}-{config.version}-{config.platform}-runtime.zip"
     )
 
 
@@ -73,6 +80,7 @@ class RuntimeDownloadService:
         platform: str = "windows-x64",
         url: str | None = None,
         on_progress: ProgressCallback | None = None,
+        on_bytes_progress: Callable[[int, int], None] | None = None,
     ) -> Path:
         """Download, verify, and extract a runtime bundle.
 
@@ -83,6 +91,8 @@ class RuntimeDownloadService:
             url: Explicit download URL. If ``None``, built from
                 the configured ``url_builder``.
             on_progress: Optional callback receiving status strings.
+            on_bytes_progress: Optional callback ``(downloaded_bytes, total_bytes)``
+                for byte-level progress during download.
 
         Returns:
             Path to the extracted runtime directory.
@@ -105,13 +115,15 @@ class RuntimeDownloadService:
 
         download_url = url or self._url_builder(config)
 
-        # Download to a temporary file
+        # Download to a temporary file with byte-level progress
         try:
-            import urllib.request
-
             with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
                 tmp_path = tmp.name
-                urllib.request.urlretrieve(download_url, tmp.name)
+            _download_url_resume(
+                download_url,
+                Path(tmp_path),
+                on_bytes_progress=on_bytes_progress,
+            )
         except Exception as exc:
             raise RuntimeDownloadError(
                 f"Failed to download {runtime} {version} from {download_url}: {exc}"
@@ -258,3 +270,156 @@ def _manifest_from_dict(data: dict[str, Any]) -> Any:
     from .config import DownloadManifest  # noqa: PLC0415
 
     return DownloadManifest.from_dict(data)
+
+
+# ------------------------------------------------------------------
+# Shared streaming HTTP download with progress
+# ------------------------------------------------------------------
+
+_MAX_RETRIES = 3
+_RETRY_DELAYS = (1, 3, 10)
+_CHUNK_SIZE = 64 * 1024
+
+
+def _download_url_resume(
+    url: str,
+    dest_path: Path,
+    resume_from: int = 0,
+    on_bytes_progress: Callable[[int, int], None] | None = None,
+) -> None:
+    """Stream *url* into *dest_path* with HTTP Range resume and retry.
+
+    When *resume_from* > 0 a ``Range`` header is sent.  If the server
+    responds with 206 Partial Content the data is appended.  Otherwise
+    (200 OK — range not supported) the file is written from scratch.
+
+    On network failures the connection is retried up to 3 times with
+    exponential backoff (1s, 3s, 10s).  Each retry picks up from the
+    last byte actually written to disk.
+
+    The *on_bytes_progress* callback receives ``(total_downloaded, total_size)``
+    where *total_downloaded* includes the already-cached bytes.
+    """
+    last_error: Exception | None = None
+
+    for attempt in range(_MAX_RETRIES + 1):
+        # On retry, re-check what's actually on disk
+        if attempt > 0:
+            resume_from = dest_path.stat().st_size if dest_path.exists() else 0
+            delay = _RETRY_DELAYS[min(attempt - 1, len(_RETRY_DELAYS) - 1)]
+            log.warning(
+                "Download retry %d/%d for %s after %.0fs (resuming at byte %d)",
+                attempt, _MAX_RETRIES, dest_path.name, delay, resume_from,
+            )
+            time.sleep(delay)
+
+        resp: Any | None = None
+
+        try:
+            req = urllib.request.Request(url)
+            if resume_from > 0:
+                req.add_header("Range", f"bytes={resume_from}-")
+
+            resp = urllib.request.urlopen(req, timeout=30)
+
+            status = resp.status
+            supports_range = status == 206
+
+            # Server doesn't support Range — restart from scratch
+            if resume_from > 0 and not supports_range:
+                log.info(
+                    "Server does not support Range for %s; re-downloading from scratch",
+                    url,
+                )
+                resume_from = 0
+                dest_path.write_bytes(b"")
+                resp.close()
+                resp = None
+                continue
+
+            # Determine total file size for progress reporting
+            content_length = resp.length
+            if supports_range and content_length is not None:
+                total_size = resume_from + content_length
+            elif content_length is not None:
+                total_size = content_length
+            else:
+                total_size = 0
+
+            mode = "ab" if resume_from > 0 else "wb"
+            downloaded_this_session = 0
+
+            with open(dest_path, mode) as f:
+                while True:
+                    try:
+                        chunk = resp.read(_CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded_this_session += len(chunk)
+                        if on_bytes_progress:
+                            total_downloaded = resume_from + downloaded_this_session
+                            on_bytes_progress(
+                                total_downloaded,
+                                total_size or total_downloaded,
+                            )
+                    except Exception as read_err:
+                        # Mid-stream failure — retry connection from last byte
+                        last_error = read_err
+                        if attempt < _MAX_RETRIES:
+                            log.debug(
+                                "Read error on %s at byte %d: %s",
+                                dest_path.name,
+                                resume_from + downloaded_this_session,
+                                read_err,
+                            )
+                            break  # break inner read loop → retry outer loop
+                        raise
+
+                if not chunk and not downloaded_this_session:
+                    # EOF right away — might be a transient 0-byte response
+                    if attempt < _MAX_RETRIES:
+                        log.debug(
+                            "Empty response on %s (attempt %d), retrying",
+                            dest_path.name, attempt,
+                        )
+                        continue
+
+            # If we hit a read error and broke early, retry the connection
+            if last_error is not None and attempt < _MAX_RETRIES:
+                resp.close()
+                resp = None
+                continue
+
+            # Success — all data read
+            resp.close()
+            resp = None
+            return
+
+        except urllib.request.HTTPError as exc:
+            resp = None
+            # 416 Range Not Satisfiable → the file is already complete
+            if exc.code == 416:
+                log.debug("Range 416 for %s — file already complete", dest_path.name)
+                if on_bytes_progress:
+                    file_size = dest_path.stat().st_size
+                    on_bytes_progress(file_size, file_size)
+                return
+            last_error = exc
+            if attempt >= _MAX_RETRIES:
+                raise
+        except Exception as exc:
+            last_error = exc
+            if attempt >= _MAX_RETRIES:
+                raise
+        finally:
+            if resp is not None:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+
+    # Exhausted retries
+    raise RuntimeDownloadError(
+        f"Download failed after {_MAX_RETRIES + 1} attempts: {last_error}"
+    ) from last_error

@@ -178,7 +178,7 @@ def _get_base_url_for(provider: str) -> str:
 		"litert-lm": ("litertServerUrl", defaults.DEFAULT_LITERT_URL),
 	}
 	key, default = key_map.get(provider, ("baseUrl", ""))
-	return _read_string(key, default)
+	return _read_string(key, default).rstrip("/")
 
 
 def _get_api_key_for(provider: str) -> str:
@@ -250,6 +250,15 @@ def get_litert_server_url() -> str:
 	return _get_base_url_for("litert-lm")
 
 
+def _get_openai_endpoint_paths(provider: str) -> tuple[str, str]:
+	"""Return the OpenAI-compatible endpoint paths for *provider*."""
+	if provider == "gemini":
+		return defaults.DEFAULT_GEMINI_CHAT_PATH, defaults.DEFAULT_GEMINI_MODELS_PATH
+	if provider == "openai":
+		return get_openai_chat_path(), defaults.DEFAULT_OPENAI_MODELS_PATH
+	return defaults.DEFAULT_OPENAI_CHAT_PATH, defaults.DEFAULT_OPENAI_MODELS_PATH
+
+
 # ---------------------------------------------------------------------------
 # Unified config builder
 # ---------------------------------------------------------------------------
@@ -259,13 +268,15 @@ def get_openai_compat_config() -> "OpenAICompatConfig":
 	from ..providers.config import OpenAICompatConfig
 
 	provider = get_provider()
+	chat_path, models_path = _get_openai_endpoint_paths(provider)
 	return OpenAICompatConfig(
 		provider=provider,
 		model_name=_get_model_name_for(provider),
 		base_url=_get_base_url_for(provider),
 		api_key=_get_api_key_for(provider),
 		api_token=get_gemini_api_token() if provider == "gemini" else None,
-		chat_path=get_openai_chat_path(),
+		chat_path=chat_path,
+		models_path=models_path,
 		timeout_seconds=get_timeout_seconds(),
 		enable_progress=is_progress_enabled(),
 		num_ctx=get_num_ctx(),
@@ -445,7 +456,7 @@ def set_litert_think(think: bool) -> None:
 	_set_value("litertThink", bool(think), notify=True)
 
 def set_litert_server_url(serverUrl: str) -> None:
-	_set_value("litertServerUrl", str(serverUrl).strip(), notify=True)
+	_set_value("litertServerUrl", str(serverUrl).strip().rstrip("/"), notify=True)
 
 
 # ---------------------------------------------------------------------------

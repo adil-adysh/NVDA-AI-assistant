@@ -52,14 +52,26 @@ impl OpenAiClient {
     /// Create a new OpenAI-compatible client.
     ///
     /// Args:
-    ///     base_url: Server base URL (e.g. "http://localhost:8080/v1").
+    ///     base_url: Server service URL (e.g. "http://localhost:8080").
     ///     api_key: API key or token (empty string for no auth, e.g. local llama.cpp).
     ///     timeout_seconds: Request timeout in seconds (default 30.0).
     #[new]
-    #[pyo3(signature = (base_url, api_key = String::new(), timeout_seconds = 30.0))]
-    fn new(base_url: String, api_key: String, timeout_seconds: f64) -> Self {
+    #[pyo3(signature = (
+        base_url,
+        api_key = String::new(),
+        timeout_seconds = 30.0,
+        chat_url = None,
+        models_url = None,
+    ))]
+    fn new(
+        base_url: String,
+        api_key: String,
+        timeout_seconds: f64,
+        chat_url: Option<String>,
+        models_url: Option<String>,
+    ) -> Self {
         Self {
-            http: HttpClient::new(base_url, api_key, timeout_seconds),
+            http: HttpClient::new(base_url, api_key, timeout_seconds, chat_url, models_url),
         }
     }
 
@@ -72,8 +84,8 @@ impl OpenAiClient {
     ///
     /// Returns a list of dicts, each with keys: ``id``, ``owned_by``, ``created``, ``object``.
     fn list_models(&self) -> PyResult<Vec<PyObject>> {
+        let models = Python::with_gil(|py| py.allow_threads(|| self.http.list_models()))?;
         Python::with_gil(|py| {
-            let models = self.http.list_models()?;
             let result: Vec<PyObject> = models
                 .iter()
                 .map(|v| types::value_to_py(py, v))
@@ -131,15 +143,20 @@ impl OpenAiClient {
             })
             .transpose()?;
 
-        let response = self.http.chat_completion(
-            model,
-            &chat_messages,
-            tools_value.as_ref(),
-            temperature,
-            top_p,
-            max_tokens,
-            num_ctx,
-        )?;
+        let model = model.to_owned();
+        let response = Python::with_gil(|py| {
+            py.allow_threads(|| {
+                self.http.chat_completion(
+                    &model,
+                    &chat_messages,
+                    tools_value.as_ref(),
+                    temperature,
+                    top_p,
+                    max_tokens,
+                    num_ctx,
+                )
+            })
+        })?;
 
         Python::with_gil(|py| Ok(types::value_to_py(py, &response)))
     }
@@ -186,15 +203,20 @@ impl OpenAiClient {
             })
             .transpose()?;
 
-        self.http.chat_completion_stream(
-            model,
-            &chat_messages,
-            tools_value.as_ref(),
-            temperature,
-            top_p,
-            max_tokens,
-            num_ctx,
-        )
+        let model = model.to_owned();
+        Python::with_gil(|py| {
+            py.allow_threads(|| {
+                self.http.chat_completion_stream(
+                    &model,
+                    &chat_messages,
+                    tools_value.as_ref(),
+                    temperature,
+                    top_p,
+                    max_tokens,
+                    num_ctx,
+                )
+            })
+        })
     }
 
     /// Generic GET request — returns parsed JSON as a Python dict.
@@ -202,8 +224,9 @@ impl OpenAiClient {
     /// ``path`` is appended to ``base_url`` (e.g. ``"/api/tags"``).
     /// Use this to call non-OpenAI endpoints (Ollama native API, health checks, etc.).
     fn get(&self, path: &str) -> PyResult<PyObject> {
+        let path = path.to_owned();
+        let value = Python::with_gil(|py| py.allow_threads(|| self.http.get_json(&path)))?;
         Python::with_gil(|py| {
-            let value = self.http.get_json(path)?;
             Ok(types::value_to_py(py, &value))
         })
     }
@@ -212,9 +235,12 @@ impl OpenAiClient {
     ///
     /// ``path`` is appended to ``base_url``, ``body`` must be a dict or list.
     fn post(&self, path: &str, body: PyObject) -> PyResult<PyObject> {
+        let path = path.to_owned();
         let body_value = Python::with_gil(|py| py_object_to_json_value(py, &body))?;
+        let value = Python::with_gil(|py| {
+            py.allow_threads(|| self.http.post_json_body(&path, &body_value))
+        })?;
         Python::with_gil(|py| {
-            let value = self.http.post_json_body(path, &body_value)?;
             Ok(types::value_to_py(py, &value))
         })
     }

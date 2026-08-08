@@ -30,6 +30,7 @@ class OpenAICompatConfig(ProviderConfig):
     api_key: str = ""
     api_token: str | None = None
     chat_path: str = "/v1/chat/completions"
+    models_path: str = "/v1/models"
     organization: str | None = None
     think: bool = False
 

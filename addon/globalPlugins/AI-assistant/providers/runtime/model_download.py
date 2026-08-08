@@ -12,11 +12,11 @@ import hashlib
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 from logHandler import log
 
 from ..interfaces import ProgressCallback
+from .download import _download_url_resume
 
 
 HF_DEFAULT_BASE = "https://huggingface.co"
@@ -152,157 +152,6 @@ def _default_model_dir() -> Path:
     appdata = os.getenv("APPDATA")
     base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
     return base / "nvda" / "AIAssistant" / "models" / "litert-lm"
-
-
-def _download_url_resume(
-    url: str,
-    dest_path: Path,
-    resume_from: int = 0,
-    on_bytes_progress: Callable[[int, int], None] | None = None,
-) -> None:
-    """Stream *url* into *dest_path* with HTTP Range resume and retry.
-
-    When *resume_from* > 0 a ``Range`` header is sent.  If the server
-    responds with 206 Partial Content the data is appended.  Otherwise
-    (200 OK — range not supported) the file is written from scratch.
-
-    On network failures the connection is retried up to 3 times with
-    exponential backoff (1s, 3s, 10s).  Each retry picks up from the
-    last byte actually written to disk.
-
-    The *on_bytes_progress* callback receives ``(total_downloaded, total_size)``
-    where *total_downloaded* includes the already-cached bytes.
-    """
-    import time
-    import urllib.request
-
-    MAX_RETRIES = 3
-    RETRY_DELAYS = (1, 3, 10)
-
-    last_error: Exception | None = None
-
-    for attempt in range(MAX_RETRIES + 1):
-        # On retry, re-check what's actually on disk
-        if attempt > 0:
-            resume_from = dest_path.stat().st_size if dest_path.exists() else 0
-            delay = RETRY_DELAYS[min(attempt - 1, len(RETRY_DELAYS) - 1)]
-            log.warning(
-                "Download retry %d/%d for %s after %.0fs (resuming at byte %d)",
-                attempt, MAX_RETRIES, dest_path.name, delay, resume_from,
-            )
-            time.sleep(delay)
-
-        resp: Any | None = None
-
-        try:
-            req = urllib.request.Request(url)
-            if resume_from > 0:
-                req.add_header("Range", f"bytes={resume_from}-")
-
-            resp = urllib.request.urlopen(req, timeout=30)
-
-            status = resp.status
-            supports_range = status == 206
-
-            # Server doesn't support Range — restart from scratch
-            if resume_from > 0 and not supports_range:
-                log.info(
-                    "Server does not support Range for %s; re-downloading from scratch",
-                    url,
-                )
-                resume_from = 0
-                dest_path.write_bytes(b"")
-                resp.close()
-                resp = None
-                continue
-
-            # Determine total file size for progress reporting
-            content_length = resp.length
-            if supports_range and content_length is not None:
-                total_size = resume_from + content_length
-            elif content_length is not None:
-                total_size = content_length
-            else:
-                total_size = 0
-
-            mode = "ab" if resume_from > 0 else "wb"
-            downloaded_this_session = 0
-            CHUNK_SIZE = 64 * 1024
-
-            with open(dest_path, mode) as f:
-                while True:
-                    try:
-                        chunk = resp.read(CHUNK_SIZE)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        downloaded_this_session += len(chunk)
-                        if on_bytes_progress:
-                            total_downloaded = resume_from + downloaded_this_session
-                            on_bytes_progress(
-                                total_downloaded,
-                                total_size or total_downloaded,
-                            )
-                    except Exception as read_err:
-                        # Mid-stream failure — retry connection from last byte
-                        last_error = read_err
-                        if attempt < MAX_RETRIES:
-                            log.debug(
-                                "Read error on %s at byte %d: %s",
-                                dest_path.name,
-                                resume_from + downloaded_this_session,
-                                read_err,
-                            )
-                            break  # break inner read loop → retry outer loop
-                        raise
-
-                if not chunk and not downloaded_this_session:
-                    # EOF right away — might be a transient 0-byte response
-                    if attempt < MAX_RETRIES:
-                        log.debug(
-                            "Empty response on %s (attempt %d), retrying",
-                            dest_path.name, attempt,
-                        )
-                        continue
-
-            # If we hit a read error and broke early, retry the connection
-            if last_error is not None and attempt < MAX_RETRIES:
-                resp.close()
-                resp = None
-                continue
-
-            # Success — all data read
-            resp.close()
-            resp = None
-            return
-
-        except urllib.request.HTTPError as exc:
-            resp = None
-            # 416 Range Not Satisfiable → the .part is already complete
-            if exc.code == 416:
-                log.debug("Range 416 for %s — part file already complete", dest_path.name)
-                if on_bytes_progress:
-                    file_size = dest_path.stat().st_size
-                    on_bytes_progress(file_size, file_size)
-                return
-            last_error = exc
-            if attempt >= MAX_RETRIES:
-                raise
-        except Exception as exc:
-            last_error = exc
-            if attempt >= MAX_RETRIES:
-                raise
-        finally:
-            if resp is not None:
-                try:
-                    resp.close()
-                except Exception:
-                    pass
-
-    # Exhausted retries
-    raise ModelDownloadError(
-        f"Download failed after {MAX_RETRIES + 1} attempts: {last_error}"
-    ) from last_error
 
 
 def _make_range_aware_progress(
