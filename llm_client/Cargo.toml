@@ -1,0 +1,20 @@
+[package]
+name = "llm_client"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "llm_client"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module"] }
+ureq = { version = "2", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.release]
+lto = false
+codegen-units = 1
+opt-level = "z"
+strip = true
