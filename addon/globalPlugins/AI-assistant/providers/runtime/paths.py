@@ -24,6 +24,6 @@ def get_runtime_dir() -> Path:
 def get_runtime_path(runtime_type: str, version: str) -> Path:
     """Return the path for a specific runtime version.
 
-    Example: %APPDATA%/nvda/AIAssistant/runtimes/litert-lm/0.13.1/
+    Example: %APPDATA%/nvda/AIAssistant/runtimes/litert-lm/0.15.0/
     """
     return get_runtime_dir() / runtime_type / version

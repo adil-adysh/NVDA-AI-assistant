@@ -13,9 +13,12 @@ from .loader import RuntimeImportError, RuntimeLoader, RuntimeLoadError
 from .manager import RuntimeManager, RuntimeManagerError
 from .model_download import ModelDownloadError, ModelDownloadService
 from .paths import get_runtime_dir
+from .server import LiteRTServerError, LiteRTServerSupervisor, get_litert_supervisor
 
 __all__ = [
     "DefaultRuntimeConfig",
+    "LiteRTServerError",
+    "LiteRTServerSupervisor",
     "ModelDownloadError",
     "ModelDownloadService",
     "RuntimeConfig",
@@ -28,4 +31,5 @@ __all__ = [
     "RuntimeManagerError",
     "RuntimeType",
     "get_runtime_dir",
+    "get_litert_supervisor",
 ]

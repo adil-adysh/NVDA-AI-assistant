@@ -31,7 +31,7 @@ class RuntimeManager:
     Usage::
 
         mgr = RuntimeManager()
-        lm = mgr.load(RuntimeConfig.for_runtime("litert-lm", "0.13.1"))
+        lm = mgr.load(RuntimeConfig.for_runtime("litert-lm", "0.15.0"))
         engine = lm.Engine(model_path)
     """
 

@@ -22,7 +22,7 @@ class RuntimeConfig:
 
     Attributes:
         runtime: Backend identifier (e.g., "litert-lm").
-        version: Semantic version of the runtime (e.g., "0.13.1").
+        version: Semantic version of the runtime (e.g., "0.15.0").
         platform: Target platform (e.g., "windows-x64").
         import_name: Python package name to import after path injection.
             Falls back to runtime identifier with hyphens replaced.
@@ -117,4 +117,4 @@ class DefaultRuntimeConfig:
     Stored in config.yaml so users can override per-runtime version.
     """
 
-    litert_lm: str = "0.13.1"
+    litert_lm: str = "0.15.0"

@@ -26,6 +26,8 @@ class LiteRTModelDef:
         vision: Whether the model supports image (vision) input.
         thinking: Whether the model supports reasoning/thinking tokens
             (e.g. via ``<think>`` tags in the output).
+        mtp: Whether the model supports Multi-Token Prediction (MTP)
+            speculative decoding for faster generation.
         priority: Display ordering — lower = more recommended.
             Values ≤ 50 are shown in the "Recommended" group.
         license_: SPDX license identifier.
@@ -40,6 +42,7 @@ class LiteRTModelDef:
     gated: bool = False
     vision: bool = False
     thinking: bool = False
+    mtp: bool = False
     priority: int = 100
     license_: str = "apache-2.0"
     platform_hint: Literal["cpu", "gpu", "universal"] = "universal"
@@ -57,6 +60,7 @@ GEMMA_4_E2B = LiteRTModelDef(
     vision=True,
     priority=10,
     platform_hint="cpu",
+    mtp=True,
 )
 
 GEMMA_4_E4B = LiteRTModelDef(
@@ -165,25 +169,43 @@ QWEN3_14B = LiteRTModelDef(
     platform_hint="gpu",
 )
 
-# Register all known models here so the provider can enumerate them.
-# Order roughly by popularity / capability.
-KNOWN_MODELS: tuple[LiteRTModelDef, ...] = (
+# ── All known models (full catalog) ─────────────────────────────────
+
+ALL_MODELS: tuple[LiteRTModelDef, ...] = (
     GEMMA_4_E2B,
     GEMMA_4_E4B,
+    PEPPX_UNCENSORED,
     GEMMA_4_12B,
     QWEN3_0_6B,
     QWEN3_1_7B,
     QWEN3_4B,
     QWEN3_8B,
     QWEN3_14B,
-    PEPPX_UNCENSORED,
+)
+
+# CPU-only models — GPU models excluded for size/compatibility.
+# This is the default recommended set; call :func:`recommended_models`
+# for a hardware-aware filtered list.
+KNOWN_MODELS: tuple[LiteRTModelDef, ...] = (
+    GEMMA_4_E2B,
+    GEMMA_4_E4B,
+    QWEN3_0_6B,
+    QWEN3_1_7B,
+    QWEN3_4B,
 )
 
 
 def lookup_model(model_id: str) -> LiteRTModelDef | None:
-    """Return the model definition for *model_id*, or ``None``."""
-    for m in KNOWN_MODELS:
+    """Return the model definition for *model_id*, or ``None``.
+
+    Searches the **full** catalog (not just ``KNOWN_MODELS``) so that
+    capability detection works even for GPU-only entries.
+    """
+    lowered = model_id.lower().strip()
+    for m in ALL_MODELS:
         if m.model_id == model_id or m.filename == model_id:
+            return m
+        if m.model_id.lower() == lowered or m.filename.lower() == lowered:
             return m
     return None
 
@@ -193,3 +215,58 @@ def download_url(model: LiteRTModelDef) -> str:
     return (
         f"https://huggingface.co/{model.model_id}/resolve/main/{model.filename}"
     )
+
+
+# ── Hardware detection ──────────────────────────────────────────────
+
+def _detect_gpu_available() -> bool:
+    """Return ``True`` if a usable GPU is detected on this system."""
+    # Try CUDA first (NVIDIA).
+    try:
+        import ctypes  # noqa: F811
+
+        cuda = ctypes.cdll.LoadLibrary("cudart64_12.dll")
+        result = cuda.cudaGetDeviceCount(ctypes.byref(ctypes.c_int(0)))
+        if result == 0:
+            return True
+    except OSError:
+        pass
+
+    # Try Vulkan (works for AMD / Intel Arc / NVIDIA).
+    try:
+        import ctypes
+
+        ctypes.cdll.LoadLibrary("vulkan-1.dll")
+        return True
+    except OSError:
+        pass
+
+    return False
+
+
+# Cache hardware detection — import-time probe is cheap.
+_HAS_GPU: bool | None = None
+
+
+def has_gpu() -> bool:
+    """Check GPU availability (cached)."""
+    global _HAS_GPU
+    if _HAS_GPU is None:
+        _HAS_GPU = _detect_gpu_available()
+    return _HAS_GPU
+
+
+def recommended_models() -> tuple[LiteRTModelDef, ...]:
+    """Return models recommended for the current hardware.
+
+    On GPU-capable machines this includes larger GPU-targeted models;
+    on CPU-only machines it returns the conservative CPU set.
+    """
+    if has_gpu():
+        return tuple(
+            m
+            for m in ALL_MODELS
+            if m.platform_hint in ("cpu", "universal", "gpu")
+            and m.priority <= 60
+        )
+    return tuple(m for m in ALL_MODELS if m.platform_hint in ("cpu", "universal"))
