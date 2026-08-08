@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -75,6 +76,85 @@ def get_litert_supervisor() -> LiteRTServerSupervisor:
     if _supervisor is None:
         _supervisor = LiteRTServerSupervisor()
     return _supervisor
+
+
+def _subprocess_flags() -> int:
+    """Return ``creationflags`` that suppress the console window on Windows.
+
+    Without this flag, every ``subprocess.Popen`` or ``subprocess.run``
+    call that launches the bundled Python runtime flashes a command-prompt
+    window on screen.  ``CREATE_NO_WINDOW`` (0x08000000) tells Windows to
+    run the process without a console.
+    """
+    if sys.platform == "win32":
+        return subprocess.CREATE_NO_WINDOW  # 0x08000000
+    return 0
+
+
+def _resolve_litert_python(python_exe: Path) -> Path:
+    """Verify *python_exe* exists or raise :exc:`LiteRTServerError`."""
+    if not python_exe.is_file():
+        raise LiteRTServerError(
+            "LiteRT runtime is not installed. "
+            "Call install() first or download it from the settings panel."
+        )
+    return python_exe
+
+
+def _build_serve_args(host: str, port: int) -> list[str]:
+    """Build the CLI argument list for ``litert-lm serve``."""
+    return ["serve", "--host", host, "--port", str(port)]
+
+
+def _build_import_args(model_path: str | Path, model_id: str) -> list[str]:
+    """Build the CLI argument list for ``litert-lm import``."""
+    return ["import", str(model_path), model_id]
+
+
+def _run_litert_cli(
+    python_exe: Path,
+    args: list[str],
+    *,
+    env: dict[str, str],
+    timeout: float | None = None,
+    capture: bool = False,
+) -> subprocess.Popen[str] | subprocess.CompletedProcess[str]:
+    """Launch a ``litert-lm`` CLI command via the bundled Python runtime.
+
+    Args:
+        python_exe: Path to the bundled ``python.exe``.
+        args: CLI subcommand and arguments (e.g. ``["serve", "--host", ...]``).
+        env: Full environment dict (must include ``LITERT_LM_DIR``).
+        timeout: If set, uses ``subprocess.run`` with a deadline.
+            If ``None``, spawns a long-running ``subprocess.Popen``.
+        capture: When ``True`` (used with *timeout*), capture stdout/stderr.
+            When ``False``, discard output via ``DEVNULL``.
+
+    Returns:
+        A ``Popen`` instance for long-running commands or a
+        ``CompletedProcess`` for finite commands.
+    """
+    cmd = [str(python_exe), "-m", "litert_lm_cli.main", *args]
+    flags = _subprocess_flags()
+
+    if timeout is not None:
+        return subprocess.run(
+            cmd,
+            capture_output=capture,
+            text=True,
+            timeout=timeout,
+            env=env,
+            creationflags=flags,
+        )
+
+    return subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        env=env,
+        creationflags=flags,
+    )
 
 
 class LiteRTServerError(LLMProviderError):
@@ -195,11 +275,7 @@ class LiteRTServerSupervisor:
                 log.debug("LiteRT server is already running")
                 return
 
-        python_exe = self._server_python()
-        if not python_exe.exists():
-            raise LiteRTServerError(
-                "LiteRT server is not installed. Call install() first."
-            )
+        python_exe = _resolve_litert_python(self._server_python())
 
         self._report(on_progress, f"Starting LiteRT-LM server on port {self._port}...")
 
@@ -208,22 +284,10 @@ class LiteRTServerSupervisor:
                 return
             try:
                 self._litert_dir().mkdir(parents=True, exist_ok=True)
-                self._process = subprocess.Popen(
-                    [
-                        str(python_exe),
-                        "-m",
-                        "litert_lm_cli.main",
-                        "serve",
-                        "--host",
-                        self._host,
-                        "--port",
-                        str(self._port),
-                    ],
-                    # Never leave pipes unread: a verbose server can fill a
-                    # pipe and stop servicing chat requests.
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    text=True,
+                serve_args = _build_serve_args(self._host, self._port)
+                self._process = _run_litert_cli(
+                    python_exe,
+                    serve_args,
                     env=self._process_environment(),
                 )
             except Exception as exc:
@@ -344,11 +408,7 @@ class LiteRTServerSupervisor:
         Raises:
             LiteRTServerError: If the import fails.
         """
-        python_exe = self._server_python()
-        if not python_exe.exists():
-            raise LiteRTServerError(
-                "Cannot import model — LiteRT runtime is not installed."
-            )
+        python_exe = _resolve_litert_python(self._server_python())
 
         self._report(
             on_progress,
@@ -361,20 +421,14 @@ class LiteRTServerSupervisor:
         if not model_id or "\\" in model_id or "\x00" in model_id:
             raise LiteRTServerError(f"Invalid LiteRT-LM model ID: {model_id!r}")
 
+        import_args = _build_import_args(model_path, model_id)
         try:
-            result = subprocess.run(
-                [
-                    str(python_exe),
-                    "-m",
-                    "litert_lm_cli.main",
-                    "import",
-                    str(model_path),
-                    model_id,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=120,
+            result = _run_litert_cli(
+                python_exe,
+                import_args,
                 env=self._process_environment(),
+                timeout=120,
+                capture=True,
             )
         except subprocess.TimeoutExpired:
             raise LiteRTServerError(
