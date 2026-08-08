@@ -13,6 +13,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 HOST_DIR = ROOT_DIR / "nvda_ui_host"
 HOST_DESTINATION = ROOT_DIR / "addon" / "globalPlugins" / "AI-assistant" / "ui_host" / "nvda_ui_host.exe"
 MEMORY_ENGINE_DIR = ROOT_DIR / "memory_engine"
+LLM_CLIENT_DIR = ROOT_DIR / "llm_client"
 ADDON_LIB_DIR = ROOT_DIR / "addon" / "globalPlugins" / "AI-assistant" / "lib"
 NPM_EXECUTABLE = "npm.cmd" if os.name == "nt" else "npm"
 
@@ -119,6 +120,8 @@ def build_memory_engine(*, release: bool = True) -> None:
 	print("Building memory_engine:", " ".join(args))
 	env = _filtered_rust_environment()
 	env.setdefault("PYO3_PYTHON", sys.executable)
+	# PyO3 0.23.5 caps at Python 3.13; allow forward compat via stable ABI
+	env["PYO3_USE_ABI3_FORWARD_COMPATIBILITY"] = "1"
 	subprocess.run(args, cwd=ROOT_DIR, env=env, check=True)
 
 
@@ -175,6 +178,72 @@ def install_memory_engine_extension(*, release: bool, allow_existing_install: bo
 	print(f"Copied memory_engine extension to {destination_path}")
 
 
+def build_llm_client(*, release: bool = True) -> None:
+	args = ["cargo", "build", "--manifest-path", str(LLM_CLIENT_DIR / "Cargo.toml")]
+	if release:
+		args.append("--release")
+
+	print("Building llm_client:", " ".join(args))
+	env = _filtered_rust_environment()
+	env.setdefault("PYO3_PYTHON", sys.executable)
+	# PyO3 caps at Python 3.13; allow forward compat via stable ABI
+	env["PYO3_USE_ABI3_FORWARD_COMPATIBILITY"] = "1"
+	subprocess.run(args, cwd=ROOT_DIR, env=env, check=True)
+
+
+def _compiled_llm_client_path(*, release: bool) -> Path:
+	profile_dir = "release" if release else "debug"
+	if os.name == "nt":
+		pattern = f"target/**/{profile_dir}/llm_client.dll"
+	elif sys.platform == "darwin":
+		pattern = f"target/**/{profile_dir}/libllm_client.dylib"
+	else:
+		pattern = f"target/**/{profile_dir}/libllm_client.so"
+	candidates = sorted(
+		LLM_CLIENT_DIR.glob(pattern),
+		key=lambda path: path.stat().st_mtime,
+		reverse=True,
+	)
+	if not candidates:
+		raise FileNotFoundError(
+			f"Compiled llm_client library not found under {LLM_CLIENT_DIR / 'target'} for profile {profile_dir}."
+		)
+	return candidates[0]
+
+
+def _find_existing_llm_client_extension() -> Path | None:
+	for suffix in EXTENSION_SUFFIXES:
+		matches = list(ADDON_LIB_DIR.glob(f"llm_client*{suffix}"))
+		if matches:
+			return matches[0]
+	return None
+
+
+def install_llm_client_extension(*, release: bool, allow_existing_install: bool = False) -> None:
+	try:
+		built_extension = _compiled_llm_client_path(release=release)
+	except FileNotFoundError:
+		if allow_existing_install:
+			existing_extension = _find_existing_llm_client_extension()
+			if existing_extension is not None:
+				print(f"Using existing installed llm_client extension at {existing_extension}")
+				return
+		raise
+
+	ADDON_LIB_DIR.mkdir(parents=True, exist_ok=True)
+	for suffix in EXTENSION_SUFFIXES:
+		for stale_extension in ADDON_LIB_DIR.glob(f"llm_client*{suffix}"):
+			stale_extension.unlink(missing_ok=True)
+
+	if os.name == "nt":
+		destination_name = "llm_client.pyd"
+	else:
+		destination_name = built_extension.name.removeprefix("lib")
+	destination_path = ADDON_LIB_DIR / destination_name
+	shutil.copy2(built_extension, destination_path)
+	print(f"Copied llm_client extension to {destination_path}")
+
+
 def main() -> int:
 	parser = argparse.ArgumentParser(description="Build and install Rust artifacts for the NVDA AI Assistant add-on.")
 	parser.add_argument("--debug", action="store_true", help="Build Rust artifacts using debug mode.")
@@ -186,9 +255,11 @@ def main() -> int:
 		if not args.install_only:
 			build_host(release=not args.debug)
 			build_memory_engine(release=not args.debug)
+			build_llm_client(release=not args.debug)
 		install_host_binary(allow_existing_install=args.install_only)
 		install_host_assets()
 		install_memory_engine_extension(release=not args.debug, allow_existing_install=args.install_only)
+		install_llm_client_extension(release=not args.debug, allow_existing_install=args.install_only)
 	except Exception as error:
 		print(f"Rust artifact build failed: {error}")
 		return 1

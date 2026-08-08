@@ -33,7 +33,7 @@ def main():
         sys.executable, "-m", "pip", "install",
         "--target", str(target_dir),
         "--no-deps",  # litert-lm-api has zero deps, but be explicit
-        "litert-lm-api==0.13.1",
+        "litert-lm-api==0.15.0",
     ])
     print(result.stdout[-500:] if result.stdout else "")
     if result.returncode != 0:
