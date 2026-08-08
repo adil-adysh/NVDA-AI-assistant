@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Install or bundle a litert-lm runtime for the NVDA AI Assistant.
+"""Build a self-contained litert-lm runtime bundle for the NVDA AI Assistant.
 
-Downloads the wheel from PyPI and extracts it.
+Downloads the Python 3.13 embeddable distribution, installs litert-lm into
+it, and packages everything as a single ZIP that can be extracted and used
+without any system Python dependency.
 
 Usage::
 
-    # Dev — extract into the versioned runtime directory
-    python scripts/build_runtime_bundle.py 0.13.1
+    # Dev — build into the versioned runtime directory for local testing
+    python scripts/build_runtime_bundle.py 0.15.0
 
     # Release — build a distributable ZIP in dist/
-    python scripts/build_runtime_bundle.py 0.13.1 --release
+    python scripts/build_runtime_bundle.py 0.15.0 --release
 """
 
 from __future__ import annotations
@@ -21,14 +23,23 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import zipfile
 from pathlib import Path
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
-PYPI_PACKAGE = "litert-lm-api"
+PYTHON_VERSION = "3.13.12"
+PYTHON_EMBED_URL = (
+	f"https://www.python.org/ftp/python/{PYTHON_VERSION}/"
+	f"python-{PYTHON_VERSION}-embed-amd64.zip"
+)
+GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
+LITERT_PACKAGE = "litert-lm"
 RUNTIME_NAME = "litert-lm"
+
 
 # ---------------------------------------------------------------------------
 # Path helpers
@@ -36,166 +47,268 @@ RUNTIME_NAME = "litert-lm"
 
 
 def _appdata_runtime_dir(version: str) -> Path:
-    """``%APPDATA%/nvda/AIAssistant/runtimes/litert-lm/<version>``."""
-    appdata = os.getenv("APPDATA")
-    base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
-    return base / "nvda" / "AIAssistant" / "runtimes" / RUNTIME_NAME / version
+	"""``%APPDATA%/nvda/AIAssistant/runtimes/litert-lm/<version>``."""
+	appdata = os.getenv("APPDATA")
+	base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+	return base / "nvda" / "AIAssistant" / "runtimes" / RUNTIME_NAME / version
 
 
 def _bundle_zip_name(version: str, platform: str) -> str:
-    return f"{RUNTIME_NAME}-{version}-{platform}-runtime.zip"
-
-
-# ---------------------------------------------------------------------------
-# Wheel helpers
-# ---------------------------------------------------------------------------
-
-
-def _download_wheel(spec: str, dest_dir: Path) -> Path:
-    """Download a wheel from PyPI into *dest_dir*.  Returns the wheel path."""
-    subprocess.run(
-        [sys.executable, "-m", "pip", "download",
-         "--only-binary=:all:", "--no-deps", "--dest", str(dest_dir), spec],
-        check=True, capture_output=True, text=True,
-    )
-    wheels = list(dest_dir.glob("*.whl"))
-    if not wheels:
-        print("ERROR: No wheel downloaded")
-        sys.exit(1)
-    return wheels[0]
-
-
-def _extract_wheel(wheel_path: Path, extract_dir: Path) -> Path:
-    """Extract the ``litert_lm/`` package directory from a wheel.
-
-    Returns the path to the extracted ``litert_lm`` directory.
-    """
-    with zipfile.ZipFile(wheel_path, "r") as zf:
-        zf.extractall(extract_dir)
-    return extract_dir / "litert_lm"
-
-
-def _build_manifest(src_dir: Path, version: str, platform: str) -> dict:
-    """Scan *src_dir* and return a manifest dict."""
-    all_files = sorted(src_dir.rglob("*")) if src_dir.exists() else []
-    file_hashes: dict[str, str] = {}
-    total_size = 0
-    for f in all_files:
-        if f.is_file() and f.name != "manifest.json":
-            file_hashes[str(f.relative_to(src_dir))] = hashlib.sha256(
-                f.read_bytes()
-            ).hexdigest()
-            total_size += f.stat().st_size
-
-    dll_names = {f.name for f in all_files if f.is_file()}
-
-    return {
-        "runtime": RUNTIME_NAME,
-        "version": version,
-        "platform": platform,
-        "python": ">=3.10",
-        "arch": "x86_64",
-        "cpus": ["cpu"],
-        "gpu": "dxcompiler.dll" in dll_names,
-        "openvino": "LiteRtDispatch.dll" in dll_names,
-        "fileCount": len(file_hashes),
-        "totalSizeBytes": total_size,
-        "files": file_hashes,
-        "built_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-    }
-
-
-def _write_manifest(src_dir: Path, version: str, platform: str) -> Path:
-    """Write ``manifest.json`` to *src_dir*."""
-    manifest = _build_manifest(src_dir, version, platform)
-    path = src_dir / "manifest.json"
-    path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    mb = manifest["totalSizeBytes"] / 1024 / 1024
-    print(f"  manifest.json: {manifest['fileCount']} files, {mb:.1f} MB")
-    return path
+	return f"{RUNTIME_NAME}-{version}-{platform}-runtime.zip"
 
 
 def _dir_size(directory: Path) -> int:
-    return sum(f.stat().st_size for f in directory.rglob("*") if f.is_file())
+	return sum(f.stat().st_size for f in directory.rglob("*") if f.is_file())
 
 
 # ---------------------------------------------------------------------------
-# Dev workflow — extract wheel into the versioned runtime directory
+# Network helpers
 # ---------------------------------------------------------------------------
+
+
+def _download_file(url: str, dest: Path) -> None:
+	"""Download a file from *url* to *dest*."""
+	import urllib.request
+
+	print(f"  Downloading {url}")
+	urllib.request.urlretrieve(url, str(dest))
+	print(f"  -> {dest.name} ({dest.stat().st_size / 1024 / 1024:.1f} MB)")
+
+
+# ---------------------------------------------------------------------------
+# Python embeddable setup
+# ---------------------------------------------------------------------------
+
+
+def _configure_embeddable(python_dir: Path) -> None:
+	"""Edit ``python313._pth`` to uncomment ``import site``.
+
+	Without this, pip-installed packages in ``Lib/site-packages`` are
+	not discoverable.
+	"""
+	pth = python_dir / "python313._pth"
+	if not pth.exists():
+		print("  WARNING: python313._pth not found — site-packages may not work")
+		return
+	lines = pth.read_text(encoding="utf-8").splitlines()
+	new_lines = []
+	for line in lines:
+		stripped = line.strip()
+		if stripped == "#import site":
+			new_lines.append("import site")
+		else:
+			new_lines.append(line)
+	pth.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+	print("  Configured python313._pth (import site enabled)")
+
+
+def _bootstrap_pip(python_exe: Path) -> None:
+	"""Download ``get-pip.py`` and run it inside the embeddable Python."""
+	with tempfile.TemporaryDirectory(prefix="pip_bootstrap_") as tmp:
+		tmp_dir = Path(tmp)
+		get_pip = tmp_dir / "get-pip.py"
+		_download_file(GET_PIP_URL, get_pip)
+		subprocess.run(
+			[str(python_exe), str(get_pip), "--no-warn-script-location"],
+			check=True,
+			capture_output=True,
+			text=True,
+			timeout=120,
+		)
+	print("  Pip bootstrapped successfully")
+
+
+def _install_litert(python_exe: Path, version: str) -> None:
+	"""``pip install litert-lm==<version>`` into the embeddable Python."""
+	pip = python_exe.parent / "Scripts" / "pip.exe"
+	subprocess.run(
+		[str(pip), "install", f"{LITERT_PACKAGE}=={version}"],
+		check=True,
+		capture_output=True,
+		text=True,
+		timeout=300,
+	)
+	print(f"  Installed {LITERT_PACKAGE}=={version}")
+
+
+def _strip_pip(python_dir: Path) -> None:
+	"""Remove pip, setuptools, and wheel to reduce bundle size.
+
+	Only used for release bundles; dev builds keep pip for debugging.
+	"""
+	site_packages = python_dir / "Lib" / "site-packages"
+	if not site_packages.exists():
+		return
+
+	patterns = [
+		"pip",
+		"pip-*.dist-info",
+		"setuptools",
+		"setuptools-*.dist-info",
+		"wheel",
+		"wheel-*.dist-info",
+	]
+	for pattern in patterns:
+		for p in site_packages.glob(pattern):
+			if p.is_dir():
+				shutil.rmtree(p, ignore_errors=True)
+			else:
+				p.unlink(missing_ok=True)
+
+	scripts = python_dir / "Scripts"
+	if scripts.exists():
+		shutil.rmtree(scripts, ignore_errors=True)
+
+	print("  Stripped pip / setuptools / wheel")
+
+
+def _clean_pycache(root: Path) -> None:
+	"""Remove all ``__pycache__`` directories under *root*."""
+	count = 0
+	for pycache in root.rglob("__pycache__"):
+		shutil.rmtree(pycache, ignore_errors=True)
+		count += 1
+	if count:
+		print(f"  Removed {count} __pycache__ directories")
+
+
+# ---------------------------------------------------------------------------
+# Manifest
+# ---------------------------------------------------------------------------
+
+
+def _build_manifest(src_dir: Path, version: str, platform: str) -> dict:
+	"""Scan *src_dir* and return a manifest dict with file hashes."""
+	all_files = sorted(src_dir.rglob("*"))
+	file_hashes: dict[str, str] = {}
+	total_size = 0
+	for f in all_files:
+		if f.is_file() and f.name != "manifest.json":
+			# Use forward slashes for cross-platform consistency
+			rel = str(f.relative_to(src_dir)).replace("\\", "/")
+			file_hashes[rel] = hashlib.sha256(f.read_bytes()).hexdigest()
+			total_size += f.stat().st_size
+
+	return {
+		"runtime": RUNTIME_NAME,
+		"version": version,
+		"platform": platform,
+		"python": f">={PYTHON_VERSION}",
+		"arch": "x86_64",
+		"cpus": ["cpu"],
+		"gpu": False,
+		"openvino": False,
+		"fileCount": len(file_hashes),
+		"totalSizeBytes": total_size,
+		"files": file_hashes,
+		"built_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+	}
+
+
+def _write_manifest(src_dir: Path, version: str, platform: str) -> Path:
+	"""Write ``manifest.json`` to *src_dir* and return its path."""
+	manifest = _build_manifest(src_dir, version, platform)
+	path = src_dir / "manifest.json"
+	path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+	mb = manifest["totalSizeBytes"] / 1024 / 1024
+	print(f"  manifest.json: {manifest['fileCount']} files, {mb:.1f} MB")
+	return path
+
+
+# ---------------------------------------------------------------------------
+# Build workflows
+# ---------------------------------------------------------------------------
+
+
+def _build_runtime(version: str, work_dir: Path, *, strip: bool) -> None:
+	"""Shared build pipeline: download Python embeddable, configure, install.
+
+	Args:
+		version: litert-lm version to install.
+		work_dir: Temporary working directory to build into.
+		strip: If True, remove pip/setuptools/wheel after install.
+	"""
+	# 1. Download and extract Python embeddable
+	embed_zip = work_dir / "python-embed-amd64.zip"
+	_download_file(PYTHON_EMBED_URL, embed_zip)
+
+	python_dir = work_dir / "python"
+	python_dir.mkdir()
+	with zipfile.ZipFile(embed_zip, "r") as zf:
+		zf.extractall(python_dir)
+	print(f"  Extracted Python {PYTHON_VERSION} embeddable ({_dir_size(python_dir) / 1024 / 1024:.1f} MB)")
+
+	# 2. Enable site-packages
+	_configure_embeddable(python_dir)
+
+	# 3. Bootstrap pip
+	python_exe = python_dir / "python.exe"
+	_bootstrap_pip(python_exe)
+
+	# 4. Install litert-lm
+	_install_litert(python_exe, version)
+
+	# 5. Clean up
+	if strip:
+		_strip_pip(python_dir)
+	_clean_pycache(python_dir)
 
 
 def install_dev_runtime(version: str, target_dir: Path) -> Path:
-    """Download wheel and extract the ``litert_lm`` package into *target_dir*."""
-    spec = f"{PYPI_PACKAGE}=={version}"
-    target_dir.mkdir(parents=True, exist_ok=True)
+	"""Build the self-contained runtime and place it in *target_dir*.
 
-    with tempfile.TemporaryDirectory(prefix="litert_dev_") as tmp:
-        tmp_dir = Path(tmp)
-        wheel = _download_wheel(spec, tmp_dir / "wheels")
-        src = _extract_wheel(wheel, tmp_dir / "extracted")
-        # Merge into target — overwrite all files except locked DLLs
-        dst = target_dir / "litert_lm"
-        dst.mkdir(parents=True, exist_ok=True)
-        for item in src.rglob("*"):
-            if item.is_file():
-                rel = item.relative_to(src)
-                dest_file = dst / rel
-                dest_file.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    shutil.copy2(item, dest_file)
-                except PermissionError:
-                    pass  # locked by another process (e.g. litert-lm.dll)
+	Returns the populated target directory.
+	"""
+	target_dir.mkdir(parents=True, exist_ok=True)
 
-    _write_manifest(target_dir, version, "windows-x64")
-    dest_mb = _dir_size(target_dir) / 1024 / 1024
-    print(f"\n[dev] LiteRT-LM {version} installed to {target_dir} ({dest_mb:.0f} MB)")
-    print("[dev] The addon will load from this directory directly.")
-    return target_dir
+	with tempfile.TemporaryDirectory(prefix="litert_dev_") as tmp:
+		tmp_dir = Path(tmp)
+		_build_runtime(version, tmp_dir, strip=False)
 
+		python_dir = tmp_dir / "python"
+		_write_manifest(python_dir, version, "windows-x64")
 
-# ---------------------------------------------------------------------------
-# Release workflow — bundle a distributable ZIP
-# ---------------------------------------------------------------------------
+		# Replace target atomically
+		if target_dir.exists():
+			shutil.rmtree(target_dir, ignore_errors=True)
+		shutil.copytree(python_dir, target_dir)
+
+	size_mb = _dir_size(target_dir) / 1024 / 1024
+	print(f"\n[dev] LiteRT-LM {version} installed to {target_dir} ({size_mb:.0f} MB)")
+	print("[dev] The addon will load from this directory directly.")
+	return target_dir
 
 
 def build_release_bundle(
-    version: str,
-    platform: str,
-    output_dir: Path,
+	version: str,
+	platform: str,
+	output_dir: Path,
 ) -> Path:
-    """Download wheel and create a distributable ZIP."""
-    spec = f"{PYPI_PACKAGE}=={version}"
-    zip_name = _bundle_zip_name(version, platform)
+	"""Build a distributable ZIP of the self-contained runtime.
 
-    with tempfile.TemporaryDirectory(prefix="litert_release_") as tmp:
-        tmp_dir = Path(tmp)
-        wheel = _download_wheel(spec, tmp_dir / "wheels")
-        src = _extract_wheel(wheel, tmp_dir / "extracted")
+	Returns the path to the created ZIP file.
+	"""
+	with tempfile.TemporaryDirectory(prefix="litert_release_") as tmp:
+		tmp_dir = Path(tmp)
+		_build_runtime(version, tmp_dir, strip=True)
 
-        # Strip GPU DLLs and cruft for release
-        for pattern in ["dxcompiler.dll", "dxil.dll", "LiteRtDispatch.dll"]:
-            for f in src.rglob(pattern):
-                f.unlink()
-        vendors = src / "vendors"
-        if vendors.exists():
-            shutil.rmtree(vendors, ignore_errors=True)
-        for pycache in src.rglob("__pycache__"):
-            shutil.rmtree(pycache, ignore_errors=True)
+		python_dir = tmp_dir / "python"
+		_write_manifest(python_dir, version, platform)
 
-        _write_manifest(src, version, platform)
+		# Create ZIP — files at the root of the archive
+		output_dir.mkdir(parents=True, exist_ok=True)
+		zip_name = _bundle_zip_name(version, platform)
+		zip_path = output_dir / zip_name
+		with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+			for f in python_dir.rglob("*"):
+				if f.is_file():
+					zf.write(f, str(f.relative_to(python_dir)))
 
-        output_dir.mkdir(parents=True, exist_ok=True)
-        zip_path = output_dir / zip_name
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for f in src.rglob("*"):
-                if f.is_file():
-                    zf.write(f, str(f.relative_to(src)))
-
-        zipped_mb = zip_path.stat().st_size / 1024 / 1024
-        extracted_mb = _dir_size(src) / 1024 / 1024
-        print(f"\n[release] Bundle created: {zip_path}")
-        print(f"[release] {extracted_mb:.1f} MB extracted, {zipped_mb:.1f} MB zipped")
-        return zip_path
+		extracted_mb = _dir_size(python_dir) / 1024 / 1024
+		zipped_mb = zip_path.stat().st_size / 1024 / 1024
+		print(f"\n[release] {extracted_mb:.1f} MB extracted, {zipped_mb:.1f} MB zipped")
+		print(f"[release] Bundle: {zip_path}")
+		return zip_path
 
 
 # ---------------------------------------------------------------------------
@@ -204,39 +317,49 @@ def build_release_bundle(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Install or bundle litert-lm runtime for NVDA AI Assistant."
-    )
-    parser.add_argument(
-        "version", nargs="?", default="0.13.1",
-        help="Runtime version (default: 0.13.1)",
-    )
-    parser.add_argument(
-        "--output-dir", default="dist",
-        help="Output directory for release ZIP (default: dist/)",
-    )
-    parser.add_argument(
-        "--release", action="store_true",
-        help="Build a distributable ZIP instead of dev-installing",
-    )
-    parser.add_argument(
-        "--runtime-dir", type=Path, default=None,
-        help="Target directory (default: %%APPDATA%%/nvda/AIAssistant/runtimes/litert-lm/<version>)",
-    )
-    args = parser.parse_args()
+	parser = argparse.ArgumentParser(
+		description="Build self-contained litert-lm runtime bundle for NVDA AI Assistant."
+	)
+	parser.add_argument(
+		"version",
+		nargs="?",
+		default="0.15.0",
+		help="Runtime version (default: 0.15.0)",
+	)
+	parser.add_argument(
+		"--output-dir",
+		default="dist",
+		help="Output directory for release ZIP (default: dist/)",
+	)
+	parser.add_argument(
+		"--release",
+		action="store_true",
+		help="Build a distributable ZIP instead of dev-installing",
+	)
+	parser.add_argument(
+		"--runtime-dir",
+		type=Path,
+		default=None,
+		help=(
+			"Target directory "
+			"(default: %%APPDATA%%/nvda/AIAssistant/runtimes/litert-lm/<version>)"
+		),
+	)
+	args = parser.parse_args()
 
-    if args.release:
-        build_release_bundle(
-            version=args.version,
-            platform="windows-x64",
-            output_dir=Path(args.output_dir),
-        )
-    else:
-        install_dev_runtime(
-            version=args.version,
-            target_dir=args.runtime_dir or _appdata_runtime_dir(args.version),
-        )
+	if args.release:
+		build_release_bundle(
+			version=args.version,
+			platform="windows-x64",
+			output_dir=Path(args.output_dir),
+		)
+	else:
+		install_dev_runtime(
+			version=args.version,
+			target_dir=args.runtime_dir or _appdata_runtime_dir(args.version),
+		)
 
 
 if __name__ == "__main__":
-    main()
+	main()
+
