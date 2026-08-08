@@ -63,6 +63,9 @@ manifest.ini
 *.lib
 *.exp
 
+# Build output (runtime bundles, etc.)
+dist/
+
 # =========================
 
 # Editor / OS junk
