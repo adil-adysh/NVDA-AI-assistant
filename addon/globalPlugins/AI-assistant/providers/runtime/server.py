@@ -446,6 +446,18 @@ class LiteRTServerSupervisor:
             )
 
         log.info("Model %s imported successfully", model_id)
+
+        # Delete the source file now that litert-lm has copied it into
+        # its own registry.  These files are 1-8 GB — keeping both is wasteful.
+        catalog_dir = self.catalog_model_dir(model_id)
+        catalog_file = catalog_dir / "model.litertlm" if catalog_dir is not None else None
+        if catalog_file is not None and catalog_file.is_file():
+            try:
+                model_path.unlink(missing_ok=True)
+                log.debug("Deleted source model file %s after import", model_path)
+            except OSError:
+                log.debug("Could not delete source model file %s", model_path, exc_info=True)
+
         if on_progress:
             on_progress(f"Model {model_id} registered.")
 
