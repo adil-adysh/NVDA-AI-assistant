@@ -18,15 +18,7 @@ _provider_state_listeners: list[Callable[[ProviderState], None]] = []
 
 
 def get_provider_state(active_provider: Any) -> ProviderState:
-	from ..providers.config import GeminiConfig, OllamaConfig, OpenAIConfig
-
-	backend_url = ""
-	if isinstance(active_provider, GeminiConfig):
-		backend_url = active_provider.base_url
-	elif isinstance(active_provider, OllamaConfig):
-		backend_url = active_provider.server_url
-	elif isinstance(active_provider, OpenAIConfig):
-		backend_url = active_provider.base_url
+	backend_url = str(getattr(active_provider, "base_url", "") or "")
 
 	return ProviderState(
 		provider=active_provider.provider,

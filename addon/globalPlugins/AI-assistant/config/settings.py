@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 import languageHandler
+from logHandler import log
 from . import defaults
 from .state import (
 	ProviderState,
@@ -15,7 +16,7 @@ from .state import (
 from .yaml_store import YamlConfigStore
 
 if TYPE_CHECKING:
-	from ..providers.config import GeminiConfig, LiteRTConfig, OllamaConfig, OpenAIConfig, ProviderConfig
+	from ..providers.config import OpenAICompatConfig, ProviderConfig
 
 
 _config_store = YamlConfigStore()
@@ -105,7 +106,7 @@ def get_provider() -> str:
 
 def set_provider(provider: str) -> None:
 	provider_value = str(provider or "").strip().lower()
-	if provider_value not in {"ollama", "gemini", "openai", "litert-lm"}:
+	if provider_value not in {"ollama", "gemini", "openai", "litert-lm", "openai_compat"}:
 		raise ValueError(f"Unsupported provider: {provider}")
 	_set_value("provider", provider_value, notify=True)
 
@@ -136,90 +137,119 @@ def set_language(language: str) -> None:
 	_set_value("language", language_value, notify=False)
 
 
-def get_ollama_model_name() -> str:
-	return _read_string("ollamaModelName", defaults.DEFAULT_OLLAMA_MODEL)
+# ---------------------------------------------------------------------------
+# Unified per-provider property getters (backward-compatible YAML keys)
+# ---------------------------------------------------------------------------
 
+def _get_model_name_for(provider: str) -> str:
+	"""Read the model name for a given provider from its legacy YAML key."""
+	key_map = {
+		"ollama": ("ollamaModelName", defaults.DEFAULT_OLLAMA_MODEL),
+		"gemini": ("geminiModelName", defaults.DEFAULT_GEMINI_MODEL),
+		"openai": ("openaiModelName", defaults.DEFAULT_OPENAI_MODEL),
+		"litert-lm": ("litertModelName", defaults.DEFAULT_LITERT_MODEL),
+	}
+	key, default = key_map.get(provider, ("modelName", ""))
+	return _read_string(key, default)
+
+
+def _get_base_url_for(provider: str) -> str:
+	"""Read the base URL for a given provider from its legacy YAML key."""
+	key_map = {
+		"ollama": ("ollamaServerUrl", defaults.DEFAULT_OLLAMA_URL),
+		"gemini": ("geminiBaseUrl", defaults.DEFAULT_GEMINI_BASE_URL),
+		"openai": ("openaiBaseUrl", defaults.DEFAULT_OPENAI_BASE_URL),
+		"litert-lm": ("litertServerUrl", defaults.DEFAULT_LITERT_URL),
+	}
+	key, default = key_map.get(provider, ("baseUrl", ""))
+	return _read_string(key, default)
+
+
+def _get_api_key_for(provider: str) -> str:
+	"""Read the API key for a given provider from its legacy YAML key."""
+	key_map = {
+		"gemini": "geminiApiKey",
+		"openai": "openaiApiKey",
+	}
+	key = key_map.get(provider)
+	return _read_string(key, "") if key else ""
+
+
+def _get_think_for(provider: str) -> bool:
+	"""Read the think/reasoning toggle for a given provider."""
+	key_map = {
+		"ollama": ("ollamaThink", defaults.DEFAULT_OLLAMA_THINK),
+		"litert-lm": ("litertThink", defaults.DEFAULT_LITERT_THINK),
+	}
+	key_default = key_map.get(provider)
+	if key_default is None:
+		return False
+	return _read_bool(key_default[0], key_default[1])
+
+
+# ---------------------------------------------------------------------------
+# Legacy getter aliases (kept for backward compat during migration)
+# ---------------------------------------------------------------------------
+
+def get_ollama_model_name() -> str:
+	return _get_model_name_for("ollama")
 
 def get_ollama_server_url() -> str:
-	return _read_string("ollamaServerUrl", defaults.DEFAULT_OLLAMA_URL)
-
+	return _get_base_url_for("ollama")
 
 def get_ollama_think() -> bool:
-	return _read_bool("ollamaThink", defaults.DEFAULT_OLLAMA_THINK)
-
+	return _get_think_for("ollama")
 
 def get_gemini_model_name() -> str:
-	return _read_string("geminiModelName", defaults.DEFAULT_GEMINI_MODEL)
-
+	return _get_model_name_for("gemini")
 
 def get_gemini_api_key() -> str:
-	return _read_string("geminiApiKey", "")
-
+	return _get_api_key_for("gemini")
 
 def get_gemini_api_token() -> str:
 	return _read_string("geminiApiToken", "")
 
-
 def get_gemini_base_url() -> str:
-	return _read_string("geminiBaseUrl", defaults.DEFAULT_GEMINI_BASE_URL)
-
+	return _get_base_url_for("gemini")
 
 def get_openai_model_name() -> str:
-	return _read_string("openaiModelName", defaults.DEFAULT_OPENAI_MODEL)
-
+	return _get_model_name_for("openai")
 
 def get_openai_api_key() -> str:
-	return _read_string("openaiApiKey", "")
-
+	return _get_api_key_for("openai")
 
 def get_openai_base_url() -> str:
-	return _read_string("openaiBaseUrl", defaults.DEFAULT_OPENAI_BASE_URL)
-
+	return _get_base_url_for("openai")
 
 def get_openai_chat_path() -> str:
 	return _read_string("openaiChatPath", defaults.DEFAULT_OPENAI_CHAT_PATH)
 
-
 def get_litert_model_name() -> str:
-	return _read_string("litertModelName", defaults.DEFAULT_LITERT_MODEL)
-
-
-def get_litert_backend() -> str:
-	return _read_string("litertBackend", defaults.DEFAULT_LITERT_BACKEND)
-
+	return _get_model_name_for("litert-lm")
 
 def get_litert_think() -> bool:
-	return _read_bool("litertThink", defaults.DEFAULT_LITERT_THINK)
+	return _get_think_for("litert-lm")
+
+def get_litert_server_url() -> str:
+	return _get_base_url_for("litert-lm")
 
 
-def get_openai_config() -> "OpenAIConfig":
-	from ..providers.config import OpenAIConfig
+# ---------------------------------------------------------------------------
+# Unified config builder
+# ---------------------------------------------------------------------------
 
-	return OpenAIConfig(
-		provider="openai",
-		model_name=get_openai_model_name(),
-		timeout_seconds=get_timeout_seconds(),
-		enable_progress=is_progress_enabled(),
-		num_ctx=get_num_ctx(),
-		max_retries=get_max_retries(),
-		retry_backoff_seconds=get_retry_backoff_seconds(),
-		generate_temperature=get_generate_temperature(),
-		generate_top_k=get_generate_top_k(),
-		generate_top_p=get_generate_top_p(),
-		generate_max_tokens=get_generate_max_tokens(),
-		api_key=get_openai_api_key(),
-		base_url=get_openai_base_url(),
+def get_openai_compat_config() -> "OpenAICompatConfig":
+	"""Build a unified OpenAICompatConfig from the active provider's YAML keys."""
+	from ..providers.config import OpenAICompatConfig
+
+	provider = get_provider()
+	return OpenAICompatConfig(
+		provider=provider,
+		model_name=_get_model_name_for(provider),
+		base_url=_get_base_url_for(provider),
+		api_key=_get_api_key_for(provider),
+		api_token=get_gemini_api_token() if provider == "gemini" else None,
 		chat_path=get_openai_chat_path(),
-		organization=None,
-	)
-
-
-def get_ollama_config() -> "OllamaConfig":
-	from ..providers.config import OllamaConfig
-
-	return OllamaConfig(
-		provider="ollama",
-		model_name=get_ollama_model_name(),
 		timeout_seconds=get_timeout_seconds(),
 		enable_progress=is_progress_enabled(),
 		num_ctx=get_num_ctx(),
@@ -229,63 +259,26 @@ def get_ollama_config() -> "OllamaConfig":
 		generate_top_k=get_generate_top_k(),
 		generate_top_p=get_generate_top_p(),
 		generate_max_tokens=get_generate_max_tokens(),
-		generate_presence_penalty=get_generate_presence_penalty(),
-		server_url=get_ollama_server_url(),
-		keep_alive=get_keep_alive(),
-		think=get_ollama_think(),
+		think=_get_think_for(provider),
 	)
 
 
-def get_gemini_config() -> "GeminiConfig":
-	from ..providers.config import GeminiConfig
+# Legacy config builders (dispatch to unified)
+def get_openai_config() -> "OpenAICompatConfig":
+	return get_openai_compat_config()
 
-	return GeminiConfig(
-		provider="gemini",
-		model_name=get_gemini_model_name(),
-		timeout_seconds=get_timeout_seconds(),
-		enable_progress=is_progress_enabled(),
-		num_ctx=get_num_ctx(),
-		max_retries=get_max_retries(),
-		retry_backoff_seconds=get_retry_backoff_seconds(),
-		generate_temperature=get_generate_temperature(),
-		generate_top_k=get_generate_top_k(),
-		generate_top_p=get_generate_top_p(),
-		generate_max_tokens=get_generate_max_tokens(),
-		api_key=get_gemini_api_key(),
-		api_token=get_gemini_api_token(),
-		base_url=get_gemini_base_url(),
-	)
+def get_ollama_config() -> "OpenAICompatConfig":
+	return get_openai_compat_config()
 
+def get_gemini_config() -> "OpenAICompatConfig":
+	return get_openai_compat_config()
 
-def get_litert_config() -> "LiteRTConfig":
-	from ..providers.config import LiteRTConfig
-
-	return LiteRTConfig(
-		provider="litert-lm",
-		model_name=get_litert_model_name(),
-		timeout_seconds=get_timeout_seconds(),
-		enable_progress=is_progress_enabled(),
-		num_ctx=get_num_ctx(),
-		max_retries=get_max_retries(),
-		retry_backoff_seconds=get_retry_backoff_seconds(),
-		generate_temperature=get_generate_temperature(),
-		generate_top_k=get_generate_top_k(),
-		generate_top_p=get_generate_top_p(),
-		generate_max_tokens=get_generate_max_tokens(),
-		backend=get_litert_backend(),
-		think=get_litert_think(),
-	)
+def get_litert_config() -> "OpenAICompatConfig":
+	return get_openai_compat_config()
 
 
 def get_active_provider_config() -> "ProviderConfig":
-	provider = get_provider()
-	if provider == "gemini":
-		return get_gemini_config()
-	if provider == "openai":
-		return get_openai_config()
-	if provider == "litert-lm":
-		return get_litert_config()
-	return get_ollama_config()
+	return get_openai_compat_config()
 
 
 def get_model_name() -> str:
@@ -300,16 +293,7 @@ def get_provider_state() -> "ProviderState":
 
 def get_server_url() -> str:
 	"""Return the configured backend URL for the selected provider."""
-	from ..providers.config import GeminiConfig, LiteRTConfig, OllamaConfig
-
-	active = get_active_provider_config()
-	if isinstance(active, GeminiConfig):
-		return active.base_url
-	if isinstance(active, OllamaConfig):
-		return active.server_url
-	if isinstance(active, LiteRTConfig):
-		return "local"
-	return ""
+	return _get_base_url_for(get_provider())
 
 
 def is_streaming_enabled() -> bool:
@@ -441,108 +425,91 @@ def set_litert_model_name(modelName: str) -> None:
 	_set_value("litertModelName", str(modelName).strip(), notify=True)
 
 
-def set_litert_backend(backend: str) -> None:
-	_set_value("litertBackend", str(backend).strip().lower(), notify=True)
-
-
 def set_litert_think(think: bool) -> None:
 	_set_value("litertThink", bool(think), notify=True)
 
+def set_litert_server_url(serverUrl: str) -> None:
+	_set_value("litertServerUrl", str(serverUrl).strip(), notify=True)
 
-def set_litert_config(config: LiteRTConfig) -> None:
-	_set_values(
-		{
-			"provider": config.provider,
-			"litertModelName": config.model_name,
-			"litertBackend": config.backend,
-			"litertThink": config.think,
-			"timeoutSeconds": config.timeout_seconds,
-			"numCtx": config.num_ctx,
-			"maxRetries": config.max_retries,
-			"retryBackoffSeconds": config.retry_backoff_seconds,
-			"generateTemperature": config.generate_temperature,
-			"generateTopK": config.generate_top_k,
-			"generateTopP": config.generate_top_p,
-			"generateMaxTokens": config.generate_max_tokens,
-			"enableProgressAnnouncements": config.enable_progress,
-		},
-		notify=False,
-	)
+
+# ---------------------------------------------------------------------------
+# Unified config setter
+# ---------------------------------------------------------------------------
+
+def set_openai_compat_config(config: "OpenAICompatConfig") -> None:
+	"""Persist a unified OpenAICompatConfig to YAML using legacy per-provider keys."""
+	provider = str(config.provider or "").strip().lower()
+	key_prefixes: dict[str, str] = {
+		"ollama": "ollama",
+		"gemini": "gemini",
+		"openai": "openai",
+		"litert-lm": "litert",
+	}
+	if provider not in key_prefixes:
+		log.warning(
+			"set_openai_compat_config: unknown provider %r, defaulting to 'openai' key prefix",
+			provider,
+		)
+	prefix = key_prefixes.get(provider, "openai")
+
+	values: dict[str, Any] = {
+		"provider": provider,
+		f"{prefix}ModelName": config.model_name,
+		"timeoutSeconds": config.timeout_seconds,
+		"numCtx": config.num_ctx,
+		"maxRetries": config.max_retries,
+		"retryBackoffSeconds": config.retry_backoff_seconds,
+		"generateTemperature": config.generate_temperature,
+		"generateTopK": config.generate_top_k,
+		"generateTopP": config.generate_top_p,
+		"generateMaxTokens": config.generate_max_tokens,
+		"enableProgressAnnouncements": config.enable_progress,
+	}
+
+	# Base URL — stored in the provider-specific key.
+	base_url_keys = {
+		"ollama": "ollamaServerUrl",
+		"gemini": "geminiBaseUrl",
+		"openai": "openaiBaseUrl",
+		"litert-lm": "litertServerUrl",
+	}
+	if base_url_key := base_url_keys.get(provider):
+		values[base_url_key] = config.base_url
+
+	# API key.
+	api_key_keys = {"gemini": "geminiApiKey", "openai": "openaiApiKey"}
+	if api_key_key := api_key_keys.get(provider):
+		values[api_key_key] = config.api_key
+
+	# API token (Gemini only).
+	if provider == "gemini":
+		values["geminiApiToken"] = config.api_token or ""
+
+	# Chat path (OpenAI only).
+	if provider == "openai":
+		values["openaiChatPath"] = config.chat_path
+
+	# Think toggle.
+	think_keys = {"ollama": "ollamaThink", "litert-lm": "litertThink"}
+	if think_key := think_keys.get(provider):
+		values[think_key] = config.think
+
+	_set_values(values, notify=False)
 	_notify_provider_state_changed()
 
 
-def set_gemini_base_url(baseUrl: str) -> None:
-	_set_value("geminiBaseUrl", str(baseUrl).strip(), notify=True)
+# Legacy set_config aliases
+def set_ollama_config(config: "OpenAICompatConfig") -> None:
+	set_openai_compat_config(config)
 
+def set_gemini_config(config: "OpenAICompatConfig") -> None:
+	set_openai_compat_config(config)
 
-def set_ollama_config(config: OllamaConfig) -> None:
-	_set_values(
-		{
-			"provider": config.provider,
-			"ollamaModelName": config.model_name,
-			"ollamaServerUrl": config.server_url,
-			"ollamaThink": config.think,
-			"timeoutSeconds": config.timeout_seconds,
-			"numCtx": config.num_ctx,
-			"keepAlive": config.keep_alive,
-			"maxRetries": config.max_retries,
-			"retryBackoffSeconds": config.retry_backoff_seconds,
-			"generateTemperature": config.generate_temperature,
-			"generateTopK": config.generate_top_k,
-			"generateTopP": config.generate_top_p,
-			"generateMaxTokens": config.generate_max_tokens,
-			"generatePresencePenalty": config.generate_presence_penalty,
-			"enableProgressAnnouncements": config.enable_progress,
-		},
-		notify=False,
-	)
-	_notify_provider_state_changed()
+def set_openai_config(config: "OpenAICompatConfig") -> None:
+	set_openai_compat_config(config)
 
-
-def set_gemini_config(config: GeminiConfig) -> None:
-	_set_values(
-		{
-			"provider": config.provider,
-			"geminiModelName": config.model_name,
-			"geminiApiKey": config.api_key,
-			"geminiApiToken": str(config.api_token or "").strip(),
-			"geminiBaseUrl": config.base_url,
-			"timeoutSeconds": config.timeout_seconds,
-			"numCtx": config.num_ctx,
-			"maxRetries": config.max_retries,
-			"retryBackoffSeconds": config.retry_backoff_seconds,
-			"generateTemperature": config.generate_temperature,
-			"generateTopK": config.generate_top_k,
-			"generateTopP": config.generate_top_p,
-			"generateMaxTokens": config.generate_max_tokens,
-			"enableProgressAnnouncements": config.enable_progress,
-		},
-		notify=False,
-	)
-	_notify_provider_state_changed()
-
-
-def set_openai_config(config: OpenAIConfig) -> None:
-	_set_values(
-		{
-			"provider": config.provider,
-			"openaiModelName": config.model_name,
-			"openaiApiKey": config.api_key,
-			"openaiBaseUrl": config.base_url,
-			"openaiChatPath": config.chat_path,
-			"timeoutSeconds": config.timeout_seconds,
-			"numCtx": config.num_ctx,
-			"maxRetries": config.max_retries,
-			"retryBackoffSeconds": config.retry_backoff_seconds,
-			"generateTemperature": config.generate_temperature,
-			"generateTopK": config.generate_top_k,
-			"generateTopP": config.generate_top_p,
-			"generateMaxTokens": config.generate_max_tokens,
-			"enableProgressAnnouncements": config.enable_progress,
-		},
-		notify=False,
-	)
-	_notify_provider_state_changed()
+def set_litert_config(config: "OpenAICompatConfig") -> None:
+	set_openai_compat_config(config)
 
 
 def set_model_name(modelName: str) -> None:
@@ -555,6 +522,10 @@ def set_model_name(modelName: str) -> None:
 		set_litert_model_name(modelName)
 	else:
 		set_ollama_model_name(modelName)
+
+
+def set_gemini_base_url(baseUrl: str) -> None:
+	_set_value("geminiBaseUrl", str(baseUrl).strip(), notify=True)
 
 
 def set_server_url(serverUrl: str) -> None:
