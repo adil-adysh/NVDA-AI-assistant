@@ -1,8 +1,18 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from .gemini import GeminiProvider
-from .litert import LiteRTLMProvider
-from .ollama import OllamaProvider
+from .openai_compat import OpenAICompatProvider
 
-__all__ = ["GeminiProvider", "LiteRTLMProvider", "OllamaProvider"]
+# Backward-compatibility aliases
+GeminiProvider = OpenAICompatProvider
+LiteRTLMProvider = OpenAICompatProvider
+OllamaProvider = OpenAICompatProvider
+OpenAIProvider = OpenAICompatProvider
+
+__all__ = [
+    "GeminiProvider",
+    "LiteRTLMProvider",
+    "OllamaProvider",
+    "OpenAIProvider",
+    "OpenAICompatProvider",
+]

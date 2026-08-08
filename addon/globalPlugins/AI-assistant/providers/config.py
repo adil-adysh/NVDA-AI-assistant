@@ -20,35 +20,25 @@ class ProviderConfig:
 
 
 @dataclass(frozen=True)
-class OllamaConfig(ProviderConfig):
-    server_url: str
-    keep_alive: str
-    generate_presence_penalty: float
-    think: bool
+class OpenAICompatConfig(ProviderConfig):
+    """Unified configuration for any OpenAI-compatible provider.
 
-
-@dataclass(frozen=True)
-class GeminiConfig(ProviderConfig):
-    api_key: str
-    api_token: str | None
-    base_url: str
-
-
-@dataclass(frozen=True)
-class OpenAIConfig(ProviderConfig):
-    api_key: str
-    base_url: str
-    chat_path: str
-    organization: str | None
-
-
-@dataclass(frozen=True)
-class LiteRTConfig(ProviderConfig):
-    """Configuration for the on-device LiteRT-LM runtime.
-
-    Uses RuntimeManager to download the native runtime on first use.
-    The model_name field holds the path to a .litertlm model file.
+    Covers Ollama, OpenAI, Gemini OpenAI-compat, LiteRT, llama.cpp, etc.
     """
 
-    backend: str = "cpu"
+    base_url: str
+    api_key: str = ""
+    api_token: str | None = None
+    chat_path: str = "/v1/chat/completions"
+    organization: str | None = None
     think: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatibility aliases — these will be removed after migration.
+# ---------------------------------------------------------------------------
+
+OllamaConfig = OpenAICompatConfig
+GeminiConfig = OpenAICompatConfig
+OpenAIConfig = OpenAICompatConfig
+LiteRTConfig = OpenAICompatConfig

@@ -3,10 +3,8 @@ from __future__ import annotations
 
 
 from ..config.settings import get_active_provider_config
-from .adapters.gemini import GeminiProvider
-from .adapters.litert import LiteRTLMProvider
-from .adapters.ollama import OllamaProvider
-from .config import GeminiConfig, LiteRTConfig, OllamaConfig, OpenAIConfig, ProviderConfig
+from .adapters.openai_compat import OpenAICompatProvider
+from .config import OpenAICompatConfig, ProviderConfig
 from .interfaces import LLMProvider, LLMProviderError
 
 
@@ -22,6 +20,12 @@ class ProviderFactory:
 		provider_config = config if config is not None else get_active_provider_config()
 		provider_type = cls._provider_registry.get(type(provider_config))
 		if provider_type is None:
+			# Fallback: walk MRO for registered base types (handles alias classes).
+			for base in type(provider_config).__mro__:
+				provider_type = cls._provider_registry.get(base)
+				if provider_type is not None:
+					break
+		if provider_type is None:
 			raise ValueError(f"Unsupported provider config type: {type(provider_config).__name__}")
 		try:
 			return provider_type(provider_config)
@@ -31,11 +35,7 @@ class ProviderFactory:
 			raise LLMProviderError(str(error)) from error
 
 
-ProviderFactory.register_provider(GeminiConfig, GeminiProvider)
-ProviderFactory.register_provider(OllamaConfig, OllamaProvider)
-from .adapters.openai import OpenAIProvider  # noqa: E402 — cyclic import
-ProviderFactory.register_provider(OpenAIConfig, OpenAIProvider)
-ProviderFactory.register_provider(LiteRTConfig, LiteRTLMProvider)
+ProviderFactory.register_provider(OpenAICompatConfig, OpenAICompatProvider)
 
 
 Provider = LLMProvider
