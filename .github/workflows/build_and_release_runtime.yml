@@ -1,0 +1,118 @@
+name: build-and-release-runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "LiteRT-LM version to bundle (e.g. 0.15.0)"
+        required: true
+        type: string
+        default: "0.15.0"
+      create_release:
+        description: "Create a GitHub Release with the built ZIP?"
+        required: false
+        type: boolean
+        default: true
+  push:
+    tags:
+      - "litert-runtime-v*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          DISPATCH_VERSION="${{ github.event.inputs.version }}"
+          if [ -n "${DISPATCH_VERSION}" ]; then
+            echo "VERSION=${DISPATCH_VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            # Extract version from tag: litert-runtime-v0.15.0 -> 0.15.0
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#litert-runtime-v}"
+            echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build runtime bundle
+        shell: bash
+        run: |
+          python scripts/build_runtime_bundle.py "${{ steps.version.outputs.VERSION }}" --release
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: litert-runtime-bundle
+          path: dist/litert-lm-*.zip
+          if-no-files-found: error
+
+  release:
+    runs-on: ubuntu-latest
+    needs: build
+    if: |
+      github.ref_type == 'tag' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: litert-runtime-bundle
+
+      - name: Determine version and ZIP path
+        id: release
+        shell: bash
+        run: |
+          DISPATCH_VERSION="${{ github.event.inputs.version }}"
+          if [ -n "${DISPATCH_VERSION}" ]; then
+            VERSION="${DISPATCH_VERSION}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#litert-runtime-v}"
+          fi
+          ZIP_FILE="litert-lm-${VERSION}-windows-x64-runtime.zip"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "zip_file=${ZIP_FILE}" >> "$GITHUB_OUTPUT"
+          echo "tag=litert-runtime-v${VERSION}" >> "$GITHUB_OUTPUT"
+
+          echo "Bundle: ${ZIP_FILE} ($(du -h "${ZIP_FILE}" | cut -f1))"
+          sha256sum "${ZIP_FILE}" | tee checksum.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: "LiteRT-LM Runtime v${{ steps.release.outputs.version }}"
+          body: |
+            ## LiteRT-LM Self-Contained Runtime v${{ steps.release.outputs.version }}
+
+            Python ${{ steps.release.outputs.version }} embeddable + litert-lm + all dependencies.
+
+            ### Contents
+            - Python 3.13.12 embeddable (Windows x64)
+            - litert-lm ${{ steps.release.outputs.version }}
+            - All pip dependencies (pre-installed, no system Python required)
+
+            ### Usage
+            Downloaded automatically by the NVDA AI Assistant add-on when a litert-lm model is requested.
+            No manual installation needed.
+
+            ### SHA256
+            ```
+            $(cat checksum.txt)
+            ```
+          files: ${{ steps.release.outputs.zip_file }}
+          fail_on_unmatched_files: true
+          generate_release_notes: false
