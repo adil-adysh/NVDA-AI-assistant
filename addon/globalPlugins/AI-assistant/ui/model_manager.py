@@ -16,18 +16,11 @@ import gui
 from logHandler import log
 
 from ..config.settings import (
-    get_gemini_config,
-    get_litert_config,
-    get_ollama_config,
-    get_openai_config,
-    set_gemini_model_name,
-    set_ollama_model_name,
+    get_openai_compat_config,
+    set_openai_compat_config,
 )
-from ..providers.adapters.gemini import GeminiProvider
-from ..providers.adapters.litert import LiteRTLMProvider
-from ..providers.adapters.ollama import OllamaProvider
-from ..providers.adapters.openai import OpenAIProvider
-from ..providers.litert_models import KNOWN_MODELS
+from ..providers.adapters.openai_compat import OpenAICompatProvider
+from ..providers.litert_models import recommended_models
 from ..providers.model_manager import (
     CloudModelManagerAdapter,
     ManagedModel,
@@ -37,6 +30,16 @@ from ..providers.model_manager import (
 from .enabled_models import EnabledModelsStore
 
 _RECOMMENDED_PRIORITY = 50
+
+
+def _make_set_model(provider_id: str):
+    """Return a set_model_fn that updates model_name for the given provider."""
+    def _set(model_id: str) -> None:
+        cfg = get_openai_compat_config()
+        set_openai_compat_config(type(cfg)(
+            **{**vars(cfg), "provider": provider_id, "model_name": model_id},
+        ))
+    return _set
 
 
 class ModelManagerDialog(wx.Dialog):
@@ -60,7 +63,7 @@ class ModelManagerDialog(wx.Dialog):
         self._models: list[ManagedModel] = []
         self._displayed_models: list[ManagedModel] = []
         self._pending_downloads: set[str] = set()
-        self._known_map = {m.filename: m for m in KNOWN_MODELS}
+        self._known_map = {m.filename: m for m in recommended_models()}
 
         self._build_ui()
         self._refresh_model_list()
@@ -198,21 +201,21 @@ class ModelManagerDialog(wx.Dialog):
         result: dict[str, tuple[str, ModelManagerProvider]] = {}
 
         # ── LiteRT-LM (local) ───────────────────────────────────
-        litert_config = get_litert_config()
-        litert = LiteRTLMProvider(config=litert_config)
+        litert_config = get_openai_compat_config()
+        litert = OpenAICompatProvider(config=litert_config)
         # TRANSLATORS: Provider option in the model manager combo box.
         result[_("LiteRT-LM")] = ("litert-lm", litert)
 
         # ── Gemini (cloud) ──────────────────────────────────────
         try:
-            gemini_config = get_gemini_config()
+            gemini_config = get_openai_compat_config()
             if str(gemini_config.api_key or "").strip():
                 gemini = CloudModelManagerAdapter(
                     provider_id="gemini",
                     config=gemini_config,
-                    provider_class=GeminiProvider,
-                    set_model_fn=set_gemini_model_name,
-                    get_config_fn=get_gemini_config,
+                    provider_class=OpenAICompatProvider,
+                    set_model_fn=_make_set_model("gemini"),
+                    get_config_fn=get_openai_compat_config,
                 )
                 # TRANSLATORS: Provider option in the model manager combo box.
                 result[_("Gemini")] = ("gemini", gemini)
@@ -221,14 +224,14 @@ class ModelManagerDialog(wx.Dialog):
 
         # ── Ollama (local server) ───────────────────────────────
         try:
-            ollama_config = get_ollama_config()
-            if str(ollama_config.server_url or "").strip():
+            ollama_config = get_openai_compat_config()
+            if str(ollama_config.base_url or "").strip():
                 ollama = CloudModelManagerAdapter(
                     provider_id="ollama",
                     config=ollama_config,
-                    provider_class=OllamaProvider,
-                    set_model_fn=set_ollama_model_name,
-                    get_config_fn=get_ollama_config,
+                    provider_class=OpenAICompatProvider,
+                    set_model_fn=_make_set_model("ollama"),
+                    get_config_fn=get_openai_compat_config,
                 )
                 # TRANSLATORS: Provider option in the model manager combo box.
                 result[_("Ollama")] = ("ollama", ollama)
@@ -237,22 +240,14 @@ class ModelManagerDialog(wx.Dialog):
 
         # ── OpenAI (cloud) ──────────────────────────────────────
         try:
-            openai_config = get_openai_config()
+            openai_config = get_openai_compat_config()
             if str(openai_config.api_key or "").strip():
-
-                def _set_openai_model(model_id: str) -> None:
-                    from ..config.settings import set_openai_config
-                    new_cfg = type(openai_config)(
-                        **{**vars(openai_config), "model_name": model_id},
-                    )
-                    set_openai_config(new_cfg)
-
                 openai_adapter = CloudModelManagerAdapter(
                     provider_id="openai",
                     config=openai_config,
-                    provider_class=OpenAIProvider,
-                    set_model_fn=_set_openai_model,
-                    get_config_fn=get_openai_config,
+                    provider_class=OpenAICompatProvider,
+                    set_model_fn=_make_set_model("openai"),
+                    get_config_fn=get_openai_compat_config,
                 )
                 # TRANSLATORS: Provider option in the model manager combo box.
                 result[_("OpenAI")] = ("openai", openai_adapter)
@@ -276,7 +271,7 @@ class ModelManagerDialog(wx.Dialog):
         _provider_id, provider = entry
         self._provider = provider
         if _provider_id == "litert-lm":
-            self._known_map = {m.filename: m for m in KNOWN_MODELS}
+            self._known_map = {m.filename: m for m in recommended_models()}
         else:
             self._known_map = {}
         self._refresh_model_list()
@@ -626,7 +621,7 @@ def open_model_manager(parent: wx.Window) -> None:
     """
     # Start with LiteRT-LM as the default provider; the dialog's
     # _discover_providers() populates the combo with all available.
-    config = get_litert_config()
-    provider = LiteRTLMProvider(config=config)
+    config = get_openai_compat_config()
+    provider = OpenAICompatProvider(config=config)
     dlg = ModelManagerDialog(gui.mainFrame, provider)
     dlg.Show()

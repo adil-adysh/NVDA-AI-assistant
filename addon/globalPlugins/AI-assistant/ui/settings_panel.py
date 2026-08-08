@@ -14,39 +14,33 @@ from ..config.settings import (
     get_generate_top_k,
     get_generate_top_p,
     get_generate_temperature,
-    get_gemini_config,
     get_image_format,
     get_image_quality,
     get_image_max_side,
     get_language,
-    get_litert_config,
     get_max_retries,
     get_num_ctx,
+    get_openai_compat_config,
     get_progress_enabled,
     get_provider,
-    get_ollama_config,
-    get_openai_config,
     get_request_metrics_log_path,
     get_request_metrics_logging_enabled,
     get_retry_backoff_seconds,
     get_streaming_enabled,
     get_timeout_seconds,
     get_streaming_tone_enabled,
-    set_gemini_config,
     set_image_format,
     set_image_max_side,
     set_image_quality,
     set_language,
-    set_litert_config,
-    set_ollama_config,
-    set_openai_config,
     set_num_ctx,
+    set_openai_compat_config,
     set_request_metrics_log_path,
     set_request_metrics_logging_enabled,
     set_streaming_enabled,
     set_streaming_tone_enabled,
 )
-from ..providers.config import GeminiConfig, LiteRTConfig, OllamaConfig, OpenAIConfig
+from ..providers.config import OpenAICompatConfig
 
 addonHandler.initTranslation()
 
@@ -59,9 +53,7 @@ class AIAssistantSettingsPanel(SettingsPanel):
         sHelper = guiHelper.BoxSizerHelper(self, sizer=settingsSizer)
 
         provider = get_provider()
-        ollama_config = get_ollama_config()
-        gemini_config = get_gemini_config()
-        openai_config = get_openai_config()
+        config = get_openai_compat_config()
         # TRANSLATORS: Provider option label for Ollama.
         # TRANSLATORS: Provider option label for Gemini.
         self._providerOptions = [("ollama", _("Ollama")), ("gemini", _("Gemini")), ("openai", _("OpenAI")), ("litert-lm", _("LiteRT-LM"))]
@@ -81,12 +73,12 @@ class AIAssistantSettingsPanel(SettingsPanel):
         self.providerChoice.Bind(wx.EVT_CHOICE, self._on_provider_choice)
         providerGroupHelper.addItem(self.providerChoice)
 
-        self.ollamaGroupSizer = self._build_ollama_settings(sHelper, ollama_config)
-        self.geminiGroupSizer = self._build_gemini_settings(sHelper, gemini_config)
-        self.openaiGroupSizer = self._build_openai_settings(sHelper, openai_config)
+        self.ollamaGroupSizer = self._build_ollama_settings(sHelper, config)
+        self.geminiGroupSizer = self._build_gemini_settings(sHelper, config)
+        self.openaiGroupSizer = self._build_openai_settings(sHelper, config)
         self.litertGroupSizer = self._build_litert_settings(sHelper)
         self.sharedGroupSizer = self._build_advanced_settings(sHelper)
-        self.ollamaExpertGroupSizer = self._build_ollama_expert_settings(sHelper, ollama_config)
+        self.ollamaExpertGroupSizer = self._build_ollama_expert_settings(sHelper, config)
         self._build_expert_settings(sHelper)
 
         self._update_provider_field_state()
@@ -131,7 +123,7 @@ class AIAssistantSettingsPanel(SettingsPanel):
                 return value
         return label
 
-    def _build_ollama_settings(self, parentHelper, config: OllamaConfig):
+    def _build_ollama_settings(self, parentHelper, config: OpenAICompatConfig):
         # TRANSLATORS: Section label for Ollama-specific settings.
         groupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Ollama Settings"))
         groupHelper = parentHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=groupSizer))
@@ -145,13 +137,7 @@ class AIAssistantSettingsPanel(SettingsPanel):
         self.ollamaServerUrlEdit = self._add_labeled_text_ctrl(
             groupHelper,
             _("Ollama server URL:"),
-            config.server_url or defaults.DEFAULT_OLLAMA_URL,
-        )
-        # TRANSLATORS: Label for the Ollama keep-alive duration setting.
-        self.ollamaKeepAliveEdit = self._add_labeled_text_ctrl(
-            groupHelper,
-            _("Keep-alive duration:"),
-            config.keep_alive or defaults.DEFAULT_KEEP_ALIVE,
+            config.base_url or defaults.DEFAULT_OLLAMA_URL,
         )
         # TRANSLATORS: Label for the Ollama context window size setting.
         self.ollamaNumCtxEdit = self._add_labeled_text_ctrl(
@@ -161,7 +147,7 @@ class AIAssistantSettingsPanel(SettingsPanel):
         )
         return groupSizer
 
-    def _build_gemini_settings(self, parentHelper, config: GeminiConfig):
+    def _build_gemini_settings(self, parentHelper, config: OpenAICompatConfig):
         # TRANSLATORS: Section label for Gemini-specific settings.
         groupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Gemini Settings"))
         groupHelper = parentHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=groupSizer))
@@ -177,12 +163,6 @@ class AIAssistantSettingsPanel(SettingsPanel):
             _("Gemini API key:"),
             config.api_key,
         )
-        # TRANSLATORS: Label for the optional Gemini API token setting.
-        self.geminiApiTokenEdit = self._add_labeled_text_ctrl(
-            groupHelper,
-            _("Gemini API token (optional):"),
-            config.api_token or "",
-        )
         # TRANSLATORS: Label for the Gemini base URL setting.
         self.geminiBaseUrlEdit = self._add_labeled_text_ctrl(
             groupHelper,
@@ -191,7 +171,7 @@ class AIAssistantSettingsPanel(SettingsPanel):
         )
         return groupSizer
 
-    def _build_openai_settings(self, parentHelper, config: OpenAIConfig):
+    def _build_openai_settings(self, parentHelper, config: OpenAICompatConfig):
         groupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("OpenAI Settings"))
         groupHelper = parentHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=groupSizer))
         self.openaiModelNameEdit = self._add_labeled_text_ctrl(
@@ -209,41 +189,30 @@ class AIAssistantSettingsPanel(SettingsPanel):
             _("OpenAI base URL:"),
             config.base_url or defaults.DEFAULT_OPENAI_BASE_URL,
         )
-        self.openaiChatPathEdit = self._add_labeled_text_ctrl(
-            groupHelper,
-            _("OpenAI chat endpoint path:"),
-            config.chat_path or defaults.DEFAULT_OPENAI_CHAT_PATH,
-        )
-        self.openaiMaxTokensEdit = self._add_labeled_text_ctrl(
-            groupHelper,
-            _("OpenAI max tokens:"),
-            str(config.generate_max_tokens if config.generate_max_tokens is not None else defaults.DEFAULT_GENERATE_MAX_TOKENS),
-        )
         return groupSizer
 
     def _build_litert_settings(self, parentHelper):
         # TRANSLATORS: Section label for LiteRT-LM-specific settings.
         groupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("LiteRT-LM Settings"))
         groupHelper = parentHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=groupSizer))
-        litert_config = get_litert_config()
+        litert_config = get_openai_compat_config()
         # TRANSLATORS: Label for the LiteRT-LM model name setting.
         self.litertModelNameEdit = self._add_labeled_text_ctrl(
             groupHelper,
             _("LiteRT-LM model name:"),
             litert_config.model_name or defaults.DEFAULT_LITERT_MODEL,
         )
+        # TRANSLATORS: Label for the LiteRT-LM server URL setting.
+        self.litertServerUrlEdit = self._add_labeled_text_ctrl(
+            groupHelper,
+            _("LiteRT-LM server URL:"),
+            litert_config.base_url or defaults.DEFAULT_LITERT_URL,
+        )
         # TRANSLATORS: Label for the LiteRT-LM context window size setting.
         self.litertNumCtxEdit = self._add_labeled_text_ctrl(
             groupHelper,
             _("LiteRT-LM context window size (may affect performance):"),
             str(get_num_ctx()),
-        )
-        # TRANSLATORS: Label for the LiteRT-LM backend selection.
-        self.litertBackendChoice = self._add_labeled_combo_box(
-            groupHelper,
-            _("LiteRT-LM backend:"),
-            ["cpu", "gpu"],
-            litert_config.backend or defaults.DEFAULT_LITERT_BACKEND,
         )
         return groupSizer
 
@@ -316,7 +285,7 @@ class AIAssistantSettingsPanel(SettingsPanel):
         self.streamingToneCheckbox.Value = get_streaming_tone_enabled()
         return groupSizer
 
-    def _build_ollama_expert_settings(self, parentHelper, config: OllamaConfig):
+    def _build_ollama_expert_settings(self, parentHelper, config: OpenAICompatConfig):
         # TRANSLATORS: Section label for experimental Ollama expert settings.
         groupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Ollama Expert Settings (Experimental)"))
         groupHelper = parentHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=groupSizer))
@@ -386,23 +355,60 @@ class AIAssistantSettingsPanel(SettingsPanel):
         return value
 
     def onSave(self):
-        ollamaModelName = self.ollamaModelNameEdit.Value.strip()
-        ollamaServerUrl = self.ollamaServerUrlEdit.Value.strip()
+        provider = self._selected_provider()
 
-        if self._selected_provider() == "ollama":
+        # Common field validation based on provider.
+        if provider == "ollama":
+            ollamaModelName = self.ollamaModelNameEdit.Value.strip()
+            ollamaServerUrl = self.ollamaServerUrlEdit.Value.strip()
             if not ollamaModelName:
-                # TRANSLATORS: Error shown when the Ollama model name field is empty.
                 self._show_error(_("Ollama model name cannot be empty"))
                 return
-
             if not ollamaServerUrl:
-                # TRANSLATORS: Error shown when the Ollama server URL field is empty.
                 self._show_error(_("Ollama server URL cannot be empty."))
                 return
+        elif provider == "gemini":
+            geminiModelName = self.geminiModelNameEdit.Value.strip()
+            geminiApiKey = self.geminiApiKeyEdit.Value.strip()
+            geminiBaseUrl = self.geminiBaseUrlEdit.Value.strip()
+            if not geminiModelName:
+                self._show_error(_("Gemini model name cannot be empty"))
+                return
+            if not geminiApiKey:
+                self._show_error(_("Gemini API key cannot be empty"))
+                return
+            if not geminiBaseUrl:
+                self._show_error(_("Gemini base URL cannot be empty."))
+                return
+        elif provider == "openai":
+            openaiModelName = self.openaiModelNameEdit.Value.strip()
+            openaiApiKey = self.openaiApiKeyEdit.Value.strip()
+            openaiBaseUrl = self.openaiBaseUrlEdit.Value.strip()
+            if not openaiModelName:
+                self._show_error(_("OpenAI model name cannot be empty"))
+                return
+            if not openaiApiKey:
+                self._show_error(_("OpenAI API key cannot be empty"))
+                return
+            if not openaiBaseUrl:
+                self._show_error(_("OpenAI base URL cannot be empty."))
+                return
+        elif provider == "litert-lm":
+            litertModelName = self.litertModelNameEdit.Value.strip()
+            if not litertModelName:
+                self._show_error(_("LiteRT-LM model name cannot be empty"))
+                return
+            litertNumCtx = self._parse_int(
+                self.litertNumCtxEdit,
+                _("Context window size must be an integer of at least 256."),
+                minimum=256,
+            )
+            if litertNumCtx is None:
+                return
+            set_num_ctx(litertNumCtx)
 
         timeoutSeconds = self._parse_float(
             self.timeoutSecondsEdit,
-            # TRANSLATORS: Error shown when timeout is invalid.
             _("Timeout seconds must be a positive number."),
             minimum=0.000001,
         )
@@ -411,7 +417,6 @@ class AIAssistantSettingsPanel(SettingsPanel):
 
         temperature = self._parse_float(
             self.temperatureEdit,
-            # TRANSLATORS: Error shown when temperature is invalid.
             _("Generate temperature must be a non-negative number."),
             minimum=0.0,
         )
@@ -420,7 +425,6 @@ class AIAssistantSettingsPanel(SettingsPanel):
 
         topK = self._parse_int(
             self.topKEdit,
-            # TRANSLATORS: Error shown when top-k value is invalid.
             _("Top-k sampling must be a non-negative integer."),
             minimum=0,
         )
@@ -429,7 +433,6 @@ class AIAssistantSettingsPanel(SettingsPanel):
 
         topP = self._parse_float(
             self.topPEdit,
-            # TRANSLATORS: Error shown when top-p value is invalid.
             _("Top-p sampling must be a non-negative number."),
             minimum=0.0,
         )
@@ -440,7 +443,6 @@ class AIAssistantSettingsPanel(SettingsPanel):
 
         imageMaxSide = self._parse_int(
             self.imageMaxSideEdit,
-            # TRANSLATORS: Error shown when image max side is invalid.
             _("Image max side length must be an integer of at least 128."),
             minimum=128,
         )
@@ -449,185 +451,79 @@ class AIAssistantSettingsPanel(SettingsPanel):
 
         imageFormatIndex = self.imageFormatChoice.GetSelection()
         if imageFormatIndex < 0 or imageFormatIndex >= 2:
-            # TRANSLATORS: Error shown when an unsupported image format is selected.
             self._show_error(_("Image format must be PNG or JPEG."))
             return
         imageFormat = ["PNG", "JPEG"][imageFormatIndex]
 
         imageQuality = self._parse_int(
             self.imageQualityEdit,
-            # TRANSLATORS: Error shown when image quality is invalid.
             _("Image quality must be an integer between 1 and 100."),
             minimum=1,
         )
         if imageQuality is None or imageQuality > 100:
-            # TRANSLATORS: Error shown when image quality is outside the supported range.
             self._show_error(_("Image quality must be an integer between 1 and 100."))
             return
 
         requestMetricsLoggingEnabled = self.requestMetricsLoggingCheckbox.Value
         requestMetricsLogPath = self.requestMetricsLogPathEdit.Value.strip()
         if requestMetricsLoggingEnabled and not requestMetricsLogPath:
-            # TRANSLATORS: Error shown when metrics logging is enabled but no path is entered.
             self._show_error(_("Metrics log file path cannot be empty when logging is enabled."))
             return
 
-        provider = self._selected_provider()
+        # Build unified config based on provider.
+        model_name = ""
+        base_url = ""
+        api_key = ""
 
         if provider == "ollama":
-            ollamaKeepAlive = self.ollamaKeepAliveEdit.Value.strip()
+            model_name = self.ollamaModelNameEdit.Value.strip()
+            base_url = self.ollamaServerUrlEdit.Value.strip()
             ollamaNumCtx = self._parse_int(
                 self.ollamaNumCtxEdit,
-                # TRANSLATORS: Error shown when Ollama context window size is invalid.
                 _("Context window size must be an integer of at least 256."),
                 minimum=256,
             )
             if ollamaNumCtx is None:
                 return
-
-            presencePenalty = self._parse_float(
-                self.presencePenaltyEdit,
-                # TRANSLATORS: Error shown when repetition penalty value is invalid.
-                _("Repetition penalty must be a number."),
-            )
-            if presencePenalty is None:
-                return
-
-            config = OllamaConfig(
-                provider="ollama",
-                model_name=ollamaModelName,
-                timeout_seconds=timeoutSeconds,
-                enable_progress=self.progressCheckbox.Value,
-                num_ctx=ollamaNumCtx,
-                max_retries=get_max_retries(),
-                retry_backoff_seconds=get_retry_backoff_seconds(),
-                generate_temperature=temperature,
-                generate_top_k=topK,
-                generate_top_p=topP,
-                generate_max_tokens=maxTokens,
-                generate_presence_penalty=presencePenalty,
-                server_url=ollamaServerUrl,
-                keep_alive=ollamaKeepAlive,
-                think=self.ollamaThinkCheckbox.Value,
-            )
-            set_ollama_config(config)
+            num_ctx = ollamaNumCtx
         elif provider == "gemini":
-            geminiModelName = self.geminiModelNameEdit.Value.strip()
-            geminiApiKey = self.geminiApiKeyEdit.Value.strip()
-            geminiApiToken = self.geminiApiTokenEdit.Value.strip()
-            geminiBaseUrl = self.geminiBaseUrlEdit.Value.strip()
-
-            if not geminiModelName:
-                # TRANSLATORS: Error shown when the Gemini model name field is empty.
-                self._show_error(_("Gemini model name cannot be empty"))
-                return
-            if not geminiApiKey:
-                # TRANSLATORS: Error shown when the Gemini API key field is empty.
-                self._show_error(_("Gemini API key cannot be empty"))
-                return
-            if not geminiBaseUrl:
-                # TRANSLATORS: Error shown when the Gemini base URL field is empty.
-                self._show_error(_("Gemini base URL cannot be empty."))
-                return
-
-            current_config = get_gemini_config()
-            config = GeminiConfig(
-                provider="gemini",
-                model_name=geminiModelName,
-                timeout_seconds=timeoutSeconds,
-                enable_progress=self.progressCheckbox.Value,
-                num_ctx=current_config.num_ctx,
-                max_retries=get_max_retries(),
-                retry_backoff_seconds=get_retry_backoff_seconds(),
-                generate_temperature=temperature,
-                generate_top_k=topK,
-                generate_top_p=topP,
-                generate_max_tokens=maxTokens,
-                api_key=geminiApiKey,
-                api_token=geminiApiToken or None,
-                base_url=geminiBaseUrl,
-            )
-            set_gemini_config(config)
+            model_name = self.geminiModelNameEdit.Value.strip()
+            base_url = self.geminiBaseUrlEdit.Value.strip()
+            api_key = self.geminiApiKeyEdit.Value.strip()
+            num_ctx = get_num_ctx()
         elif provider == "openai":
-            openaiModelName = self.openaiModelNameEdit.Value.strip()
-            openaiApiKey = self.openaiApiKeyEdit.Value.strip()
-            openaiBaseUrl = self.openaiBaseUrlEdit.Value.strip()
-            openaiChatPath = self.openaiChatPathEdit.Value.strip()
-
-            if not openaiModelName:
-                self._show_error(_("OpenAI model name cannot be empty"))
-                return
-            if not openaiApiKey:
-                self._show_error(_("OpenAI API key cannot be empty"))
-                return
-            if not openaiBaseUrl:
-                self._show_error(_("OpenAI base URL cannot be empty."))
-                return
-            if not openaiChatPath:
-                self._show_error(_("OpenAI chat endpoint path cannot be empty."))
-                return
-
-            openaiMaxTokens = self._parse_int(
-                self.openaiMaxTokensEdit,
-                _("OpenAI max tokens must be an integer of at least 1."),
-                minimum=1,
-            )
-            if openaiMaxTokens is None:
-                return
-
-            config = OpenAIConfig(
-                provider="openai",
-                model_name=openaiModelName,
-                timeout_seconds=timeoutSeconds,
-                enable_progress=self.progressCheckbox.Value,
-                num_ctx=get_num_ctx(),
-                max_retries=get_max_retries(),
-                retry_backoff_seconds=get_retry_backoff_seconds(),
-                generate_temperature=temperature,
-                generate_top_k=topK,
-                generate_top_p=topP,
-                generate_max_tokens=openaiMaxTokens,
-                api_key=openaiApiKey,
-                base_url=openaiBaseUrl,
-                chat_path=openaiChatPath,
-                organization=None,
-            )
-            set_openai_config(config)
+            model_name = self.openaiModelNameEdit.Value.strip()
+            base_url = self.openaiBaseUrlEdit.Value.strip()
+            api_key = self.openaiApiKeyEdit.Value.strip()
+            num_ctx = get_num_ctx()
         else:  # litert-lm
-            litertModelName = self.litertModelNameEdit.Value.strip()
+            model_name = self.litertModelNameEdit.Value.strip()
+            base_url = self.litertServerUrlEdit.Value.strip()
+            num_ctx = get_num_ctx()
 
-            if not litertModelName:
-                self._show_error(_("LiteRT-LM model name cannot be empty"))
-                return
+        if provider == "ollama":
+            think_widget = getattr(self, "ollamaThinkCheckbox", None)
+            think_value = think_widget.Value if think_widget is not None else False
+        else:
+            think_value = get_openai_compat_config().think
 
-            litertNumCtx = self._parse_int(
-                self.litertNumCtxEdit,
-                _("Context window size must be an integer of at least 256."),
-                minimum=256,
-            )
-            if litertNumCtx is None:
-                return
-
-            litertBackend = self.litertBackendChoice.GetStringSelection().strip().lower()
-            if litertBackend not in ("cpu", "gpu"):
-                litertBackend = defaults.DEFAULT_LITERT_BACKEND
-
-            config = LiteRTConfig(
-                provider="litert-lm",
-                model_name=litertModelName,
-                timeout_seconds=timeoutSeconds,
-                enable_progress=self.progressCheckbox.Value,
-                num_ctx=litertNumCtx,
-                max_retries=get_max_retries(),
-                retry_backoff_seconds=get_retry_backoff_seconds(),
-                generate_temperature=temperature,
-                generate_top_k=topK,
-                generate_top_p=topP,
-                generate_max_tokens=maxTokens,
-                backend=litertBackend,
-            )
-            set_litert_config(config)
-            set_num_ctx(litertNumCtx)
+        config = OpenAICompatConfig(
+            provider=provider,
+            model_name=model_name,
+            base_url=base_url,
+            api_key=api_key,
+            timeout_seconds=timeoutSeconds,
+            enable_progress=self.progressCheckbox.Value,
+            num_ctx=num_ctx,
+            max_retries=get_max_retries(),
+            retry_backoff_seconds=get_retry_backoff_seconds(),
+            generate_temperature=temperature,
+            generate_top_k=topK,
+            generate_top_p=topP,
+            generate_max_tokens=maxTokens,
+            think=think_value,
+        )
+        set_openai_compat_config(config)
 
         set_image_max_side(imageMaxSide)
         set_image_format(imageFormat)
@@ -677,8 +573,8 @@ class AIAssistantSettingsPanel(SettingsPanel):
         self.openaiChatPathEdit.Enable(is_openai)
         self.openaiMaxTokensEdit.Enable(is_openai)
         self.litertModelNameEdit.Enable(is_litert)
+        self.litertServerUrlEdit.Enable(is_litert)
         self.litertNumCtxEdit.Enable(is_litert)
-        self.litertBackendChoice.Enable(is_litert)
         self.presencePenaltyEdit.Enable(is_ollama)
         self.ollamaThinkCheckbox.Enable(is_ollama)
 

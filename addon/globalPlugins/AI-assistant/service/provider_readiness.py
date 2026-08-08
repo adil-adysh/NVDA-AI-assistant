@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from enum import Enum
 
 from ..config.settings import get_active_provider_config
-from ..providers.config import GeminiConfig, LiteRTConfig, OllamaConfig, OpenAIConfig, ProviderConfig
+from ..providers.config import ProviderConfig
+from ..providers.runtime.server import get_litert_supervisor
 
 
 class ProviderReadinessState(str, Enum):
@@ -69,93 +70,103 @@ class ProviderReadiness:
 
 class ProviderReadinessService:
 	def evaluate(self, config: ProviderConfig) -> ProviderReadiness:
-		if isinstance(config, OllamaConfig):
-			return self._evaluate_ollama(config)
-		if isinstance(config, GeminiConfig):
-			return self._evaluate_gemini(config)
-		if isinstance(config, OpenAIConfig):
-			return self._evaluate_openai(config)
-		if isinstance(config, LiteRTConfig):
-			return self._evaluate_litert(config)
-		raise ValueError(f"Unsupported provider config type: {type(config).__name__}")
-
-	def evaluate_active(self) -> ProviderReadiness:
-		return self.evaluate(get_active_provider_config())
-
-	def _evaluate_ollama(self, config: OllamaConfig) -> ProviderReadiness:
+		provider = str(config.provider or "").strip().lower()
 		model_name = str(config.model_name or "").strip()
-		server_url = str(config.server_url or "").strip()
+		base_url = str(getattr(config, "base_url", "") or "").strip()
+		api_key = str(getattr(config, "api_key", "") or "").strip()
+
 		if not model_name:
+			can_list = provider in {"litert-lm", "ollama", "openai", "gemini"}
 			return ProviderReadiness(
 				provider=config.provider,
 				state=ProviderReadinessState.UNCONFIGURED,
 				reason=ProviderReadinessReason.MISSING_MODEL,
 				can_infer=False,
-				can_list_models=bool(server_url),
+				can_list_models=can_list or bool(base_url),
 			)
-		if not server_url:
-			return ProviderReadiness(
-				provider=config.provider,
-				state=ProviderReadinessState.UNCONFIGURED,
-				reason=ProviderReadinessReason.MISSING_SERVER_URL,
-				can_infer=False,
-				can_list_models=False,
-			)
-		return ProviderReadiness(
-			provider=config.provider,
-			state=ProviderReadinessState.READY,
-			reason=None,
-			can_infer=True,
-			can_list_models=True,
-		)
 
-	def _evaluate_gemini(self, config: GeminiConfig) -> ProviderReadiness:
-		model_name = str(config.model_name or "").strip()
-		base_url = str(config.base_url or "").strip()
-		api_key = str(config.api_key or "").strip()
-		api_token = str(config.api_token or "").strip()
-		if not model_name:
-			return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_MODEL)
-		if not base_url:
-			return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_BASE_URL)
-		if not api_key and not api_token:
-			return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_CREDENTIALS)
-		if is_gemini_generate_content_incompatible_model_name(model_name):
+		# LiteRT: local server must be healthy.
+		if provider == "litert-lm":
+			supervisor = get_litert_supervisor()
+			if not supervisor.is_running and not supervisor.is_healthy():
+				return ProviderReadiness(
+					provider=config.provider,
+					state=ProviderReadinessState.UNCONFIGURED,
+					reason=ProviderReadinessReason.MISSING_SERVER_URL,
+					can_infer=False,
+					can_list_models=False,
+				)
 			return ProviderReadiness(
 				provider=config.provider,
-				state=ProviderReadinessState.INVALID_CONFIG,
-				reason=ProviderReadinessReason.UNSUPPORTED_MODEL,
-				can_infer=False,
+				state=ProviderReadinessState.READY,
+				reason=None,
+				can_infer=True,
 				can_list_models=True,
 			)
-		return ProviderReadiness(
-			provider=config.provider,
-			state=ProviderReadinessState.READY,
-			reason=None,
-			can_infer=True,
-			can_list_models=True,
-		)
 
-	def _evaluate_openai(self, config: OpenAIConfig) -> ProviderReadiness:
-		model_name = str(config.model_name or "").strip()
-		base_url = str(config.base_url or "").strip()
-		chat_path = str(config.chat_path or "").strip()
-		api_key = str(config.api_key or "").strip()
-		if not model_name:
-			return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_MODEL)
-		if not base_url:
-			return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_BASE_URL)
-		if not chat_path:
-			return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_CHAT_PATH)
-		if not api_key:
-			return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_CREDENTIALS)
-		return ProviderReadiness(
-			provider=config.provider,
-			state=ProviderReadinessState.READY,
-			reason=None,
-			can_infer=True,
-			can_list_models=True,
-		)
+		# Ollama: needs server URL, no credentials.
+		if provider == "ollama":
+			if not base_url:
+				return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_SERVER_URL)
+			return ProviderReadiness(
+				provider=config.provider,
+				state=ProviderReadinessState.READY,
+				reason=None,
+				can_infer=True,
+				can_list_models=True,
+			)
+
+		# Gemini: needs base URL + credentials (API key or bearer token).
+		if provider == "gemini":
+			if not base_url:
+				return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_BASE_URL)
+			api_token = str(getattr(config, "api_token", "") or "").strip()
+			if not api_key and not api_token:
+				return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_CREDENTIALS)
+			if is_gemini_generate_content_incompatible_model_name(model_name):
+				return ProviderReadiness(
+					provider=config.provider,
+					state=ProviderReadinessState.INVALID_CONFIG,
+					reason=ProviderReadinessReason.UNSUPPORTED_MODEL,
+					can_infer=False,
+					can_list_models=True,
+				)
+			return ProviderReadiness(
+				provider=config.provider,
+				state=ProviderReadinessState.READY,
+				reason=None,
+				can_infer=True,
+				can_list_models=True,
+			)
+
+		# OpenAI / generic: needs base URL + API key.
+		if provider in {"openai", "openai_compat"} or not provider:
+			if not base_url:
+				return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_BASE_URL)
+			if not api_key and provider != "openai_compat":
+				return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_CREDENTIALS)
+			return ProviderReadiness(
+				provider=config.provider,
+				state=ProviderReadinessState.READY,
+				reason=None,
+				can_infer=True,
+				can_list_models=True,
+			)
+
+		# Unknown provider: assume ready if model + URL present.
+		if model_name and base_url:
+			return ProviderReadiness(
+				provider=config.provider,
+				state=ProviderReadinessState.READY,
+				reason=None,
+				can_infer=True,
+				can_list_models=True,
+			)
+
+		raise ValueError(f"Unsupported provider config type: {type(config).__name__}")
+
+	def evaluate_active(self) -> ProviderReadiness:
+		return self.evaluate(get_active_provider_config())
 
 	def _unconfigured(self, provider: str, reason: ProviderReadinessReason) -> ProviderReadiness:
 		return ProviderReadiness(
@@ -164,23 +175,4 @@ class ProviderReadinessService:
 			reason=reason,
 			can_infer=False,
 			can_list_models=False,
-		)
-
-	def _evaluate_litert(self, config: LiteRTConfig) -> ProviderReadiness:
-		model_name = str(config.model_name or "").strip()
-		if not model_name:
-			# Model not configured — can still list known models, can't infer.
-			return ProviderReadiness(
-				provider=config.provider,
-				state=ProviderReadinessState.UNCONFIGURED,
-				reason=ProviderReadinessReason.MISSING_MODEL,
-				can_infer=False,
-				can_list_models=True,  # known litert-lm models are always listable
-			)
-		return ProviderReadiness(
-			provider=config.provider,
-			state=ProviderReadinessState.READY,
-			reason=None,
-			can_infer=True,
-			can_list_models=True,
 		)

@@ -351,12 +351,12 @@ def _filter_available_models(
 		return available_models  # First run — nothing disabled yet
 
 	if provider == "litert-lm":
-		from ..providers.litert_models import KNOWN_MODELS
+		from ..providers.litert_models import ALL_MODELS
 		from ..providers.runtime.model_download import ModelDownloadService
 
 		# available_models uses model_id (e.g. "litert-community/gemma-4-E2B-it-litert-lm")
 		# but enabled_ids and download check use model.filename.
-		known_map = {m.model_id: m for m in KNOWN_MODELS}
+		known_map = {m.model_id: m for m in ALL_MODELS}
 		svc = ModelDownloadService()
 
 		filtered: list[str] = []

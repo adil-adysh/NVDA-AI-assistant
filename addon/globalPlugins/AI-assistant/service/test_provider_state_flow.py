@@ -73,6 +73,7 @@ settings_module = types.ModuleType(f"{PACKAGE_NAME}.config.settings")
 settings_module.get_active_provider_config = _get_active_provider_config
 settings_module.get_provider_state = _get_provider_state
 settings_module.get_ollama_think = lambda: False
+settings_module.get_litert_think = lambda: False
 sys.modules[settings_module.__name__] = settings_module
 
 state_module = types.ModuleType(f"{PACKAGE_NAME}.config.state")
