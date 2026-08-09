@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+# Pylint cannot infer attributes assigned to types.ModuleType() fakes used
+# to stub NVDA-internal modules (E1101 ``__name__`` false positives).
+# pylint: disable=no-member
 from __future__ import annotations
 
 import importlib.util
@@ -107,7 +110,7 @@ class StreamingToneProgressTests(unittest.TestCase):
 
 		base_module.is_progress_enabled = lambda: False
 		base_module.nvda_ui.play_streaming_tone = lambda: tone_calls.append("tone")
-		base_module.nvda_ui.message = lambda text: message_calls.append(text)
+		base_module.nvda_ui.message = message_calls.append
 
 		coordinator = _TestCoordinator()
 

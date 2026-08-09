@@ -14,8 +14,10 @@ class HostTransport(Protocol):
 
 
 class UIHostRenderer(ABC):
+	# The renderer interface signature is the protocol contract shared by
+	# every host renderer; the parameter set is dictated by the protocol.
 	@abstractmethod
-	def render_display_result(
+	def render_display_result(  # pylint: disable=too-many-arguments,too-many-positional-arguments
 		self,
 		use_case_id: str | None,
 		title: str,

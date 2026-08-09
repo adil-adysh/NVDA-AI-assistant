@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+# Pylint cannot infer attributes assigned to types.ModuleType() fakes used
+# to stub NVDA-internal modules (E1101 ``__name__`` false positives).
+# pylint: disable=no-member
 from __future__ import annotations
 
 import importlib.util

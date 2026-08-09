@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from .candidate_base import CandidateExtractionContext
+from .candidate_base import CandidateExtractionContext, is_usable_tree_interceptor
 
 try:
 	import treeInterceptorHandler

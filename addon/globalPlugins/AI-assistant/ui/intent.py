@@ -100,7 +100,7 @@ def build_display_presentation(
 	presentation: DisplayPresentationIntent = {
 		"variant": variant,
 		"toolbar": {
-			"actions": [action for action in toolbar_actions],
+			"actions": list(toolbar_actions),
 			"placement": toolbar_placement,
 		},
 	}

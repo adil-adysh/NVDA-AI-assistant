@@ -12,18 +12,18 @@ from pathlib import Path
 
 
 def get_runtime_dir() -> Path:
-    """Return the root directory for downloaded runtimes.
+	"""Return the root directory for downloaded runtimes.
 
-    Resolves to: %APPDATA%/nvda/AIAssistant/runtimes/
-    """
-    appdata = os.getenv("APPDATA")
-    base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
-    return base / "nvda" / "AIAssistant" / "runtimes"
+	Resolves to: %APPDATA%/nvda/AIAssistant/runtimes/
+	"""
+	appdata = os.getenv("APPDATA")
+	base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+	return base / "nvda" / "AIAssistant" / "runtimes"
 
 
 def get_runtime_path(runtime_type: str, version: str) -> Path:
-    """Return the path for a specific runtime version.
+	"""Return the path for a specific runtime version.
 
-    Example: %APPDATA%/nvda/AIAssistant/runtimes/litert-lm/0.15.0/
-    """
-    return get_runtime_dir() / runtime_type / version
+	Example: %APPDATA%/nvda/AIAssistant/runtimes/litert-lm/0.15.0/
+	"""
+	return get_runtime_dir() / runtime_type / version

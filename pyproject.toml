@@ -159,3 +159,108 @@ reportMissingTypeStubs = false
 
 # Bad rules
 # These are sorted alphabetically and should be enabled and moved to compliant rules section when resolved.
+
+[tool.pylint.main]
+py-version = "3.13"
+recursive = true
+
+[tool.pylint.messages_control]
+disable = [
+	# Ruff already handles these areas.
+	"line-too-long",
+	"trailing-whitespace",
+	"missing-final-newline",
+
+	# Too noisy for this project initially.
+	"missing-module-docstring",
+	"missing-class-docstring",
+	"missing-function-docstring",
+
+	# Naming/style overlap with Ruff.
+	"invalid-name",
+
+	# Pylint's generic warnings about too-few-public-methods
+	# are often inappropriate for small utility/data classes.
+	"too-few-public-methods",
+
+	# Lazy imports inside functions are a deliberate NVDA add-on pattern
+	# to keep startup imports cheap; Pyright still type-checks them.
+	"import-outside-toplevel",
+
+	# Protocol method stubs use ``...`` as their body (PEP 544);
+	# Pylint treats the ellipsis as redundant next to the docstring.
+	"unnecessary-ellipsis",
+]
+
+[tool.pylint.format]
+max-line-length = 110
+
+# The project uses tabs for indentation (see [tool.ruff.format] indent-style).
+indent-string = "\t"
+
+[tool.pylint.design]
+# Thresholds are tuned to this codebase's actual design norms:
+# NVDA settings panels accumulate controls as instance attributes, UI
+# plumbing methods legitimately carry many parameters, and stream/retry
+# loops need more locals/branches than a generic limit would allow.
+# Genuinely extreme methods are suppressed in-file with a justification.
+max-args = 10
+max-attributes = 20
+max-bool-expr = 5
+max-branches = 25
+max-locals = 25
+max-parents = 7
+max-positional-arguments = 10
+max-public-methods = 25
+max-returns = 10
+max-statements = 80
+
+[tool.pylint.variables]
+additional-builtins = [
+	# translation lookup
+	"_",
+	# translation lookup
+	"ngettext",
+	# translation lookup
+	"pgettext",
+	# translation lookup
+	"npgettext",
+]
+
+[tool.pylint.imports]
+known-standard-library = []
+
+[tool.pylint.typecheck]
+# NVDA-internal modules and third-party runtime dependencies are only
+# importable inside NVDA's embedded Python, not the dev interpreter.
+# Pyright (extraPaths + strict) is the source of truth for types here.
+ignored-modules = [
+	"addonHandler",
+	"api",
+	"controlTypes",
+	"globalPluginHandler",
+	"gui",
+	"gui.settingsDialogs",
+	"languageHandler",
+	"latex2mathml.converter",
+	"locationHelper",
+	"logHandler",
+	"queueHandler",
+	"scriptHandler",
+	"textInfos",
+	"tones",
+	"treeInterceptorHandler",
+	"ui",
+	"winUser",
+	"wx",
+]
+
+# Pylint cannot infer the dynamically generated PIL constants
+# (e.g. Image.LANCZOS is an enum alias set at import time) and cannot
+# introspect pywin32 C-extension members (win32pipe/win32file) from source.
+extension-pkg-allow-list = [
+	"PIL",
+	"win32file",
+	"win32pipe",
+]
+generated-members = ["LANCZOS"]

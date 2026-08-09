@@ -263,11 +263,17 @@ def _get_openai_endpoint_paths(provider: str) -> tuple[str, str]:
 # Unified config builder
 # ---------------------------------------------------------------------------
 
-def get_openai_compat_config() -> "OpenAICompatConfig":
-	"""Build a unified OpenAICompatConfig from the active provider's YAML keys."""
+def build_provider_config(provider: str) -> "OpenAICompatConfig":
+	"""Build a unified ``OpenAICompatConfig`` for *provider* from its YAML keys.
+
+	Unlike :func:`get_openai_compat_config` (which always returns the
+	config for the *active* provider), this builds the config for any
+	provider by reading its own per-provider YAML keys.  This is needed
+	by the model manager dialog, which manages providers other than the
+	active one.
+	"""
 	from ..providers.config import OpenAICompatConfig
 
-	provider = get_provider()
 	chat_path, models_path = _get_openai_endpoint_paths(provider)
 	return OpenAICompatConfig(
 		provider=provider,
@@ -288,6 +294,11 @@ def get_openai_compat_config() -> "OpenAICompatConfig":
 		generate_max_tokens=get_generate_max_tokens(),
 		think=_get_think_for(provider),
 	)
+
+
+def get_openai_compat_config() -> "OpenAICompatConfig":
+	"""Build a unified OpenAICompatConfig from the active provider's YAML keys."""
+	return build_provider_config(get_provider())
 
 
 # Legacy config builders (dispatch to unified)

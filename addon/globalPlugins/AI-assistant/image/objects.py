@@ -18,14 +18,13 @@ def get_object_safe(source: str = "foreground") -> Any | None:
 	try:
 		if source == "desktop":
 			return api.getDesktopObject()
-		elif source == "foreground":
+		if source == "foreground":
 			return api.getForegroundObject()
-		elif source == "focus":
+		if source == "focus":
 			return api.getFocusObject()
-		elif source == "navigator":
+		if source == "navigator":
 			return api.getNavigatorObject()
-		else:
-			return None
+		return None
 	except Exception:
 		return None
 

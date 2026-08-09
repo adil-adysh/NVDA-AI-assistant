@@ -21,184 +21,181 @@ from ..use_case.engine import UseCaseEngine
 from ..use_case.types import UseCaseId
 
 if TYPE_CHECKING:
-    from ..providers.runtime.server import LiteRTServerSupervisor
+	from ..providers.runtime.server import LiteRTServerSupervisor
 
 
 _litert_readiness_lock = threading.Lock()
 
 
 def ensure_litert_server_ready(on_progress: Callable[[str], None] | None = None) -> None:
-    """Auto-start the LiteRT-LM server if the active provider is litert-lm.
+	"""Auto-start the LiteRT-LM server if the active provider is litert-lm.
 
-    This is a standalone function so it can be called from both the
-    background task runner and the WebView chat adapter.
+	This is a standalone function so it can be called from both the
+	background task runner and the WebView chat adapter.
 
-    The server process starts quickly (~2s) without pre-loading a model.
-    The model is loaded lazily by the server on the first inference request.
+	The server process starts quickly (~2s) without pre-loading a model.
+	The model is loaded lazily by the server on the first inference request.
 
-    Args:
-        on_progress: Optional callback receiving status message strings.
+	Args:
+	    on_progress: Optional callback receiving status message strings.
 
-    Raises:
-        LiteRTServerError: If the server cannot be started, fails to
-            become healthy, or the configured model cannot be imported.
-    """
-    provider = get_provider()
-    log.debug("ensure_litert_server_ready: active provider=%s", provider)
-    if provider != "litert-lm":
-        log.debug("ensure_litert_server_ready: skipping — not litert-lm")
-        return
+	Raises:
+	    LiteRTServerError: If the server cannot be started, fails to
+	        become healthy, or the configured model cannot be imported.
+	"""
+	provider = get_provider()
+	log.debug("ensure_litert_server_ready: active provider=%s", provider)
+	if provider != "litert-lm":
+		log.debug("ensure_litert_server_ready: skipping — not litert-lm")
+		return
 
-    # Preload and chat can start at the same time. Serialize the blocking
-    # health/start/import sequence, but only on worker threads.
-    with _litert_readiness_lock:
-        _ensure_litert_server_ready_locked(on_progress=on_progress)
+	# Preload and chat can start at the same time. Serialize the blocking
+	# health/start/import sequence, but only on worker threads.
+	with _litert_readiness_lock:
+		_ensure_litert_server_ready_locked(on_progress=on_progress)
 
 
 def _ensure_litert_server_ready_locked(
-    on_progress: Callable[[str], None] | None = None,
+	on_progress: Callable[[str], None] | None = None,
 ) -> None:
-    supervisor = get_litert_supervisor()
-    healthy = supervisor.is_healthy()
-    log.debug(
-        "ensure_litert_server_ready: supervisor is_running=%s is_healthy=%s is_installed=%s",
-        supervisor.is_running,
-        healthy,
-        supervisor.is_installed,
-    )
+	supervisor = get_litert_supervisor()
+	healthy = supervisor.is_healthy()
+	log.debug(
+		"ensure_litert_server_ready: supervisor is_running=%s is_healthy=%s is_installed=%s",
+		supervisor.is_running,
+		healthy,
+		supervisor.is_installed,
+	)
 
-    if supervisor.is_running and healthy:
-        log.debug("ensure_litert_server_ready: server already healthy")
-        # A healthy HTTP process does not imply that the selected model is
-        # present.  Validate the registry on every provider/model switch.
-        _ensure_model_imported(supervisor, on_progress=on_progress)
-        return
+	if supervisor.is_running and healthy:
+		log.debug("ensure_litert_server_ready: server already healthy")
+		# A healthy HTTP process does not imply that the selected model is
+		# present.  Validate the registry on every provider/model switch.
+		_ensure_model_imported(supervisor, on_progress=on_progress)
+		return
 
-    # After an NVDA restart we lose the process handle but the server may
-    # still be alive on the port.  Treat a reachable healthy server as ready
-    # even when we do not own the process — a new bind would fail anyway.
-    if healthy:
-        log.debug(
-            "ensure_litert_server_ready: server is healthy at %s "
-            "(process handle lost after restart); reusing",
-            supervisor.base_url,
-        )
-        supervisor.adopt()
-        _ensure_model_imported(supervisor, on_progress=on_progress)
-        return
+	# After an NVDA restart we lose the process handle but the server may
+	# still be alive on the port.  Treat a reachable healthy server as ready
+	# even when we do not own the process — a new bind would fail anyway.
+	if healthy:
+		log.debug(
+			"ensure_litert_server_ready: server is healthy at %s "
+			"(process handle lost after restart); reusing",
+			supervisor.base_url,
+		)
+		supervisor.adopt()
+		_ensure_model_imported(supervisor, on_progress=on_progress)
+		return
 
-    if not supervisor.is_installed:
-        log.warning("ensure_litert_server_ready: runtime not installed")
-        raise LiteRTServerError(
-            "LiteRT-LM runtime is not installed. "
-            "Please download it from the AI Assistant settings panel."
-        )
+	if not supervisor.is_installed:
+		log.warning("ensure_litert_server_ready: runtime not installed")
+		raise LiteRTServerError(
+			"LiteRT-LM runtime is not installed. Please download it from the AI Assistant settings panel."
+		)
 
-    log.debug("ensure_litert_server_ready: starting LiteRT server...")
-    supervisor.start(
-        on_progress=on_progress,
-    )
-    log.debug("ensure_litert_server_ready: server process started, waiting for ready...")
+	log.debug("ensure_litert_server_ready: starting LiteRT server...")
+	supervisor.start(
+		on_progress=on_progress,
+	)
+	log.debug("ensure_litert_server_ready: server process started, waiting for ready...")
 
-    ready = supervisor.wait_until_ready(
-        timeout=60.0,
-        on_progress=on_progress,
-    )
-    if ready:
-        log.debug("ensure_litert_server_ready: server is ready at %s", supervisor.base_url)
-    else:
-        log.error("ensure_litert_server_ready: server did not become ready within timeout")
-        raise LiteRTServerError(
-            "LiteRT-LM server did not become ready in time. "
-            "Check the server logs for details."
-        )
+	ready = supervisor.wait_until_ready(
+		timeout=60.0,
+		on_progress=on_progress,
+	)
+	if ready:
+		log.debug("ensure_litert_server_ready: server is ready at %s", supervisor.base_url)
+	else:
+		log.error("ensure_litert_server_ready: server did not become ready within timeout")
+		raise LiteRTServerError(
+			"LiteRT-LM server did not become ready in time. Check the server logs for details."
+		)
 
-    # Ensure the configured model is registered with the server.
-    _ensure_model_imported(supervisor, on_progress=on_progress)
+	# Ensure the configured model is registered with the server.
+	_ensure_model_imported(supervisor, on_progress=on_progress)
 
 
 def _ensure_model_imported(
-    supervisor: LiteRTServerSupervisor,
-    on_progress: Callable[[str], None] | None = None,
+	supervisor: LiteRTServerSupervisor,
+	on_progress: Callable[[str], None] | None = None,
 ) -> None:
-    """Check that the configured model is registered in the server catalog.
+	"""Check that the configured model is registered in the server catalog.
 
-    If the model file exists locally but is not yet imported, run
-    ``litert-lm import`` to register it.  If the file is missing,
-    raise an error directing the user to the model manager.
-    """
-    model_id = get_model_name()
-    if not model_id:
-        raise LiteRTServerError(
-            "No model configured for LiteRT-LM. "
-            "Please select a model in the AI Assistant settings."
-        )
+	If the model file exists locally but is not yet imported, run
+	``litert-lm import`` to register it.  If the file is missing,
+	raise an error directing the user to the model manager.
+	"""
+	model_id = get_model_name()
+	if not model_id:
+		raise LiteRTServerError(
+			"No model configured for LiteRT-LM. Please select a model in the AI Assistant settings."
+		)
 
-    server_models = supervisor.list_server_models()
-    log.debug(
-        "_ensure_model_imported: model_id=%s server_models=%s",
-        model_id,
-        server_models,
-    )
+	server_models = supervisor.list_server_models()
+	log.debug(
+		"_ensure_model_imported: model_id=%s server_models=%s",
+		model_id,
+		server_models,
+	)
 
-    # The HTTP model list alone is not authoritative: an unrelated
-    # LiteRT-LM process may be answering on the configured port while using
-    # the user's global ~/.litert-lm registry.  Require the selected model to
-    # exist in the add-on-owned registry as well.
-    catalog_dir = supervisor.catalog_model_dir(model_id)
-    catalog_model = catalog_dir / "model.litertlm" if catalog_dir is not None else None
-    if catalog_model is not None and catalog_model.is_file():
-        if model_id in server_models:
-            log.debug("_ensure_model_imported: model already registered")
-            return
-        raise LiteRTServerError(
-            f"LiteRT-LM server at {supervisor.base_url} is not using the "
-            "AI Assistant model registry. Stop the existing server and try again."
-        )
+	# The HTTP model list alone is not authoritative: an unrelated
+	# LiteRT-LM process may be answering on the configured port while using
+	# the user's global ~/.litert-lm registry.  Require the selected model to
+	# exist in the add-on-owned registry as well.
+	catalog_dir = supervisor.catalog_model_dir(model_id)
+	catalog_model = catalog_dir / "model.litertlm" if catalog_dir is not None else None
+	if catalog_model is not None and catalog_model.is_file():
+		if model_id in server_models:
+			log.debug("_ensure_model_imported: model already registered")
+			return
+		raise LiteRTServerError(
+			f"LiteRT-LM server at {supervisor.base_url} is not using the "
+			"AI Assistant model registry. Stop the existing server and try again."
+		)
 
-    # Model is not in the add-on-owned registry.  Importing copies the model
-    # into that registry; it does not merely register the original path.
-    # This must happen before accepting a model reported by /v1/models.
-    if model_id in server_models:
-        log.debug(
-            "_ensure_model_imported: server reports %s but its add-on registry "
-            "copy is missing; repairing the registry",
-            model_id,
-        )
+	# Model is not in the add-on-owned registry.  Importing copies the model
+	# into that registry; it does not merely register the original path.
+	# This must happen before accepting a model reported by /v1/models.
+	if model_id in server_models:
+		log.debug(
+			"_ensure_model_imported: server reports %s but its add-on registry "
+			"copy is missing; repairing the registry",
+			model_id,
+		)
 
-    # Model not registered — check if the file exists locally.
-    try:
-        from ..providers.litert_models import lookup_model as _lookup
-        from ..providers.runtime.model_download import ModelDownloadService
+	# Model not registered — check if the file exists locally.
+	try:
+		from ..providers.litert_models import lookup_model as _lookup
+		from ..providers.runtime.model_download import ModelDownloadService
 
-        definition = _lookup(model_id)
-        svc = ModelDownloadService()
-        if definition is not None and svc.is_downloaded(definition.filename):
-            local_path = svc.model_path(definition.filename)
-            log.debug(
-                "_ensure_model_imported: file exists at %s, importing...",
-                local_path,
-            )
-            supervisor.import_model(
-                local_path,
-                model_id,
-                on_progress=on_progress,
-            )
-            if model_id not in supervisor.list_server_models():
-                raise LiteRTServerError(
-                    f"LiteRT-LM imported {model_id}, but the running server "
-                    "cannot see the add-on-owned model registry."
-                )
-            return
-    except ImportError:
-        log.debug("_ensure_model_imported: model catalog or download service unavailable")
+		definition = _lookup(model_id)
+		svc = ModelDownloadService()
+		if definition is not None and svc.is_downloaded(definition.filename):
+			local_path = svc.model_path(definition.filename)
+			log.debug(
+				"_ensure_model_imported: file exists at %s, importing...",
+				local_path,
+			)
+			supervisor.import_model(
+				local_path,
+				model_id,
+				on_progress=on_progress,
+			)
+			if model_id not in supervisor.list_server_models():
+				raise LiteRTServerError(
+					f"LiteRT-LM imported {model_id}, but the running server "
+					"cannot see the add-on-owned model registry."
+				)
+			return
+	except ImportError:
+		log.debug("_ensure_model_imported: model catalog or download service unavailable")
 
-    # File not found — user needs to download first.
-    raise LiteRTServerError(
-        f"Model {model_id} is not downloaded. "
-        "Please open the Model Manager from the AI Assistant menu "
-        "to download it."
-    )
+	# File not found — user needs to download first.
+	raise LiteRTServerError(
+		f"Model {model_id} is not downloaded. "
+		"Please open the Model Manager from the AI Assistant menu "
+		"to download it."
+	)
 
 
 def _translate(message: str) -> str:
@@ -230,8 +227,13 @@ class BackgroundTaskRunner:
 					return
 				provider_name = get_provider_display_name(readiness.provider)
 				# TRANSLATORS: Message spoken while checking model availability for a provider. {provider} is replaced with the provider name.
-				nvda_ui.queue(nvda_ui.message, _("Checking {provider} model availability.").format(provider=provider_name))
-				model = self._llm_service.ensure_model_available(on_progress=lambda text: nvda_ui.queue(nvda_ui.message, text))
+				nvda_ui.queue(
+					nvda_ui.message,
+					_("Checking {provider} model availability.").format(provider=provider_name),
+				)
+				model = self._llm_service.ensure_model_available(
+					on_progress=lambda text: nvda_ui.queue(nvda_ui.message, text)
+				)
 			except LLMProviderError as error:
 				nvda_ui.queue(nvda_ui.message, present_error(error, _).message)
 			except Exception as error:
@@ -239,7 +241,10 @@ class BackgroundTaskRunner:
 				nvda_ui.queue(nvda_ui.message, present_error(error, _).message)
 			else:
 				# TRANSLATORS: Message spoken when a provider model is confirmed ready. {provider} and {model} are replaced with the provider and model names.
-				nvda_ui.queue(nvda_ui.message, _("{provider} model {model} is ready.").format(provider=provider_name, model=model))
+				nvda_ui.queue(
+					nvda_ui.message,
+					_("{provider} model {model} is ready.").format(provider=provider_name, model=model),
+				)
 
 		thread = threading.Thread(
 			target=worker,
@@ -248,7 +253,9 @@ class BackgroundTaskRunner:
 		)
 		thread.start()
 
-	def run_use_case_in_background(self, use_case_id: UseCaseId, title: str, render_result: Callable[[Any], None]) -> None:
+	def run_use_case_in_background(
+		self, use_case_id: UseCaseId, title: str, render_result: Callable[[Any], None]
+	) -> None:
 		def worker() -> None:
 			log.debug("BackgroundTaskRunner worker starting use_case_id=%s title=%s", use_case_id, title)
 			try:
@@ -257,10 +264,14 @@ class BackgroundTaskRunner:
 				)
 				result = self._use_case_engine.execute(use_case_id, progress=self._progress_handler)
 			except ProviderConfigurationError:
-				log.exception(f"BackgroundTaskRunner blocked by provider configuration for use case {use_case_id}")
+				log.exception(
+					f"BackgroundTaskRunner blocked by provider configuration for use case {use_case_id}"
+				)
 				readiness = self._readiness_service.evaluate_active()
 				# TRANSLATORS: Message spoken when the selected provider is not fully configured for the requested operation.
-				message = build_provider_status_message(_, readiness) or _("The selected provider is not fully configured.")
+				message = build_provider_status_message(_, readiness) or _(
+					"The selected provider is not fully configured."
+				)
 				nvda_ui.queue(nvda_ui.message, message)
 				return
 			except LiteRTServerError as error:

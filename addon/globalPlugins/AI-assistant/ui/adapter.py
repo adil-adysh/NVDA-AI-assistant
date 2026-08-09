@@ -86,7 +86,9 @@ class UIAdapter:
 		log.debug("UIAdapter dispatching host command; host_state=%s", self._host_lifecycle.state)
 		self._command_queue.put((command, fallback))
 
-	def _dispatch_primary_host_command(self, command: Callable[[], None], fallback: Callable[[], None]) -> None:
+	def _dispatch_primary_host_command(
+		self, command: Callable[[], None], fallback: Callable[[], None]
+	) -> None:
 		if self._host_lifecycle.state == HostLifecycleState.FAILED:
 			log.info("UIAdapter retrying WebView host for a primary UI action")
 		self._host_lifecycle.prepare_primary_action()
@@ -101,7 +103,9 @@ class UIAdapter:
 		self._host_lifecycle.mark_failed()
 
 	def _notify_host_unavailable(self) -> None:
-		message = self._get_localized_strings().get("host_unavailable_message", "AI WebView host is unavailable.")
+		message = self._get_localized_strings().get(
+			"host_unavailable_message", "AI WebView host is unavailable."
+		)
 		nvda_ui.message(message)
 
 	def render_display(self, view_model: DisplayResultViewModel) -> None:
@@ -133,7 +137,9 @@ class UIAdapter:
 			self._notify_host_unavailable,
 		)
 
-	def render_display_result(
+	# Concrete implementation of the UIHostRenderer protocol contract;
+	# the 12 parameters are fixed by the protocol interface.
+	def render_display_result(  # pylint: disable=too-many-arguments,too-many-positional-arguments
 		self,
 		use_case_id: str | None,
 		title: str,
@@ -173,7 +179,9 @@ class UIAdapter:
 		history_messages: list[dict[str, Any]] | None = None,
 	) -> None:
 		metadata = dict(view_model.metadata)
-		conversation_id = metadata.get("conversation_id") if isinstance(metadata.get("conversation_id"), str) else None
+		conversation_id = (
+			metadata.get("conversation_id") if isinstance(metadata.get("conversation_id"), str) else None
+		)
 		self._remember_session_metadata(metadata)
 
 		# When the host was previously shown and is now hidden (not restarted),
@@ -184,12 +192,16 @@ class UIAdapter:
 			metadata = {**metadata, "preserve_conversation": True}
 
 		if coordinator is not None:
-			def handle_chat_submission(message: str, conversation_id: str | None, event_payload: dict[str, Any] | None) -> None:
+
+			def handle_chat_submission(
+				message: str, conversation_id: str | None, event_payload: dict[str, Any] | None
+			) -> None:
 				threading.Thread(
 					target=self._handle_host_chat_submission,
 					args=(message, conversation_id, coordinator, event_payload),
 					daemon=True,
 				).start()
+
 			self._host_renderer.register_chat_submission_handler(handle_chat_submission)
 		self._host_renderer.register_ui_action_handler(self._handle_host_ui_action)
 		self._host_renderer.register_provider_selection_handler(self._handle_provider_selection)
@@ -420,7 +432,7 @@ class UIAdapter:
 		"""Build a content block list that renders as an inline error message in the chat transcript."""
 		content: list[dict[str, Any]] = []
 		error_label = localized_strings.get("error_prefix", "Error")
-		error_summary = "{0}: {1}".format(error_label, presentation.title) if presentation.title else error_label
+		error_summary = f"{error_label}: {presentation.title}" if presentation.title else error_label
 		content.append(
 			{
 				"type": "error",
@@ -450,7 +462,10 @@ class UIAdapter:
 		attached_file_label = localized_strings.get("attached_file_label", "Attached file")
 		context = extract_attachment_context(attachments, attached_file_label=attached_file_label)
 		if context.image_count > 1:
-			log.warning("UIAdapter received %s image attachments; only the first supported image will be sent", context.image_count)
+			log.warning(
+				"UIAdapter received %s image attachments; only the first supported image will be sent",
+				context.image_count,
+			)
 		return context.image_base64, context.file_context
 
 	def _handle_host_ui_action(self, action_id: str, payload: dict[str, Any] | None) -> None:

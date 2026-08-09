@@ -19,4 +19,3 @@ class Extractor(ABC):
 
 class TreeExtractor(Extractor):
 	"""Extractor specialized for tree-like candidate content."""
-	pass

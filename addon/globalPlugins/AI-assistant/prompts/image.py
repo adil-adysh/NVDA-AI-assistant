@@ -6,10 +6,10 @@ from .base import render_prompt_template
 
 
 def build_image_description_prompt(context: ImageContext, language: str | None = None) -> str:
-    """Build a prompt for describing a captured foreground window image."""
-    return render_prompt_template(
-        "image_description.jinja2",
-        language=language,
-        app_title=context.app_title,
-        window_title=context.window_title,
-    )
+	"""Build a prompt for describing a captured foreground window image."""
+	return render_prompt_template(
+		"image_description.jinja2",
+		language=language,
+		app_title=context.app_title,
+		window_title=context.window_title,
+	)

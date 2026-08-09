@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from collections.abc import Callable
-from typing import Any
 
 ToolParameters = dict[str, object]
 ToolArguments = dict[str, object]

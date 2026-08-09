@@ -40,7 +40,9 @@ def _wait_for_host_pipe_ready(timeout_seconds: float = 5.0) -> None:
 		logger.debug("pywin32 unavailable; skipping host pipe readiness wait")
 		return
 
-	logger.debug("Waiting for UI host pipe readiness: %s (timeout=%ss)", _HOST_COMMAND_PIPE_NAME, timeout_seconds)
+	logger.debug(
+		"Waiting for UI host pipe readiness: %s (timeout=%ss)", _HOST_COMMAND_PIPE_NAME, timeout_seconds
+	)
 	deadline = time.monotonic() + timeout_seconds
 	last_error: Exception | None = None
 	while time.monotonic() < deadline:
@@ -79,7 +81,9 @@ def start_host_if_needed() -> None:
 		startupinfo.wShowWindow = subprocess.SW_HIDE
 
 		try:
-			process = subprocess.Popen(
+			# The process handle must outlive this function (it is stored in
+			# the module-global _host_process), so `with` cannot be used.
+			process = subprocess.Popen(  # pylint: disable=consider-using-with
 				[str(host_exe)],
 				cwd=str(host_exe.parent),
 				startupinfo=startupinfo,

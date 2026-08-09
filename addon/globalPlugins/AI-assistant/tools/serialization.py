@@ -5,7 +5,7 @@ import json
 from typing import Any
 
 from ..core.canonical import Tool
-from ..core.tooling import ToolArguments, ToolCall
+from ..core.tooling import ToolCall
 
 
 def build_function_tool_definition(tool: Tool) -> dict[str, object]:

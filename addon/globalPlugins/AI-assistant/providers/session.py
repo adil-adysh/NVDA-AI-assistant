@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
 
 from ..core.canonical import Message, Tool
 from ..core.messages import LLMResponse, SummaryResponse

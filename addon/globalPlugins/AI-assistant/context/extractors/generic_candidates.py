@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Any
 
 from .candidate_base import CandidateProvider, CandidateExtractionContext
 

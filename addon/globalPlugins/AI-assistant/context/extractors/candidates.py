@@ -2,7 +2,6 @@
 # pyright: reportMissingImports=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportImplicitOverride=false
 from __future__ import annotations
 
-from typing import Any
 
 from .browser_candidates import BrowserCandidateProvider
 from .candidate_base import CandidateProvider, CandidateExtractionContext

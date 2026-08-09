@@ -208,7 +208,6 @@ class BrowserAwarePageExtractor(TreeExtractor):
 					return resolved
 			except Exception:
 				log.debug("BrowserAwarePageExtractor._resolveBrowserTreeInterceptor: focus handler lookup failed", exc_info=True)
-				pass
 
 		if focus is not None:
 			interceptor = getattr(focus, "treeInterceptor", None)
@@ -230,7 +229,6 @@ class BrowserAwarePageExtractor(TreeExtractor):
 					return resolved
 			except Exception:
 				log.debug("BrowserAwarePageExtractor._resolveBrowserTreeInterceptor: retry handler lookup failed", exc_info=True)
-				pass
 
 		for obj in context.focusAncestors:
 			interceptor = getattr(obj, "treeInterceptor", None)
@@ -260,7 +258,6 @@ class BrowserAwarePageExtractor(TreeExtractor):
 						"navigator" if candidate is context.navigator else "foreground",
 						exc_info=True,
 					)
-					pass
 			interceptor = getattr(candidate, "treeInterceptor", None)
 			if self._isUsableTreeInterceptor(interceptor):
 				log.debug(

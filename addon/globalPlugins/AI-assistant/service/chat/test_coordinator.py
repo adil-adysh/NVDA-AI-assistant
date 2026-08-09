@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+# Pylint cannot infer attributes assigned to types.ModuleType() fakes used
+# to stub NVDA-internal modules (E1101 ``__name__`` false positives).
+# pylint: disable=no-member
 from __future__ import annotations
 
 import importlib.util
@@ -136,8 +139,8 @@ messages_module.LLMResponse = object
 sys.modules[messages_module.__name__] = messages_module
 
 projector_module = types.ModuleType(f"{PACKAGE_NAME}.service.chat.projector")
-projector_module.project_chat_history = lambda messages: list(messages)
-projector_module.project_chat_history_transport = lambda messages: list(messages)
+projector_module.project_chat_history = list
+projector_module.project_chat_history_transport = list
 sys.modules[projector_module.__name__] = projector_module
 
 session_module = _load_module(f"{PACKAGE_NAME}.service.chat.session", MODULE_DIR / "session.py")

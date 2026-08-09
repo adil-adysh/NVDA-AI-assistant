@@ -23,25 +23,21 @@ class ContextFragment:
 @dataclass(frozen=True, slots=True)
 class PageContextFragment(ContextFragment):
 	"""Collector output for page-like content."""
-	pass
 
 
 @dataclass(frozen=True, slots=True)
 class BrowserContextFragment(PageContextFragment):
 	"""Collector output for browser page extraction."""
-	pass
 
 
 @dataclass(frozen=True, slots=True)
 class TerminalContextFragment(PageContextFragment):
 	"""Collector output for terminal/command transcript extraction."""
-	pass
 
 
 @dataclass(frozen=True, slots=True)
 class ImageContextFragment(ContextFragment):
 	"""Collector output for image-based extractions."""
-	pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,5 +52,5 @@ class ContextCollector(Protocol):
 	def handles_request(self, request: ContentRequest) -> bool:
 		...
 
-	def collect_for_request(self, request: ContentRequest, input: CollectorInput) -> ContextFragment:
+	def collect_for_request(self, request: ContentRequest, input_: CollectorInput) -> ContextFragment:
 		...

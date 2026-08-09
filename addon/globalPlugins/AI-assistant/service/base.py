@@ -1,21 +1,22 @@
 # -*- coding: utf-8 -*-
 # pyright: reportMissingImports=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
-from logHandler import log
 import threading
 import time
 from collections.abc import Callable
 from typing import Any
 
-from ..ui import nvda_ui
-from ..observability.context import ExecutionContext
-from ..observability.metrics import RequestMetrics
-from ..observability.reporter import FileMetricsReporter, MetricsReporter
-from ..service.error_presentation import present_error
-from ..providers.interfaces import LLMProviderError
+from logHandler import log
+
 from ..config.settings import (
 	is_progress_enabled,
 	is_streaming_enabled,
 )
+from ..observability.context import ExecutionContext
+from ..observability.metrics import RequestMetrics
+from ..observability.reporter import FileMetricsReporter, MetricsReporter
+from ..providers.interfaces import LLMProviderError
+from ..service.error_presentation import present_error
+from ..ui import nvda_ui
 
 
 class BaseCoordinator:

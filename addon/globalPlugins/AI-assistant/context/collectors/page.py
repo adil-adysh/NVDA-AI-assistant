@@ -28,11 +28,11 @@ class ExtractionTextCollector:
 	def handles_request(self, request: ContentRequest) -> bool:
 		return isinstance(request, PageTextRequest)
 
-	def collect_for_request(self, request: PageTextRequest, input: CollectorInput) -> PageContextFragment:
-		if self.extractor is None and input.extraction_snapshot is None:
+	def collect_for_request(self, request: PageTextRequest, input_: CollectorInput) -> PageContextFragment:
+		if self.extractor is None and input_.extraction_snapshot is None:
 			raise ContextCollectionError("ExtractionTextCollector requires an extraction snapshot or extractor")
 
-		snapshot = input.extraction_snapshot
+		snapshot = input_.extraction_snapshot
 		if not isinstance(snapshot, ExtractionSnapshot):
 			raise ContextCollectionError("ExtractionTextCollector requires an extraction snapshot")
 
@@ -43,7 +43,7 @@ class ExtractionTextCollector:
 			},
 			text=snapshot.text,
 			metadata={
-				"use_case_id": input.use_case_id,
+				"use_case_id": input_.use_case_id,
 				"title": snapshot.title,
 				"app_title": snapshot.appTitle,
 				"truncated": snapshot.truncated,
@@ -60,8 +60,8 @@ class ExtractionStructureCollector:
 	def handles_request(self, request: ContentRequest) -> bool:
 		return isinstance(request, PageStructureRequest)
 
-	def collect_for_request(self, request: PageStructureRequest, input: CollectorInput) -> PageContextFragment:
-		snapshot = self._require_snapshot(input)
+	def collect_for_request(self, request: PageStructureRequest, input_: CollectorInput) -> PageContextFragment:
+		snapshot = self._require_snapshot(input_)
 		requested = set(request.fields) if request.fields else set(self._STRUCTURED_ATTRS)
 
 		facts: dict[str, object] = {
@@ -78,19 +78,19 @@ class ExtractionStructureCollector:
 		return PageContextFragment(
 			facts=facts,
 			metadata={
-				"use_case_id": input.use_case_id,
+				"use_case_id": input_.use_case_id,
 				"title": snapshot.title,
 				"app_title": snapshot.appTitle,
 				"truncated": snapshot.truncated,
 			},
 		)
 
-	def _require_snapshot(self, input: CollectorInput) -> ExtractionSnapshot:
-		if self.extractor is None and input.extraction_snapshot is None:
+	def _require_snapshot(self, input_: CollectorInput) -> ExtractionSnapshot:
+		if self.extractor is None and input_.extraction_snapshot is None:
 			raise ContextCollectionError(
 				"ExtractionStructureCollector requires an extraction snapshot or extractor"
 			)
-		snapshot = input.extraction_snapshot
+		snapshot = input_.extraction_snapshot
 		if not isinstance(snapshot, ExtractionSnapshot):
 			raise ContextCollectionError(
 				"ExtractionStructureCollector requires an extraction snapshot"

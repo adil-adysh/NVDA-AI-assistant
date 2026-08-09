@@ -7,10 +7,10 @@ import time
 from io import BytesIO
 from typing import Any
 
+from logHandler import log
 from PIL import ImageGrab
 
 from ..config.settings import get_image_format, get_image_max_side, get_image_quality
-from logHandler import log
 from .objects import (
 	clip_location_to_containers,
 	get_object_location_with_parent_fallback,
@@ -267,8 +267,7 @@ def capture_focused_object(
 		bbox = (left, top, left + width, top + height)
 		image = ImageGrab.grab(bbox=bbox)
 	except Exception as e:
-		raise RuntimeError(f"Failed to capture the focused object region: {e}")
-
+		raise RuntimeError(f"Failed to capture the focused object region: {e}") from e
 	# Convert to bytes
 	buffer = BytesIO()
 	image.save(buffer, format="PNG")

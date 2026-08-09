@@ -46,12 +46,12 @@ class ImageContextCollector:
 	def handles_request(self, request: ContentRequest) -> bool:
 		return isinstance(request, tuple(_REQUEST_SOURCES))
 
-	def collect_for_request(self, request: ContentRequest, input: CollectorInput) -> ImageContextFragment:
+	def collect_for_request(self, request: ContentRequest, input_: CollectorInput) -> ImageContextFragment:
 		if self.preprocessor is None or self.encoder is None:
 			raise ValueError("ImageContextCollector requires preprocessor and encoder services")
 
 		source = _REQUEST_SOURCES.get(type(request), "foreground")
-		image_snapshot = input.image_snapshots.get(source)
+		image_snapshot = input_.image_snapshots.get(source)
 		if image_snapshot is None:
 			raise ValueError(f"No image snapshot available for source: {source}")
 
@@ -83,7 +83,7 @@ class ImageContextCollector:
 			},
 			image_base64=image_base64,
 			metadata={
-				"use_case_id": input.use_case_id,
+				"use_case_id": input_.use_case_id,
 				"app_title": app_title,
 				"window_title": window_title,
 				"raw_image_bytes": len(image_snapshot.raw_bytes),

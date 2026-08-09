@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Any
 
 from ..core.tooling import ToolCall
 from .definition import ToolDefinition

@@ -69,7 +69,10 @@ class ProviderReadiness:
 
 
 class ProviderReadinessService:
-	def evaluate(self, config: ProviderConfig) -> ProviderReadiness:
+	# evaluate() is a guard chain that returns as soon as the first missing
+	# requirement is found; the many early returns are the point of the
+	# function, not an accident.
+	def evaluate(self, config: ProviderConfig) -> ProviderReadiness:  # pylint: disable=too-many-return-statements
 		provider = str(config.provider or "").strip().lower()
 		model_name = str(config.model_name or "").strip()
 		base_url = str(getattr(config, "base_url", "") or "").strip()

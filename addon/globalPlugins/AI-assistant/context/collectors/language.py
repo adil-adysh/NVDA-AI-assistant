@@ -12,7 +12,7 @@ class LanguageContextCollector:
 	def handles_request(self, _request: ContentRequest) -> bool:
 		return True
 
-	def collect_for_request(self, _request: ContentRequest, input: CollectorInput) -> ContextFragment:
+	def collect_for_request(self, _request: ContentRequest, input_: CollectorInput) -> ContextFragment:
 		language = get_effective_language()
 		return ContextFragment(
 			facts={"language": language},

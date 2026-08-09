@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
+# Pylint cannot infer attributes assigned to types.ModuleType() fakes used
+# to stub NVDA-internal modules (E1101 ``__name__``/dynamic attribute
+# false positives, e.g. ``ui_adapter_module.ui_adapter``).
+# pylint: disable=no-member
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -241,9 +245,9 @@ ui_session_state_module.merge_session_metadata = _merge_session_metadata
 sys.modules[ui_session_state_module.__name__] = ui_session_state_module
 
 ui_view_models_module = types.ModuleType(f"{PACKAGE_NAME}.ui.view_models")
-ui_view_models_module.ChatWindowViewModel = lambda **kwargs: types.SimpleNamespace(**kwargs)
-ui_view_models_module.DisplayResultViewModel = lambda **kwargs: types.SimpleNamespace(**kwargs)
-ui_view_models_module.ResultActionViewModel = lambda **kwargs: types.SimpleNamespace(**kwargs)
+ui_view_models_module.ChatWindowViewModel = types.SimpleNamespace
+ui_view_models_module.DisplayResultViewModel = types.SimpleNamespace
+ui_view_models_module.ResultActionViewModel = types.SimpleNamespace
 sys.modules[ui_view_models_module.__name__] = ui_view_models_module
 
 utils_markdown_module = types.ModuleType(f"{PACKAGE_NAME}.utils.markdown")

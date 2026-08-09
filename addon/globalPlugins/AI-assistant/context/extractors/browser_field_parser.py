@@ -214,7 +214,6 @@ class BrowserFieldParser:
 		)
 
 	def _is_landmark_field(self, field: object) -> bool:
-		role = self._numeric_field_role(field)
 		tag = self._field_value(field, "IAccessible2::attribute_tag")
 		xml_role = self._field_value(field, "IAccessible2::attribute_xml-roles")
 		landmark = self._field_value(field, "landmark")

@@ -19,8 +19,9 @@ class ExtractionManager(TreeExtractor):
 	def supports(self, context: CandidateExtractionContext) -> bool:
 		return any(extractor.supports(context) for extractor in self._extractors)
 
-	def extract(self):
-		context = build_extraction_context()
+	def extract(self, context: CandidateExtractionContext | None = None):
+		if context is None:
+			context = build_extraction_context()
 		last_page_extraction_error: PageExtractionError | None = None
 		for extractor in self._extractors:
 			try:

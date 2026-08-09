@@ -102,7 +102,6 @@ class BrowserCandidateProvider(CandidateProvider):
 					return resolved
 			except Exception:
 				log.debug("BrowserCandidateProvider._resolveTreeInterceptor: handler lookup failed", exc_info=True)
-				pass
 
 		for obj in reversed(context.focusAncestors):
 			interceptor = getattr(obj, "treeInterceptor", None)

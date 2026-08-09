@@ -35,15 +35,11 @@ class ImageCaptureService:
 
 		obj = get_object_safe(source)
 		if obj is None:
-			raise RuntimeError(
-				f"Unable to locate the {source} object for capture."
-			)
+			raise RuntimeError(f"Unable to locate the {source} object for capture.")
 
 		location = get_object_location(obj)
 		if location is None:
-			raise RuntimeError(
-				f"The {source} object has no usable screen location."
-			)
+			raise RuntimeError(f"The {source} object has no usable screen location.")
 
 		# Clip to visible area like the Screenshots Wizard add-on does
 		location = clip_location_to_containers(obj, location)
@@ -62,40 +58,40 @@ class ImageCaptureService:
 
 
 class ImagePreprocessor:
-    def preprocess(
-        self,
-        image_bytes: bytes,
-        max_side: int,
-        image_format: ImageFormat,
-        quality: int | None = None,
-    ) -> bytes:
-        if max_side <= 0:
-            raise ValueError("max_side must be a positive integer")
+	def preprocess(
+		self,
+		image_bytes: bytes,
+		max_side: int,
+		image_format: ImageFormat,
+		quality: int | None = None,
+	) -> bytes:
+		if max_side <= 0:
+			raise ValueError("max_side must be a positive integer")
 
-        image = Image.open(BytesIO(image_bytes))
-        image.load()
+		image = Image.open(BytesIO(image_bytes))
+		image.load()
 
-        width, height = image.size
-        longest_side = max(width, height)
-        if longest_side > max_side:
-            scale = max_side / float(longest_side)
-            new_size = (max(1, int(width * scale)), max(1, int(height * scale)))
-            image = image.resize(new_size, Image.LANCZOS)
+		width, height = image.size
+		longest_side = max(width, height)
+		if longest_side > max_side:
+			scale = max_side / float(longest_side)
+			new_size = (max(1, int(width * scale)), max(1, int(height * scale)))
+			image = image.resize(new_size, Image.LANCZOS)
 
-        normalized_format = str(image_format).upper()
-        save_kwargs: dict[str, int | bool] = {}
-        if normalized_format == "JPEG":
-            image = image.convert("RGB")
-            save_kwargs["quality"] = quality or 80
-            save_kwargs["optimize"] = True
-        elif normalized_format != "PNG":
-            raise ValueError("Unsupported image format: %s" % image_format)
+		normalized_format = str(image_format).upper()
+		save_kwargs: dict[str, int | bool] = {}
+		if normalized_format == "JPEG":
+			image = image.convert("RGB")
+			save_kwargs["quality"] = quality or 80
+			save_kwargs["optimize"] = True
+		elif normalized_format != "PNG":
+			raise ValueError(f"Unsupported image format: {image_format}")
 
-        buffer = BytesIO()
-        image.save(buffer, format=normalized_format, **save_kwargs)
-        return buffer.getvalue()
+		buffer = BytesIO()
+		image.save(buffer, format=normalized_format, **save_kwargs)
+		return buffer.getvalue()
 
 
 class ImageEncoder:
-    def encode(self, image_bytes: bytes) -> str:
-        return base64.b64encode(image_bytes).decode("ascii")
+	def encode(self, image_bytes: bytes) -> str:
+		return base64.b64encode(image_bytes).decode("ascii")

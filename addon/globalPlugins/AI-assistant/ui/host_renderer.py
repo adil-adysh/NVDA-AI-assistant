@@ -54,7 +54,7 @@ class HostRenderer(UIHostRenderer):
 			EVENT_CLOSE_HOST: self._handle_host_closed_event,
 		}
 
-	def render_display_result(
+	def render_display_result(  # pylint: disable=too-many-arguments,too-many-positional-arguments
 		self,
 		use_case_id: str | None,
 		title: str,
@@ -113,7 +113,9 @@ class HostRenderer(UIHostRenderer):
 		)
 
 	def sync_session_state(self, metadata: dict[str, Any] | None = None) -> None:
-		self._current_conversation_id = self._resolve_conversation_id(None, metadata, fallback=self._current_conversation_id)
+		self._current_conversation_id = self._resolve_conversation_id(
+			None, metadata, fallback=self._current_conversation_id
+		)
 		self._send_command(
 			"sync_session",
 			self._build_payload(
@@ -122,7 +124,9 @@ class HostRenderer(UIHostRenderer):
 			),
 		)
 
-	def register_chat_submission_handler(self, handler: Callable[[str, str | None, dict[str, Any] | None], None]) -> None:
+	def register_chat_submission_handler(
+		self, handler: Callable[[str, str | None, dict[str, Any] | None], None]
+	) -> None:
 		self._chat_submission_handler = handler
 
 	def register_ui_action_handler(self, handler: Callable[[str, dict[str, Any] | None], None]) -> None:
@@ -314,7 +318,9 @@ class HostRenderer(UIHostRenderer):
 	def _send_command(self, command_name: str, payload: HostCommandPayload) -> None:
 		command = HostCommand(name=command_name, payload=payload)
 		message = command.to_bytes()
-		logger.debug("HostRenderer sending command name=%s message_id=%s payload=%s", command.name, command.id, payload)
+		logger.debug(
+			"HostRenderer sending command name=%s message_id=%s payload=%s", command.name, command.id, payload
+		)
 		self._ensure_host_running()
 		try:
 			response_bytes = self._transport.send(message)
@@ -460,10 +466,7 @@ class HostRenderer(UIHostRenderer):
 		logger.debug("HostRenderer host health_check succeeded message_id=%s", command.id)
 
 	def _ensure_host_running(self) -> None:
-		try:
-			self._lifecycle.ensure_started(start_host_if_needed, alive_check=is_host_process_alive)
-		except HostUnavailableError:
-			raise
+		self._lifecycle.ensure_started(start_host_if_needed, alive_check=is_host_process_alive)
 		start_event_listener = getattr(self._transport, "start_event_listener", None)
 		if callable(start_event_listener):
 			start_event_listener()
@@ -477,7 +480,12 @@ class HostRenderer(UIHostRenderer):
 			self._lifecycle.mark_ready()
 
 	def _process_response(self, response_bytes: bytes) -> None:
-		response_text = response_bytes.decode("utf-8", errors="replace").replace("\r", "").replace("\n", "").strip("\x00 ")
+		response_text = (
+			response_bytes.decode("utf-8", errors="replace")
+			.replace("\r", "")
+			.replace("\n", "")
+			.strip("\x00 ")
+		)
 		if not response_text:
 			logger.debug("HostRenderer received empty response payload")
 			return
@@ -488,7 +496,9 @@ class HostRenderer(UIHostRenderer):
 			response = HostResponse.from_json(response_text)
 			if response.status == "nack":
 				raise HostUnavailableError(response.message or "Host returned nack")
-			logger.debug("HostRenderer received ACK response: %s stage=%s", response.request_id, response.stage)
+			logger.debug(
+				"HostRenderer received ACK response: %s stage=%s", response.request_id, response.stage
+			)
 		except HostUnavailableError:
 			self._lifecycle.mark_failed()
 			raise
@@ -502,7 +512,7 @@ class HostRenderer(UIHostRenderer):
 
 	def _write_pipe_fallback(self, message: bytes) -> None:
 		try:
-			with open(self.PIPE_NAME, "wb", buffering=0) as pipe:
+			with open(self.COMMAND_PIPE_NAME, "wb", buffering=0) as pipe:
 				pipe.write(message)
 		except OSError as error:
 			raise HostUnavailableError(str(error)) from error

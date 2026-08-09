@@ -328,7 +328,7 @@ class UseCasePresenter:
 		open_chat_id, open_chat_payload = serialize_ui_action(transport)
 		# ── Attach to Current (seed text stored, resolved on dispatch) ──
 		attach_stored_action = AttachToCurrentAction()
-		_attach_stored_id, attach_stored_payload = serialize_ui_action(attach_stored_action)
+		_attach_stored_id, _attach_stored_payload = serialize_ui_action(attach_stored_action)
 		# Store the seed text payload under a new token so the resolved action
 		# carries the summary/description to inject into the current conversation.
 		attach_seed_payload: dict[str, object] = {

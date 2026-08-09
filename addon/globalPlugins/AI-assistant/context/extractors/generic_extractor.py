@@ -63,10 +63,10 @@ class GenericPageExtractor(TreeExtractor):
 					continue
 
 				trimmed_text, truncated = self._trimText(normalized)
-				text_signature = self._textSignature(trimmed_text)
-				if text_signature in self._seenTextSignatures:
+				signature = self._textSignature(trimmed_text)
+				if signature in self._seenTextSignatures:
 					continue
-				self._seenTextSignatures.add(text_signature)
+				self._seenTextSignatures.add(signature)
 
 				snapshot = self._buildSnapshot(candidate, context, sourceName=provider.name, trimmedText=trimmed_text, truncated=truncated)
 				if snapshot is not None:
