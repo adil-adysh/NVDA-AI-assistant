@@ -63,7 +63,9 @@ class BaseCoordinator:
 		self._pre_run(*args, **kwargs)
 
 		progress_callback = self._handle_progress if is_streaming_enabled() else None
-		self._request_metrics = self._build_request_metrics(*args, **kwargs)
+		# _build_request_metrics is an extension point: the base returns None to
+		# disable metrics; subclasses override it to return a RequestMetrics.
+		self._request_metrics = self._build_request_metrics(*args, **kwargs)  # pylint: disable=assignment-from-none
 		if self._request_metrics is not None:
 			self._request_metrics.start_time = time.perf_counter()
 
@@ -99,7 +101,7 @@ class BaseCoordinator:
 			return
 
 		self._last_announced_chars = generated_chars
-		preview = " ".join(partial_text.strip().split())[-self.PREVIEW_LENGTH:]
+		preview = " ".join(partial_text.strip().split())[-self.PREVIEW_LENGTH :]
 		message_text = self._format_progress_message(generated_chars, preview)
 		if message_text:
 			self._queue_to_nvda(nvda_ui.message, message_text)
@@ -149,7 +151,6 @@ class BaseCoordinator:
 		self,
 		progress_callback: Callable[[str, int], None] | None,
 		*args: Any,
-
 		**kwargs: Any,
 	) -> Any:
 		"""Subclasses must perform feature-specific background work and return a result."""

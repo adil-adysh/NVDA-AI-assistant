@@ -1,6 +1,5 @@
 ************* Module AI-assistant
 addon\globalPlugins\AI-assistant\__init__.py:17:8: W0718: Catching too general exception Exception (broad-exception-caught)
-addon\globalPlugins\AI-assistant\__init__.py:22:0: C0413: Import "from .plugin.controller import GlobalPlugin" should be placed at the top of the module (wrong-import-position)
 ************* Module AI-assistant.config.state
 addon\globalPlugins\AI-assistant\config\state.py:45:9: W0718: Catching too general exception Exception (broad-exception-caught)
 ************* Module AI-assistant.config.yaml_store
@@ -118,18 +117,14 @@ addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:164:0: W061
 addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:278:2: W0212: Access to a protected member _handle_result_action of a client class (protected-access)
 addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:285:10: W0212: Access to a protected member _result_action_store of a client class (protected-access)
 addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:293:2: W0212: Access to a protected member _handle_result_action of a client class (protected-access)
-addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:318:10: W0212: Access to a protected member _result_action_store of a client class (protected-access)
-addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:322:2: W0212: Access to a protected member _handle_result_action of a client class (protected-access)
-addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:340:2: W0212: Access to a protected member _handle_result_action of a client class (protected-access)
-addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:358:2: W0212: Access to a protected member _handle_result_action of a client class (protected-access)
-addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:376:10: W0212: Access to a protected member _result_action_store of a client class (protected-access)
-addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:380:2: W0212: Access to a protected member _handle_result_action of a client class (protected-access)
-addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:394:12: W0212: Access to a protected member _build_result_actions of a client class (protected-access)
-addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:439:2: W0212: Access to a protected member _handle_result_action of a client class (protected-access)
-************* Module AI-assistant.plugin
-addon\globalPlugins\AI-assistant\plugin\__init__.py:8:0: C0413: Import "from .application import AIAssistantApplication" should be placed at the top of the module (wrong-import-position)
-addon\globalPlugins\AI-assistant\plugin\__init__.py:9:0: C0413: Import "from .controller import GlobalPlugin" should be placed at the top of the module (wrong-import-position)
-addon\globalPlugins\AI-assistant\plugin\__init__.py:10:0: C0413: Import "from .types import PluginServices" should be placed at the top of the module (wrong-import-position)
+addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:325:10: W0212: Access to a protected member _result_action_store of a client class (protected-access)
+addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:329:2: W0212: Access to a protected member _handle_result_action of a client class (protected-access)
+addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:347:2: W0212: Access to a protected member _handle_result_action of a client class (protected-access)
+addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:365:2: W0212: Access to a protected member _handle_result_action of a client class (protected-access)
+addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:383:10: W0212: Access to a protected member _result_action_store of a client class (protected-access)
+addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:385:2: W0212: Access to a protected member _handle_result_action of a client class (protected-access)
+addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:399:12: W0212: Access to a protected member _build_result_actions of a client class (protected-access)
+addon\globalPlugins\AI-assistant\plugin\test_presenter_ui_actions.py:449:2: W0212: Access to a protected member _handle_result_action of a client class (protected-access)
 ************* Module AI-assistant.prompts.base
 addon\globalPlugins\AI-assistant\prompts\base.py:8:7: W0718: Catching too general exception Exception (broad-exception-caught)
 ************* Module AI-assistant.providers.litert_models
@@ -154,18 +149,17 @@ addon\globalPlugins\AI-assistant\providers\runtime\server.py:352:9: W0718: Catch
 addon\globalPlugins\AI-assistant\providers\runtime\server.py:368:9: W0718: Catching too general exception Exception (broad-exception-caught)
 addon\globalPlugins\AI-assistant\providers\runtime\server.py:514:10: W0718: Catching too general exception Exception (broad-exception-caught)
 ************* Module AI-assistant.service.base
-addon\globalPlugins\AI-assistant\service\base.py:66:2: E1128: Assigning result of a function call, where the function returns None (assignment-from-none)
-addon\globalPlugins\AI-assistant\service\base.py:76:9: W0718: Catching too general exception Exception (broad-exception-caught)
-addon\globalPlugins\AI-assistant\service\base.py:120:0: W0613: Unused argument 'args' (unused-argument)
-addon\globalPlugins\AI-assistant\service\base.py:120:0: W0613: Unused argument 'kwargs' (unused-argument)
-addon\globalPlugins\AI-assistant\service\base.py:136:9: W0718: Catching too general exception Exception (broad-exception-caught)
-addon\globalPlugins\AI-assistant\service\base.py:140:60: W0613: Unused argument 'result' (unused-argument)
-addon\globalPlugins\AI-assistant\service\base.py:180:0: W0613: Unused argument 'args' (unused-argument)
-addon\globalPlugins\AI-assistant\service\base.py:180:0: W0613: Unused argument 'kwargs' (unused-argument)
+addon\globalPlugins\AI-assistant\service\base.py:78:9: W0718: Catching too general exception Exception (broad-exception-caught)
+addon\globalPlugins\AI-assistant\service\base.py:122:0: W0613: Unused argument 'args' (unused-argument)
+addon\globalPlugins\AI-assistant\service\base.py:122:0: W0613: Unused argument 'kwargs' (unused-argument)
+addon\globalPlugins\AI-assistant\service\base.py:138:9: W0718: Catching too general exception Exception (broad-exception-caught)
+addon\globalPlugins\AI-assistant\service\base.py:142:60: W0613: Unused argument 'result' (unused-argument)
+addon\globalPlugins\AI-assistant\service\base.py:181:0: W0613: Unused argument 'args' (unused-argument)
+addon\globalPlugins\AI-assistant\service\base.py:181:0: W0613: Unused argument 'kwargs' (unused-argument)
 ************* Module AI-assistant.service.error_presentation
 addon\globalPlugins\AI-assistant\service\error_presentation.py:66:23: W0613: Unused argument 'title' (unused-argument)
 ************* Module AI-assistant.service.test_provider_state_flow
-addon\globalPlugins\AI-assistant\service\test_provider_state_flow.py:61:1: W0603: Using the global statement (global-statement)
+addon\globalPlugins\AI-assistant\service\test_provider_state_flow.py:72:1: W0603: Using the global statement (global-statement)
 ************* Module AI-assistant.service.test_streaming_tone_progress
 addon\globalPlugins\AI-assistant\service\test_streaming_tone_progress.py:66:18: W0613: Unused argument 'metrics' (unused-argument)
 addon\globalPlugins\AI-assistant\service\test_streaming_tone_progress.py:96:27: W0613: Unused argument 'progress_callback' (unused-argument)
@@ -174,10 +168,6 @@ addon\globalPlugins\AI-assistant\service\test_streaming_tone_progress.py:96:0: W
 addon\globalPlugins\AI-assistant\service\test_streaming_tone_progress.py:99:27: W0613: Unused argument 'result' (unused-argument)
 addon\globalPlugins\AI-assistant\service\test_streaming_tone_progress.py:117:2: W0212: Access to a protected member _handle_progress of a client class (protected-access)
 addon\globalPlugins\AI-assistant\service\test_streaming_tone_progress.py:130:2: W0212: Access to a protected member _handle_progress of a client class (protected-access)
-************* Module AI-assistant.service.chat.coordinator
-addon\globalPlugins\AI-assistant\service\chat\coordinator.py:25:0: W0223: Method '_format_progress_message' is abstract in class 'BaseCoordinator' but is not overridden in child class 'ChatCoordinator' (abstract-method)
-addon\globalPlugins\AI-assistant\service\chat\coordinator.py:25:0: W0223: Method '_present_result' is abstract in class 'BaseCoordinator' but is not overridden in child class 'ChatCoordinator' (abstract-method)
-addon\globalPlugins\AI-assistant\service\chat\coordinator.py:25:0: W0223: Method '_run_task_logic' is abstract in class 'BaseCoordinator' but is not overridden in child class 'ChatCoordinator' (abstract-method)
 ************* Module AI-assistant.service.chat.repository_backends
 addon\globalPlugins\AI-assistant\service\chat\repository_backends.py:150:10: W0718: Catching too general exception Exception (broad-exception-caught)
 addon\globalPlugins\AI-assistant\service\chat\repository_backends.py:231:9: W0718: Catching too general exception Exception (broad-exception-caught)
@@ -299,15 +289,15 @@ addon\globalPlugins\AI-assistant\ui\stream_projection.py:185:9: W0718: Catching 
 ************* Module AI-assistant.ui.test_accessibility
 addon\globalPlugins\AI-assistant\ui\test_accessibility.py:40:19: W0613: Unused argument 'text' (unused-argument)
 ************* Module AI-assistant.ui.test_host_transport
-addon\globalPlugins\AI-assistant\ui\test_host_transport.py:41:18: W0212: Access to a protected member _stop_event of a client class (protected-access)
+addon\globalPlugins\AI-assistant\ui\test_host_transport.py:18:18: W0212: Access to a protected member _stop_event of a client class (protected-access)
 ************* Module AI-assistant.use_case.base
 addon\globalPlugins\AI-assistant\use_case\base.py:38:76: W0613: Unused argument 'emit' (unused-argument)
 addon\globalPlugins\AI-assistant\use_case\base.py:46:2: W0613: Unused argument 'llm_service' (unused-argument)
 ************* Module AI-assistant.use_case.test_streaming_use_cases
-addon\globalPlugins\AI-assistant\use_case\test_streaming_use_cases.py:128:0: W0613: Unused argument 'kwargs' (unused-argument)
-addon\globalPlugins\AI-assistant\use_case\test_streaming_use_cases.py:143:21: W0613: Unused argument 'prompt' (unused-argument)
-addon\globalPlugins\AI-assistant\use_case\test_streaming_use_cases.py:149:26: W0613: Unused argument 'image_base64' (unused-argument)
-addon\globalPlugins\AI-assistant\use_case\test_streaming_use_cases.py:149:45: W0613: Unused argument 'prompt' (unused-argument)
+addon\globalPlugins\AI-assistant\use_case\test_streaming_use_cases.py:162:0: W0613: Unused argument 'kwargs' (unused-argument)
+addon\globalPlugins\AI-assistant\use_case\test_streaming_use_cases.py:177:21: W0613: Unused argument 'prompt' (unused-argument)
+addon\globalPlugins\AI-assistant\use_case\test_streaming_use_cases.py:183:26: W0613: Unused argument 'image_base64' (unused-argument)
+addon\globalPlugins\AI-assistant\use_case\test_streaming_use_cases.py:183:45: W0613: Unused argument 'prompt' (unused-argument)
 ************* Module AI-assistant.utils.clipboard
 addon\globalPlugins\AI-assistant\utils\clipboard.py:24:8: W0718: Catching too general exception Exception (broad-exception-caught)
 ************* Module AI-assistant.utils.crypto
@@ -325,52 +315,6 @@ addon\globalPlugins\AI-assistant\utils\markdown.py:51:9: W0718: Catching too gen
 addon\globalPlugins\AI-assistant\utils\mathml.py:32:8: W0718: Catching too general exception Exception (broad-exception-caught)
 addon\globalPlugins\AI-assistant\utils\mathml.py:218:9: W0718: Catching too general exception Exception (broad-exception-caught)
 ************* Module AI-assistant.utils.__init__
-addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 2 files
-==AI-assistant.ui.test_attachment_context:[10:30]
-==AI-assistant.ui.test_host_lifecycle:[10:30]
-MODULE_DIR = Path(__file__).resolve().parent
-if str(MODULE_DIR) not in sys.path:
-	sys.path.insert(0, str(MODULE_DIR))
-
-PACKAGE_NAME = "ui_testpkg"
-package = types.ModuleType(PACKAGE_NAME)
-package.__path__ = [str(MODULE_DIR)]
-sys.modules.setdefault(PACKAGE_NAME, package)
-
-
-def _load_module(module_name: str, file_name: str):
-	spec = importlib.util.spec_from_file_location(f"{PACKAGE_NAME}.{module_name}", MODULE_DIR / file_name)
-	if spec is None or spec.loader is None:
-		raise RuntimeError(f"Unable to load {module_name}")
-	module = importlib.util.module_from_spec(spec)
-	sys.modules[spec.name] = module
-	spec.loader.exec_module(module)
-	return module
-
- (duplicate-code)
-addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 2 files
-==AI-assistant.ui.test_host_transport:[10:30]
-==AI-assistant.ui.test_view_models:[10:30]
-MODULE_DIR = Path(__file__).resolve().parent
-if str(MODULE_DIR) not in sys.path:
-	sys.path.insert(0, str(MODULE_DIR))
-
-PACKAGE_NAME = "ui_testpkg"
-package = types.ModuleType(PACKAGE_NAME)
-package.__path__ = [str(MODULE_DIR)]
-sys.modules.setdefault(PACKAGE_NAME, package)
-
-
-def _load_module(module_name: str, file_name: str):
-	spec = importlib.util.spec_from_file_location(f"{PACKAGE_NAME}.{module_name}", MODULE_DIR / file_name)
-	if spec is None or spec.loader is None:
-		raise RuntimeError(f"Unable to load {module_name}")
-	module = importlib.util.module_from_spec(spec)
-	sys.modules[spec.name] = module
-	spec.loader.exec_module(module)
-	return module
-
- (duplicate-code)
 addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 2 files
 ==AI-assistant.service.test_error_presentation:[16:34]
 ==AI-assistant.service.test_provider_state_flow:[20:38]
@@ -482,14 +426,16 @@ addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 
 	message_count: int
 	updated_at: float
 
-	def to_metadata(self) -> dict[str, Any]:
+	def to_metadata(self) -> dict[str, object]:
 		return {
 			"id": self.conversation_id,
 			"title": self.title,
 			"preview": self.preview,
 			"message_count": self.message_count,
 			"updated_at": self.updated_at,
-		} (duplicate-code)
+		}
+
+ (duplicate-code)
 addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 2 files
 ==AI-assistant.use_case.focus_image:[110:123]
 ==AI-assistant.use_case.image:[81:92]
@@ -503,7 +449,9 @@ addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 
 				"model": model,
 				"prompt_key": self.spec.prompt_key,
 			},
-		) (duplicate-code)
+		)
+
+ (duplicate-code)
 addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 2 files
 ==AI-assistant.use_case.structure_summary:[67:78]
 ==AI-assistant.use_case.summary:[67:78]
@@ -520,22 +468,21 @@ addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 
 			metadata={ (duplicate-code)
 addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 2 files
 ==AI-assistant.prompts.test_base:[16:31]
-==AI-assistant.ui.test_attachment_context:[15:30]
+==AI-assistant.ui.test_bootstrap:[22:36]
 package = types.ModuleType(PACKAGE_NAME)
 package.__path__ = [str(MODULE_DIR)]
 sys.modules.setdefault(PACKAGE_NAME, package)
 
 
-def _load_module(module_name: str, file_name: str):
+def load_module(module_name: str, file_name: str):
+	"""Load a sibling module under the synthetic ``ui_testpkg`` namespace."""
 	spec = importlib.util.spec_from_file_location(f"{PACKAGE_NAME}.{module_name}", MODULE_DIR / file_name)
 	if spec is None or spec.loader is None:
 		raise RuntimeError(f"Unable to load {module_name}")
 	module = importlib.util.module_from_spec(spec)
 	sys.modules[spec.name] = module
 	spec.loader.exec_module(module)
-	return module
-
- (duplicate-code)
+	return module (duplicate-code)
 addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 2 files
 ==AI-assistant.context.extractors.browser:[37:51]
 ==AI-assistant.context.extractors.browser_candidates:[20:31]
@@ -702,52 +649,75 @@ addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 
 			if target is not None:
 				yield target
 
-	def _extractStructuredInfo(self, obj: object): (duplicate-code)
+	def _make_text_info(self, obj: object): (duplicate-code)
 addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 2 files
 ==AI-assistant.providers.interfaces:[75:117]
 ==AI-assistant.ui.host_interface:[83:148]
 		raise NotImplementedError
 
-	@abc.abstractmethod
-	def supports_streaming(self) -> bool:
-		raise NotImplementedError
-
-	@abc.abstractmethod
-	def supports_image_description(self) -> bool:
-		raise NotImplementedError
-
-	@abc.abstractmethod
-	def list_models(self) -> tuple[ProviderModelInfo, ...]:
-		raise NotImplementedError
-
-	@abc.abstractmethod
-	def get_model_info(self, model_name: str | None = None) -> ProviderModelInfo | None:
-		raise NotImplementedError
-
-	@abc.abstractmethod
-	def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
-		raise NotImplementedError
-
-	@abc.abstractmethod
-	def describe_image(
+	@abstractmethod
+	def chat_stream_begin(
 		self,
-		image_base64: str,
-		prompt: str,
-		stream_handler: PartialCallback | None = None,
-	) -> SummaryResponse:
+		use_case_id: str | None,
+		conversation_id: str,
+		message_id: str,
+		stream_id: str,
+		role: str = "assistant",
+		metadata: dict[str, Any] | None = None,
+	) -> None:
 		raise NotImplementedError
 
-	@abc.abstractmethod
-	def generate(
+	@abstractmethod
+	def chat_stream_delta(
 		self,
-		messages: list[Message],
-		tools: list[Tool] | None = None,
-		stream_handler: Callable[[str, int], None] | None = None,
-	) -> LLMResponse:
+		use_case_id: str | None,
+		conversation_id: str,
+		message_id: str,
+		stream_id: str,
+		delta: str,
+		sequence: int,
+		metadata: dict[str, Any] | None = None,
+	) -> None:
 		raise NotImplementedError
 
-	@abc.abstractmethod
-	def ensure_model_available(self, on_progress: ProgressCallback | None = None) -> str | None: (duplicate-code)
+	@abstractmethod
+	def chat_stream_end(
+		self,
+		use_case_id: str | None,
+		conversation_id: str,
+		message_id: str,
+		stream_id: str,
+		final_sequence: int,
+		content: list[dict[str, Any]] | str,
+		status: str | None = None,
+		metadata: dict[str, Any] | None = None,
+	) -> None:
+		raise NotImplementedError
+
+	@abstractmethod
+	def chat_stream_abort(
+		self,
+		use_case_id: str | None,
+		conversation_id: str,
+		message_id: str,
+		stream_id: str,
+		last_sequence: int,
+		reason: str | None = None,
+		metadata: dict[str, Any] | None = None,
+	) -> None:
+		raise NotImplementedError
+
+	@abstractmethod
+	def show_error(self, error_message: str, details: str | None = None) -> None:
+		raise NotImplementedError
+
+	@abstractmethod
+	def show_progress(self, message: str) -> None:
+		raise NotImplementedError
+
+	@abstractmethod
+	def close_window(self, reason: str | None = None) -> None:
+		raise NotImplementedError (duplicate-code)
 addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 2 files
 ==AI-assistant.providers.interfaces:[79:121]
 ==AI-assistant.ui.host_interface:[34:122]
@@ -1080,24 +1050,21 @@ addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 
 ==AI-assistant.providers.interfaces:[75:95]
 		raise NotImplementedError
 
-	@abc.abstractmethod
-	def supports_streaming(self) -> bool:
+	@abstractmethod
+	def save(self) -> None:
 		raise NotImplementedError
 
-	@abc.abstractmethod
-	def supports_image_description(self) -> bool:
+	@abstractmethod
+	def get(self, key: str, default: Any) -> Any:
 		raise NotImplementedError
 
-	@abc.abstractmethod
-	def list_models(self) -> tuple[ProviderModelInfo, ...]:
+	@abstractmethod
+	def set(self, key: str, value: Any) -> None:
 		raise NotImplementedError
 
-	@abc.abstractmethod
-	def get_model_info(self, model_name: str | None = None) -> ProviderModelInfo | None:
-		raise NotImplementedError
-
-	@abc.abstractmethod
-	def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse: (duplicate-code)
+	@abstractmethod
+	def set_many(self, values: dict[str, Any]) -> None:
+		raise NotImplementedError (duplicate-code)
 addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 2 files
 ==AI-assistant.context.extractors.browser:[198:203]
 ==AI-assistant.context.extractors.browser_candidates:[95:100]
@@ -1113,16 +1080,15 @@ addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 
 		if textLength >= 500:
 			score += 10
 		elif textLength >= MIN_PAGE_TEXT_CHARS:
-			score += 5
- (duplicate-code)
+			score += 5 (duplicate-code)
 addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 2 files
 ==AI-assistant.context.extractors.extraction_utils:[48:53]
 ==AI-assistant.context.extractors.text_extractor:[19:24]
-			try:
-				value = getattr(obj, attr, None)
-			except Exception:
-				value = None
-			if isinstance(value, str) and value.strip(): (duplicate-code)
+		try:
+			value = getattr(obj, attr, None)
+		except Exception:
+			value = None
+		if isinstance(value, str) and value.strip(): (duplicate-code)
 addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 2 files
 ==AI-assistant.providers.interfaces:[91:121]
 ==AI-assistant.ui.host_interface:[34:83]
@@ -1213,5 +1179,5 @@ addon\globalPlugins\AI-assistant\utils\__init__.py:1:0: R0801: Similar lines in 
 				use_case_id=self.spec.id, (duplicate-code)
 
 ------------------------------------------------------------------
-Your code has been rated at 9.70/10 (previous run: 9.70/10, +0.00)
+Your code has been rated at 9.71/10 (previous run: 9.71/10, +0.00)
 

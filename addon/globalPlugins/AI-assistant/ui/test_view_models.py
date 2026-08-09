@@ -1,35 +1,12 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import importlib.util
-import sys
-import types
 import unittest
-from pathlib import Path
 
+from test_bootstrap import load_module
 
-MODULE_DIR = Path(__file__).resolve().parent
-if str(MODULE_DIR) not in sys.path:
-	sys.path.insert(0, str(MODULE_DIR))
-
-PACKAGE_NAME = "ui_testpkg"
-package = types.ModuleType(PACKAGE_NAME)
-package.__path__ = [str(MODULE_DIR)]
-sys.modules.setdefault(PACKAGE_NAME, package)
-
-
-def _load_module(module_name: str, file_name: str):
-	spec = importlib.util.spec_from_file_location(f"{PACKAGE_NAME}.{module_name}", MODULE_DIR / file_name)
-	if spec is None or spec.loader is None:
-		raise RuntimeError(f"Unable to load {module_name}")
-	module = importlib.util.module_from_spec(spec)
-	sys.modules[spec.name] = module
-	spec.loader.exec_module(module)
-	return module
-
-
-intent = _load_module("intent", "intent.py")
-view_models = _load_module("view_models", "view_models.py")
+intent = load_module("intent", "intent.py")
+view_models = load_module("view_models", "view_models.py")
 
 ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND = intent.ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND
 DISPLAY_VARIANT_RESULT_ACTIONS = intent.DISPLAY_VARIANT_RESULT_ACTIONS
@@ -52,7 +29,11 @@ class ViewModelTransportTests(unittest.TestCase):
 			display_presentation=build_display_presentation(
 				variant=DISPLAY_VARIANT_RESULT_ACTIONS,
 				initial_focus=FOCUS_TARGET_PRIMARY_ACTION,
-				toolbar_actions=(TOOLBAR_ACTION_COPY_TEXT, TOOLBAR_ACTION_COPY_MARKDOWN, TOOLBAR_ACTION_CLOSE),
+				toolbar_actions=(
+					TOOLBAR_ACTION_COPY_TEXT,
+					TOOLBAR_ACTION_COPY_MARKDOWN,
+					TOOLBAR_ACTION_CLOSE,
+				),
 			),
 			controls_visible=False,
 			attention_policy=ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND,
@@ -62,7 +43,10 @@ class ViewModelTransportTests(unittest.TestCase):
 
 		self.assertEqual(metadata["display_presentation"]["variant"], DISPLAY_VARIANT_RESULT_ACTIONS)
 		self.assertEqual(metadata["display_presentation"]["initial_focus"], FOCUS_TARGET_PRIMARY_ACTION)
-		self.assertEqual(metadata["display_presentation"]["toolbar"]["actions"], [TOOLBAR_ACTION_COPY_TEXT, TOOLBAR_ACTION_COPY_MARKDOWN, TOOLBAR_ACTION_CLOSE])
+		self.assertEqual(
+			metadata["display_presentation"]["toolbar"]["actions"],
+			[TOOLBAR_ACTION_COPY_TEXT, TOOLBAR_ACTION_COPY_MARKDOWN, TOOLBAR_ACTION_CLOSE],
+		)
 		self.assertEqual(metadata["controls_visible"], False)
 		self.assertEqual(metadata["attention_policy"], ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND)
 		self.assertEqual(metadata["actions"][0]["id"], "open_chat")

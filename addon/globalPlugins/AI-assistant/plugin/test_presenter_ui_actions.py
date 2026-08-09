@@ -308,7 +308,14 @@ class PresenterUIActionTests(unittest.TestCase):
 
 		self.assertEqual(
 			self.conversation_service.open_calls,
-			[{"conversation_id": None, "initial_assistant_text": None, "force_new": False}],
+			[
+				{
+					"conversation_id": None,
+					"initial_assistant_text": None,
+					"initial_image_base64": None,
+					"force_new": False,
+				}
+			],
 		)
 
 	def test_attach_to_current_resolves_token_and_injects_text(self) -> None:
@@ -373,9 +380,7 @@ class PresenterUIActionTests(unittest.TestCase):
 		captured: list[dict[str, object | None]] = []
 		self.presenter.open_chat_window = lambda **kwargs: captured.append(kwargs)
 		# Store payload with text but no image
-		token = self.presenter._result_action_store.put(
-			{"initial_assistant_text": "Just text summary"}
-		)
+		token = self.presenter._result_action_store.put({"initial_assistant_text": "Just text summary"})
 
 		self.presenter._handle_result_action("attach_to_current", {"token": token})
 
@@ -394,7 +399,12 @@ class PresenterUIActionTests(unittest.TestCase):
 		actions = self.presenter._build_result_actions(
 			"describe_image",
 			"Image description text",
-			types.SimpleNamespace(initial_image_base64="img-123"),
+			# UseCaseEngine auto-injects the result_actions flag from UseCaseSpec;
+			# _build_result_actions only emits actions when it is present.
+			types.SimpleNamespace(
+				initial_image_base64="img-123",
+				metadata={"result_actions": True},
+			),
 		)
 
 		self.assertEqual(len(actions), 2)

@@ -67,6 +67,30 @@ class PromptContext:
 	metadata: dict[str, object] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class PageTextRequest:
+	"""Minimal stand-in for context.types.PageTextRequest."""
+
+
+@dataclass(frozen=True)
+class PageStructureRequest:
+	"""Minimal stand-in for context.types.PageStructureRequest."""
+
+	fields: tuple[object, ...] = ()
+
+
+@dataclass(frozen=True)
+class ForegroundImageRequest:
+	"""Minimal stand-in for context.types.ForegroundImageRequest."""
+
+
+@dataclass(frozen=True)
+class ExtractionIntent:
+	"""Minimal stand-in for context.types.ExtractionIntent."""
+
+	requests: tuple[object, ...] = ()
+
+
 context_types_module = types.ModuleType(f"{PACKAGE_NAME}.context.types")
 context_types_module.APP = "app"
 context_types_module.PAGE = "page"
@@ -75,6 +99,10 @@ context_types_module.ContextProfileList = tuple[str, ...]
 context_types_module.ExtractionResult = ExtractionResult
 context_types_module.ImageContext = ImageContext
 context_types_module.PromptContext = PromptContext
+context_types_module.PageTextRequest = PageTextRequest
+context_types_module.PageStructureRequest = PageStructureRequest
+context_types_module.ForegroundImageRequest = ForegroundImageRequest
+context_types_module.ExtractionIntent = ExtractionIntent
 sys.modules[context_types_module.__name__] = context_types_module
 
 providers_interfaces_module = types.ModuleType(f"{PACKAGE_NAME}.providers.interfaces")
@@ -90,9 +118,15 @@ utils_markdown_module.render_markdown_to_html = lambda text: f"<p>{text}</p>"
 sys.modules[utils_markdown_module.__name__] = utils_markdown_module
 
 prompts_module = types.ModuleType(f"{PACKAGE_NAME}.prompts")
-prompts_module.build_extraction_summary_prompt = lambda extraction_result, language: f"summary:{extraction_result.text}:{language}"
-prompts_module.build_extraction_structure_summary_prompt = lambda extraction_result, language: f"structure:{extraction_result.text}:{language}"
-prompts_module.build_image_description_prompt = lambda image_context, language: f"image:{image_context.image_base64}:{language}"
+prompts_module.build_extraction_summary_prompt = lambda extraction_result, language: (
+	f"summary:{extraction_result.text}:{language}"
+)
+prompts_module.build_extraction_structure_summary_prompt = lambda extraction_result, language: (
+	f"structure:{extraction_result.text}:{language}"
+)
+prompts_module.build_image_description_prompt = lambda image_context, language: (
+	f"image:{image_context.image_base64}:{language}"
+)
 sys.modules[prompts_module.__name__] = prompts_module
 
 types_module = _load_module(

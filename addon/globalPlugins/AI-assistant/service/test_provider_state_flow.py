@@ -41,6 +41,17 @@ _register_package(f"{PACKAGE_NAME}.providers", ROOT_DIR / "providers")
 _register_package(f"{PACKAGE_NAME}.service", ROOT_DIR / "service")
 _register_package(f"{PACKAGE_NAME}.ui", ROOT_DIR / "ui")
 
+# NVDA-internal module: provider_readiness -> providers.runtime.server ->
+# providers.runtime.download imports ``from logHandler import log``, which is
+# unavailable outside NVDA. Stub it like other tests do.
+log_handler_module = types.ModuleType("logHandler")
+log_handler_module.log = types.SimpleNamespace(
+	debug=lambda *args, **kwargs: None,
+	warning=lambda *args, **kwargs: None,
+	exception=lambda *args, **kwargs: None,
+)
+sys.modules["logHandler"] = log_handler_module
+
 config_module = _load_module(
 	f"{PACKAGE_NAME}.providers.config",
 	ROOT_DIR / "providers" / "config.py",
@@ -243,7 +254,9 @@ class ProviderStateFlowTests(unittest.TestCase):
 
 		def fake_factory(provider_config):
 			factory_calls.append(provider_config)
-			raise AssertionError("Provider factory should not be called when readiness blocks model catalog access")
+			raise AssertionError(
+				"Provider factory should not be called when readiness blocks model catalog access"
+			)
 
 		catalog = ProviderCatalogService(
 			readiness_service=self.readiness_service,
@@ -285,7 +298,9 @@ class ProviderStateFlowTests(unittest.TestCase):
 
 		self.assertFalse(metadata["chat_enabled"])
 		self.assertEqual(metadata["provider_status"]["state"], ProviderReadinessState.UNCONFIGURED.value)
-		self.assertEqual(metadata["provider_status"]["reason"], ProviderReadinessReason.MISSING_CREDENTIALS.value)
+		self.assertEqual(
+			metadata["provider_status"]["reason"], ProviderReadinessReason.MISSING_CREDENTIALS.value
+		)
 		self.assertIn("OpenAI is selected but not configured", metadata["status_message"])
 
 	def test_merge_session_metadata_clears_stale_status_when_provider_is_ready(self) -> None:
@@ -315,7 +330,9 @@ class ProviderStateFlowTests(unittest.TestCase):
 			readiness=readiness,
 		)
 		merged = merge_session_metadata(
-			{"status_message": "Gemini is selected but not configured. Set an API key or bearer token in settings."},
+			{
+				"status_message": "Gemini is selected but not configured. Set an API key or bearer token in settings."
+			},
 			session_state,
 		)
 

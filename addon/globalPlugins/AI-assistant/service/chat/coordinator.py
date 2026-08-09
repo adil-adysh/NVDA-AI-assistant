@@ -22,7 +22,10 @@ from .session import ConversationSession
 from .transaction import ChatTurnTransaction
 
 
-class ChatCoordinator(BaseCoordinator):
+# ChatCoordinator drives chat synchronously through send()/send_message() and
+# never uses BaseCoordinator's background-task hooks (_run_task_logic,
+# _present_result, _format_progress_message), so those stay unimplemented.
+class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 	def __init__(
 		self,
 		client: ProviderLLMService,
@@ -31,7 +34,9 @@ class ChatCoordinator(BaseCoordinator):
 		repository: ConversationRepository | None = None,
 		conversation_id_factory: Callable[[], str] | None = None,
 		history_projector: Callable[[list[Message]], list[ChatMessage]] = project_chat_history,
-		history_transport_projector: Callable[[list[Message]], list[dict[str, Any]]] = project_chat_history_transport,
+		history_transport_projector: Callable[
+			[list[Message]], list[dict[str, Any]]
+		] = project_chat_history_transport,
 	) -> None:
 		super().__init__(metrics_reporter)
 		self._llm_service = client
@@ -111,11 +116,17 @@ class ChatCoordinator(BaseCoordinator):
 		seed_messages: Sequence[Message] = (),
 	) -> str:
 		with self._session_lock:
-			resolved_conversation_id = conversation_id.strip() if isinstance(conversation_id, str) and conversation_id.strip() else self._conversation_id_factory()
+			resolved_conversation_id = (
+				conversation_id.strip()
+				if isinstance(conversation_id, str) and conversation_id.strip()
+				else self._conversation_id_factory()
+			)
 			previous_conversation_id = self._active_conversation_id
 			previous_messages = self._session.snapshot()
 			if previous_conversation_id and previous_conversation_id != resolved_conversation_id:
-				self._persist_conversation_locked(previous_conversation_id, previous_messages, delete_if_empty=False)
+				self._persist_conversation_locked(
+					previous_conversation_id, previous_messages, delete_if_empty=False
+				)
 			self._active_conversation_id = resolved_conversation_id
 			self._session_generation += 1
 			if self._repository is not None and self._repository.exists(resolved_conversation_id):
@@ -167,7 +178,9 @@ class ChatCoordinator(BaseCoordinator):
 		with self._session_lock:
 			generation = self._session_generation
 			prior_messages = tuple(self._session.snapshot())
-			return ChatTurnTransaction(prior_messages=prior_messages, staged_messages=staged_messages), generation
+			return ChatTurnTransaction(
+				prior_messages=prior_messages, staged_messages=staged_messages
+			), generation
 
 	def _send_transaction(
 		self,
@@ -178,7 +191,9 @@ class ChatCoordinator(BaseCoordinator):
 		progress: ProgressHandler | None = None,
 	) -> LLMResponse:
 		if threading.current_thread() is threading.main_thread():
-			log.warning("ChatCoordinator.send called on main thread; should be invoked from a background worker")
+			log.warning(
+				"ChatCoordinator.send called on main thread; should be invoked from a background worker"
+			)
 
 		turn_result = self._llm_service.generate_with_transcript(
 			messages=transaction.request_messages(),
@@ -195,7 +210,11 @@ class ChatCoordinator(BaseCoordinator):
 		return turn_result.response
 
 	def _persist_locked(self) -> None:
-		if self._repository is None or not isinstance(self._active_conversation_id, str) or not self._active_conversation_id:
+		if (
+			self._repository is None
+			or not isinstance(self._active_conversation_id, str)
+			or not self._active_conversation_id
+		):
 			return
 		self._persist_conversation_locked(self._active_conversation_id, self._session.snapshot())
 
@@ -232,8 +251,16 @@ class ChatCoordinator(BaseCoordinator):
 			if not name:
 				continue
 			description = str(function_payload.get("description", ""))
-			parameters = function_payload.get("parameters") if isinstance(function_payload.get("parameters"), dict) else {}
-			required = tuple(item for item in parameters.get("required", []) if isinstance(item, str)) if isinstance(parameters, dict) else ()
+			parameters = (
+				function_payload.get("parameters")
+				if isinstance(function_payload.get("parameters"), dict)
+				else {}
+			)
+			required = (
+				tuple(item for item in parameters.get("required", []) if isinstance(item, str))
+				if isinstance(parameters, dict)
+				else ()
+			)
 			canonical_tools.append(
 				Tool(
 					name=name,

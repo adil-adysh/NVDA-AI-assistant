@@ -39,6 +39,11 @@ ignore = [
 # so ignore F821.
 "sconstruct" = ["F821"]
 
+# NVDA entry points must run bootstrap code (sys.path setup, translation
+# init) before importing plugin modules, so imports can't be at the top.
+"addon/globalPlugins/AI-assistant/__init__.py" = ["E402"]
+"addon/globalPlugins/AI-assistant/plugin/__init__.py" = ["E402"]
+
 [tool.pyright]
 pythonPlatform = "Windows"
 typeCheckingMode = "strict"
@@ -187,6 +192,11 @@ disable = [
 	# to keep startup imports cheap; Pyright still type-checks them.
 	"import-outside-toplevel",
 
+	# NVDA package entry points (addon root and plugin package __init__)
+	# must run bootstrap code (sys.path setup, addonHandler.initTranslation)
+	# before importing plugin modules; import ordering is intentional there.
+	"wrong-import-position",
+
 	# Protocol method stubs use ``...`` as their body (PEP 544);
 	# Pylint treats the ellipsis as redundant next to the docstring.
 	"unnecessary-ellipsis",
@@ -253,6 +263,9 @@ ignored-modules = [
 	"ui",
 	"winUser",
 	"wx",
+	# Test-only support module: tests insert the ui directory on sys.path
+	# at runtime, so it is not importable from the repo root for Pylint.
+	"test_bootstrap",
 ]
 
 # Pylint cannot infer the dynamically generated PIL constants
