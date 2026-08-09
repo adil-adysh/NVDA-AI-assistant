@@ -7,16 +7,37 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
 
+from ..context.formatting import format_page_context, format_page_structure
 from ..context.pipeline import ContextPipeline
 from ..context.types import ExtractionResult, PromptContext
 from ..providers.interfaces import PartialCallback
 from ..service.llm import LLMService
 from ..utils.markdown import render_markdown_to_html
-from .types import UseCaseResult, UseCaseSpec
+from .types import ResultContextItem, UseCaseResult, UseCaseSpec
 
 logger = logging.getLogger(__name__)
 
 ContextEmitter = Callable[[str, str], None] | None
+
+
+def build_page_context_items(extraction_result: ExtractionResult) -> tuple[ResultContextItem, ...]:
+	"""Build the context items a page-based use case exposes to the conversation.
+
+	Only includes items that actually have usable data, so the presenter never
+	offers actions for context that does not exist.
+	"""
+	items: list[ResultContextItem] = []
+	page_content = format_page_context(
+		extraction_result.title,
+		extraction_result.app_title,
+		extraction_result.text or "",
+	)
+	if page_content:
+		items.append(ResultContextItem(id="page_content", content=page_content))
+	structure_text = format_page_structure(extraction_result.structure)
+	if structure_text:
+		items.append(ResultContextItem(id="page_structure", content=structure_text))
+	return tuple(items)
 
 
 class UseCase(ABC):

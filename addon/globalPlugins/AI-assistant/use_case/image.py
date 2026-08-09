@@ -8,7 +8,7 @@ from ..prompts import build_image_description_prompt
 from ..context.types import ExtractionIntent, ForegroundImageRequest, ImageContext, PromptContext
 from ..service.llm import LLMService
 from .base import UseCase
-from .types import UseCaseResult, UseCaseSpec
+from .types import ResultContextItem, ResultOutputItem, UseCaseResult, UseCaseSpec
 
 
 class ImageDescriptionUseCase(UseCase):
@@ -63,6 +63,14 @@ class ImageDescriptionUseCase(UseCase):
 	def _build_result(self, prompt_context: PromptContext, response: object, prompt: str) -> UseCaseResult:
 		image_context = self._get_image_context(prompt_context)
 		html_output = self.markdown_to_html(response.text)
+		context_items: tuple[ResultContextItem, ...] = ()
+		if image_context.image_base64:
+			context_items = (
+				ResultContextItem(
+					id="screenshot",
+					image_base64=image_context.image_base64,
+				),
+			)
 		return UseCaseResult(
 			success=True,
 			message="Image description ready",
@@ -77,4 +85,6 @@ class ImageDescriptionUseCase(UseCase):
 				metadata=self._build_prompt_metadata(self.spec.prompt_key, prompt),
 			),
 			metadata=self._build_result_metadata(response, self.spec.prompt_key),
+			context_items=context_items,
+			output_items=(ResultOutputItem(id="image_description", content=response.text),),
 		)

@@ -9,7 +9,9 @@ from typing import Any, cast
 from logHandler import log
 
 from ..config.state import ProviderState
+from ..core.canonical import Message
 from ..core.events import ProgressEvent
+from ..core.message_transforms import build_assistant_message, build_user_message
 from ..service.chat import ChatCoordinator, ConversationService
 from ..service.provider_catalog import ProviderCatalogService
 from ..service.provider_readiness import ProviderReadinessService
@@ -40,13 +42,12 @@ from ..ui.view_models import ChatWindowViewModel, DisplayResultViewModel, Result
 from ..utils.markdown import render_markdown_to_html
 from .model_cache import ModelCache
 from .ui_actions import (
-	AttachToCurrentAction,
+	AddItemToChatAction,
 	ConversationDeleteAction,
 	ConversationNewAction,
 	ConversationOpenAction,
-	OpenChatAction,
+	OpenInNewChatAction,
 	parse_ui_action,
-	serialize_ui_action,
 )
 
 
@@ -55,6 +56,33 @@ def _translate(message: str) -> str:
 
 
 _ = cast(Callable[[str], str], getattr(builtins, "_", _translate))
+# `translate` is the extraction keyword recognized by the repo's xgettext
+# configuration (site_scons/site_tools/gettexttool); it resolves to the same
+# translator as `_` at runtime.  New user-facing labels must go through it so
+# they land in the generated POT file.
+translate = _
+
+
+# TRANSLATORS: Result action that adds the page content used by the use case to the current chat.
+_CONTEXT_ITEM_ACTION_LABELS: dict[str, str] = {
+	"page_content": translate("Add Page Content to Chat"),
+	# TRANSLATORS: Result action that adds the extracted page structure to the current chat.
+	"page_structure": translate("Add Page Structure to Chat"),
+	# TRANSLATORS: Result action that attaches the foreground screenshot to the current chat.
+	"screenshot": translate("Add Screenshot to Chat"),
+	# TRANSLATORS: Result action that attaches the focused object image to the current chat.
+	"focused_image": translate("Add Focused Image to Chat"),
+}
+# TRANSLATORS: Result action that adds the generated summary to the current chat.
+_OUTPUT_ITEM_ACTION_LABELS: dict[str, str] = {
+	"summary": translate("Add Summary to Chat"),
+	# TRANSLATORS: Result action that adds the generated structure summary to the current chat.
+	"structure_summary": translate("Add Structure Summary to Chat"),
+	# TRANSLATORS: Result action that adds the generated image description to the current chat.
+	"image_description": translate("Add Image Description to Chat"),
+	# TRANSLATORS: Result action that adds the generated focused-image description to the current chat.
+	"focused_image_description": translate("Add Focused Image Description to Chat"),
+}
 
 
 class UseCasePresenter:
@@ -93,6 +121,7 @@ class UseCasePresenter:
 		initial_assistant_text: str | None = None,
 		conversation_id: str | None = None,
 		force_new_conversation: bool = False,
+		seed_messages: tuple[Message, ...] | None = None,
 	) -> None:
 		# When carrying both an image and its description into the conversation,
 		# inject the image as a user message seed so it appears in the transcript.
@@ -106,6 +135,7 @@ class UseCasePresenter:
 			initial_assistant_text=initial_assistant_text,
 			initial_image_base64=seed_image,
 			force_new=force_new_conversation,
+			seed_messages=seed_messages,
 		)
 		provider_state = get_provider_state()
 		session_state = build_session_state(
@@ -209,7 +239,7 @@ class UseCasePresenter:
 		copy_markdown = output_text if has_output_text else None
 		metadata = merge_session_metadata(getattr(use_case_result, "metadata", None), session_state)
 		self._result_action_store.clear()
-		actions = self._build_result_actions(use_case_id, output_text, use_case_result)
+		actions = self._build_result_actions(use_case_result)
 		# result_actions flag is set by UseCaseSpec and auto-injected into
 		# metadata by UseCase.execute_prompted_use_case; avoids hardcoded lists.
 		has_result_actions = bool(actions and (metadata or {}).get("result_actions"))
@@ -323,54 +353,84 @@ class UseCasePresenter:
 			).to_metadata()
 		)
 
-	def _build_result_actions(
-		self, _use_case_id: str | None, output_text: str | None, use_case_result: Any
-	) -> list[ResultActionViewModel]:
-		if not isinstance(output_text, str) or not output_text.strip():
-			return []
+	def _build_result_actions(self, use_case_result: Any) -> list[ResultActionViewModel]:
 		# Check the flag auto-injected by UseCase.execute_prompted_use_case
 		# from UseCaseSpec.result_actions.  Avoids hardcoded use-case-ID lists.
 		result_metadata = getattr(use_case_result, "metadata", None) or {}
 		if not result_metadata.get("result_actions"):
 			return []
-		# ── Open Chat (new conversation, seed text via token store) ──
-		stored_action = OpenChatAction(
-			assistant_seed_text=output_text.strip(),
-			initial_image_base64=getattr(use_case_result, "initial_image_base64", None),
-			force_new_conversation=True,
+		context_items = tuple(
+			item
+			for item in (getattr(use_case_result, "context_items", None) or ())
+			if item.id in _CONTEXT_ITEM_ACTION_LABELS and self._context_item_has_data(item)
 		)
-		_stored_id, stored_payload = serialize_ui_action(stored_action)
-		token = self._result_action_store.put(stored_payload)
-		transport = OpenChatAction(token=token)
-		open_chat_id, open_chat_payload = serialize_ui_action(transport)
-		# ── Attach to Current (seed text stored, resolved on dispatch) ──
-		attach_stored_action = AttachToCurrentAction()
-		_attach_stored_id, _attach_stored_payload = serialize_ui_action(attach_stored_action)
-		# Store the seed text payload under a new token so the resolved action
-		# carries the summary/description to inject into the current conversation.
-		attach_seed_payload: dict[str, object] = {
-			"initial_assistant_text": output_text.strip(),
-		}
-		image_b64 = getattr(use_case_result, "initial_image_base64", None)
-		if image_b64:
-			attach_seed_payload["initial_image_base64"] = image_b64
-		attach_token = self._result_action_store.put(attach_seed_payload)
-		attach_transport = AttachToCurrentAction(token=attach_token)
-		attach_id, attach_payload = serialize_ui_action(attach_transport)
-		return [
-			ResultActionViewModel(
-				id=attach_id,
-				label=_("Add to current chat"),
-				kind=attach_id,
-				payload=attach_payload,
-			),
-			ResultActionViewModel(
-				id=open_chat_id,
-				label=_("Open Chat"),
-				kind=open_chat_id,
-				payload=open_chat_payload,
-			),
+		output_items = tuple(
+			item
+			for item in (getattr(use_case_result, "output_items", None) or ())
+			if item.id in _OUTPUT_ITEM_ACTION_LABELS and self._output_item_has_data(item)
+		)
+		if not context_items and not output_items:
+			return []
+		# Store the full payload once; each action transports only its token and
+		# item id, so large page content or Base64 images never cross the event
+		# pipe.  The store is cleared on every new display (see present_use_case_result).
+		token = self._result_action_store.put(
+			{
+				"context_items": [self._serialize_context_item(item) for item in context_items],
+				"output_items": [self._serialize_output_item(item) for item in output_items],
+			}
+		)
+		actions = [
+			self._build_add_item_action(token, item.id)
+			for item in (*context_items, *output_items)
 		]
+		# TRANSLATORS: Result action that moves the complete use-case context and result into a new conversation.
+		actions.append(
+			ResultActionViewModel(
+				id="open_in_new_chat",
+				label=translate("Open in New Chat"),
+				kind="open_in_new_chat",
+				payload={"token": token},
+			)
+		)
+		return actions
+
+	@staticmethod
+	def _context_item_has_data(item: Any) -> bool:
+		return bool(
+			(isinstance(item.content, str) and item.content.strip())
+			or item.image_base64
+		)
+
+	@staticmethod
+	def _output_item_has_data(item: Any) -> bool:
+		return bool(isinstance(item.content, str) and item.content.strip())
+
+	@staticmethod
+	def _serialize_context_item(item: Any) -> dict[str, object]:
+		return {
+			"kind": "context",
+			"id": item.id,
+			"content": item.content,
+			"image_base64": item.image_base64,
+		}
+
+	@staticmethod
+	def _serialize_output_item(item: Any) -> dict[str, object]:
+		return {"kind": "output", "id": item.id, "content": item.content}
+
+	def _build_add_item_action(self, token: str, item_id: str) -> ResultActionViewModel:
+		action_id = f"add_{item_id}_to_chat"
+		label = _CONTEXT_ITEM_ACTION_LABELS.get(item_id) or _OUTPUT_ITEM_ACTION_LABELS.get(item_id)
+		if label is None:
+			# Unknown capability id — do not surface a vague action.
+			raise ValueError(f"Unknown result action item: {item_id}")
+		return ResultActionViewModel(
+			id=action_id,
+			label=label,
+			kind=action_id,
+			payload={"token": token, "item_id": item_id},
+		)
 
 	def _handle_result_action(self, action_id: str, payload: dict[str, Any] | None) -> None:
 		action = parse_ui_action(action_id, payload)
@@ -383,28 +443,14 @@ class UseCasePresenter:
 		action: ConversationNewAction
 		| ConversationOpenAction
 		| ConversationDeleteAction
-		| OpenChatAction
-		| AttachToCurrentAction,
+		| AddItemToChatAction
+		| OpenInNewChatAction,
 	) -> None:
 		if isinstance(action, ConversationNewAction):
 			self.open_chat_window(force_new_conversation=True)
 			return
 		if isinstance(action, ConversationOpenAction):
 			self.open_chat_window(conversation_id=action.conversation_id)
-			return
-		if isinstance(action, AttachToCurrentAction):
-			initial_text = None
-			initial_image = None
-			if action.token:
-				stored_payload = self._result_action_store.pop(action.token)
-				if isinstance(stored_payload, dict):
-					initial_text = stored_payload.get("initial_assistant_text")
-					initial_image = stored_payload.get("initial_image_base64")
-			self.open_chat_window(
-				initial_assistant_text=initial_text,
-				initial_image_base64=initial_image,
-				force_new_conversation=False,
-			)
 			return
 		if isinstance(action, ConversationDeleteAction):
 			delete_result = self._conversation_service.delete_conversation(action.conversation_id)
@@ -415,17 +461,87 @@ class UseCasePresenter:
 			else:
 				self.update_provider_state()
 			return
-		resolved_action = action
-		if isinstance(action, OpenChatAction) and action.token:
-			stored_payload = self._result_action_store.pop(action.token)
-			if stored_payload is not None:
-				stored_action = parse_ui_action("open_chat", stored_payload)
-				if isinstance(stored_action, OpenChatAction):
-					resolved_action = stored_action
-		if not isinstance(resolved_action, OpenChatAction):
+		if isinstance(action, AddItemToChatAction):
+			self._dispatch_add_item_to_chat(action)
 			return
-		self.open_chat_window(
-			initial_assistant_text=resolved_action.assistant_seed_text,
-			initial_image_base64=resolved_action.initial_image_base64,
-			force_new_conversation=resolved_action.force_new_conversation,
+		if isinstance(action, OpenInNewChatAction):
+			self._dispatch_open_in_new_chat(action)
+
+	def _dispatch_add_item_to_chat(self, action: AddItemToChatAction) -> None:
+		payload = self._result_action_store.pop(action.token)
+		if payload is None:
+			log.debug("Result action token expired: action=add_item_to_chat item_id=%s", action.item_id)
+			return
+		item = self._find_stored_item(payload, action.item_id)
+		if item is None:
+			log.warning(
+				"Result action item missing from stored payload: item_id=%s", action.item_id,
+			)
+			return
+		if item.get("kind") == "context":
+			self._conversation_service.add_user_context(
+				content=item.get("content") or None,
+				image_base64=item.get("image_base64") or None,
+			)
+		else:
+			self._conversation_service.add_assistant_result(item.get("content") or "")
+		log.debug(
+			"Result action applied: destination=current_chat item_kind=%s item_id=%s conversation_id=%s",
+			item.get("kind"),
+			action.item_id,
+			self._conversation_service.current_conversation_id(),
 		)
+		self.open_chat_window(force_new_conversation=False)
+
+	def _dispatch_open_in_new_chat(self, action: OpenInNewChatAction) -> None:
+		payload = self._result_action_store.pop(action.token)
+		if payload is None:
+			log.debug("Result action token expired: action=open_in_new_chat")
+			return
+		seed_messages = self._build_seed_messages_from_payload(payload)
+		if not seed_messages:
+			log.warning("Open in new chat invoked without seedable result content")
+			self.open_chat_window(force_new_conversation=True)
+			return
+		log.debug(
+			"Result action applied: destination=new_chat message_count=%d",
+			len(seed_messages),
+		)
+		self.open_chat_window(seed_messages=seed_messages, force_new_conversation=True)
+
+	def _build_seed_messages_from_payload(self, payload: dict[str, Any]) -> tuple[Message, ...]:
+		"""Build complete conversation seeds (user context + assistant result)."""
+		messages: list[Message] = []
+		context_items = payload.get("context_items") or []
+		if context_items:
+			text_parts = [
+				item.get("content")
+				for item in context_items
+				if isinstance(item.get("content"), str) and item.get("content").strip()
+			]
+			image_base64 = next(
+				(item.get("image_base64") for item in context_items if item.get("image_base64")),
+				None,
+			)
+			combined_text = "\n\n".join(text_parts) if text_parts else None
+			messages.append(build_user_message(text=combined_text, image_base64=image_base64))
+		output_items = payload.get("output_items") or []
+		if output_items:
+			output_text = "\n\n".join(
+				item.get("content")
+				for item in output_items
+				if isinstance(item.get("content"), str) and item.get("content").strip()
+			)
+			if output_text:
+				messages.append(build_assistant_message(text=output_text))
+		return tuple(messages)
+
+	@staticmethod
+	def _find_stored_item(payload: dict[str, Any], item_id: str) -> dict[str, Any] | None:
+		for item in payload.get("context_items", []):
+			if item.get("id") == item_id:
+				return item
+		for item in payload.get("output_items", []):
+			if item.get("id") == item_id:
+				return item
+		return None

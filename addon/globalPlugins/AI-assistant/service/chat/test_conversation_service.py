@@ -108,6 +108,10 @@ conversation_service_module = _load_module(
 ConversationDeleteResult = conversation_service_module.ConversationDeleteResult
 ConversationService = conversation_service_module.ConversationService
 
+message_transforms_module = sys.modules[f"{PACKAGE_NAME}.core.message_transforms"]
+build_assistant_message = message_transforms_module.build_assistant_message
+build_user_message = message_transforms_module.build_user_message
+
 
 class ConversationServiceTests(unittest.TestCase):
 	def setUp(self) -> None:
@@ -129,6 +133,20 @@ class ConversationServiceTests(unittest.TestCase):
 		self.assertEqual(seed_messages[0].role, "assistant")
 		self.assertEqual(seed_messages[0].parts[0].text, "Saved reply")
 
+	def test_open_conversation_prefers_explicit_seed_messages(self) -> None:
+		user = build_user_message(text="context text")
+		assistant = build_assistant_message(text="result text")
+
+		conversation_id = self.service.open_conversation(
+			conversation_id="conv-123",
+			initial_assistant_text="ignored",
+			seed_messages=(user, assistant),
+		)
+
+		self.assertEqual(conversation_id, "conv-123")
+		activate_call = self.coordinator.activate_calls[0]
+		self.assertEqual(activate_call["seed_messages"], (user, assistant))
+
 	def test_open_conversation_reuses_current_active_conversation_by_default(self) -> None:
 		conversation_id = self.service.open_conversation()
 
@@ -140,6 +158,51 @@ class ConversationServiceTests(unittest.TestCase):
 
 		self.assertEqual(conversation_id, "generated-conv")
 		self.assertIsNone(self.coordinator.activate_calls[0]["conversation_id"])
+
+	def test_add_user_context_targets_current_conversation_as_user_message(self) -> None:
+		conversation_id = self.service.add_user_context(content="page content")
+
+		self.assertEqual(conversation_id, "conv-active")
+		activate_call = self.coordinator.activate_calls[0]
+		self.assertEqual(activate_call["conversation_id"], "conv-active")
+		seed_messages = activate_call["seed_messages"]
+		self.assertEqual(len(seed_messages), 1)
+		self.assertEqual(seed_messages[0].role, "user")
+		self.assertEqual(seed_messages[0].parts[0].text, "page content")
+
+	def test_add_user_context_with_image_attaches_image_part(self) -> None:
+		conversation_id = self.service.add_user_context(content="describe this", image_base64="aW1n")
+
+		self.assertEqual(conversation_id, "conv-active")
+		seed_messages = self.coordinator.activate_calls[0]["seed_messages"]
+		self.assertEqual(seed_messages[0].role, "user")
+		self.assertEqual(seed_messages[0].parts[0].text, "describe this")
+		image_part = seed_messages[0].parts[1]
+		self.assertEqual(image_part.type, "image")
+		self.assertEqual(image_part.image, b"img")
+
+	def test_add_user_context_without_content_adds_no_message(self) -> None:
+		conversation_id = self.service.add_user_context()
+
+		self.assertEqual(conversation_id, "conv-active")
+		self.assertEqual(self.coordinator.activate_calls[0]["seed_messages"], ())
+
+	def test_add_assistant_result_targets_current_conversation_as_assistant_message(self) -> None:
+		conversation_id = self.service.add_assistant_result("summary text")
+
+		self.assertEqual(conversation_id, "conv-active")
+		activate_call = self.coordinator.activate_calls[0]
+		self.assertEqual(activate_call["conversation_id"], "conv-active")
+		seed_messages = activate_call["seed_messages"]
+		self.assertEqual(len(seed_messages), 1)
+		self.assertEqual(seed_messages[0].role, "assistant")
+		self.assertEqual(seed_messages[0].parts[0].text, "summary text")
+
+	def test_add_assistant_result_without_content_adds_no_message(self) -> None:
+		conversation_id = self.service.add_assistant_result("")
+
+		self.assertEqual(conversation_id, "conv-active")
+		self.assertEqual(self.coordinator.activate_calls[0]["seed_messages"], ())
 
 	def test_list_conversation_summaries_projects_metadata(self) -> None:
 		summaries = self.service.list_conversation_summaries()

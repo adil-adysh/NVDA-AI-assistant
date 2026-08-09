@@ -21,20 +21,34 @@ class ConversationDeleteAction:
 
 
 @dataclass(frozen=True, slots=True)
-class OpenChatAction:
-	token: str | None = None
-	assistant_seed_text: str | None = None
-	initial_image_base64: str | None = None
-	force_new_conversation: bool = False
+class AddItemToChatAction:
+	"""Add a single context/output item from a completed use case to the current conversation.
+
+	``token`` references the stored result payload in ``ResultActionStore``;
+	``item_id`` selects which context or output item inside that payload to add.
+	"""
+
+	token: str
+	item_id: str
 
 
 @dataclass(frozen=True, slots=True)
-class AttachToCurrentAction:
-	"""Open chat attached to the current conversation — injected assistant text via token."""
-	token: str | None = None
+class OpenInNewChatAction:
+	"""Create a new conversation carrying the complete use-case context and result.
+
+	``token`` references the stored result payload in ``ResultActionStore``.
+	"""
+
+	token: str
 
 
-UIAction = ConversationNewAction | ConversationOpenAction | ConversationDeleteAction | OpenChatAction | AttachToCurrentAction
+UIAction = (
+	ConversationNewAction
+	| ConversationOpenAction
+	| ConversationDeleteAction
+	| AddItemToChatAction
+	| OpenInNewChatAction
+)
 
 
 def serialize_ui_action(action: UIAction) -> tuple[str, dict[str, object]]:
@@ -44,14 +58,9 @@ def serialize_ui_action(action: UIAction) -> tuple[str, dict[str, object]]:
 		return "conversation_open", {"conversation_id": action.conversation_id}
 	if isinstance(action, ConversationDeleteAction):
 		return "conversation_delete", {"conversation_id": action.conversation_id}
-	if isinstance(action, AttachToCurrentAction):
-		return "attach_to_current", _compact_payload(token=action.token)
-	return "open_chat", _compact_payload(
-		token=action.token,
-		assistant_seed_text=action.assistant_seed_text,
-		initial_image_base64=action.initial_image_base64,
-		force_new_conversation=True if action.force_new_conversation else None,
-	)
+	if isinstance(action, AddItemToChatAction):
+		return f"add_{action.item_id}_to_chat", _compact_payload(token=action.token)
+	return "open_in_new_chat", _compact_payload(token=action.token)
 
 
 def parse_ui_action(action_id: str, payload: dict[str, Any] | None) -> UIAction | None:
@@ -68,17 +77,17 @@ def parse_ui_action(action_id: str, payload: dict[str, Any] | None) -> UIAction 
 		if conversation_id is None:
 			return None
 		return ConversationDeleteAction(conversation_id=conversation_id)
-	if action_id == "attach_to_current":
-		return AttachToCurrentAction(
-			token=_read_non_empty_string(resolved_payload, "token"),
-		)
-	if action_id == "open_chat":
-		return OpenChatAction(
-			token=_read_non_empty_string(resolved_payload, "token"),
-			assistant_seed_text=_read_non_empty_string(resolved_payload, "assistant_seed_text"),
-			initial_image_base64=_read_non_empty_string(resolved_payload, "initial_image_base64"),
-			force_new_conversation=resolved_payload.get("force_new_conversation") is True,
-		)
+	if action_id.startswith("add_") and action_id.endswith("_to_chat"):
+		item_id = action_id[len("add_") : -len("_to_chat")]
+		token = _read_non_empty_string(resolved_payload, "token")
+		if token is None or not item_id:
+			return None
+		return AddItemToChatAction(token=token, item_id=item_id)
+	if action_id == "open_in_new_chat":
+		token = _read_non_empty_string(resolved_payload, "token")
+		if token is None:
+			return None
+		return OpenInNewChatAction(token=token)
 	return None
 
 

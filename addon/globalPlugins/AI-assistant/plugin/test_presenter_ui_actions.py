@@ -111,9 +111,19 @@ class _FakeConversationService:
 	def __init__(self) -> None:
 		self.delete_result = _FakeDeleteResult(False, False, None)
 		self.open_calls: list[dict[str, object]] = []
+		self.user_context_calls: list[dict[str, object | None]] = []
+		self.assistant_result_calls: list[str] = []
 
 	def open_conversation(self, **kwargs):
 		self.open_calls.append(dict(kwargs))
+		return "conv-active"
+
+	def add_user_context(self, *, content=None, image_base64=None):
+		self.user_context_calls.append({"content": content, "image_base64": image_base64})
+		return "conv-active"
+
+	def add_assistant_result(self, content):
+		self.assistant_result_calls.append(content)
 		return "conv-active"
 
 	def current_conversation_id(self):
@@ -127,6 +137,19 @@ class _FakeConversationService:
 
 	def delete_conversation(self, conversation_id: str):
 		return self.delete_result
+
+
+def _item(item_id: str, content: str | None = None, image_base64: str | None = None):
+	"""Build a minimal context/output item stand-in (SimpleNamespace)."""
+	return types.SimpleNamespace(id=item_id, content=content, image_base64=image_base64)
+
+
+def _make_result(context_items=(), output_items=(), metadata: dict[str, object] | None = None):
+	return types.SimpleNamespace(
+		context_items=tuple(context_items),
+		output_items=tuple(output_items),
+		metadata={"result_actions": True, **(metadata or {})},
+	)
 
 
 class _FakeChatCoordinator:
@@ -279,29 +302,59 @@ class PresenterUIActionTests(unittest.TestCase):
 
 		self.assertEqual(captured, [{"conversation_id": "conv-123"}])
 
-	def test_handle_result_action_open_chat_resolves_token_payload(self) -> None:
+	def test_open_in_new_chat_creates_new_conversation_with_context_and_result(self) -> None:
 		captured: list[dict[str, object | None]] = []
 		self.presenter.open_chat_window = lambda **kwargs: captured.append(kwargs)
 		token = self.presenter._result_action_store.put(
 			{
-				"assistant_seed_text": "Stored summary",
-				"initial_image_base64": "img-123",
-				"force_new_conversation": True,
+				"context_items": [
+					{"kind": "context", "id": "page_content", "content": "Page content...", "image_base64": None}
+				],
+				"output_items": [{"kind": "output", "id": "summary", "content": "The summary"}],
 			}
 		)
 
-		self.presenter._handle_result_action("open_chat", {"token": token})
+		self.presenter._handle_result_action("open_in_new_chat", {"token": token})
 
-		self.assertEqual(
-			captured,
-			[
-				{
-					"initial_assistant_text": "Stored summary",
-					"initial_image_base64": "img-123",
-					"force_new_conversation": True,
-				}
-			],
+		self.assertEqual(len(captured), 1)
+		call = captured[0]
+		self.assertEqual(call["force_new_conversation"], True)
+		seed_messages = call["seed_messages"]
+		self.assertEqual(len(seed_messages), 2)
+		# Context is user-side material, the result is an assistant message.
+		self.assertEqual(seed_messages[0].role, "user")
+		self.assertEqual(seed_messages[0].parts[0].text, "Page content...")
+		self.assertEqual(seed_messages[1].role, "assistant")
+		self.assertEqual(seed_messages[1].parts[0].text, "The summary")
+
+	def test_open_in_new_chat_carries_focused_image_context(self) -> None:
+		captured: list[dict[str, object | None]] = []
+		self.presenter.open_chat_window = lambda **kwargs: captured.append(kwargs)
+		token = self.presenter._result_action_store.put(
+			{
+				"context_items": [
+					{
+						"kind": "context",
+						"id": "focused_image",
+						"content": "Focused element role: button\nName: Save",
+						"image_base64": "aW1n",
+					}
+				],
+				"output_items": [
+					{"kind": "output", "id": "focused_image_description", "content": "A save button"}
+				],
+			}
 		)
+
+		self.presenter._handle_result_action("open_in_new_chat", {"token": token})
+
+		seed_messages = captured[0]["seed_messages"]
+		self.assertEqual(seed_messages[0].role, "user")
+		self.assertEqual(seed_messages[0].parts[0].text, "Focused element role: button\nName: Save")
+		image_part = seed_messages[0].parts[1]
+		self.assertEqual(image_part.type, "image")
+		self.assertEqual(image_part.image, b"img")
+		self.assertEqual(seed_messages[1].role, "assistant")
 
 	def test_open_chat_window_reuses_current_conversation_by_default(self) -> None:
 		self.presenter.open_chat_window()
@@ -314,108 +367,278 @@ class PresenterUIActionTests(unittest.TestCase):
 					"initial_assistant_text": None,
 					"initial_image_base64": None,
 					"force_new": False,
+					"seed_messages": None,
 				}
 			],
 		)
 
-	def test_attach_to_current_resolves_token_and_injects_text(self) -> None:
+	def test_add_summary_to_chat_injects_assistant_result(self) -> None:
 		captured: list[dict[str, object | None]] = []
 		self.presenter.open_chat_window = lambda **kwargs: captured.append(kwargs)
-		# Store seed text in action store, then dispatch via attach_to_current
 		token = self.presenter._result_action_store.put(
-			{"initial_assistant_text": "Summary text", "initial_image_base64": "img-123"}
+			{
+				"context_items": [],
+				"output_items": [{"kind": "output", "id": "summary", "content": "Summary text"}],
+			}
 		)
 
-		self.presenter._handle_result_action("attach_to_current", {"token": token})
+		self.presenter._handle_result_action("add_summary_to_chat", {"token": token, "item_id": "summary"})
 
-		self.assertEqual(
-			captured,
-			[
-				{
-					"initial_assistant_text": "Summary text",
-					"initial_image_base64": "img-123",
-					"force_new_conversation": False,
-				}
-			],
-		)
+		self.assertEqual(self.conversation_service.assistant_result_calls, ["Summary text"])
+		self.assertEqual(self.conversation_service.user_context_calls, [])
+		self.assertEqual(captured, [{"force_new_conversation": False}])
 
-	def test_attach_to_current_with_expired_token_opens_current_conversation(self) -> None:
-		"""When the token has already been consumed, open chat without seed text."""
+	def test_add_page_content_to_chat_injects_user_context(self) -> None:
 		captured: list[dict[str, object | None]] = []
 		self.presenter.open_chat_window = lambda **kwargs: captured.append(kwargs)
-		# Use a non-existent token
-		self.presenter._handle_result_action("attach_to_current", {"token": "token-gone"})
-
-		self.assertEqual(
-			captured,
-			[
-				{
-					"initial_assistant_text": None,
-					"initial_image_base64": None,
-					"force_new_conversation": False,
-				}
-			],
+		token = self.presenter._result_action_store.put(
+			{
+				"context_items": [
+					{"kind": "context", "id": "page_content", "content": "Page content...", "image_base64": None}
+				],
+				"output_items": [],
+			}
 		)
 
-	def test_attach_to_current_without_token_opens_current_conversation(self) -> None:
-		"""Legacy/malformed payload with no token — open current conversation silently."""
+		self.presenter._handle_result_action(
+			"add_page_content_to_chat", {"token": token, "item_id": "page_content"}
+		)
+
+		self.assertEqual(
+			self.conversation_service.user_context_calls,
+			[{"content": "Page content...", "image_base64": None}],
+		)
+		self.assertEqual(self.conversation_service.assistant_result_calls, [])
+		self.assertEqual(captured, [{"force_new_conversation": False}])
+
+	def test_add_screenshot_to_chat_injects_user_context_with_image(self) -> None:
+		captured: list[dict[str, object | None]] = []
+		self.presenter.open_chat_window = lambda **kwargs: captured.append(kwargs)
+		token = self.presenter._result_action_store.put(
+			{
+				"context_items": [
+					{"kind": "context", "id": "screenshot", "content": None, "image_base64": "aW1n"}
+				],
+				"output_items": [],
+			}
+		)
+
+		self.presenter._handle_result_action(
+			"add_screenshot_to_chat", {"token": token, "item_id": "screenshot"}
+		)
+
+		self.assertEqual(
+			self.conversation_service.user_context_calls,
+			[{"content": None, "image_base64": "aW1n"}],
+		)
+		self.assertEqual(captured, [{"force_new_conversation": False}])
+
+	def test_add_item_with_expired_token_is_noop(self) -> None:
 		captured: list[dict[str, object | None]] = []
 		self.presenter.open_chat_window = lambda **kwargs: captured.append(kwargs)
 
-		self.presenter._handle_result_action("attach_to_current", {})
+		self.presenter._handle_result_action("add_summary_to_chat", {"token": "token-gone", "item_id": "summary"})
 
-		self.assertEqual(
-			captured,
-			[
-				{
-					"initial_assistant_text": None,
-					"initial_image_base64": None,
-					"force_new_conversation": False,
-				}
-			],
-		)
+		self.assertEqual(self.conversation_service.assistant_result_calls, [])
+		self.assertEqual(self.conversation_service.user_context_calls, [])
+		self.assertEqual(captured, [])
 
-	def test_attach_to_current_resolves_token_with_text_only(self) -> None:
-		"""Image-optional: stored payload without image still injects text."""
+	def test_add_item_without_token_is_ignored(self) -> None:
+		"""Malformed payload without a token is rejected at parse time."""
 		captured: list[dict[str, object | None]] = []
 		self.presenter.open_chat_window = lambda **kwargs: captured.append(kwargs)
-		# Store payload with text but no image
-		token = self.presenter._result_action_store.put({"initial_assistant_text": "Just text summary"})
 
-		self.presenter._handle_result_action("attach_to_current", {"token": token})
+		self.presenter._handle_result_action("add_summary_to_chat", {})
 
-		self.assertEqual(
-			captured,
-			[
-				{
-					"initial_assistant_text": "Just text summary",
-					"initial_image_base64": None,
-					"force_new_conversation": False,
-				}
-			],
+		self.assertEqual(self.conversation_service.assistant_result_calls, [])
+		self.assertEqual(captured, [])
+
+	def test_add_item_with_unknown_item_id_is_noop(self) -> None:
+		captured: list[dict[str, object | None]] = []
+		self.presenter.open_chat_window = lambda **kwargs: captured.append(kwargs)
+		token = self.presenter._result_action_store.put(
+			{
+				"context_items": [],
+				"output_items": [{"kind": "output", "id": "summary", "content": "Summary text"}],
+			}
 		)
 
-	def test_build_result_actions_returns_two_buttons(self) -> None:
-		actions = self.presenter._build_result_actions(
-			"describe_image",
-			"Image description text",
-			# UseCaseEngine auto-injects the result_actions flag from UseCaseSpec;
-			# _build_result_actions only emits actions when it is present.
-			types.SimpleNamespace(
-				initial_image_base64="img-123",
-				metadata={"result_actions": True},
+		self.presenter._handle_result_action(
+			"add_page_content_to_chat", {"token": token, "item_id": "page_content"}
+		)
+
+		self.assertEqual(self.conversation_service.assistant_result_calls, [])
+		self.assertEqual(self.conversation_service.user_context_calls, [])
+		self.assertEqual(captured, [])
+
+	def test_build_result_actions_for_summary(self) -> None:
+		result = _make_result(
+			context_items=(
+				_item("page_content", "Page content..."),
+				_item("page_structure", "Page structure..."),
 			),
+			output_items=(_item("summary", "Summary text"),),
 		)
 
-		self.assertEqual(len(actions), 2)
-		# attach_to_current comes first — carries token for seed text
-		self.assertEqual(actions[0].label, "Add to current chat")
-		self.assertEqual(actions[0].id, "attach_to_current")
-		self.assertIsNotNone(actions[0].payload.get("token"))
-		# open_chat comes second — carries token for seed text
-		self.assertEqual(actions[1].label, "Open Chat")
-		self.assertEqual(actions[1].id, "open_chat")
-		self.assertIsNotNone(actions[1].payload.get("token"))
+		actions = self.presenter._build_result_actions(result)
+
+		self.assertEqual(
+			[(action.id, action.label) for action in actions],
+			[
+				("add_page_content_to_chat", "Add Page Content to Chat"),
+				("add_page_structure_to_chat", "Add Page Structure to Chat"),
+				("add_summary_to_chat", "Add Summary to Chat"),
+				("open_in_new_chat", "Open in New Chat"),
+			],
+		)
+		# All actions share one token referencing the stored payload; item
+		# actions also carry the selected item id.
+		token = actions[0].payload["token"]
+		for action in actions:
+			self.assertEqual(action.payload["token"], token)
+		self.assertEqual(actions[0].payload["item_id"], "page_content")
+		self.assertEqual(actions[1].payload["item_id"], "page_structure")
+		self.assertEqual(actions[2].payload["item_id"], "summary")
+		self.assertNotIn("item_id", actions[3].payload)
+		stored = self.presenter._result_action_store.pop(token)
+		self.assertEqual(
+			[(item["kind"], item["id"]) for item in stored["context_items"]],
+			[("context", "page_content"), ("context", "page_structure")],
+		)
+		self.assertEqual(
+			[(item["kind"], item["id"]) for item in stored["output_items"]],
+			[("output", "summary")],
+		)
+
+	def test_build_result_actions_for_structure_summary(self) -> None:
+		result = _make_result(
+			context_items=(
+				_item("page_content", "Page content..."),
+				_item("page_structure", "Page structure..."),
+			),
+			output_items=(_item("structure_summary", "Structure summary text"),),
+		)
+
+		actions = self.presenter._build_result_actions(result)
+
+		self.assertEqual(
+			[(action.id, action.label) for action in actions],
+			[
+				("add_page_content_to_chat", "Add Page Content to Chat"),
+				("add_page_structure_to_chat", "Add Page Structure to Chat"),
+				("add_structure_summary_to_chat", "Add Structure Summary to Chat"),
+				("open_in_new_chat", "Open in New Chat"),
+			],
+		)
+
+	def test_build_result_actions_for_image_description(self) -> None:
+		result = _make_result(
+			context_items=(_item("screenshot", None, image_base64="aW1n"),),
+			output_items=(_item("image_description", "Image description text"),),
+		)
+
+		actions = self.presenter._build_result_actions(result)
+
+		self.assertEqual(
+			[(action.id, action.label) for action in actions],
+			[
+				("add_screenshot_to_chat", "Add Screenshot to Chat"),
+				("add_image_description_to_chat", "Add Image Description to Chat"),
+				("open_in_new_chat", "Open in New Chat"),
+			],
+		)
+
+	def test_build_result_actions_for_focused_image_description(self) -> None:
+		result = _make_result(
+			context_items=(_item("focused_image", "Focused element role: button", image_base64="aW1n"),),
+			output_items=(_item("focused_image_description", "Focused image description text"),),
+		)
+
+		actions = self.presenter._build_result_actions(result)
+
+		self.assertEqual(
+			[(action.id, action.label) for action in actions],
+			[
+				("add_focused_image_to_chat", "Add Focused Image to Chat"),
+				("add_focused_image_description_to_chat", "Add Focused Image Description to Chat"),
+				("open_in_new_chat", "Open in New Chat"),
+			],
+		)
+
+	def test_build_result_actions_omits_missing_structure(self) -> None:
+		result = _make_result(
+			context_items=(_item("page_content", "Page content..."),),
+			output_items=(_item("summary", "Summary text"),),
+		)
+
+		actions = self.presenter._build_result_actions(result)
+
+		self.assertEqual(
+			[action.id for action in actions],
+			["add_page_content_to_chat", "add_summary_to_chat", "open_in_new_chat"],
+		)
+
+	def test_build_result_actions_omits_empty_output(self) -> None:
+		result = _make_result(
+			context_items=(_item("screenshot", None, image_base64="aW1n"),),
+			output_items=(_item("image_description", "   "),),
+		)
+
+		actions = self.presenter._build_result_actions(result)
+
+		self.assertEqual(
+			[action.id for action in actions],
+			["add_screenshot_to_chat", "open_in_new_chat"],
+		)
+
+	def test_build_result_actions_omits_missing_image(self) -> None:
+		result = _make_result(
+			context_items=(_item("screenshot", None, image_base64=None),),
+			output_items=(_item("image_description", "Description text"),),
+		)
+
+		actions = self.presenter._build_result_actions(result)
+
+		self.assertEqual(
+			[action.id for action in actions],
+			["add_image_description_to_chat", "open_in_new_chat"],
+		)
+
+	def test_build_result_actions_requires_result_actions_flag(self) -> None:
+		result = _make_result(
+			context_items=(_item("page_content", "Page content..."),),
+			output_items=(_item("summary", "Summary text"),),
+			metadata={"result_actions": False},
+		)
+
+		actions = self.presenter._build_result_actions(result)
+
+		self.assertEqual(actions, [])
+
+	def test_build_result_actions_without_items_returns_empty(self) -> None:
+		result = _make_result(context_items=(), output_items=())
+
+		actions = self.presenter._build_result_actions(result)
+
+		self.assertEqual(actions, [])
+
+	def test_build_result_actions_does_not_expose_legacy_labels(self) -> None:
+		result = _make_result(
+			context_items=(
+				_item("page_content", "Page content..."),
+				_item("page_structure", "Page structure..."),
+			),
+			output_items=(_item("summary", "Summary text"),),
+		)
+
+		actions = self.presenter._build_result_actions(result)
+
+		labels = [action.label for action in actions]
+		self.assertNotIn("Add to current chat", labels)
+		self.assertNotIn("Open Chat", labels)
+		ids = [action.id for action in actions]
+		self.assertNotIn("attach_to_current", ids)
+		self.assertNotIn("open_chat", ids)
 
 	def test_present_use_case_result_focuses_content_for_describe_image(self) -> None:
 		ui_adapter_module.ui_adapter.render_display_calls.clear()

@@ -29,6 +29,39 @@ ATTACH_FOCUSED_IMAGE_TO_CHAT: Final[UseCaseId] = "attach_focused_image_to_chat"
 
 
 @dataclass(frozen=True, slots=True)
+class ResultContextItem:
+	"""A use-case input/context artifact that can be added to a conversation.
+
+	``id`` is a stable capability id (for example ``"page_content"``,
+	``"page_structure"``, ``"screenshot"``, ``"focused_image"``) used to derive
+	the result action id (``add_{id}_to_chat``) and its user-facing label.
+
+	Context items are conversation *user/context material*, never
+	assistant-generated answers.
+	"""
+
+	id: str
+	content: str | None = None
+	image_base64: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResultOutputItem:
+	"""A use-case output artifact that can be added to a conversation.
+
+	``id`` is a stable capability id (for example ``"summary"``,
+	``"structure_summary"``, ``"image_description"``,
+	``"focused_image_description"``).
+
+	Output items are assistant-generated results and must keep the assistant
+	message role when seeded into a conversation.
+	"""
+
+	id: str
+	content: str
+
+
+@dataclass(frozen=True, slots=True)
 class UseCaseSpec:
 	id: UseCaseId
 	description: str
@@ -37,7 +70,7 @@ class UseCaseSpec:
 	tools: tuple[str, ...] = ()
 	requires_input: bool = False
 	# If True, the UseCaseResult will carry "result_actions" in metadata,
-	# signalling the presenter to show "Open Chat" / "Add to current chat" buttons.
+	# signalling the presenter to build context/output result actions.
 	result_actions: bool = False
 
 
@@ -53,3 +86,8 @@ class UseCaseResult:
 	is_browseable: bool = False
 	error_message: str | None = None
 	metadata: dict[str, Any] | None = None
+	# Structured, data-driven result actions: context items are user-side
+	# material, output items are assistant results.  The presenter derives
+	# "Add X to Chat" / "Open in New Chat" actions from these.
+	context_items: tuple[ResultContextItem, ...] = ()
+	output_items: tuple[ResultOutputItem, ...] = ()

@@ -187,24 +187,24 @@ A common example is:
 
 1. the user asks for an image description
 2. the host renders the description result
-3. the UI exposes an action such as `Open Chat`
-4. selecting that action opens chat preloaded with the same screenshot and optional initial text
+3. the UI exposes context-aware actions such as `Add Screenshot to Chat`, `Add Image Description to Chat`, or `Open in New Chat`
+4. selecting an action seeds the chosen context item or assistant result into the current conversation, or moves the complete context plus result into a new conversation
 
 This should be modeled as a generic result-action flow rather than as a use-case-specific host customization.
 
 Recommended ownership:
 
-- Python decides which follow-up actions are available.
+- Python decides which follow-up actions are available and derives them from the use-case result's structured context/output items.
 - Rust and the WebView render those actions generically.
 - The WebView emits a typed event such as `ui_action_invoked`.
-- Python translates that event into the next application intent, such as `open_chat_with_screenshot`.
+- Python translates that event into the next application intent, such as adding a context item to the current conversation or creating a new conversation.
 
 This keeps result chaining extensible for future use cases such as:
 
-- `Open Chat` from image description
-- `Ask follow-up` from a summary result
+- `Add Screenshot to Chat` from image description
+- `Add Page Content to Chat` from a summary result
 - `Retry` from an error result
-- `Explain in chat` from a structured extraction result
+- `Add Selected Text to Chat` from a structured extraction result
 
 ### Rich UI state
 
@@ -239,7 +239,7 @@ Recommended rules:
 - streamed updates render incrementally without changing focus
 - streamed updates do not foreground the host window
 - a final answer may foreground the host window once if it is backgrounded
-- one-shot results such as image description, summary, and structured summary should render as content plus `Open Chat`
+- one-shot results such as image description, summary, and structured summary should render as content plus context-aware result actions (`Add X to Chat` / `Open in New Chat`)
 - one-shot results should not expose session controls until the user explicitly opens chat
 
 Recommended ownership:
@@ -287,8 +287,8 @@ These use cases do not require long-lived asynchronous interaction to be useful.
 
 Examples:
 
-- image description followed by `Open Chat`
-- summary followed by `Ask follow-up`
+- image description followed by `Add Image Description to Chat` or `Open in New Chat`
+- summary followed by `Add Summary to Chat`
 - error result followed by `Retry`
 
 These use cases start as one-shot render flows, but they need the UI to expose follow-up actions.

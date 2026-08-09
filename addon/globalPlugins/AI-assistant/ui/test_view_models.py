@@ -25,7 +25,7 @@ class ViewModelTransportTests(unittest.TestCase):
 			use_case_id="summary",
 			title="Summary",
 			output_text="Example",
-			actions=(ResultActionViewModel(id="open_chat", label="Open Chat", kind="open_chat"),),
+			actions=(ResultActionViewModel(id="add_summary_to_chat", label="Add Summary to Chat", kind="add_summary_to_chat"),),
 			display_presentation=build_display_presentation(
 				variant=DISPLAY_VARIANT_RESULT_ACTIONS,
 				initial_focus=FOCUS_TARGET_PRIMARY_ACTION,
@@ -49,7 +49,7 @@ class ViewModelTransportTests(unittest.TestCase):
 		)
 		self.assertEqual(metadata["controls_visible"], False)
 		self.assertEqual(metadata["attention_policy"], ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND)
-		self.assertEqual(metadata["actions"][0]["id"], "open_chat")
+		self.assertEqual(metadata["actions"][0]["id"], "add_summary_to_chat")
 
 
 if __name__ == "__main__":

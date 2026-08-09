@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from ..context.formatting import format_focus_capture_text
 from ..context.pipeline import ContextPipeline
 from ..context.types import ExtractionIntent, ImageContext, PromptContext
 from ..image import capture_focused_object
@@ -10,7 +11,7 @@ from ..image.services import ImageEncoder, ImagePreprocessor
 from ..prompts import build_image_description_prompt
 from ..service.llm import LLMService
 from .base import UseCase
-from .types import UseCaseResult, UseCaseSpec
+from .types import ResultContextItem, ResultOutputItem, UseCaseResult, UseCaseSpec
 
 
 class DescribeFocusedImageUseCase(UseCase):
@@ -86,6 +87,22 @@ class DescribeFocusedImageUseCase(UseCase):
 
 		html_output = self.markdown_to_html(response.text)
 
+		focus_capture = {
+			"object_name": capture.object_name,
+			"object_role": capture.object_role,
+			"app_name": capture.app_name,
+			"window_title": capture.window_title,
+		}
+		context_items: tuple[ResultContextItem, ...] = ()
+		if capture.image_base64:
+			context_items = (
+				ResultContextItem(
+					id="focused_image",
+					content=format_focus_capture_text(focus_capture) or None,
+					image_base64=capture.image_base64,
+				),
+			)
+
 		return UseCaseResult(
 			success=True,
 			message="Focused image description ready",
@@ -111,6 +128,8 @@ class DescribeFocusedImageUseCase(UseCase):
 				metadata=self._build_prompt_metadata(self.spec.prompt_key, prompt),
 			),
 			metadata=self._build_result_metadata(response, self.spec.prompt_key),
+			context_items=context_items,
+			output_items=(ResultOutputItem(id="focused_image_description", content=response.text),),
 		)
 
 

@@ -7,8 +7,8 @@ from ..context.pipeline import ContextPipeline
 from ..prompts import build_extraction_structure_summary_prompt
 from ..context.types import ExtractionIntent, PageStructureRequest, PageTextRequest, PromptContext
 from ..service.llm import LLMService
-from .base import UseCase
-from .types import UseCaseResult, UseCaseSpec
+from .base import UseCase, build_page_context_items
+from .types import ResultOutputItem, UseCaseResult, UseCaseSpec
 
 
 class StructureSummaryUseCase(UseCase):
@@ -71,4 +71,6 @@ class StructureSummaryUseCase(UseCase):
 				metadata=self._build_prompt_metadata(self.spec.prompt_key, prompt),
 			),
 			metadata=self._build_result_metadata(response, self.spec.prompt_key),
+			context_items=build_page_context_items(extraction_result),
+			output_items=(ResultOutputItem(id="structure_summary", content=response.text),),
 		)

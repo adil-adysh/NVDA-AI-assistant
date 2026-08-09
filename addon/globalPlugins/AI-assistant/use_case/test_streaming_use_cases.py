@@ -47,8 +47,23 @@ sys.modules[context_pipeline_module.__name__] = context_pipeline_module
 
 
 @dataclass(frozen=True)
+class ExtractionStructure:
+	headings: tuple[tuple[int | None, str], ...] = ()
+	links: tuple[str, ...] = ()
+	buttons: tuple[str, ...] = ()
+	landmarks: tuple[str, ...] = ()
+	inputs: tuple[str, ...] = ()
+	comboboxes: tuple[str, ...] = ()
+	checkboxes: tuple[str, ...] = ()
+	radios: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ExtractionResult:
 	text: str
+	title: str | None = None
+	app_title: str | None = None
+	structure: ExtractionStructure | None = None
 
 
 @dataclass(frozen=True)
@@ -97,6 +112,7 @@ context_types_module.PAGE = "page"
 context_types_module.IMAGE = "image"
 context_types_module.ContextProfileList = tuple[str, ...]
 context_types_module.ExtractionResult = ExtractionResult
+context_types_module.ExtractionStructure = ExtractionStructure
 context_types_module.ImageContext = ImageContext
 context_types_module.PromptContext = PromptContext
 context_types_module.PageTextRequest = PageTextRequest
@@ -153,6 +169,8 @@ image_module = _load_module(
 SummaryUseCase = summary_module.SummaryUseCase
 StructureSummaryUseCase = structure_summary_module.StructureSummaryUseCase
 ImageDescriptionUseCase = image_module.ImageDescriptionUseCase
+ResultContextItem = types_module.ResultContextItem
+ResultOutputItem = types_module.ResultOutputItem
 
 
 class _Pipeline:
@@ -207,6 +225,38 @@ class StreamingUseCaseTests(unittest.TestCase):
 		self.assertEqual(result.output_text, "final summary")
 		self.assertTrue(callable(service.summary_stream_handler))
 		self.assertIn(("streaming", "partial summary"), events)
+		self.assertEqual(
+			[(item.id, item.content) for item in result.context_items],
+			[("page_content", "Page content:\nexample page")],
+		)
+		self.assertEqual(
+			[(item.id, item.content) for item in result.output_items],
+			[("summary", "final summary")],
+		)
+
+	def test_summary_use_case_includes_structure_context_item_when_present(self) -> None:
+		service = _StreamingLLMService()
+		pipeline = _Pipeline(
+			PromptContext(
+				use_case_id="summary",
+				extraction_result=ExtractionResult(
+					text="example page",
+					title="My Page",
+					app_title="Browser",
+					structure=ExtractionStructure(headings=((1, "Intro"),)),
+				),
+			)
+		)
+
+		result = SummaryUseCase().execute(pipeline, service)
+
+		self.assertEqual(
+			[item.id for item in result.context_items],
+			["page_content", "page_structure"],
+		)
+		self.assertIn("Headings:\n- H1: Intro", result.context_items[1].content)
+		self.assertIn("Title: My Page", result.context_items[0].content)
+		self.assertIn("App: Browser", result.context_items[0].content)
 
 	def test_structure_summary_use_case_passes_stream_handler_and_emits_streaming(self) -> None:
 		service = _StreamingLLMService()
@@ -227,6 +277,14 @@ class StreamingUseCaseTests(unittest.TestCase):
 		self.assertEqual(result.output_text, "final summary")
 		self.assertTrue(callable(service.summary_stream_handler))
 		self.assertIn(("streaming", "partial summary"), events)
+		self.assertEqual(
+			[(item.id, item.content) for item in result.output_items],
+			[("structure_summary", "final summary")],
+		)
+		self.assertEqual(
+			[item.id for item in result.context_items],
+			["page_content"],
+		)
 
 	def test_image_description_use_case_passes_stream_handler_and_emits_streaming(self) -> None:
 		service = _StreamingLLMService()
@@ -247,6 +305,14 @@ class StreamingUseCaseTests(unittest.TestCase):
 		self.assertEqual(result.output_text, "final image")
 		self.assertTrue(callable(service.image_stream_handler))
 		self.assertIn(("streaming", "partial image"), events)
+		self.assertEqual(
+			[(item.id, item.image_base64) for item in result.context_items],
+			[("screenshot", "abc123")],
+		)
+		self.assertEqual(
+			[(item.id, item.content) for item in result.output_items],
+			[("image_description", "final image")],
+		)
 
 
 if __name__ == "__main__":

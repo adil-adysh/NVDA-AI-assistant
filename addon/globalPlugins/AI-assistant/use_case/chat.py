@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
+from ..context.formatting import format_page_context
 from ..context.pipeline import ContextPipeline
 from ..context.types import ExtractionIntent, ForegroundImageRequest, PageTextRequest, PromptContext
 from ..service.llm import LLMService
@@ -94,15 +95,13 @@ class OpenChatWithPageContentUseCase(UseCase):
 		if prompt_context is not None:
 			extraction_result = prompt_context.extraction_result
 			if extraction_result is not None:
-				title = extraction_result.title or "Unknown"
-				app_title = extraction_result.app_title or "Unknown"
-				page_content = (
-					"Page content:\n"
-					f"Title: {title}\n"
-					f"App: {app_title}\n\n"
-					f"{extraction_result.text}\n\n"
-					"Question: "
+				page_content = format_page_context(
+					extraction_result.title,
+					extraction_result.app_title,
+					extraction_result.text,
 				)
+				if page_content:
+					page_content = f"{page_content}\n\nQuestion: "
 			elif page_content is None:
 				page_content = prompt_context.text or ""
 

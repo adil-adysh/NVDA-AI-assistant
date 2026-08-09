@@ -13,10 +13,11 @@ if str(MODULE_DIR) not in sys.path:
 
 ui_actions = importlib.import_module("ui_actions")
 
+AddItemToChatAction = ui_actions.AddItemToChatAction
 ConversationDeleteAction = ui_actions.ConversationDeleteAction
 ConversationNewAction = ui_actions.ConversationNewAction
 ConversationOpenAction = ui_actions.ConversationOpenAction
-OpenChatAction = ui_actions.OpenChatAction
+OpenInNewChatAction = ui_actions.OpenInNewChatAction
 parse_ui_action = ui_actions.parse_ui_action
 serialize_ui_action = ui_actions.serialize_ui_action
 
@@ -42,27 +43,47 @@ class UIActionTests(unittest.TestCase):
 
 		self.assertEqual(action, ConversationDeleteAction(conversation_id="conv-456"))
 
-	def test_open_chat_roundtrip_preserves_payload(self) -> None:
+	def test_add_item_roundtrip_preserves_token_and_item_id(self) -> None:
 		serialized_id, serialized_payload = serialize_ui_action(
-			OpenChatAction(
-				token="token-1",
-				assistant_seed_text="Summarize this",
-				initial_image_base64="abc123",
-				force_new_conversation=True,
-			)
+			AddItemToChatAction(token="token-1", item_id="page_content")
 		)
+
+		self.assertEqual(serialized_id, "add_page_content_to_chat")
+		self.assertEqual(serialized_payload, {"token": "token-1"})
 
 		parsed = parse_ui_action(serialized_id, serialized_payload)
 
 		self.assertEqual(
 			parsed,
-			OpenChatAction(
-				token="token-1",
-				assistant_seed_text="Summarize this",
-				initial_image_base64="abc123",
-				force_new_conversation=True,
-			),
+			AddItemToChatAction(token="token-1", item_id="page_content"),
 		)
+
+	def test_parse_add_item_requires_token(self) -> None:
+		action = parse_ui_action("add_summary_to_chat", {"item_id": "summary"})
+
+		self.assertIsNone(action)
+
+	def test_parse_add_item_requires_non_empty_item_id(self) -> None:
+		action = parse_ui_action("add__to_chat", {"token": "token-1"})
+
+		self.assertIsNone(action)
+
+	def test_open_in_new_chat_roundtrip_preserves_token(self) -> None:
+		serialized_id, serialized_payload = serialize_ui_action(
+			OpenInNewChatAction(token="token-2")
+		)
+
+		self.assertEqual(serialized_id, "open_in_new_chat")
+		self.assertEqual(serialized_payload, {"token": "token-2"})
+
+		parsed = parse_ui_action(serialized_id, serialized_payload)
+
+		self.assertEqual(parsed, OpenInNewChatAction(token="token-2"))
+
+	def test_parse_open_in_new_chat_requires_token(self) -> None:
+		action = parse_ui_action("open_in_new_chat", {})
+
+		self.assertIsNone(action)
 
 	def test_serialize_conversation_open_action(self) -> None:
 		action_id, payload = serialize_ui_action(ConversationOpenAction(conversation_id="conv-789"))

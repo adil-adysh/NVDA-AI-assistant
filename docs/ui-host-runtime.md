@@ -252,8 +252,8 @@ They work well with the command channel alone.
 
 Examples:
 
-- image description followed by `Open Chat`
-- summary followed by `Ask follow-up`
+- image description followed by `Add Image Description to Chat` or `Open in New Chat`
+- summary followed by `Add Summary to Chat`
 
 These need:
 

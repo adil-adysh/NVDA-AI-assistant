@@ -122,7 +122,7 @@ Recommended behavior:
 - final answers may use `attention_policy = foreground_if_background`
 - one-shot result views may hide session controls with `controls_visible = false`
 - one-shot result views should use `display_presentation.variant = result_actions`
-- one-shot result views can render content plus generic result actions such as `Open Chat` while still placing the secondary toolbar after the content
+- one-shot result views can render content plus context-aware result actions such as `Add Page Content to Chat` or `Open in New Chat` while still placing the secondary toolbar after the content
 
 ### `open_chat`
 
@@ -153,7 +153,7 @@ Localization notes:
 - strings intended for translators should live in Python source included in the add-on gettext extraction inputs
 - the repository gettext configuration recognizes Python-side extraction keywords such as `translate(...)`; browser-side default label tables are not the source of truth for the POT file
 
-This command is the preferred follow-up target for actions such as `Open Chat` from an image description result.
+This command is the preferred follow-up target for actions such as `Open in New Chat` from an image description result.
 
 ### `chat_set_history`
 
@@ -346,7 +346,19 @@ Event payload fields:
 
 This event is used when the WebView renders result-level actions and the user activates one.
 
-For example, an image description result may expose an `Open Chat` action. The host UI emits `ui_action_invoked`, and Python decides whether that should become `open_chat`, `open_chat_with_screenshot`, or another follow-up intent.
+Result actions are data-driven: Python derives them from the use-case result's structured context and output items. Each action carries a token that references Python-side state plus, for item actions, an `item_id`:
+
+- `add_page_content_to_chat`
+- `add_page_structure_to_chat`
+- `add_summary_to_chat`
+- `add_structure_summary_to_chat`
+- `add_screenshot_to_chat`
+- `add_image_description_to_chat`
+- `add_focused_image_to_chat`
+- `add_focused_image_description_to_chat`
+- `open_in_new_chat`
+
+The host UI emits `ui_action_invoked` with the action id and payload, and Python decides whether that means adding a context item or an assistant result to the current conversation, or creating a new conversation carrying the complete context and result.
 
 ### `provider_selected`
 
