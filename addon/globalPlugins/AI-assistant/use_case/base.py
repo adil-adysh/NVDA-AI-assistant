@@ -51,13 +51,13 @@ class UseCase(ABC):
 		self,
 		context_pipeline: ContextPipeline | None,
 		llm_service: LLMService,
-		emit: ContextEmitter = None,
+		emit: ContextEmitter = None,  # pylint: disable=unused-argument
 		**kwargs: Any,
 	) -> UseCaseResult:
 		raise NotImplementedError
 
 	def collect_prompt_context(
-		self, context_pipeline: ContextPipeline | None, emit: ContextEmitter = None
+		self, context_pipeline: ContextPipeline | None, emit: ContextEmitter = None  # pylint: disable=unused-argument
 	) -> PromptContext | None:
 		if context_pipeline is None or not self.spec.extraction_intent.requests:
 			return None
@@ -85,7 +85,7 @@ class UseCase(ABC):
 	def execute_prompted_use_case(
 		self,
 		context_pipeline: ContextPipeline | None,
-		llm_service: LLMService,
+		llm_service: LLMService,  # pylint: disable=unused-argument
 		build_prompt: Callable[[PromptContext], str],
 		llm_call: Callable[[str, PromptContext, PartialCallback | None], Any],
 		build_result: Callable[[PromptContext, Any, str], UseCaseResult],

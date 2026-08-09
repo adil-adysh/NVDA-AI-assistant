@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 # Pylint cannot infer attributes assigned to types.ModuleType() fakes used
 # to stub NVDA-internal modules (E1101 ``__name__`` false positives).
-# pylint: disable=no-member
+# Tests intentionally inspect coordinator internals (W0212) and deliberately
+# duplicate the self-contained synthetic-package bootstrap (R0801).
+# pylint: disable=no-member,protected-access,duplicate-code
 from __future__ import annotations
 
 import importlib.util
@@ -63,7 +65,7 @@ reporter_module = types.ModuleType(f"{PACKAGE_NAME}.observability.reporter")
 
 
 class _Reporter:
-	def report(self, metrics):
+	def report(self, _metrics):
 		return None
 
 
@@ -93,10 +95,10 @@ BaseCoordinator = base_module.BaseCoordinator
 
 
 class _TestCoordinator(BaseCoordinator):
-	def _run_task_logic(self, progress_callback, *args, **kwargs):
+	def _run_task_logic(self, _progress_callback, *_args, **_kwargs):
 		return None
 
-	def _present_result(self, result):
+	def _present_result(self, _result):
 		return None
 
 	def _format_progress_message(self, generated_chars: int, preview: str) -> str:

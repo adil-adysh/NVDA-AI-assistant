@@ -278,7 +278,7 @@ class ModelManagerDialog(wx.Dialog):
 		self._provider_map = self._discover_providers()
 		return list(self._provider_map.keys())
 
-	def _on_provider_change(self, event: wx.CommandEvent) -> None:
+	def _on_provider_change(self, _event: wx.CommandEvent) -> None:
 		idx = self._provider_combo.GetSelection()
 		if idx < 0:
 			return
@@ -453,7 +453,7 @@ class ModelManagerDialog(wx.Dialog):
 		self._update_details()
 		event.Skip()
 
-	def _on_double_click(self, event: wx.ListEvent) -> None:
+	def _on_double_click(self, _event: wx.ListEvent) -> None:
 		"""Double-click / Enter: toggle enabled, or set active if ready."""
 		model = self._get_selected_model()
 		if model is None:
@@ -468,10 +468,10 @@ class ModelManagerDialog(wx.Dialog):
 			self._toggle_enabled(model, not is_enabled)
 		self._refresh_model_list()
 
-	def _on_show_disabled(self, event: wx.CommandEvent) -> None:
+	def _on_show_disabled(self, _event: wx.CommandEvent) -> None:
 		self._refresh_model_list()
 
-	def _on_download(self, event: wx.CommandEvent) -> None:
+	def _on_download(self, _event: wx.CommandEvent) -> None:
 		model = self._get_selected_model()
 		if model is None:
 			return
@@ -525,7 +525,7 @@ class ModelManagerDialog(wx.Dialog):
 
 	def _on_download_progress(
 		self,
-		model_id: str,
+		_model_id: str,
 		msg: str,
 		downloaded: int | None,
 		total: int | None,
@@ -548,7 +548,7 @@ class ModelManagerDialog(wx.Dialog):
 		self._list.Enable()
 		self._refresh_model_list()
 
-	def _on_delete(self, event: wx.CommandEvent) -> None:
+	def _on_delete(self, _event: wx.CommandEvent) -> None:
 		model = self._get_selected_model()
 		if model is None:
 			return
@@ -564,14 +564,14 @@ class ModelManagerDialog(wx.Dialog):
 			)
 		self._refresh_model_list()
 
-	def _on_set_active(self, event: wx.CommandEvent) -> None:
+	def _on_set_active(self, _event: wx.CommandEvent) -> None:
 		model = self._get_selected_model()
 		if model is None or not model.state.is_ready():
 			return
 		self._provider.set_active_model(model.id)
 		self._refresh_model_list()
 
-	def _on_close(self, event: wx.Event) -> None:
+	def _on_close(self, _event: wx.Event) -> None:
 		self.Destroy()
 
 	# ------------------------------------------------------------------
@@ -633,7 +633,7 @@ def _capabilities_label(model: ManagedModel) -> str:
 	return ", ".join(parts) if parts else "Text"
 
 
-def open_model_manager(parent: wx.Window) -> None:
+def open_model_manager(_parent: wx.Window) -> None:
 	"""Open the model manager dialog.
 
 	The dialog discovers all configured providers (local and cloud)

@@ -321,7 +321,7 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 				return idx
 		return 0
 
-	def _on_enabled_provider_changed(self, event: wx.CommandEvent) -> None:
+	def _on_enabled_provider_changed(self, _event: wx.CommandEvent) -> None:
 		"""Refresh the provider dropdown when enable/disable checkboxes change."""
 		current_provider = self._selected_provider()
 		choices = self._build_provider_choices()
@@ -351,7 +351,7 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 			is_litert = self._selected_provider() == "litert-lm"
 			self.litertDownloadBtn.Enable(is_litert)
 
-	def _on_download_litert_runtime(self, event: wx.CommandEvent) -> None:
+	def _on_download_litert_runtime(self, _event: wx.CommandEvent) -> None:
 		"""Download and extract the LiteRT-LM runtime in a background thread."""
 		self.litertDownloadBtn.Disable()
 		# TRANSLATORS: Progress message shown while the LiteRT-LM runtime is downloading.
@@ -785,7 +785,7 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 				return value
 		return "ollama"
 
-	def _on_provider_choice(self, event: Any) -> None:
+	def _on_provider_choice(self, _event: Any) -> None:
 		self._update_provider_field_state()
 
 	def _update_provider_field_state(self) -> None:

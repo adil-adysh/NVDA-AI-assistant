@@ -119,7 +119,7 @@ class BaseCoordinator:
 		"""Queue execution on the NVDA event queue."""
 		nvda_ui.queue(callback, *args)
 
-	def _build_request_metrics(self, *args: Any, **kwargs: Any) -> RequestMetrics | None:
+	def _build_request_metrics(self, *_args: Any, **_kwargs: Any) -> RequestMetrics | None:
 		"""Return a metrics object for the current request, if supported."""
 		return None
 
@@ -139,7 +139,7 @@ class BaseCoordinator:
 			log.exception("Failed to report request metrics")
 		self._request_metrics = None
 
-	def _report_request_metrics(self, metrics: RequestMetrics, result: Any | None) -> None:
+	def _report_request_metrics(self, metrics: RequestMetrics, _result: Any | None) -> None:
 		"""Report request metrics. Subclasses may override this to capture richer telemetry."""
 		log.debug("Request metrics: %s", metrics.to_dict())
 		if self.metrics_reporter:
@@ -178,6 +178,6 @@ class BaseCoordinator:
 		"""Return a formatted error message for NVDA UI."""
 		return present_error(error).message
 
-	def _pre_run(self, *args: Any, **kwargs: Any) -> None:
+	def _pre_run(self, *_args: Any, **_kwargs: Any) -> None:
 		"""Optional hook run in the background thread before task logic."""
 		return None

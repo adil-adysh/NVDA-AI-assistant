@@ -76,7 +76,7 @@ class AssistantLayerController:
 		self._clear_gesture_bindings()
 		self._restore_default_gestures()
 
-	def script_error(self, gesture: Any):
+	def script_error(self, _gesture: Any):
 		# TRANSLATORS: Message spoken when an invalid key is pressed in the AI assistant command layer.
 		nvda_ui.message(_("Can't find this assistant layer script."))
 		self.finish()

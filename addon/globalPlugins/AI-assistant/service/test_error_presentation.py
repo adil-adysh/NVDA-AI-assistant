@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+# Test files deliberately duplicate the self-contained synthetic-package
+# bootstrap so each suite can run standalone (R0801).
+# pylint: disable=duplicate-code
 from __future__ import annotations
 
 import importlib.util

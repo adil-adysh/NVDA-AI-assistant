@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+# Intentional structural mirror of the other use cases: spec definitions
+# follow the same shape by design (R0801).
+# pylint: disable=duplicate-code
 from __future__ import annotations
 
 import logging
@@ -81,9 +84,9 @@ class OpenChatWithPageContentUseCase(UseCase):
 		prompt_context = None
 		try:
 			prompt_context = self.collect_prompt_context(context_pipeline, emit=emit)
-		except Exception as error:
-			# Opening the chat must never fail because context collection did
-			# (e.g. the focused window is not a document with extractable text).
+		# Opening the chat must never fail because context collection did
+		# (e.g. the focused window is not a document with extractable text).
+		except Exception as error:  # pylint: disable=broad-exception-caught
 			logger.warning(
 				"open_chat_with_page_content context collection failed: %s", error,
 				exc_info=True,
@@ -146,9 +149,9 @@ class OpenChatWithScreenshotUseCase(UseCase):
 		prompt_context = None
 		try:
 			prompt_context = self.collect_prompt_context(context_pipeline, emit=emit)
-		except Exception as error:
-			# Opening the chat must never fail because the screenshot could not
-			# be captured (e.g. screen curtain active, no usable window bounds).
+		# Opening the chat must never fail because the screenshot could not
+		# be captured (e.g. screen curtain active, no usable window bounds).
+		except Exception as error:  # pylint: disable=broad-exception-caught
 			logger.warning(
 				"open_chat_with_screenshot context collection failed: %s", error,
 				exc_info=True,

@@ -63,7 +63,7 @@ class ErrorPresentation:
 	is_internal: bool = False
 
 
-def _make_presentation(title: str, suggestion: ErrorSuggestion, translate: Translator) -> ErrorPresentation:
+def _make_presentation(_title: str, suggestion: ErrorSuggestion, translate: Translator) -> ErrorPresentation:
 	"""Build an ``ErrorPresentation`` from an ``ErrorSuggestion``."""
 	return ErrorPresentation(
 		title=translate(suggestion.summary),

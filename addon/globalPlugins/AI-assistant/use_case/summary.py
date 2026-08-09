@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+# Intentional structural mirror of the other result-producing use cases:
+# spec/result building follow the same shape by design (R0801).
+# pylint: disable=duplicate-code
 from __future__ import annotations
 
 from collections.abc import Callable

@@ -37,7 +37,7 @@ class AccessibilityAnnouncementTests(unittest.TestCase):
 		def queue_stub(func, text):
 			captured.append((func, text))
 
-		def message_stub(text):
+		def message_stub(_text):
 			return None
 
 		accessibility_module.queue_response_announcement(

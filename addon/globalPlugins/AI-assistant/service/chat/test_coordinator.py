@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 # Pylint cannot infer attributes assigned to types.ModuleType() fakes used
 # to stub NVDA-internal modules (E1101 ``__name__`` false positives).
-# pylint: disable=no-member
+# Tests intentionally inspect coordinator internals (W0212) and deliberately
+# duplicate the self-contained synthetic-package bootstrap (R0801).
+# pylint: disable=no-member,protected-access,duplicate-code
 from __future__ import annotations
 
 import importlib.util
@@ -83,7 +85,7 @@ def _message_to_chat_message(message):
 	return message
 
 
-def _no_op(*args, **kwargs):
+def _no_op(*_args, **_kwargs):
 	return None
 
 

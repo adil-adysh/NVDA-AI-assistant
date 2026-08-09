@@ -8,6 +8,10 @@ to duplicate this synthetic-package loader; it lives here so the tests stay in
 sync.
 """
 
+# The synthetic-package loader is intentionally duplicated inline in the
+# ui package test files so each suite can run standalone (R0801).
+# pylint: disable=duplicate-code
+
 from __future__ import annotations
 
 import importlib.util

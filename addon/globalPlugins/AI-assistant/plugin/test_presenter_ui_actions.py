@@ -2,7 +2,9 @@
 # Pylint cannot infer attributes assigned to types.ModuleType() fakes used
 # to stub NVDA-internal modules (E1101 ``__name__``/dynamic attribute
 # false positives, e.g. ``ui_adapter_module.ui_adapter``).
-# pylint: disable=no-member
+# Tests intentionally inspect presenter internals (W0212) and deliberately
+# duplicate the self-contained synthetic-package bootstrap (R0801).
+# pylint: disable=no-member,protected-access,duplicate-code
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -135,7 +137,7 @@ class _FakeConversationService:
 	def list_conversation_summaries(self):
 		return []
 
-	def delete_conversation(self, conversation_id: str):
+	def delete_conversation(self, _conversation_id: str):
 		return self.delete_result
 
 
@@ -156,7 +158,7 @@ class _FakeChatCoordinator:
 	pass
 
 
-def _build_session_state(*args, **kwargs):
+def _build_session_state(*_args, **_kwargs):
 	class _SessionState:
 		def to_metadata(self) -> dict[str, object]:
 			return {}
@@ -184,7 +186,7 @@ def _render_markdown_to_html(text: str) -> str:
 	return f"<p>{text}</p>"
 
 
-def _no_op(*args, **kwargs) -> None:
+def _no_op(*_args, **_kwargs) -> None:
 	return None
 
 

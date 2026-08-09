@@ -57,7 +57,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	def _restore_default_gesture_bindings(self) -> None:
 		self.bindGestures(self.__gestures)
 
-	def _on_tools_manage_providers(self, event: wx.CommandEvent) -> None:
+	def _on_tools_manage_providers(self, _event: wx.CommandEvent) -> None:
 		"""Open the NVDA Settings dialog focused on the AI Assistant panel."""
 		from gui.settingsDialogs import NVDASettingsDialog
 		from ..ui.settings_panel import AIAssistantSettingsPanel
@@ -67,7 +67,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		)
 		gui.mainFrame.postPopup()
 
-	def _on_tools_manage_models(self, event: wx.CommandEvent) -> None:
+	def _on_tools_manage_models(self, _event: wx.CommandEvent) -> None:
 		from ..ui.model_manager import open_model_manager
 		gui.mainFrame.prePopup()
 		open_model_manager(gui.mainFrame)
@@ -160,7 +160,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		# TRANSLATORS: Description for the script that lists available AI assistant layer commands.
 		description=_("Lists available AI assistant layer commands."),
 	)
-	def script_assistantLayerHelp(self, gesture: Any):
+	def script_assistantLayerHelp(self, _gesture: Any):
 		self._app.show_assistant_layer_help()
 
 	@script(

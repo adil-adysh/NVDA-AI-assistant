@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 # Pylint cannot infer attributes assigned to types.ModuleType() fakes used
 # to stub NVDA-internal modules (E1101 ``__name__`` false positives).
-# pylint: disable=no-member
+# Test files deliberately duplicate the self-contained synthetic-package
+# bootstrap so each suite can run standalone (R0801).
+# pylint: disable=no-member,duplicate-code
 from __future__ import annotations
 
 import importlib.util
@@ -177,7 +179,7 @@ class _Pipeline:
 	def __init__(self, prompt_context: PromptContext) -> None:
 		self._prompt_context = prompt_context
 
-	def collect(self, **kwargs):
+	def collect(self, **_kwargs):
 		return self._prompt_context
 
 
@@ -192,13 +194,15 @@ class _StreamingLLMService:
 	def provider_name(self) -> str:
 		return "test"
 
-	def summarize(self, prompt: str, stream_handler=None):
+	def summarize(self, _prompt: str, stream_handler=None):
 		self.summary_stream_handler = stream_handler
 		if stream_handler is not None:
 			stream_handler("partial summary", len("partial summary"))
 		return types.SimpleNamespace(text="final summary", model="test-model", provider="test")
 
-	def describe_image(self, image_base64: str, prompt: str, stream_handler=None):
+	def describe_image(  # pylint: disable=unused-argument
+		self, image_base64: str, prompt: str, stream_handler=None
+	):
 		self.image_stream_handler = stream_handler
 		if stream_handler is not None:
 			stream_handler("partial image", len("partial image"))

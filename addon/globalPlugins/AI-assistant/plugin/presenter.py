@@ -111,7 +111,8 @@ class UseCasePresenter:
 		self._model_cache.close()
 		try:
 			ui_adapter.close()
-		except Exception:
+		# Shutdown must never raise: the host may already be gone.
+		except Exception:  # pylint: disable=broad-exception-caught
 			log.exception("Error closing UI adapter during presenter shutdown")
 
 	def open_chat_window(
@@ -181,7 +182,9 @@ class UseCasePresenter:
 				).to_metadata()
 			)
 			self._refresh_available_models_async(provider_state)
-		except Exception:
+		# Session sync must never fail: NVDA stays responsive and the next
+		# sync attempt recovers.
+		except Exception:  # pylint: disable=broad-exception-caught
 			log.exception("Error synchronizing WebView session state after provider change")
 
 	def present_use_case_result(self, use_case_result: Any, title: str) -> None:

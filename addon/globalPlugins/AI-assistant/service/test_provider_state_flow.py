@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 # Pylint cannot infer attributes assigned to types.ModuleType() fakes used
 # to stub NVDA-internal modules (E1101 ``__name__`` false positives).
-# pylint: disable=no-member
+# Test files deliberately duplicate the self-contained synthetic-package
+# bootstrap so each suite can run standalone (R0801).
+# pylint: disable=no-member,duplicate-code
 from __future__ import annotations
 
 from dataclasses import dataclass

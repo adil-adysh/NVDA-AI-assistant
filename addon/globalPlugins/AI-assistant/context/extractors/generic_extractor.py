@@ -149,8 +149,8 @@ class GenericPageExtractor(TreeExtractor):
 		obj: object,
 		context: CandidateExtractionContext,
 		snapshot: ExtractionSnapshot,
-		sourceName: str,
-		browserInterceptor: object | None,
+		_sourceName: str,
+		_browserInterceptor: object | None,
 	) -> int:
 		score = 0
 		textLength = len(snapshot.text)

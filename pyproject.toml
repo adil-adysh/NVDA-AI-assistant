@@ -256,6 +256,7 @@ ignored-modules = [
 	"locationHelper",
 	"logHandler",
 	"queueHandler",
+	"screenCurtain",
 	"scriptHandler",
 	"textInfos",
 	"tones",
@@ -270,10 +271,14 @@ ignored-modules = [
 
 # Pylint cannot infer the dynamically generated PIL constants
 # (e.g. Image.LANCZOS is an enum alias set at import time) and cannot
-# introspect pywin32 C-extension members (win32pipe/win32file) from source.
+# introspect pywin32 C-extension members (win32pipe/win32file/pywintypes)
+# or the compiled Rust/PyO3 llm_client module from source.
 extension-pkg-allow-list = [
 	"PIL",
+	"pywintypes",
 	"win32file",
 	"win32pipe",
 ]
-generated-members = ["LANCZOS"]
+# pywintypes.error is defined inside the C extension at import time, so it
+# is missed even with the allow-list; generated-members suppresses it.
+generated-members = ["LANCZOS", "OpenAiClient", "pywintypes.error"]

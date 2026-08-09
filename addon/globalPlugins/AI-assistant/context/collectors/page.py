@@ -28,7 +28,7 @@ class ExtractionTextCollector:
 	def handles_request(self, request: ContentRequest) -> bool:
 		return isinstance(request, PageTextRequest)
 
-	def collect_for_request(self, request: PageTextRequest, input_: CollectorInput) -> PageContextFragment:
+	def collect_for_request(self, _request: PageTextRequest, input_: CollectorInput) -> PageContextFragment:
 		if self.extractor is None and input_.extraction_snapshot is None:
 			raise ContextCollectionError("ExtractionTextCollector requires an extraction snapshot or extractor")
 

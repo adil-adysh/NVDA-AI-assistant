@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+# Tests intentionally inspect transport internals (W0212) to drive
+# lifecycle behavior.
+# pylint: disable=protected-access
 from __future__ import annotations
 
 import unittest
