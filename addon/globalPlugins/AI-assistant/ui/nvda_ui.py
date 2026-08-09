@@ -27,7 +27,7 @@ def play_streaming_tone() -> None:
 		return
 
 	now = time.monotonic()
-	global _last_streaming_tone_time, _streaming_tone_interval
+	global _last_streaming_tone_time, _streaming_tone_interval  # pylint: disable=global-statement
 	with _streaming_tone_lock:
 		elapsed = now - _last_streaming_tone_time
 		if elapsed < _streaming_tone_interval:

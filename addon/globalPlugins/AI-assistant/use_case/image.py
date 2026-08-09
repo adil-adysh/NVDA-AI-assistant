@@ -17,9 +17,7 @@ class ImageDescriptionUseCase(UseCase):
 		return UseCaseSpec(
 			id="describe_image",
 			description="Describe the current foreground window screenshot.",
-			extraction_intent=ExtractionIntent(requests=(
-				ForegroundImageRequest(),
-			)),
+			extraction_intent=ExtractionIntent(requests=(ForegroundImageRequest(),)),
 			prompt_key="image_description",
 			tools=(),
 			requires_input=False,
@@ -65,9 +63,6 @@ class ImageDescriptionUseCase(UseCase):
 	def _build_result(self, prompt_context: PromptContext, response: object, prompt: str) -> UseCaseResult:
 		image_context = self._get_image_context(prompt_context)
 		html_output = self.markdown_to_html(response.text)
-		# Ensure provider and model are included in metadata if present on response
-		provider = getattr(response, "provider", None) or "unknown"
-		model = getattr(response, "model", None) or "unknown"
 		return UseCaseResult(
 			success=True,
 			message="Image description ready",
@@ -79,14 +74,7 @@ class ImageDescriptionUseCase(UseCase):
 				use_case_id=self.spec.id,
 				facts={"image_context": image_context},
 				image_base64=image_context.image_base64,
-				metadata={
-					"prompt_key": self.spec.prompt_key,
-					"prompt_chars": len(prompt),
-				},
+				metadata=self._build_prompt_metadata(self.spec.prompt_key, prompt),
 			),
-			metadata={
-				"provider": provider,
-				"model": model,
-				"prompt_key": self.spec.prompt_key,
-			},
+			metadata=self._build_result_metadata(response, self.spec.prompt_key),
 		)

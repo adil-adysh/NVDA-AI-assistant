@@ -27,6 +27,7 @@ from ...core.messages import LLMResponse, SummaryResponse
 from ...core.tooling import ToolCall
 from ...tools import build_function_tool_definition, normalize_tool_calls
 from ..config import OpenAICompatConfig
+from ...config.settings import get_image_mime_type
 from ..endpoints import EndpointConfigurationError, resolve_openai_endpoints
 from ..interfaces import (
 	LLMProvider,
@@ -131,7 +132,11 @@ class OpenAICompatProvider(LLMProvider):
 		return True
 
 	def supports_image_description(self) -> bool:
-		return self._detect_ollama() or self._model_supports_images(self._resolve_model())
+		# Capability is per-model, not per-backend: probing an Ollama server does
+		# not mean the selected model accepts images (e.g. llama3 is text-only).
+		# Name-based inference covers both Ollama (/api/tags) and OpenAI-compat
+		# model listings.
+		return self._model_supports_images(self._resolve_model())
 
 	# ------------------------------------------------------------------
 	# ABC — model listing (hybrid)
@@ -472,7 +477,7 @@ class OpenAICompatProvider(LLMProvider):
 					{"type": "text", "text": prompt},
 					{
 						"type": "image_url",
-						"image_url": {"url": f"data:image/png;base64,{image_base64}"},
+						"image_url": {"url": f"data:{get_image_mime_type()};base64,{image_base64}"},
 					},
 				],
 			}
@@ -575,6 +580,17 @@ class OpenAICompatProvider(LLMProvider):
 					chat_msg["content"] = (
 						part.tool_result if part.tool_result is not None else part.text or ""
 					)
+					if part.tool_call_id:
+						chat_msg["tool_call_id"] = part.tool_call_id
+				elif part.type == "tool_call":
+					chat_msg["tool_calls"] = [
+						{
+							"function": {
+								"name": part.tool_name or "",
+								"arguments": part.tool_args or {},
+							}
+						}
+					]
 
 			if text_parts:
 				chat_msg["content"] = "\n".join(text_parts)
@@ -725,16 +741,24 @@ class OpenAICompatProvider(LLMProvider):
 	# ==================================================================
 
 	def _convert_message(self, message: Message) -> dict[str, Any]:
-		"""Convert a canonical Message to an OpenAI-compat dict."""
+		"""Convert a canonical Message to an OpenAI-compat dict.
+
+		Assistant tool-call parts are emitted as wire-format ``tool_calls``
+		(required by OpenAI-compatible servers before a ``tool`` role result),
+		and tool results carry the matching ``tool_call_id``.
+		"""
 		text_parts: list[str] = []
 		content_parts: list[dict[str, Any]] = []
 		has_image = False
+		wire_tool_calls: list[dict[str, Any]] = []
+		tool_call_id: str | None = None
 
 		for part in message.parts:
 			if part.type == "text" and part.text is not None:
 				text_parts.append(part.text)
 				content_parts.append({"type": "text", "text": part.text})
 			elif part.type == "tool_result":
+				tool_call_id = part.tool_call_id or tool_call_id
 				text = json.dumps(part.tool_result) if part.tool_result is not None else part.text or ""
 				text_parts.append(text)
 				content_parts.append({"type": "text", "text": text})
@@ -744,12 +768,22 @@ class OpenAICompatProvider(LLMProvider):
 					content_parts.append(
 						{
 							"type": "image_url",
-							"image_url": {"url": f"data:image/png;base64,{img_b64}"},
+							"image_url": {"url": f"data:{get_image_mime_type()};base64,{img_b64}"},
 						}
 					)
 					has_image = True
 					text_parts.append("[IMAGE ATTACHED]")
 			elif part.type == "tool_call":
+				wire_tool_calls.append(
+					{
+						"id": part.tool_call_id,
+						"type": "function",
+						"function": {
+							"name": part.tool_name or "",
+							"arguments": json.dumps(part.tool_args or {}),
+						},
+					}
+				)
 				rendered = (
 					f"[tool call: {part.tool_name or 'unknown'} arguments={json.dumps(part.tool_args or {})}]"
 				)
@@ -757,15 +791,21 @@ class OpenAICompatProvider(LLMProvider):
 				content_parts.append({"type": "text", "text": rendered})
 
 		if message.role == "tool":
-			return {
+			result: dict[str, Any] = {
 				"role": message.role,
 				"content": "\n".join(text_parts) if text_parts else "",
 			}
+			if tool_call_id:
+				result["tool_call_id"] = tool_call_id
+			return result
 
-		return {
+		result = {
 			"role": message.role,
 			"content": (content_parts if has_image else "\n".join(text_parts)),
 		}
+		if wire_tool_calls:
+			result["tool_calls"] = wire_tool_calls
+		return result
 
 	# ==================================================================
 	# Internal: utilities

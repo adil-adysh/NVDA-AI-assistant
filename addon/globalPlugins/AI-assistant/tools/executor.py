@@ -25,5 +25,11 @@ class ToolExecutor:
 				result = self.execute(tool_call)
 			except Exception as error:
 				result = f"Tool error: {error}"
-			tool_messages.append(ToolExecutionResult(tool_name=tool_call.name, content=result))
+			tool_messages.append(
+				ToolExecutionResult(
+					tool_name=tool_call.name,
+					content=result,
+					tool_call_id=tool_call.id,
+				)
+			)
 		return tool_messages

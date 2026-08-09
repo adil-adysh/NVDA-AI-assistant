@@ -1,11 +1,9 @@
 import type { ChatSetHistoryPayload, ChatAppendPayload } from '../protocol-types';
-import { extractTextFromBlocks } from '../content';
 import {
 	setActiveConversationId,
 	setConversationSummaries,
 } from '../operations/view-ops';
 import {
-	announceResponse,
 	appState,
 	setViewMode,
 } from '../state.svelte';
@@ -14,16 +12,6 @@ import {
 	resolvePresentationFocusTarget,
 	updateChatEnvelope,
 } from './_shared';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function announceAssistantMessage(message: { role?: string; streaming?: boolean; content?: { type: string; text?: string }[] }): void {
-	if (!message || message.role !== 'assistant' || message.streaming === true) return;
-	const text = extractTextFromBlocks(message.content);
-	if (text) announceResponse(text);
-}
 
 // ---------------------------------------------------------------------------
 // chat_set_history
@@ -59,10 +47,6 @@ export function appendChatMessage(commandId: string, payload: ChatAppendPayload)
 	}
 
 	console.log(`[chat-history] transcript after upsert: ${appState.chat.transcript.count}`);
-
-	for (const msg of messages) {
-		announceAssistantMessage(msg as any);
-	}
 
 	const hasUserMessage = messages.some((m) => m.role === 'user');
 	if (hasUserMessage) {

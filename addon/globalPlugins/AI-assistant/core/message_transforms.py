@@ -31,12 +31,17 @@ def build_assistant_message(text: str | None = None, tool_calls: list[ToolCall] 
 				type="tool_call",
 				tool_name=tool_call.name,
 				tool_args=tool_call.arguments,
+				tool_call_id=tool_call.id,
 			)
 		)
 	return Message(role="assistant", parts=tuple(parts))
 
 
-def build_tool_result_message(tool_name: str, content: str) -> Message:
+def build_tool_result_message(
+	tool_name: str,
+	content: str,
+	tool_call_id: str | None = None,
+) -> Message:
 	return Message(
 		role="tool",
 		parts=(
@@ -44,6 +49,7 @@ def build_tool_result_message(tool_name: str, content: str) -> Message:
 				type="tool_result",
 				text=content,
 				tool_name=tool_name,
+				tool_call_id=tool_call_id,
 			),
 		),
 	)

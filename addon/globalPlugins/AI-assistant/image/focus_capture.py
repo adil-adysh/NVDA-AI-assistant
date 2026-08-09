@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import time
+from collections.abc import Callable
 from io import BytesIO
 from typing import Any
 
@@ -226,26 +227,16 @@ def _describe_object(obj: Any) -> str:
 	return " ".join(parts)
 
 
-def capture_focused_object(
-	preprocessor: ImagePreprocessor | None = None,
-	encoder: ImageEncoder | None = None,
-) -> FocusCaptureResult:
-	"""Capture the currently focused NVDA object as a base64-encoded image.
+def _capture_region_and_metadata() -> (
+	tuple[bytes, str | None, str | None, str | None, str | None, int, int, int, int, str]
+):
+	"""NVDA main-thread phase: resolve bounds, grab the region, read metadata.
 
-	First attempts to capture from the focus object (``api.getFocusObject()``),
-	then falls back to the navigator object (``api.getNavigatorObject()``) if
-	the focus object's location cannot be resolved.
-
-	Returns a FocusCaptureResult with the image data, metadata, and the
-	capture source (``"focus"`` or ``"navigator"``).
-
-	Raises:
-		RuntimeError: If the screen curtain is active, or if no focus or
-			navigator object is available, or if their location cannot be
-			determined.
+	Touches NVDA's thread-affine object model (focus/navigator/foreground
+	objects, ``appModule``, ``windowText``) plus GDI screen capture, so this
+	must run on the NVDA main thread via ``main_thread_executor`` (official
+	``queueHandler.queueFunction(queueHandler.eventQueue, ...)`` pattern).
 	"""
-	check_screen_curtain()
-
 	resolved = _resolve_capture_location_with_retry()
 	if resolved is None:
 		focus_obj = get_object_safe("focus")
@@ -273,6 +264,74 @@ def capture_focused_object(
 	image.save(buffer, format="PNG")
 	raw_bytes = buffer.getvalue()
 
+	return (
+		raw_bytes,
+		_get_object_name(capture_obj),
+		_get_object_role(capture_obj),
+		_get_app_name(capture_obj),
+		_get_window_title(capture_obj),
+		left,
+		top,
+		width,
+		height,
+		capture_source,
+	)
+
+
+def capture_focused_object(
+	preprocessor: ImagePreprocessor | None = None,
+	encoder: ImageEncoder | None = None,
+	main_thread_executor: Callable[[Callable[[], Any]], Any] | None = None,
+) -> FocusCaptureResult:
+	"""Capture the currently focused NVDA object as a base64-encoded image.
+
+	First attempts to capture from the focus object (``api.getFocusObject()``),
+	then falls back to the navigator object (``api.getNavigatorObject()``) if
+	the focus object's location cannot be resolved.
+
+	NVDA object-model access is thread-affine, so when *main_thread_executor*
+	is provided (e.g. ``ui.nvda_ui.call``), the resolution/capture/metadata
+	phase runs on NVDA's main thread; PIL preprocessing/encoding stays on the
+	calling (worker) thread.  Without an executor the capture runs inline on
+	the caller's thread (legacy behaviour for tests).
+
+	Returns a FocusCaptureResult with the image data, metadata, and the
+	capture source (``"focus"`` or ``"navigator"``).
+
+	Raises:
+		RuntimeError: If the screen curtain is active, or if no focus or
+			navigator object is available, or if their location cannot be
+			determined.
+	"""
+	check_screen_curtain()
+
+	if main_thread_executor is not None:
+		(
+			raw_bytes,
+			object_name,
+			object_role,
+			app_name,
+			window_title,
+			left,
+			top,
+			width,
+			height,
+			capture_source,
+		) = main_thread_executor(_capture_region_and_metadata)
+	else:
+		(
+			raw_bytes,
+			object_name,
+			object_role,
+			app_name,
+			window_title,
+			left,
+			top,
+			width,
+			height,
+			capture_source,
+		) = _capture_region_and_metadata()
+
 	# Preprocess
 	if preprocessor is None:
 		preprocessor = ImagePreprocessor()
@@ -287,12 +346,6 @@ def capture_focused_object(
 	if encoder is None:
 		encoder = ImageEncoder()
 	image_base64 = encoder.encode(processed_bytes)
-
-	# Metadata
-	object_name = _get_object_name(capture_obj)
-	object_role = _get_object_role(capture_obj)
-	app_name = _get_app_name(capture_obj)
-	window_title = _get_window_title(capture_obj)
 
 	return FocusCaptureResult(
 		image_base64=image_base64,

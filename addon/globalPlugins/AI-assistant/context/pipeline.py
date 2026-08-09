@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Any, Callable, Sequence, TypeVar
+from typing import Callable, Sequence, TypeVar
 
 from .protocols import CollectorInput, ContextCollector
 from .types import (
@@ -33,11 +33,13 @@ _IMAGE_SOURCES: dict[type, ImageCaptureSource] = {
 
 
 class ContextPipeline:
-	def __init__(self, collectors: Sequence[ContextCollector], main_thread_executor: MainThreadExecutor) -> None:
+	def __init__(
+		self, collectors: Sequence[ContextCollector], main_thread_executor: MainThreadExecutor
+	) -> None:
 		self._collectors = tuple(collectors)
 		self._main_thread_executor = main_thread_executor
 
-	def collect(self, use_case_id: str, extraction_intent: ExtractionIntent, **kwargs: Any) -> PromptContext:
+	def collect(self, use_case_id: str, extraction_intent: ExtractionIntent) -> PromptContext:
 		if not extraction_intent.requests:
 			return PromptContext(use_case_id=use_case_id, metadata={})
 
@@ -86,6 +88,16 @@ class ContextPipeline:
 			metadata=merged_metadata,
 		)
 
+	def run_on_main_thread(self, callable_: Callable[[], T]) -> T:
+		"""Execute *callable_* on the NVDA main thread and return its result.
+
+		Uses the same main-thread executor as snapshot resolution (the official
+		``queueHandler.queueFunction(queueHandler.eventQueue, ...)`` pattern via
+		``nvda_ui.call``), so background-thread code can safely touch NVDA's
+		thread-affine object model.
+		"""
+		return self._main_thread_executor(callable_)
+
 	# ── Snapshot resolution (NVDA main thread) ─────────────────────
 
 	def _needs_text_snapshot(self, intent: ExtractionIntent) -> bool:
@@ -120,7 +132,9 @@ class ContextPipeline:
 				return snapshot
 		raise ContextCollectionError("Unable to obtain page snapshot for requested text extraction")
 
-	def _resolve_image_snapshots(self, intent: ExtractionIntent) -> dict[ImageCaptureSource, ImageCaptureSnapshot]:
+	def _resolve_image_snapshots(
+		self, intent: ExtractionIntent
+	) -> dict[ImageCaptureSource, ImageCaptureSnapshot]:
 		"""Capture images on the main thread for all image request types."""
 		result: dict[ImageCaptureSource, ImageCaptureSnapshot] = {}
 		request_types = self._image_requests(intent)
@@ -129,7 +143,7 @@ class ContextPipeline:
 
 		# Import lazily so the image package is not loaded on context import.
 		from ..image.services import ImageCaptureService
-		from ..image.screen_curtain import check_screen_curtain
+		from ..image.screen_curtain import ScreenCurtainError, check_screen_curtain
 
 		def _capture_all() -> list[ImageCaptureSnapshot]:
 			check_screen_curtain()
@@ -139,16 +153,23 @@ class ContextPipeline:
 				source = _IMAGE_SOURCES[req_type]
 				try:
 					raw_bytes = capture_service.capture(source=source)
+				except ScreenCurtainError:
+					# User-actionable; must not be masked as an internal error.
+					raise
 				except Exception:
 					continue
-				snapshots.append(ImageCaptureSnapshot(
-					raw_bytes=raw_bytes,
-					source=source,
-				))
+				snapshots.append(
+					ImageCaptureSnapshot(
+						raw_bytes=raw_bytes,
+						source=source,
+					)
+				)
 			return snapshots
 
 		try:
 			snapshots = self._main_thread_executor(_capture_all)
+		except ScreenCurtainError:
+			raise
 		except Exception:
 			return result
 

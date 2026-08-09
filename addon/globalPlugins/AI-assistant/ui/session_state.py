@@ -147,6 +147,8 @@ def build_localized_strings(translate: Translator) -> dict[str, str]:
 		"chat_placeholder": translate("Type your message..."),
 		# TRANSLATORS: Status text shown while waiting for a host command.
 		"waiting_status": translate("Waiting for host command..."),
+		# TRANSLATORS: Notice spoken when a chat response was discarded because the conversation changed while it was being generated.
+		"conversation_changed_notice": translate("Response discarded because the conversation changed."),
 		# TRANSLATORS: Message shown when no display content exists.
 		"no_content": translate("No content available."),
 		# TRANSLATORS: Message shown when the chat transcript is empty.

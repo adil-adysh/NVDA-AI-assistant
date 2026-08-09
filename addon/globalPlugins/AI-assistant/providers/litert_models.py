@@ -251,7 +251,7 @@ _HAS_GPU: bool | None = None
 
 def has_gpu() -> bool:
 	"""Check GPU availability (cached)."""
-	global _HAS_GPU
+	global _HAS_GPU  # pylint: disable=global-statement
 	if _HAS_GPU is None:
 		_HAS_GPU = _detect_gpu_available()
 	return _HAS_GPU

@@ -69,7 +69,7 @@ _active_config = None
 
 
 def _set_active_config(config) -> None:
-	global _active_config
+	global _active_config  # pylint: disable=global-statement
 	_active_config = config
 
 

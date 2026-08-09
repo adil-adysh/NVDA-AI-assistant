@@ -13,6 +13,7 @@ class Part:
 	tool_name: str | None = None
 	tool_args: dict[str, Any] | None = None
 	tool_result: dict[str, Any] | None = None
+	tool_call_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

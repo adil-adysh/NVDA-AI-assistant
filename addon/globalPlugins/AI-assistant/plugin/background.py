@@ -18,10 +18,24 @@ from ..config.settings import get_provider, get_model_name
 from ..ui import nvda_ui
 from ..ui.session_state import build_provider_status_message
 from ..use_case.engine import UseCaseEngine
-from ..use_case.types import UseCaseId
+from ..use_case.types import (
+	ATTACH_FOCUSED_IMAGE_TO_CHAT,
+	OPEN_CHAT,
+	OPEN_CHAT_WITH_PAGE_CONTENT,
+	OPEN_CHAT_WITH_SCREENSHOT,
+	UseCaseId,
+)
 
 if TYPE_CHECKING:
 	from ..providers.runtime.server import LiteRTServerSupervisor
+
+
+# Use cases that open a chat workspace without touching the LLM.  They must
+# not be gated on LiteRT-LM server readiness (which may be slow or fail), or
+# the chat window would never open for a non-inference action.
+_NON_LLM_USE_CASES = frozenset(
+	{OPEN_CHAT, OPEN_CHAT_WITH_PAGE_CONTENT, OPEN_CHAT_WITH_SCREENSHOT, ATTACH_FOCUSED_IMAGE_TO_CHAT}
+)
 
 
 _litert_readiness_lock = threading.Lock()
@@ -259,9 +273,10 @@ class BackgroundTaskRunner:
 		def worker() -> None:
 			log.debug("BackgroundTaskRunner worker starting use_case_id=%s title=%s", use_case_id, title)
 			try:
-				ensure_litert_server_ready(
-					on_progress=lambda msg: nvda_ui.queue(nvda_ui.message, msg),
-				)
+				if use_case_id not in _NON_LLM_USE_CASES:
+					ensure_litert_server_ready(
+						on_progress=lambda msg: nvda_ui.queue(nvda_ui.message, msg),
+					)
 				result = self._use_case_engine.execute(use_case_id, progress=self._progress_handler)
 			except ProviderConfigurationError:
 				log.exception(

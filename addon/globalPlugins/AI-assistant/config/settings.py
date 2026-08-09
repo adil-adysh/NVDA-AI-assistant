@@ -417,6 +417,15 @@ def get_image_format() -> str:
 	return image_format if image_format in {"PNG", "JPEG"} else defaults.DEFAULT_IMAGE_FORMAT
 
 
+def get_image_mime_type() -> str:
+	"""Return the MIME type matching the configured image format.
+
+	The declared MIME must match the bytes produced by ``ImagePreprocessor``,
+	which encodes captures in ``get_image_format()`` (PNG or JPEG).
+	"""
+	return "image/jpeg" if get_image_format() == "JPEG" else "image/png"
+
+
 def get_image_quality() -> int:
 	return _read_int("imageQuality", defaults.DEFAULT_IMAGE_QUALITY, minimum=1)
 

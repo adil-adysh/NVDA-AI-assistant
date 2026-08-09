@@ -1,5 +1,4 @@
 import type { RenderDisplayPayload } from '../protocol-types';
-import { announceResponse } from '../state.svelte';
 import {
 	setCopyBuffers,
 	setDisplayBlocks,
@@ -74,14 +73,6 @@ function resolveDisplayPresentation(
 	};
 }
 
-function announceDisplayBlocks(blocks: { type: string; text?: string }[]): void {
-	const text = blocks
-		.filter((b) => typeof b.text === 'string')
-		.map((b) => b.text!)
-		.join('\n');
-	if (text) announceResponse(text);
-}
-
 // ---------------------------------------------------------------------------
 // Command handler
 // ---------------------------------------------------------------------------
@@ -120,7 +111,6 @@ export function renderDisplay(commandId: string, payload: RenderDisplayPayload):
 	}
 
 	setDisplayBlocks(blocks, normalizedActions, displayPresentation);
-	announceDisplayBlocks(blocks);
 	applyPresentationState(payload as Record<string, unknown>, {
 		controlsVisible: true,
 		interactionMode: 'display',

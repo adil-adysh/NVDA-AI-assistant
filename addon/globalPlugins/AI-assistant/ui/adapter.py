@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from logHandler import log
 
+from ..config.settings import get_image_mime_type
 from ..plugin.background import ensure_litert_server_ready
 from ..providers.runtime.server import LiteRTServerError
 from ..service.error_presentation import ErrorPresentation, present_error
@@ -328,6 +329,28 @@ class UIAdapter:
 				image_base64=image_base64,
 				progress_callback=assistant_projection.update,
 			)
+			if not coordinator.last_turn_committed():
+				# The conversation was switched/reset while the turn was in flight,
+				# so the backend discarded it.  Tear down the streamed placeholder
+				# and, when we are still viewing the same conversation, re-sync the
+				# transcript to the authoritative backend history so the UI does
+				# not keep messages the backend dropped.
+				assistant_projection.abort(reason="conversation_changed")
+				if conversation_id and coordinator.get_active_conversation_id() == conversation_id:
+					self._host_renderer.chat_set_history(
+						use_case_id,
+						conversation_id,
+						coordinator.get_history_transport(),
+						metadata=assistant_projection.final_metadata_factory(),
+					)
+					nvda_ui.queue(
+						nvda_ui.message,
+						localized_strings.get(
+							"conversation_changed_notice",
+							"Response discarded because the conversation changed.",
+						),
+					)
+				return
 			assistant_text = getattr(response, "text", None)
 			thinking_trace = self._extract_thinking_trace(response)
 			if isinstance(assistant_text, str) and assistant_text.strip():
@@ -393,7 +416,7 @@ class UIAdapter:
 				{
 					"type": "image",
 					"image_base64": image_base64,
-					"mime_type": "image/png",
+					"mime_type": get_image_mime_type(),
 					"alt": localized_strings.get("image_attachment_notice", "[Image attachment included]"),
 				}
 			)

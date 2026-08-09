@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 from ..context.pipeline import ContextPipeline
@@ -8,6 +9,8 @@ from ..context.types import ExtractionIntent, ForegroundImageRequest, PageTextRe
 from ..service.llm import LLMService
 from .base import UseCase
 from .types import UseCaseResult, UseCaseSpec
+
+logger = logging.getLogger(__name__)
 
 
 class OpenChatUseCase(UseCase):
@@ -74,7 +77,16 @@ class OpenChatWithPageContentUseCase(UseCase):
 	) -> UseCaseResult:
 		if emit is not None:
 			emit("collecting_context", "Collecting page content...")
-		prompt_context = self.collect_prompt_context(context_pipeline, emit=emit)
+		prompt_context = None
+		try:
+			prompt_context = self.collect_prompt_context(context_pipeline, emit=emit)
+		except Exception as error:
+			# Opening the chat must never fail because context collection did
+			# (e.g. the focused window is not a document with extractable text).
+			logger.warning(
+				"open_chat_with_page_content context collection failed: %s", error,
+				exc_info=True,
+			)
 		if emit is not None:
 			emit("building_prompt", "Building chat prompt...")
 
@@ -132,7 +144,16 @@ class OpenChatWithScreenshotUseCase(UseCase):
 	) -> UseCaseResult:
 		if emit is not None:
 			emit("collecting_context", "Collecting screenshot context...")
-		prompt_context = self.collect_prompt_context(context_pipeline, emit=emit)
+		prompt_context = None
+		try:
+			prompt_context = self.collect_prompt_context(context_pipeline, emit=emit)
+		except Exception as error:
+			# Opening the chat must never fail because the screenshot could not
+			# be captured (e.g. screen curtain active, no usable window bounds).
+			logger.warning(
+				"open_chat_with_screenshot context collection failed: %s", error,
+				exc_info=True,
+			)
 		if emit is not None:
 			emit("building_prompt", "Building chat prompt...")
 

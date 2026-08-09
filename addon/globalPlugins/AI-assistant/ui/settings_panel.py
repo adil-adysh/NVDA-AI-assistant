@@ -60,8 +60,11 @@ addonHandler.initTranslation()
 
 
 # This settings panel stores one attribute per wx control it builds — the
-# standard NVDA settings-dialog pattern — so the attribute limit is waived.
+# standard NVDA settings-dialog pattern — so the attribute limit and the
+# out-of-init assignment rule are waived (controls can only be created in
+# makeSettings, where the sizer exists).
 class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-instance-attributes
+	# pylint: disable=attribute-defined-outside-init
 	# TRANSLATORS: Title shown at the top of the AI Assistant settings panel.
 	title = _("AI Assistant")
 

@@ -47,6 +47,7 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 		self._repository = repository
 		self._conversation_id_factory = conversation_id_factory or (lambda: str(uuid4()))
 		self._active_conversation_id: str | None = None
+		self._last_turn_committed: bool = False
 		self._history_projector = history_projector
 		self._history_transport_projector = history_transport_projector
 
@@ -205,9 +206,21 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 			if generation == self._session_generation:
 				self._session.extend(transaction.committed_messages(turn_result.messages))
 				self._persist_locked()
+				self._last_turn_committed = True
 			else:
 				log.debug("Discarding stale chat turn after session reset")
+				self._last_turn_committed = False
 		return turn_result.response
+
+	def last_turn_committed(self) -> bool:
+		"""Whether the most recently completed chat turn was committed to the session.
+
+		A turn may be discarded when the conversation was switched, reset, or
+		deleted while the LLM request was in flight (the session generation
+		changed between the request and its completion).
+		"""
+		with self._session_lock:
+			return self._last_turn_committed
 
 	def _persist_locked(self) -> None:
 		if (

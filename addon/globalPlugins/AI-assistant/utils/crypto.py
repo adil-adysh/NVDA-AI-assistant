@@ -42,6 +42,10 @@ class _DATA_BLOB(ctypes.Structure):
 	]
 
 
+# Lazy-init singleton: DPAPI function pointers are cached on first use.
+# pylint: disable=global-statement
+
+
 def _init_dpapi() -> bool:
 	"""One-time initialisation of DPAPI function pointers.
 
@@ -96,9 +100,11 @@ def _init_dpapi() -> bool:
 def _make_blob(data: bytes) -> _DATA_BLOB:
 	"""Build a DATA_BLOB from *data*.
 
-	The returned blob owns Python-allocated memory — do **not** pass it to
-	``LocalFree``.
+	Fields are declared on the ctypes ``_DATA_BLOB._fields_`` class attribute;
+	the blob instance is populated here instead of ``__init__``. The returned
+	blob owns Python-allocated memory — do **not** pass it to ``LocalFree``.
 	"""
+	# pylint: disable=attribute-defined-outside-init
 	blob = _DATA_BLOB()
 	blob.cbData = len(data)
 	blob.pbData = (ctypes.c_byte * len(data))(*data)

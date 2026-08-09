@@ -140,12 +140,18 @@ class ProviderLLMService:
 			tools=tools,
 			stream_handler=stream_adapter if _use_streaming else None,
 		)
-		generated_messages.append(build_assistant_message(text=response.text, tool_calls=response.tool_calls))
+		assistant_message = build_assistant_message(text=response.text, tool_calls=response.tool_calls)
+		generated_messages.append(assistant_message)
 		if self._tool_executor is None:
 			return ConversationTurnResult(response=response, messages=tuple(generated_messages))
 
 		steps = 0
 		while response.tool_calls and steps < self.MAX_TOOL_STEPS:
+			# The assistant message carrying tool_calls must precede the tool
+			# results in the provider-visible history; otherwise OpenAI-compat
+			# servers reject the follow-up request (tool result without a
+			# matching assistant tool-call message).
+			canonical_messages.append(assistant_message)
 			emit("tool_execution", f"Executing {len(response.tool_calls)} tool call(s)...")
 			tool_messages = self._tool_executor.execute_tool_calls(response.tool_calls)
 			canonical_tool_messages = self._convert_tool_messages(tool_messages)
@@ -158,7 +164,8 @@ class ProviderLLMService:
 				tools=tools,
 				stream_handler=stream_adapter if _use_streaming else None,
 			)
-			generated_messages.append(build_assistant_message(text=response.text, tool_calls=response.tool_calls))
+			assistant_message = build_assistant_message(text=response.text, tool_calls=response.tool_calls)
+			generated_messages.append(assistant_message)
 			steps += 1
 
 		return ConversationTurnResult(response=response, messages=tuple(generated_messages))
@@ -170,4 +177,11 @@ class ProviderLLMService:
 		self._provider.close()
 
 	def _convert_tool_messages(self, tool_messages: list[ToolExecutionResult]) -> list[Message]:
-		return [build_tool_result_message(tool_message.tool_name, tool_message.content) for tool_message in tool_messages]
+		return [
+			build_tool_result_message(
+				tool_message.tool_name,
+				tool_message.content,
+				tool_call_id=tool_message.tool_call_id,
+			)
+			for tool_message in tool_messages
+		]

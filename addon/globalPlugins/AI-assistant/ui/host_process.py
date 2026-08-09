@@ -63,8 +63,8 @@ def _wait_for_host_pipe_ready(timeout_seconds: float = 5.0) -> None:
 
 
 def start_host_if_needed() -> None:
-	global _host_process
-	global _host_logger_thread
+	global _host_process  # pylint: disable=global-statement
+	global _host_logger_thread  # pylint: disable=global-statement
 	process: subprocess.Popen | None = None
 	with _process_lock:
 		if _host_process is not None and _host_process.poll() is None:
@@ -132,7 +132,7 @@ def is_host_process_alive() -> bool:
 
 
 def stop_host() -> None:
-	global _host_process
+	global _host_process  # pylint: disable=global-statement
 	with _process_lock:
 		if _host_process is None:
 			return

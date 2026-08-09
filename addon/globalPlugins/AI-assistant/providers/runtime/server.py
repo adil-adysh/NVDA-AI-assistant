@@ -72,7 +72,7 @@ def get_litert_supervisor() -> LiteRTServerSupervisor:
 	Creates the instance on first call with defaults that match the
 	add-on configuration.
 	"""
-	global _supervisor
+	global _supervisor  # pylint: disable=global-statement
 	if _supervisor is None:
 		_supervisor = LiteRTServerSupervisor()
 	return _supervisor

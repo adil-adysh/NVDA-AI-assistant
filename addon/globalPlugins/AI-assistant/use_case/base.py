@@ -8,7 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ..context.pipeline import ContextPipeline
-from ..context.types import PromptContext
+from ..context.types import ExtractionResult, PromptContext
 from ..providers.interfaces import PartialCallback
 from ..service.llm import LLMService
 from ..utils.markdown import render_markdown_to_html
@@ -35,10 +35,31 @@ class UseCase(ABC):
 	) -> UseCaseResult:
 		raise NotImplementedError
 
-	def collect_prompt_context(self, context_pipeline: ContextPipeline | None, emit: ContextEmitter = None) -> PromptContext | None:
+	def collect_prompt_context(
+		self, context_pipeline: ContextPipeline | None, emit: ContextEmitter = None
+	) -> PromptContext | None:
 		if context_pipeline is None or not self.spec.extraction_intent.requests:
 			return None
-		return context_pipeline.collect(use_case_id=self.spec.id, extraction_intent=self.spec.extraction_intent)
+		return context_pipeline.collect(
+			use_case_id=self.spec.id, extraction_intent=self.spec.extraction_intent
+		)
+
+	def _get_extraction_result(self, prompt_context: PromptContext) -> ExtractionResult:
+		"""Return the extraction result carried by *prompt_context* or raise."""
+		extraction_result = prompt_context.extraction_result
+		if extraction_result is None:
+			raise ValueError("Unable to collect extraction result")
+		return extraction_result
+
+	def _build_prompt_metadata(self, prompt_key: str, prompt: str) -> dict[str, int | str]:
+		"""Metadata describing the prompt built for this use case."""
+		return {"prompt_key": prompt_key, "prompt_chars": len(prompt)}
+
+	def _build_result_metadata(self, response: object, prompt_key: str) -> dict[str, str]:
+		"""Metadata describing the LLM response (provider/model provenance)."""
+		provider = getattr(response, "provider", None) or "unknown"
+		model = getattr(response, "model", None) or "unknown"
+		return {"provider": provider, "model": model, "prompt_key": prompt_key}
 
 	def execute_prompted_use_case(
 		self,

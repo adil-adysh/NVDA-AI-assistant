@@ -272,6 +272,9 @@ class ModelManagerDialog(wx.Dialog):
 		return result
 
 	def _provider_choices(self) -> list[str]:
+		# Lazy cache: built when the provider combo is first populated (wx
+		# lifecycle), so it cannot be initialized in __init__.
+		# pylint: disable=attribute-defined-outside-init
 		self._provider_map = self._discover_providers()
 		return list(self._provider_map.keys())
 

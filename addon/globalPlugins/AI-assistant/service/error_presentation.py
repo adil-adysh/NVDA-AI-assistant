@@ -91,6 +91,17 @@ def present_error(error: Exception, translate: Translator | None = None) -> Erro
 	translate = translate or _
 	message_text = str(error).strip()
 
+	# ── User-actionable screen state (e.g. screen curtain active) ──
+	from ..image.screen_curtain import ScreenCurtainError
+
+	if isinstance(error, ScreenCurtainError):
+		return ErrorPresentation(
+			# TRANSLATORS: Title shown when a screen-based feature is blocked by the screen curtain.
+			title=translate("Screen curtain active"),
+			# The ScreenCurtainError message is already user-facing and actionable.
+			message=message_text or translate("Screen capture is unavailable."),
+		)
+
 	# ── Known framework errors (highest priority) ──
 	if isinstance(error, UnsupportedModelError):
 		return ErrorPresentation(

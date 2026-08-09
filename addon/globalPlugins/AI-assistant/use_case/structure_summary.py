@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 from ..context.pipeline import ContextPipeline
 from ..prompts import build_extraction_structure_summary_prompt
-from ..context.types import ExtractionIntent, ExtractionResult, PageStructureRequest, PageTextRequest, PromptContext
+from ..context.types import ExtractionIntent, PageStructureRequest, PageTextRequest, PromptContext
 from ..service.llm import LLMService
 from .base import UseCase
 from .types import UseCaseResult, UseCaseSpec
@@ -17,10 +17,12 @@ class StructureSummaryUseCase(UseCase):
 		return UseCaseSpec(
 			id="structure_summary",
 			description="Summarize page structure, including headings, links, and interactive elements.",
-			extraction_intent=ExtractionIntent(requests=(
-				PageTextRequest(),
-				PageStructureRequest(),
-			)),
+			extraction_intent=ExtractionIntent(
+				requests=(
+					PageTextRequest(),
+					PageStructureRequest(),
+				)
+			),
 			prompt_key="page_structure_summary",
 			tools=(),
 			requires_input=False,
@@ -41,19 +43,15 @@ class StructureSummaryUseCase(UseCase):
 				self._get_extraction_result(prompt_context),
 				language=prompt_context.language,
 			),
-			llm_call=lambda prompt, prompt_context, stream_handler: llm_service.summarize(prompt, stream_handler=stream_handler),
+			llm_call=lambda prompt, prompt_context, stream_handler: llm_service.summarize(
+				prompt, stream_handler=stream_handler
+			),
 			build_result=self._build_result,
 			emit=emit,
 			collecting_message="Collecting page content...",
 			building_prompt_message="Building structure summary prompt...",
 			llm_request_message="Generating structure summary...",
 		)
-
-	def _get_extraction_result(self, prompt_context: PromptContext) -> ExtractionResult:
-		extraction_result = prompt_context.extraction_result
-		if extraction_result is None:
-			raise ValueError("Unable to collect extraction result")
-		return extraction_result
 
 	def _build_result(self, prompt_context: PromptContext, response: object, prompt: str) -> UseCaseResult:
 		extraction_result = self._get_extraction_result(prompt_context)
@@ -70,13 +68,7 @@ class StructureSummaryUseCase(UseCase):
 				facts={"extraction_result": extraction_result},
 				extraction_result=extraction_result,
 				text=extraction_result.text,
-				metadata={
-					"prompt_key": self.spec.prompt_key,
-					"prompt_chars": len(prompt),
-				},
+				metadata=self._build_prompt_metadata(self.spec.prompt_key, prompt),
 			),
-			metadata={
-				"model": response.model,
-				"prompt_key": self.spec.prompt_key,
-			},
+			metadata=self._build_result_metadata(response, self.spec.prompt_key),
 		)

@@ -98,9 +98,7 @@ class UseCasePresenter:
 		# inject the image as a user message seed so it appears in the transcript.
 		# When only an image is provided (e.g. open_chat_with_screenshot shortcut),
 		# keep it as a composer attachment — the user decides when to send it.
-		carry_image_into_history = bool(
-			initial_image_base64 and initial_assistant_text
-		)
+		carry_image_into_history = bool(initial_image_base64 and initial_assistant_text)
 		seed_image = initial_image_base64 if carry_image_into_history else None
 		composer_image = None if carry_image_into_history else initial_image_base64
 		active_conversation_id = self._conversation_service.open_conversation(
@@ -157,7 +155,11 @@ class UseCasePresenter:
 			log.exception("Error synchronizing WebView session state after provider change")
 
 	def present_use_case_result(self, use_case_result: Any, title: str) -> None:
-		log.debug("UseCasePresenter.present_use_case_result called title=%s result_type=%s", title, type(use_case_result).__name__)
+		log.debug(
+			"UseCasePresenter.present_use_case_result called title=%s result_type=%s",
+			title,
+			type(use_case_result).__name__,
+		)
 		output_text = None
 		output_html = None
 		is_html = False
@@ -196,7 +198,9 @@ class UseCasePresenter:
 
 		browseable_title = nvda_ui.format_browseable_title(title, get_provider_state())
 		provider_state = get_provider_state()
-		session_state = build_session_state(_, provider_state, available_models=self._get_cached_models(provider_state))
+		session_state = build_session_state(
+			_, provider_state, available_models=self._get_cached_models(provider_state)
+		)
 		use_case_id = None
 		prompt_context = getattr(use_case_result, "prompt_context", None)
 		if prompt_context is not None:
@@ -208,13 +212,13 @@ class UseCasePresenter:
 		actions = self._build_result_actions(use_case_id, output_text, use_case_result)
 		# result_actions flag is set by UseCaseSpec and auto-injected into
 		# metadata by UseCase.execute_prompted_use_case; avoids hardcoded lists.
-		has_result_actions = bool(
-			actions and (metadata or {}).get("result_actions")
-		)
+		has_result_actions = bool(actions and (metadata or {}).get("result_actions"))
 		is_result_action_screen = has_result_actions
 		display_presentation = build_display_presentation(
 			variant=DISPLAY_VARIANT_RESULT_ACTIONS if is_result_action_screen else DISPLAY_VARIANT_STANDARD,
-			initial_focus=FOCUS_TARGET_CONTENT if is_result_action_screen or not actions else FOCUS_TARGET_PRIMARY_ACTION,
+			initial_focus=FOCUS_TARGET_CONTENT
+			if is_result_action_screen or not actions
+			else FOCUS_TARGET_PRIMARY_ACTION,
 			toolbar_actions=self._build_display_toolbar_actions(include_clear=not is_result_action_screen),
 		)
 		ui_adapter.render_display(
@@ -255,23 +259,36 @@ class UseCasePresenter:
 		output_html: Any,
 		is_html: bool,
 	) -> tuple[str | None, str | None, bool]:
-		normalized_text = output_text.strip() if isinstance(output_text, str) and output_text.strip() else None
-		normalized_html = output_html.strip() if isinstance(output_html, str) and output_html.strip() else None
+		normalized_text = (
+			output_text.strip() if isinstance(output_text, str) and output_text.strip() else None
+		)
+		normalized_html = (
+			output_html.strip() if isinstance(output_html, str) and output_html.strip() else None
+		)
 		if normalized_html is None and normalized_text is not None:
 			normalized_html = render_markdown_to_html(normalized_text).strip() or None
 		return normalized_text, normalized_html, bool(is_html or normalized_html)
 
 	def progress_handler(self, event: ProgressEvent) -> None:
 		if event.stage == "error":
+			# The error is spoken exactly once by the background worker's
+			# exception handler (present_error); here we only surface the host
+			# error dialog so users are not announced the same failure twice.
 			ui_adapter.show_error(_("Error"), details=event.message)
-			nvda_ui.queue(nvda_ui.message, _("Error: ") + event.message)
 			return
 
 		if event.stage == "streaming":
 			nvda_ui.play_streaming_tone()
 			return
 
-		if event.stage in {"start", "collecting_context", "building_prompt", "llm_request", "tool_execution", "complete"}:
+		if event.stage in {
+			"start",
+			"collecting_context",
+			"building_prompt",
+			"llm_request",
+			"tool_execution",
+			"complete",
+		}:
 			ui_adapter.show_progress(event.message)
 
 	def _build_chat_metadata(self) -> dict[str, Any]:
@@ -294,7 +311,7 @@ class UseCasePresenter:
 	def _refresh_available_models_async(self, provider_state: ProviderState) -> None:
 		self._model_cache.refresh_async(provider_state)
 
-	def _on_models_cached(self, provider: str, models: tuple[str, ...]) -> None:
+	def _on_models_cached(self, _provider: str, models: tuple[str, ...]) -> None:
 		ui_adapter.sync_session_state(
 			build_session_state(
 				_,
@@ -306,14 +323,14 @@ class UseCasePresenter:
 			).to_metadata()
 		)
 
-	def _build_result_actions(self, use_case_id: str | None, output_text: str | None, use_case_result: Any) -> list[ResultActionViewModel]:
+	def _build_result_actions(
+		self, _use_case_id: str | None, output_text: str | None, use_case_result: Any
+	) -> list[ResultActionViewModel]:
 		if not isinstance(output_text, str) or not output_text.strip():
 			return []
 		# Check the flag auto-injected by UseCase.execute_prompted_use_case
 		# from UseCaseSpec.result_actions.  Avoids hardcoded use-case-ID lists.
-		result_metadata = (
-			getattr(use_case_result, "metadata", None) or {}
-		)
+		result_metadata = getattr(use_case_result, "metadata", None) or {}
 		if not result_metadata.get("result_actions"):
 			return []
 		# ── Open Chat (new conversation, seed text via token store) ──
@@ -363,7 +380,11 @@ class UseCasePresenter:
 
 	def _dispatch_ui_action(
 		self,
-		action: ConversationNewAction | ConversationOpenAction | ConversationDeleteAction | OpenChatAction | AttachToCurrentAction,
+		action: ConversationNewAction
+		| ConversationOpenAction
+		| ConversationDeleteAction
+		| OpenChatAction
+		| AttachToCurrentAction,
 	) -> None:
 		if isinstance(action, ConversationNewAction):
 			self.open_chat_window(force_new_conversation=True)

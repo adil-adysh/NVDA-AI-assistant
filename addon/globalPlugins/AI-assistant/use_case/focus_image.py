@@ -46,6 +46,9 @@ class DescribeFocusedImageUseCase(UseCase):
 			capture = capture_focused_object(
 				preprocessor=ImagePreprocessor(),
 				encoder=ImageEncoder(),
+				main_thread_executor=(
+					context_pipeline.run_on_main_thread if context_pipeline is not None else None
+				),
 			)
 		except RuntimeError as e:
 			return UseCaseResult(
@@ -83,9 +86,6 @@ class DescribeFocusedImageUseCase(UseCase):
 
 		html_output = self.markdown_to_html(response.text)
 
-		provider = getattr(response, "provider", None) or "unknown"
-		model = getattr(response, "model", None) or "unknown"
-
 		return UseCaseResult(
 			success=True,
 			message="Focused image description ready",
@@ -108,16 +108,9 @@ class DescribeFocusedImageUseCase(UseCase):
 					},
 				},
 				image_base64=capture.image_base64,
-				metadata={
-					"prompt_key": self.spec.prompt_key,
-					"prompt_chars": len(prompt),
-				},
+				metadata=self._build_prompt_metadata(self.spec.prompt_key, prompt),
 			),
-			metadata={
-				"provider": provider,
-				"model": model,
-				"prompt_key": self.spec.prompt_key,
-			},
+			metadata=self._build_result_metadata(response, self.spec.prompt_key),
 		)
 
 
@@ -149,6 +142,9 @@ class AttachFocusedImageToChatUseCase(UseCase):
 			capture = capture_focused_object(
 				preprocessor=ImagePreprocessor(),
 				encoder=ImageEncoder(),
+				main_thread_executor=(
+					context_pipeline.run_on_main_thread if context_pipeline is not None else None
+				),
 			)
 		except RuntimeError as e:
 			return UseCaseResult(
