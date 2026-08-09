@@ -25,6 +25,7 @@ from logHandler import log
 from ...core.canonical import Message, Tool
 from ...core.messages import LLMResponse, SummaryResponse
 from ...core.tooling import ToolCall
+from ...config.model_config import ModelSamplingConfig, resolve_model_sampling
 from ...tools import build_function_tool_definition, normalize_tool_calls
 from ..config import OpenAICompatConfig
 from ...config.settings import get_image_mime_type
@@ -178,6 +179,7 @@ class OpenAICompatProvider(LLMProvider):
 		stream_handler: PartialCallback | None = None,
 	) -> SummaryResponse:
 		model = self._resolve_model()
+		sampling = self._resolve_sampling(model)
 		messages: list[dict[str, Any]] = [
 			{
 				"role": "system",
@@ -193,10 +195,12 @@ class OpenAICompatProvider(LLMProvider):
 		response = self._client.chat_completion(
 			model=model,
 			messages=messages,
-			temperature=self._config.generate_temperature,
-			top_p=self._config.generate_top_p,
-			max_tokens=self._config.generate_max_tokens,
-			num_ctx=self._config.num_ctx,
+			temperature=sampling.temperature,
+			top_p=sampling.top_p,
+			max_tokens=sampling.max_tokens,
+			num_ctx=sampling.num_ctx,
+			top_k=sampling.top_k,
+			repeat_penalty=sampling.repeat_penalty,
 		)
 		choice = self._parse_choice(response)
 		return SummaryResponse(
@@ -438,6 +442,7 @@ class OpenAICompatProvider(LLMProvider):
 		stream_handler: PartialCallback | None,
 	) -> SummaryResponse:
 		"""Describe an image via Ollama-native POST /api/chat."""
+		sampling = self._resolve_sampling(model)
 		payload: dict[str, Any] = {
 			"model": model,
 			"messages": [
@@ -448,7 +453,7 @@ class OpenAICompatProvider(LLMProvider):
 				}
 			],
 			"stream": False,
-			"options": {"num_ctx": self._config.num_ctx},
+			"options": self._ollama_options(sampling),
 		}
 
 		try:
@@ -487,13 +492,16 @@ class OpenAICompatProvider(LLMProvider):
 			text, _, _ = self._stream_chat(model, messages, stream_handler)
 			return SummaryResponse(text=text, model=model, provider=self.provider_name())
 
+		sampling = self._resolve_sampling(model)
 		response = self._client.chat_completion(
 			model=model,
 			messages=messages,
-			temperature=self._config.generate_temperature,
-			top_p=self._config.generate_top_p,
-			max_tokens=self._config.generate_max_tokens,
-			num_ctx=self._config.num_ctx,
+			temperature=sampling.temperature,
+			top_p=sampling.top_p,
+			max_tokens=sampling.max_tokens,
+			num_ctx=sampling.num_ctx,
+			top_k=sampling.top_k,
+			repeat_penalty=sampling.repeat_penalty,
 		)
 		choice = self._parse_choice(response)
 		return SummaryResponse(
@@ -514,6 +522,7 @@ class OpenAICompatProvider(LLMProvider):
 	) -> LLMResponse:
 		"""Generate via OpenAI-compat /v1/chat/completions."""
 		model = self._resolve_model()
+		sampling = self._resolve_sampling(model)
 		payload_messages = [self._convert_message(msg) for msg in messages]
 		tool_defs = self._build_tool_definitions(tools)
 
@@ -537,10 +546,12 @@ class OpenAICompatProvider(LLMProvider):
 				model=model,
 				messages=payload_messages,
 				tools=tool_defs,
-				temperature=self._config.generate_temperature,
-				top_p=self._config.generate_top_p,
-				max_tokens=self._config.generate_max_tokens,
-				num_ctx=self._config.num_ctx,
+				temperature=sampling.temperature,
+				top_p=sampling.top_p,
+				max_tokens=sampling.max_tokens,
+				num_ctx=sampling.num_ctx,
+				top_k=sampling.top_k,
+				repeat_penalty=sampling.repeat_penalty,
 			)
 		except Exception as exc:
 			raise LLMProviderError(str(exc)) from exc
@@ -564,6 +575,7 @@ class OpenAICompatProvider(LLMProvider):
 	) -> LLMResponse:
 		"""Generate via Ollama-native POST /api/chat (supports images)."""
 		model = self._resolve_model()
+		sampling = self._resolve_sampling(model)
 		ollama_messages: list[dict[str, Any]] = []
 
 		for msg in messages:
@@ -603,7 +615,7 @@ class OpenAICompatProvider(LLMProvider):
 			"model": model,
 			"messages": ollama_messages,
 			"stream": False,
-			"options": {"num_ctx": self._config.num_ctx},
+			"options": self._ollama_options(sampling),
 		}
 		if tools:
 			payload["tools"] = [build_function_tool_definition(t) for t in tools]
@@ -647,15 +659,18 @@ class OpenAICompatProvider(LLMProvider):
 		last_callback_at = time.monotonic()
 		last_yield_at = last_callback_at
 
+		sampling = self._resolve_sampling(model)
 		try:
 			for chunk in self._client.chat_completion_stream(
 				model=model,
 				messages=messages,
 				tools=tools,
-				temperature=self._config.generate_temperature,
-				top_p=self._config.generate_top_p,
-				max_tokens=self._config.generate_max_tokens,
-				num_ctx=self._config.num_ctx,
+				temperature=sampling.temperature,
+				top_p=sampling.top_p,
+				max_tokens=sampling.max_tokens,
+				num_ctx=sampling.num_ctx,
+				top_k=sampling.top_k,
+				repeat_penalty=sampling.repeat_penalty,
 			):
 				chunks.append(chunk)
 				choices = chunk.get("choices")
@@ -816,6 +831,37 @@ class OpenAICompatProvider(LLMProvider):
 		if not model or not str(model).strip():
 			raise MissingModelError("Model name is required.")
 		return str(model).strip()
+
+	def _resolve_sampling(self, model_id: str) -> ModelSamplingConfig:
+		"""Return the effective sampling parameters for *model_id*.
+
+		Per-model pinned values override the provider's global settings.
+		``top_k`` and ``repeat_penalty`` are pinned-only: they stay
+		``None`` (and are therefore omitted from the wire) unless the
+		model explicitly configures them, keeping OpenAI-compatible
+		cloud endpoints from receiving unknown request parameters.
+		"""
+		base = ModelSamplingConfig(
+			num_ctx=self._config.num_ctx,
+			temperature=self._config.generate_temperature,
+			top_p=self._config.generate_top_p,
+			max_tokens=self._config.generate_max_tokens,
+		)
+		return resolve_model_sampling(self._provider_id, model_id, base)
+
+	@staticmethod
+	def _ollama_options(sampling: ModelSamplingConfig) -> dict[str, Any]:
+		"""Build the Ollama-native ``options`` dict from resolved sampling.
+
+		``top_k`` and ``repeat_penalty`` are included only when pinned
+		(not ``None``) — they are local-backend parameters.
+		"""
+		options: dict[str, Any] = {"num_ctx": sampling.num_ctx}
+		if sampling.top_k is not None:
+			options["top_k"] = sampling.top_k
+		if sampling.repeat_penalty is not None:
+			options["repeat_penalty"] = sampling.repeat_penalty
+		return options
 
 	def _model_supports_images(self, model_id: str) -> bool:
 		info = self._capabilities_for_model(model_id)

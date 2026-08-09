@@ -61,6 +61,8 @@ impl HttpClient {
         top_p: Option<f64>,
         max_tokens: Option<u32>,
         num_ctx: Option<u32>,
+        top_k: Option<u32>,
+        repeat_penalty: Option<f64>,
     ) -> PyResult<Value> {
         let request = ChatCompletionRequest {
             model: model.to_string(),
@@ -70,6 +72,8 @@ impl HttpClient {
             top_p,
             max_tokens,
             num_ctx,
+            top_k,
+            repeat_penalty,
             stream: Some(false),
             stream_options: None,
         };
@@ -96,6 +100,8 @@ impl HttpClient {
         top_p: Option<f64>,
         max_tokens: Option<u32>,
         num_ctx: Option<u32>,
+        top_k: Option<u32>,
+        repeat_penalty: Option<f64>,
     ) -> PyResult<StreamingResponse> {
         let request = ChatCompletionRequest {
             model: model.to_string(),
@@ -105,6 +111,8 @@ impl HttpClient {
             top_p,
             max_tokens,
             num_ctx,
+            top_k,
+            repeat_penalty,
             stream: Some(true),
             stream_options: Some(StreamOptions {
                 include_usage: true,

@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-import threading
 from pathlib import Path
 from typing import Any
 
@@ -7,38 +6,21 @@ import addonHandler
 import wx
 from gui import guiHelper
 from gui.settingsDialogs import SettingsPanel
-from logHandler import log
 
 from ..config import defaults
 from ..config.settings import (
+	build_provider_config,
 	get_enabled_providers,
-	get_gemini_api_key,
-	get_gemini_base_url,
-	get_gemini_model_name,
-	get_generate_max_tokens,
-	get_generate_presence_penalty,
-	get_generate_temperature,
-	get_generate_top_k,
-	get_generate_top_p,
 	get_image_format,
 	get_image_max_side,
 	get_image_quality,
 	get_language,
-	get_litert_model_name,
-	get_litert_server_url,
-	get_max_retries,
-	get_num_ctx,
-	get_ollama_model_name,
-	get_ollama_server_url,
+	get_litert_think,
 	get_ollama_think,
-	get_openai_api_key,
-	get_openai_base_url,
-	get_openai_model_name,
 	get_progress_enabled,
 	get_provider,
 	get_request_metrics_log_path,
 	get_request_metrics_logging_enabled,
-	get_retry_backoff_seconds,
 	get_streaming_enabled,
 	get_streaming_tone_enabled,
 	get_timeout_seconds,
@@ -47,14 +29,25 @@ from ..config.settings import (
 	set_image_max_side,
 	set_image_quality,
 	set_language,
-	set_openai_compat_config,
+	set_litert_think,
+	set_model_name,
+	set_ollama_think,
+	set_provider,
 	set_request_metrics_log_path,
 	set_request_metrics_logging_enabled,
 	set_streaming_enabled,
 	set_streaming_tone_enabled,
 )
-from ..providers.config import OpenAICompatConfig
-from ..providers.runtime.server import get_litert_supervisor
+from ..providers.litert_models import recommended_models
+from ..providers.registry import (
+	PROVIDER_IDS,
+	ProviderLifecycleState,
+	get_provider_info,
+	provider_display_name,
+	provider_state_label,
+)
+from .enabled_models import EnabledModelsStore
+from .provider_dialog import open_provider_dialog
 
 addonHandler.initTranslation()
 
@@ -114,37 +107,66 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		):
 			cb.Bind(wx.EVT_CHECKBOX, self._on_enabled_provider_changed)
 
-		# ── Active Provider ─────────────────────────────────────────
-		# TRANSLATORS: Provider option label for Ollama.
-		# TRANSLATORS: Provider option label for Gemini.
-		self._providerOptions = [
-			("ollama", _("Ollama")),
-			("gemini", _("Gemini")),
-			("openai", _("OpenAI")),
-			("litert-lm", _("LiteRT-LM")),
-		]
+		# ── Active AI ───────────────────────────────────────────────
+		# TRANSLATORS: Section label for the active provider/model selection.
+		activeGroupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Active AI"))
+		activeGroupHelper = sHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=activeGroupSizer))
+
 		providerChoices = self._build_provider_choices()
 		selectedProviderIndex = self._selected_provider_index(provider)
 
-		# TRANSLATORS: Section label for provider selection.
-		providerGroupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Provider"))
-		providerGroupHelper = sHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=providerGroupSizer))
-		# TRANSLATORS: Label for the LLM provider dropdown.
-		providerGroupHelper.addItem(wx.StaticText(self, label=_("LLM provider:")))
+		# TRANSLATORS: Label for the active provider dropdown.
+		activeGroupHelper.addItem(wx.StaticText(self, label=_("Active provider:")))
 		self.providerChoice = wx.Choice(self, choices=providerChoices)
 		self.providerChoice.SetSelection(max(selectedProviderIndex, 0))
 		self.providerChoice.Bind(wx.EVT_CHOICE, self._on_provider_choice)
-		providerGroupHelper.addItem(self.providerChoice)
+		activeGroupHelper.addItem(self.providerChoice)
 
-		self.ollamaGroupSizer = self._build_ollama_settings(sHelper)
-		self.geminiGroupSizer = self._build_gemini_settings(sHelper)
-		self.openaiGroupSizer = self._build_openai_settings(sHelper)
-		self.litertGroupSizer = self._build_litert_settings(sHelper)
+		# TRANSLATORS: Label showing the active provider's status.
+		self.providerStatusText = wx.StaticText(self, label="")
+		activeGroupHelper.addItem(self.providerStatusText)
+
+		# TRANSLATORS: Label for the active model dropdown.
+		activeGroupHelper.addItem(wx.StaticText(self, label=_("Active model:")))
+		self.modelCombo = wx.ComboBox(
+			self,
+			choices=[],
+			style=wx.CB_DROPDOWN,
+		)
+		activeGroupHelper.addItem(self.modelCombo)
+
+		# TRANSLATORS: Checkbox to enable think/reasoning mode for the active provider.
+		self.thinkCheckbox = activeGroupHelper.addItem(
+			wx.CheckBox(self, label=_("Enable think mode (active provider)")),
+		)
+
+		# TRANSLATORS: Button that opens the provider management dialog from the settings page.
+		self.manageProvidersBtn = activeGroupHelper.addItem(
+			wx.Button(self, label=_("&Manage AI Providers...")),
+		)
+		self.manageProvidersBtn.Bind(wx.EVT_BUTTON, self._on_manage_providers)
+
+		# TRANSLATORS: Button that opens the Configure dialog for the active model.
+		self.configureActiveModelBtn = activeGroupHelper.addItem(
+			wx.Button(self, label=_("Configure Active &Model...")),
+		)
+		self.configureActiveModelBtn.Bind(wx.EVT_BUTTON, self._on_configure_active_model)
+
+		# TRANSLATORS: Hint explaining where per-model generation settings are configured.
+		activeGroupHelper.addItem(
+			wx.StaticText(
+				self,
+				label=_(
+					"Per-model generation settings (context window, temperature, "
+					"top-k, top-p, and more) are configured from Manage AI Providers "
+					"or the Configure Active Model button."
+				),
+			)
+		)
+
 		self.sharedGroupSizer = self._build_advanced_settings(sHelper)
-		self.ollamaExpertGroupSizer = self._build_ollama_expert_settings(sHelper)
-		self._build_expert_settings(sHelper)
 
-		self._update_provider_field_state()
+		self._update_active_ai_state()
 
 	def _add_labeled_text_ctrl(self, helper, label, initialValue):
 		labelControl = wx.StaticText(self, label=label)
@@ -186,138 +208,28 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 				return value
 		return label
 
-	def _build_ollama_settings(self, parentHelper):
-		# TRANSLATORS: Section label for Ollama-specific settings.
-		groupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Ollama Settings"))
-		groupHelper = parentHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=groupSizer))
-		# TRANSLATORS: Label for the Ollama model name setting.
-		self.ollamaModelNameEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("Ollama model name:"),
-			get_ollama_model_name(),
-		)
-		# TRANSLATORS: Label for the Ollama server URL setting.
-		self.ollamaServerUrlEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("Ollama server URL:"),
-			get_ollama_server_url(),
-		)
-		# TRANSLATORS: Label for the Ollama context window size setting.
-		self.ollamaNumCtxEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("Context window size (may affect performance):"),
-			str(get_num_ctx() if get_num_ctx() is not None else defaults.DEFAULT_NUM_CTX),
-		)
-		return groupSizer
-
-	def _build_gemini_settings(self, parentHelper):
-		# TRANSLATORS: Section label for Gemini-specific settings.
-		groupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Gemini Settings"))
-		groupHelper = parentHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=groupSizer))
-		# TRANSLATORS: Label for the Gemini model name setting.
-		self.geminiModelNameEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("Gemini model name:"),
-			get_gemini_model_name(),
-		)
-		# TRANSLATORS: Label for the Gemini API key setting.
-		self.geminiApiKeyEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("Gemini API key:"),
-			get_gemini_api_key(),
-		)
-		# TRANSLATORS: Label for the Gemini base URL setting.
-		self.geminiBaseUrlEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("Gemini base URL:"),
-			get_gemini_base_url(),
-		)
-		return groupSizer
-
-	def _build_openai_settings(self, parentHelper):
-		# TRANSLATORS: Section label for OpenAI settings.
-		groupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("OpenAI Settings"))
-		groupHelper = parentHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=groupSizer))
-		self.openaiModelNameEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("OpenAI model name:"),
-			get_openai_model_name(),
-		)
-		self.openaiApiKeyEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("OpenAI API key:"),
-			get_openai_api_key() or "",
-		)
-		self.openaiBaseUrlEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("OpenAI base URL:"),
-			get_openai_base_url(),
-		)
-		return groupSizer
-
-	def _build_litert_settings(self, parentHelper):
-		# TRANSLATORS: Section label for LiteRT-LM-specific settings.
-		groupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("LiteRT-LM Settings"))
-		groupHelper = parentHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=groupSizer))
-		# TRANSLATORS: Label for the LiteRT-LM model name setting.
-		self.litertModelNameEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("LiteRT-LM model name:"),
-			get_litert_model_name(),
-		)
-		# TRANSLATORS: Label for the LiteRT-LM server URL setting.
-		self.litertServerUrlEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("LiteRT-LM server URL:"),
-			get_litert_server_url(),
-		)
-		# TRANSLATORS: Label for the LiteRT-LM context window size setting.
-		self.litertNumCtxEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("LiteRT-LM context window size (may affect performance):"),
-			str(get_num_ctx()),
-		)
-
-		# ── Runtime installation status ─────────────────────────
-		# TRANSLATORS: Section label for the LiteRT-LM runtime installation status.
-		groupHelper.addItem(
-			wx.StaticText(
-				self,
-				label=_("Runtime installation:"),
-			)
-		)
-		self.litertRuntimeStatus = wx.StaticText(self, label="")
-		groupHelper.addItem(self.litertRuntimeStatus)
-		# TRANSLATORS: Button to download and install the LiteRT-LM runtime.
-		self.litertDownloadBtn = wx.Button(self, label=_("&Download LiteRT-LM Runtime..."))
-		self.litertDownloadBtn.Bind(wx.EVT_BUTTON, self._on_download_litert_runtime)
-		groupHelper.addItem(self.litertDownloadBtn)
-		# TRANSLATORS: Label for download progress during LiteRT-LM runtime installation.
-		self.litertProgressLabel = wx.StaticText(self, label="")
-		self.litertProgressLabel.Hide()
-		groupHelper.addItem(self.litertProgressLabel)
-		self.litertProgressGauge = wx.Gauge(self, range=100, size=(-1, 20))
-		self.litertProgressGauge.Hide()
-		groupHelper.addItem(self.litertProgressGauge, flag=wx.EXPAND)
-
-		self._refresh_litert_runtime_status()
-		return groupSizer
-
 	# ------------------------------------------------------------------
-	# Provider enable / disable helpers
+	# Provider enable / disable + active AI helpers
 	# ------------------------------------------------------------------
 
 	def _build_provider_choices(self) -> list[str]:
-		"""Return provider dropdown labels, filtered by enabled providers."""
+		"""Return active-provider dropdown labels, filtered by enabled providers."""
 		enabled = get_enabled_providers()
-		return [label for value, label in self._providerOptions if value in enabled]
+		return [provider_display_name(pid) for pid in PROVIDER_IDS if pid in enabled]
 
 	def _selected_provider_index(self, provider: str) -> int:
 		"""Return the dropdown index for *provider* in the filtered (enabled-only) list."""
-		enabled = get_enabled_providers()
-		filtered = [(v, label) for v, label in self._providerOptions if v in enabled]
-		for idx, (value, _label) in enumerate(filtered):
-			if value == provider:
+		choices = self._build_provider_choices()
+		for idx, label in enumerate(choices):
+			if label == provider_display_name(provider):
+				return idx
+		return 0
+
+	def _selected_provider_index(self, provider: str) -> int:
+		"""Return the dropdown index for *provider* in the filtered (enabled-only) list."""
+		choices = self._build_provider_choices()
+		for idx, label in enumerate(choices):
+			if label == provider_display_name(provider):
 				return idx
 		return 0
 
@@ -329,85 +241,105 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		self.providerChoice.AppendItems(choices)
 		idx = self._selected_provider_index(current_provider)
 		self.providerChoice.SetSelection(max(idx, 0))
-		self._update_provider_field_state()
+		self._update_active_ai_state()
 
 	# ------------------------------------------------------------------
-	# LiteRT runtime download
+	# Active AI state
 	# ------------------------------------------------------------------
 
-	def _refresh_litert_runtime_status(self) -> None:
-		"""Update the LiteRT runtime status label and download button state."""
-		supervisor = get_litert_supervisor()
-		if supervisor.is_installed:
-			# TRANSLATORS: Status message when the LiteRT-LM runtime is already installed.
-			self.litertRuntimeStatus.SetLabel(_("Runtime is installed and ready."))
-			self.litertDownloadBtn.Disable()
-		else:
-			# TRANSLATORS: Status message when the LiteRT-LM runtime is not yet installed.
-			self.litertRuntimeStatus.SetLabel(
-				_("Runtime is not installed. Download required to use LiteRT-LM.")
-			)
-			# Enable download only when litert-lm is the selected provider.
-			is_litert = self._selected_provider() == "litert-lm"
-			self.litertDownloadBtn.Enable(is_litert)
+	def _selected_provider(self) -> str:
+		index = self.providerChoice.GetSelection()
+		if index < 0:
+			return get_provider()
+		choices = self._build_provider_choices()
+		if index >= len(choices):
+			return get_provider()
+		selected_label = choices[index]
+		for pid in PROVIDER_IDS:
+			if provider_display_name(pid) == selected_label:
+				return pid
+		return get_provider()
 
-	def _on_download_litert_runtime(self, _event: wx.CommandEvent) -> None:
-		"""Download and extract the LiteRT-LM runtime in a background thread."""
-		self.litertDownloadBtn.Disable()
-		# TRANSLATORS: Progress message shown while the LiteRT-LM runtime is downloading.
-		self.litertProgressLabel.SetLabel(_("Downloading LiteRT-LM runtime..."))
-		self.litertProgressLabel.Show()
-		self.litertProgressGauge.SetValue(0)
-		self.litertProgressGauge.SetRange(100)
-		self.litertProgressGauge.Show()
-		self.Layout()
+	def _current_model_name(self, provider_id: str) -> str:
+		try:
+			# Broad catch is deliberate: the settings page must keep rendering
+			# even if a provider's stored config cannot be read.
+			# pylint: disable=broad-exception-caught
+			return str(build_provider_config(provider_id).model_name or "").strip()
+		except Exception:
+			return ""
 
-		def worker() -> None:
-			supervisor = get_litert_supervisor()
-			try:
+	def _model_choices_for(self, provider_id: str) -> list[str]:
+		"""Return non-blocking model choices for the Active Model combo.
 
-				def progress(msg: str) -> None:
-					wx.CallAfter(self.litertProgressLabel.SetLabel, msg)
+		Never performs network calls on the NVDA main thread: LiteRT-LM
+		models come from the local catalog, and other providers offer
+		the models previously enabled in their model manager plus the
+		stored active model.
+		"""
+		choices: list[str] = []
+		if provider_id == "litert-lm":
+			choices.extend(m.model_id for m in recommended_models())
+		try:
+			# Broad catch is deliberate: the enabled-models store must never
+			# break the settings page.
+			# pylint: disable=broad-exception-caught
+			enabled = EnabledModelsStore().get_enabled(provider_id)
+			for model_id in enabled:
+				if model_id not in choices:
+					choices.append(model_id)
+		except Exception:
+			pass
+		current = self._current_model_name(provider_id)
+		if current and current not in choices:
+			choices.insert(0, current)
+		return choices
 
-				def bytes_progress(downloaded: int, total: int) -> None:
-					wx.CallAfter(self._on_litert_bytes_progress, downloaded, total)
+	def _refresh_active_model_choices(self, provider_id: str) -> None:
+		choices = self._model_choices_for(provider_id)
+		current = self._current_model_name(provider_id)
+		self.modelCombo.Clear()
+		self.modelCombo.AppendItems(choices)
+		self.modelCombo.SetValue(current)
 
-				supervisor.install(
-					on_progress=progress,
-					on_bytes_progress=bytes_progress,
+	def _refresh_provider_status(self, provider_id: str) -> None:
+		info = get_provider_info(provider_id)
+		state_label = provider_state_label(info.state)
+		if info.state is ProviderLifecycleState.NOT_INSTALLED:
+			# TRANSLATORS: Status message shown when the active provider is not installed; {state} is the state name.
+			self.providerStatusText.SetLabel(
+				_("Status: {state}. Use Manage AI Providers to install this provider.").format(
+					state=state_label
 				)
-				wx.CallAfter(self._on_litert_download_complete, True, "")
-			except Exception as exc:
-				log.error("LiteRT runtime download failed: %s", exc)
-				# TRANSLATORS: Error message when the LiteRT-LM runtime download fails.
-				err_msg = _("Download failed: {}").format(exc)
-				wx.CallAfter(self._on_litert_download_complete, False, err_msg)
-
-		thread = threading.Thread(target=worker, daemon=True)
-		thread.start()
-
-	def _on_litert_bytes_progress(self, downloaded: int, total: int) -> None:
-		"""Update the progress gauge from byte-level progress."""
-		if total and total > 0:
-			pct = min(downloaded * 100 // total, 100)
-			if self.litertProgressGauge.GetRange() != 100:
-				self.litertProgressGauge.SetRange(100)
-			self.litertProgressGauge.SetValue(pct)
+			)
+		elif info.state is ProviderLifecycleState.AVAILABLE:
+			# TRANSLATORS: Status message shown when the active provider is not yet configured; {state} is the state name.
+			self.providerStatusText.SetLabel(
+				_("Status: {state}. Use Manage AI Providers to configure this provider.").format(
+					state=state_label
+				)
+			)
 		else:
-			# Indeterminate: pulse the gauge
-			val = self.litertProgressGauge.GetValue()
-			self.litertProgressGauge.SetValue(0 if val >= 100 else val + 5)
+			# TRANSLATORS: Status message shown for the active provider; {state} is the state name.
+			self.providerStatusText.SetLabel(
+				_("Status: {state}.").format(state=state_label)
+			)
 
-	def _on_litert_download_complete(self, success: bool, error_msg: str) -> None:
-		"""Handle completion of the LiteRT runtime download."""
-		self.litertProgressLabel.Hide()
-		self.litertProgressGauge.Hide()
-		if success:
-			self._refresh_litert_runtime_status()
+	def _refresh_think_checkbox(self, provider_id: str) -> None:
+		thinkable = provider_id in ("ollama", "litert-lm")
+		self.thinkCheckbox.Enable(thinkable)
+		if provider_id == "ollama":
+			self.thinkCheckbox.Value = get_ollama_think()
+		elif provider_id == "litert-lm":
+			self.thinkCheckbox.Value = get_litert_think()
 		else:
-			self.litertDownloadBtn.Enable()
-			self.litertProgressLabel.SetLabel(error_msg)
-			self.litertProgressLabel.Show()
+			self.thinkCheckbox.Value = False
+
+	def _update_active_ai_state(self) -> None:
+		provider = self._selected_provider()
+		self._refresh_active_model_choices(provider)
+		self._refresh_provider_status(provider)
+		self._refresh_think_checkbox(provider)
 		self.Layout()
 
 	def _build_advanced_settings(self, parentHelper):
@@ -479,57 +411,6 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		self.streamingToneCheckbox.Value = get_streaming_tone_enabled()
 		return groupSizer
 
-	def _build_ollama_expert_settings(self, parentHelper):
-		# TRANSLATORS: Section label for experimental Ollama expert settings.
-		groupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Ollama Expert Settings (Experimental)"))
-		groupHelper = parentHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=groupSizer))
-		# TRANSLATORS: Label for the Ollama repetition penalty setting.
-		self.presencePenaltyEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("Repetition penalty:"),
-			str(
-				get_generate_presence_penalty()
-				if get_generate_presence_penalty() is not None
-				else defaults.DEFAULT_GENERATE_PRESENCE_PENALTY
-			),
-		)
-		# TRANSLATORS: Checkbox label for enabling Ollama think mode.
-		self.ollamaThinkCheckbox = groupHelper.addItem(wx.CheckBox(self, label=_("Enable Ollama think mode")))
-		self.ollamaThinkCheckbox.Value = get_ollama_think()
-		return groupSizer
-
-	def _build_expert_settings(self, parentHelper):
-		# TRANSLATORS: Section label for general experimental settings.
-		groupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Expert Settings (Experimental)"))
-		groupHelper = parentHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=groupSizer))
-		# TRANSLATORS: Label for the response creativity temperature setting.
-		self.temperatureEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("Response creativity (temperature):"),
-			str(
-				get_generate_temperature()
-				if get_generate_temperature() is not None
-				else defaults.DEFAULT_GENERATE_TEMPERATURE
-			),
-		)
-		# TRANSLATORS: Label for the Top-k sampling setting.
-		self.topKEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("Top-k sampling:"),
-			str(
-				get_generate_top_k() if get_generate_top_k() is not None else defaults.DEFAULT_GENERATE_TOP_K
-			),
-		)
-		# TRANSLATORS: Label for the Top-p sampling setting.
-		self.topPEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("Top-p sampling:"),
-			str(
-				get_generate_top_p() if get_generate_top_p() is not None else defaults.DEFAULT_GENERATE_TOP_P
-			),
-		)
-		return groupSizer
-
 	def _show_error(self, message: str) -> None:
 		# TRANSLATORS: Title of the generic error message dialog.
 		wx.MessageBox(message, _("Error"), wx.ICON_ERROR)
@@ -559,7 +440,7 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		return value
 
 	# onSave validates and persists every field in the panel; it is long by
-	# design (one block per provider/setting) and is intentionally left
+	# design (one block per setting group) and is intentionally left
 	# monolithic so the save order stays visible.
 	def onSave(self):  # pylint: disable=too-many-locals,too-many-return-statements,too-many-branches,too-many-statements
 		provider = self._selected_provider()
@@ -589,88 +470,12 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 			)
 			return
 
-		# ── Validate LiteRT runtime when litert-lm is selected ──
-		if provider == "litert-lm":
-			supervisor = get_litert_supervisor()
-			if not supervisor.is_installed:
-				# TRANSLATORS: Warning when LiteRT-LM is selected but runtime not installed.
-				self._show_error(
-					_(
-						"LiteRT-LM is selected but the runtime is not installed. "
-						"Please download the runtime before selecting this provider."
-					)
-				)
-				return
-
-		# ── Provider-specific field validation & extraction ──
-		model_name = ""
-		base_url = ""
-		api_key = ""
-		num_ctx: int = get_num_ctx()
-		think_value: bool = False
-
-		if provider == "ollama":
-			model_name = self.ollamaModelNameEdit.Value.strip()
-			base_url = self.ollamaServerUrlEdit.Value.strip()
-			if not model_name:
-				self._show_error(_("Ollama model name cannot be empty"))
-				return
-			if not base_url:
-				self._show_error(_("Ollama server URL cannot be empty."))
-				return
-			ollamaNumCtx = self._parse_int(
-				self.ollamaNumCtxEdit,
-				_("Context window size must be an integer of at least 256."),
-				minimum=256,
-			)
-			if ollamaNumCtx is None:
-				return
-			num_ctx = ollamaNumCtx
-			think_widget = getattr(self, "ollamaThinkCheckbox", None)
-			think_value = think_widget.Value if think_widget is not None else False
-
-		elif provider == "gemini":
-			model_name = self.geminiModelNameEdit.Value.strip()
-			base_url = self.geminiBaseUrlEdit.Value.strip()
-			api_key = self.geminiApiKeyEdit.Value.strip()
-			if not model_name:
-				self._show_error(_("Gemini model name cannot be empty"))
-				return
-			if not api_key:
-				self._show_error(_("Gemini API key cannot be empty"))
-				return
-			if not base_url:
-				self._show_error(_("Gemini base URL cannot be empty."))
-				return
-
-		elif provider == "openai":
-			model_name = self.openaiModelNameEdit.Value.strip()
-			base_url = self.openaiBaseUrlEdit.Value.strip()
-			api_key = self.openaiApiKeyEdit.Value.strip()
-			if not model_name:
-				self._show_error(_("OpenAI model name cannot be empty"))
-				return
-			if not api_key:
-				self._show_error(_("OpenAI API key cannot be empty"))
-				return
-			if not base_url:
-				self._show_error(_("OpenAI base URL cannot be empty."))
-				return
-
-		else:  # litert-lm
-			model_name = self.litertModelNameEdit.Value.strip()
-			base_url = self.litertServerUrlEdit.Value.strip()
-			if not model_name:
-				self._show_error(_("LiteRT-LM model name cannot be empty"))
-				return
-			litertNumCtx = self._parse_int(
-				self.litertNumCtxEdit,
-				_("Context window size must be an integer of at least 256."),
-				minimum=256,
-			)
-			if litertNumCtx is None:
-				return
-			num_ctx = litertNumCtx
+		# ── Active model validation ──
+		model_name = self.modelCombo.GetValue().strip()
+		if not model_name:
+			# TRANSLATORS: Error when the active model name is empty.
+			self._show_error(_("Active model name cannot be empty."))
+			return
 
 		# ── Shared field validation ──
 		timeoutSeconds = self._parse_float(
@@ -680,32 +485,6 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		)
 		if timeoutSeconds is None:
 			return
-
-		temperature = self._parse_float(
-			self.temperatureEdit,
-			_("Generate temperature must be a non-negative number."),
-			minimum=0.0,
-		)
-		if temperature is None:
-			return
-
-		topK = self._parse_int(
-			self.topKEdit,
-			_("Top-k sampling must be a non-negative integer."),
-			minimum=0,
-		)
-		if topK is None:
-			return
-
-		topP = self._parse_float(
-			self.topPEdit,
-			_("Top-p sampling must be a non-negative number."),
-			minimum=0.0,
-		)
-		if topP is None:
-			return
-
-		maxTokens = get_generate_max_tokens()
 
 		imageMaxSide = self._parse_int(
 			self.imageMaxSideEdit,
@@ -738,24 +517,12 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 
 		# ── All validation passed; persist everything ──
 		set_enabled_providers(enabled)
-
-		config = OpenAICompatConfig(
-			provider=provider,
-			model_name=model_name,
-			base_url=base_url,
-			api_key=api_key,
-			timeout_seconds=timeoutSeconds,
-			enable_progress=self.progressCheckbox.Value,
-			num_ctx=num_ctx,
-			max_retries=get_max_retries(),
-			retry_backoff_seconds=get_retry_backoff_seconds(),
-			generate_temperature=temperature,
-			generate_top_k=topK,
-			generate_top_p=topP,
-			generate_max_tokens=maxTokens,
-			think=think_value,
-		)
-		set_openai_compat_config(config)
+		set_provider(provider)
+		set_model_name(model_name)
+		if provider == "ollama":
+			set_ollama_think(self.thinkCheckbox.Value)
+		elif provider == "litert-lm":
+			set_litert_think(self.thinkCheckbox.Value)
 
 		set_image_max_side(imageMaxSide)
 		set_image_format(imageFormat)
@@ -771,56 +538,22 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		set_streaming_enabled(self.streamingCheckbox.Value)
 		set_streaming_tone_enabled(self.streamingToneCheckbox.Value)
 
-	def _selected_provider(self) -> str:
-		index = self.providerChoice.GetSelection()
-		if index < 0:
-			return "ollama"
-		choices = self._build_provider_choices()
-		if index >= len(choices):
-			return "ollama"
-		# Map through the filtered list to find the provider value
-		selected_label = choices[index]
-		for value, label in self._providerOptions:
-			if label == selected_label:
-				return value
-		return "ollama"
-
 	def _on_provider_choice(self, _event: Any) -> None:
-		self._update_provider_field_state()
+		self._update_active_ai_state()
 
-	def _update_provider_field_state(self) -> None:
+	def _on_manage_providers(self, _event: wx.CommandEvent) -> None:
+		"""Open the provider management dialog, then refresh the active AI state."""
+		open_provider_dialog(self)
+		self._update_active_ai_state()
+
+	def _on_configure_active_model(self, _event: wx.CommandEvent) -> None:
+		"""Open the per-model Configure dialog for the active model."""
 		provider = self._selected_provider()
-		is_ollama = provider == "ollama"
-		is_gemini = provider == "gemini"
-		is_openai = provider == "openai"
-		is_litert = provider == "litert-lm"
+		model_name = self.modelCombo.GetValue().strip()
+		if not model_name:
+			# TRANSLATORS: Error when the active model combo is empty.
+			self._show_error(_("Select a model to configure first."))
+			return
+		from .model_config_dialog import open_model_configure
 
-		self.ollamaGroupSizer.ShowItems(is_ollama)
-		self.geminiGroupSizer.ShowItems(is_gemini)
-		self.openaiGroupSizer.ShowItems(is_openai)
-		self.litertGroupSizer.ShowItems(is_litert)
-		self.ollamaExpertGroupSizer.ShowItems(is_ollama)
-
-		self.ollamaModelNameEdit.Enable(is_ollama)
-		self.ollamaServerUrlEdit.Enable(is_ollama)
-		self.ollamaNumCtxEdit.Enable(is_ollama)
-		self.geminiModelNameEdit.Enable(is_gemini)
-		self.geminiApiKeyEdit.Enable(is_gemini)
-		self.geminiBaseUrlEdit.Enable(is_gemini)
-		self.openaiModelNameEdit.Enable(is_openai)
-		self.openaiApiKeyEdit.Enable(is_openai)
-		self.openaiBaseUrlEdit.Enable(is_openai)
-		self.litertModelNameEdit.Enable(is_litert)
-		self.litertServerUrlEdit.Enable(is_litert)
-		self.litertNumCtxEdit.Enable(is_litert)
-		self.presencePenaltyEdit.Enable(is_ollama)
-		self.ollamaThinkCheckbox.Enable(is_ollama)
-
-		# Only enable download button when litert is selected AND runtime not installed.
-		if is_litert:
-			supervisor = get_litert_supervisor()
-			self.litertDownloadBtn.Enable(not supervisor.is_installed)
-		else:
-			self.litertDownloadBtn.Enable(False)
-
-		self.Layout()
+		open_model_configure(self, provider, model_name, model_name)

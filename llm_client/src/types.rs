@@ -49,6 +49,10 @@ pub(crate) struct ChatCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub num_ctx: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repeat_penalty: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<StreamOptions>,

@@ -104,6 +104,8 @@ impl OpenAiClient {
     ///     top_p: Nucleus sampling parameter (0.0–1.0).
     ///     max_tokens: Maximum tokens to generate.
     ///     num_ctx: Context window size (Ollama).
+    ///     top_k: Top-k sampling (local backends; omitted when unset).
+    ///     repeat_penalty: Repetition penalty (local backends; omitted when unset).
     ///
     /// Returns:
     ///     A dict with ``choices``, ``usage``, ``model``, etc.
@@ -115,6 +117,8 @@ impl OpenAiClient {
         top_p = None,
         max_tokens = None,
         num_ctx = None,
+        top_k = None,
+        repeat_penalty = None,
     ))]
     fn chat_completion(
         &self,
@@ -125,6 +129,8 @@ impl OpenAiClient {
         top_p: Option<f64>,
         max_tokens: Option<u32>,
         num_ctx: Option<u32>,
+        top_k: Option<u32>,
+        repeat_penalty: Option<f64>,
     ) -> PyResult<PyObject> {
         let chat_messages = Python::with_gil(|py| {
             messages
@@ -154,6 +160,8 @@ impl OpenAiClient {
                     top_p,
                     max_tokens,
                     num_ctx,
+                    top_k,
+                    repeat_penalty,
                 )
             })
         })?;
@@ -175,6 +183,8 @@ impl OpenAiClient {
         top_p = None,
         max_tokens = None,
         num_ctx = None,
+        top_k = None,
+        repeat_penalty = None,
     ))]
     fn chat_completion_stream(
         &self,
@@ -185,6 +195,8 @@ impl OpenAiClient {
         top_p: Option<f64>,
         max_tokens: Option<u32>,
         num_ctx: Option<u32>,
+        top_k: Option<u32>,
+        repeat_penalty: Option<f64>,
     ) -> PyResult<streaming::StreamingResponse> {
         let chat_messages = Python::with_gil(|py| {
             messages
@@ -214,6 +226,8 @@ impl OpenAiClient {
                     top_p,
                     max_tokens,
                     num_ctx,
+                    top_k,
+                    repeat_penalty,
                 )
             })
         })

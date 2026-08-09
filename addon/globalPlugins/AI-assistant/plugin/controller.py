@@ -35,13 +35,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	def _build_tools_submenu(self) -> None:
 		"""Create the AI Assistant submenu under NVDA's Tools menu."""
 		self._submenu = wx.Menu()
-		# TRANSLATORS: Name of the menu item to open the AI provider management panel.
+		# TRANSLATORS: Name of the menu item to open the AI provider management dialog.
 		self._providers_item = self._submenu.Append(
 			wx.ID_ANY, _("&Manage AI Providers..."),
-		)
-		# TRANSLATORS: Name of the menu item to open the AI model manager.
-		self._models_item = self._submenu.Append(
-			wx.ID_ANY, _("&Manage AI Models..."),
 		)
 		# TRANSLATORS: Name of the submenu in NVDA's Tools menu for AI Assistant features.
 		self._submenu_parent_item = self._tools_menu.AppendSubMenu(
@@ -50,27 +46,15 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		gui.mainFrame.sysTrayIcon.Bind(
 			wx.EVT_MENU, self._on_tools_manage_providers, self._providers_item,
 		)
-		gui.mainFrame.sysTrayIcon.Bind(
-			wx.EVT_MENU, self._on_tools_manage_models, self._models_item,
-		)
 
 	def _restore_default_gesture_bindings(self) -> None:
 		self.bindGestures(self.__gestures)
 
 	def _on_tools_manage_providers(self, _event: wx.CommandEvent) -> None:
-		"""Open the NVDA Settings dialog focused on the AI Assistant panel."""
-		from gui.settingsDialogs import NVDASettingsDialog
-		from ..ui.settings_panel import AIAssistantSettingsPanel
+		"""Open the AI provider management dialog."""
+		from ..ui.provider_dialog import open_provider_dialog
 		gui.mainFrame.prePopup()
-		gui.mainFrame.popupSettingsDialog(
-			NVDASettingsDialog, AIAssistantSettingsPanel,
-		)
-		gui.mainFrame.postPopup()
-
-	def _on_tools_manage_models(self, _event: wx.CommandEvent) -> None:
-		from ..ui.model_manager import open_model_manager
-		gui.mainFrame.prePopup()
-		open_model_manager(gui.mainFrame)
+		open_provider_dialog(gui.mainFrame)
 		gui.mainFrame.postPopup()
 
 	def terminate(self) -> None:

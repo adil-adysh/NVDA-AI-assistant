@@ -33,6 +33,7 @@ class OpenAICompatConfig(ProviderConfig):
 	models_path: str = "/v1/models"
 	organization: str | None = None
 	think: bool = False
+	generate_presence_penalty: float = 0.0
 
 
 # ---------------------------------------------------------------------------

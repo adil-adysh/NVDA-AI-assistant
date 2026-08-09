@@ -14,6 +14,7 @@ from ..config.settings import (
 	set_provider,
 )
 from ..config.state import ProviderState
+from ..providers.registry import PROVIDER_IDS
 from .provider_readiness import ProviderReadiness, ProviderReadinessService
 
 
@@ -24,7 +25,8 @@ class ProviderControlResult:
 
 
 class ProviderControlService:
-	PROVIDER_ORDER = ("ollama", "gemini", "openai", "litert-lm")
+	# Canonical provider order/identity comes from the provider registry.
+	PROVIDER_ORDER = PROVIDER_IDS
 
 	def __init__(self, readiness_service: ProviderReadinessService | None = None) -> None:
 		self._readiness_service = readiness_service or ProviderReadinessService()

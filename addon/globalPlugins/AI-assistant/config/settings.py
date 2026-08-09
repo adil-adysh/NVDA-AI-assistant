@@ -292,6 +292,7 @@ def build_provider_config(provider: str) -> "OpenAICompatConfig":
 		generate_top_k=get_generate_top_k(),
 		generate_top_p=get_generate_top_p(),
 		generate_max_tokens=get_generate_max_tokens(),
+		generate_presence_penalty=get_generate_presence_penalty(),
 		think=_get_think_for(provider),
 	)
 
@@ -483,8 +484,15 @@ def set_litert_server_url(serverUrl: str) -> None:
 # Unified config setter
 # ---------------------------------------------------------------------------
 
-def set_openai_compat_config(config: "OpenAICompatConfig") -> None:
-	"""Persist a unified OpenAICompatConfig to YAML using legacy per-provider keys."""
+def set_openai_compat_config(config: "OpenAICompatConfig", activate: bool = True) -> None:
+	"""Persist a unified OpenAICompatConfig to YAML using legacy per-provider keys.
+
+	With ``activate=True`` (the default, preserving historical behavior)
+	the persisted provider becomes the active provider.  Provider
+	Configure dialogs pass ``activate=False`` so configuring a provider
+	never silently changes which provider AI Assistant currently uses —
+	active selection is owned by the settings page / host UI.
+	"""
 	provider = str(config.provider or "").strip().lower()
 	key_prefixes: dict[str, str] = {
 		"ollama": "ollama",
@@ -500,7 +508,6 @@ def set_openai_compat_config(config: "OpenAICompatConfig") -> None:
 	prefix = key_prefixes.get(provider, "openai")
 
 	values: dict[str, Any] = {
-		"provider": provider,
 		f"{prefix}ModelName": config.model_name,
 		"timeoutSeconds": config.timeout_seconds,
 		"numCtx": config.num_ctx,
@@ -510,8 +517,11 @@ def set_openai_compat_config(config: "OpenAICompatConfig") -> None:
 		"generateTopK": config.generate_top_k,
 		"generateTopP": config.generate_top_p,
 		"generateMaxTokens": config.generate_max_tokens,
+		"generatePresencePenalty": config.generate_presence_penalty,
 		"enableProgressAnnouncements": config.enable_progress,
 	}
+	if activate:
+		values["provider"] = provider
 
 	# Base URL — stored in the provider-specific key.
 	base_url_keys = {
