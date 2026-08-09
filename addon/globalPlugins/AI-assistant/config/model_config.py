@@ -282,7 +282,25 @@ def effective_field_value(
 	value = getattr(resolved, field_id)
 	if value is not None:
 		return value
-	spec = MODEL_FIELD_BY_ID.get(field_id)
+	return fallback_field_value(base, field_id, MODEL_FIELD_BY_ID.get(field_id))
+
+
+def fallback_field_value(
+	base: ModelSamplingConfig,
+	field_id: str,
+	spec: ModelFieldSpec | None,
+) -> int | float:
+	"""Return the value a model uses when *field_id* is left unpinned.
+
+	Resolution order: provider global setting (``base``) → static
+	default for the field.  Pinned-only fields (top-k, repetition
+	penalty) have no global fallback, so they resolve to their static
+	default.  This is what a Configure dialog shows next to a checked
+	"Use default" box.
+	"""
+	value = getattr(base, field_id, None)
+	if value is not None:
+		return value
 	if spec is not None and spec.default is not None:
 		return spec.default
 	return 0

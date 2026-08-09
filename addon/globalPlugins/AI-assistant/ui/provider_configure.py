@@ -8,7 +8,9 @@ question *"how do I connect to and configure this provider/runtime?"*.
 It deliberately contains **no model fields**: model selection, model
 download, and active-model handling belong to the provider-specific
 model manager.  This is enforced structurally — the field registry has
-no model-related field IDs — not merely by omitting widgets.
+no model-related field IDs — not merely by omitting widgets.  Think /
+reasoning mode (a runtime behavior, not a model property) is offered
+for the runtimes that support it.
 """
 
 from __future__ import annotations
@@ -57,6 +59,9 @@ def build_configure_dialog(
 class ProviderConfigureDialog(wx.Dialog):
 	"""Generic provider configuration dialog driven by field specs."""
 
+	#: Providers whose runtime supports think/reasoning mode.
+	_THINKABLE_PROVIDERS = frozenset({"ollama", "litert-lm"})
+
 	def __init__(
 		self,
 		parent: wx.Window,
@@ -97,6 +102,14 @@ class ProviderConfigureDialog(wx.Dialog):
 		for spec in self._fields:
 			self._add_field_row(s_helper, spec)
 			s_helper.sizer.AddSpacer(4)
+
+		if self._provider_id in self._THINKABLE_PROVIDERS:
+			# TRANSLATORS: Checkbox that enables think/reasoning mode for a provider runtime.
+			self._think_cb = wx.CheckBox(
+				self,
+				label=_("Enable think/reasoning mode"),
+			)
+			s_helper.addItem(self._think_cb)
 
 		s_helper.sizer.AddSpacer(8)
 
@@ -156,6 +169,9 @@ class ProviderConfigureDialog(wx.Dialog):
 		if is_installable(self._provider_id):
 			self._refresh_runtime_status()
 
+		if hasattr(self, "_think_cb"):
+			self._think_cb.Value = bool(getattr(self._config, "think", False))
+
 	def _refresh_runtime_status(self) -> None:
 		if is_runtime_installed(self._provider_id):
 			# TRANSLATORS: Runtime installation status shown in the LiteRT-LM Configure dialog.
@@ -184,6 +200,8 @@ class ProviderConfigureDialog(wx.Dialog):
 			attr = field_to_attr.get(spec.id)
 			if attr is not None:
 				values[attr] = ctrl.GetValue().strip()
+		if hasattr(self, "_think_cb"):
+			values["think"] = self._think_cb.Value
 		return type(self._config)(**values)
 
 	def _on_toggle_secret(self, field_id: str, event: wx.CommandEvent) -> None:
@@ -202,16 +220,27 @@ class ProviderConfigureDialog(wx.Dialog):
 		# TRANSLATORS: Message shown while a provider connection test is running.
 		self._test_result.SetLabel(_("Testing connection..."))
 		self.Layout()
-		thread = threading.Thread(target=self._run_test, daemon=True)
+		# Snapshot the current field values on the main thread: wx controls
+		# must never be read from a worker thread.
+		try:
+			# Broad catch is deliberate: a malformed field value must not leave
+			# the button permanently disabled.
+			# pylint: disable=broad-exception-caught
+			config = self._draft_config()
+		except Exception as exc:
+			log.error("Failed to build config for connection test: %s", exc)
+			# TRANSLATORS: Error shown when a connection test cannot start; {error} is the reason.
+			self._test_done(False, _("Connection test failed: {error}").format(error=exc))
+			return
+		thread = threading.Thread(target=self._run_test, args=(config,), daemon=True)
 		thread.start()
 
-	def _run_test(self) -> None:
+	def _run_test(self, config: Any) -> None:
 		"""Run the connection test off the main thread and report the result."""
 		try:
 			# Broad catch is deliberate: a connection test must always report
 			# an accessible result instead of crashing the background thread.
 			# pylint: disable=broad-exception-caught
-			config = self._draft_config()
 			provider = OpenAICompatProvider(config)
 			try:
 				models = provider.list_models()

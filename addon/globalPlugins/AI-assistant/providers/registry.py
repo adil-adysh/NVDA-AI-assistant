@@ -30,7 +30,15 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import cast
 
-from ..config.settings import build_provider_config, set_openai_compat_config
+from ..config.settings import (
+	build_provider_config,
+	get_enabled_providers,
+	get_provider,
+	save,
+	set_enabled_providers,
+	set_openai_compat_config,
+	set_provider,
+)
 from .adapters.openai_compat import OpenAICompatProvider
 from .litert_manager import LiteRTModelManager
 from .model_manager import CloudModelManagerAdapter, ModelManagerProvider
@@ -112,6 +120,10 @@ class ProviderInfo:
 	kind: ProviderKind
 	state: ProviderLifecycleState
 	installable: bool = False
+	#: Whether the provider is in the persisted enabled set.
+	enabled: bool = True
+	#: Whether the provider is currently the active AI provider.
+	active: bool = False
 
 	@property
 	def actions(self) -> tuple[ProviderAction, ...]:
@@ -278,12 +290,57 @@ def get_provider_info(provider_id: str) -> ProviderInfo:
 		kind=provider_kind(normalized),
 		state=derive_provider_state(normalized),
 		installable=is_installable(normalized),
+		enabled=normalized in get_enabled_providers(),
+		active=normalized == get_provider(),
 	)
 
 
 def get_provider_infos() -> tuple[ProviderInfo, ...]:
 	"""Return metadata for every registered provider, in canonical order."""
 	return tuple(get_provider_info(pid) for pid in PROVIDER_IDS)
+
+
+# ---------------------------------------------------------------------------
+# Enable / disable and active-provider switching
+# ---------------------------------------------------------------------------
+
+
+def set_provider_enabled(provider_id: str, enabled: bool) -> None:
+	"""Enable or disable *provider_id* in the persisted enabled set.
+
+	Refuses (``ValueError``) to disable the last enabled provider so the
+	assistant always keeps at least one usable provider.  The UI layer is
+	responsible for active-provider handling (warn + switch) *before*
+	calling this.
+	"""
+	normalized = str(provider_id or "").strip().lower()
+	current = get_enabled_providers()
+	if enabled:
+		if normalized not in current:
+			set_enabled_providers([*current, normalized])
+		return
+	if normalized not in current:
+		return
+	if len(current) <= 1:
+		# TRANSLATORS: Error when the user tries to disable the last enabled provider.
+		raise ValueError(_("At least one provider must remain enabled."))
+	set_enabled_providers([p for p in current if p != normalized])
+
+
+def set_active_provider(provider_id: str) -> None:
+	"""Make *provider_id* the active AI provider (persisted).
+
+	Only enabled providers can become active; disabled providers raise
+	``ValueError``.
+	"""
+	normalized = str(provider_id or "").strip().lower()
+	if normalized not in get_enabled_providers():
+		# TRANSLATORS: Error when trying to activate a disabled provider; {name} is the provider name.
+		raise ValueError(
+			_("{name} is not enabled.").format(name=provider_display_name(normalized))
+		)
+	set_provider(normalized)
+	save()
 
 
 # ---------------------------------------------------------------------------
@@ -415,4 +472,6 @@ __all__ = [
 	"provider_kind",
 	"provider_kind_label",
 	"provider_state_label",
+	"set_active_provider",
+	"set_provider_enabled",
 ]

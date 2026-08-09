@@ -38,6 +38,18 @@ _register_package(PACKAGE_NAME, ROOT_DIR)
 _register_package(f"{PACKAGE_NAME}.providers", ROOT_DIR / "providers")
 _register_package(f"{PACKAGE_NAME}.service", ROOT_DIR / "service")
 
+# error_presentation.present_error lazily imports the NVDA-bound image
+# package (screen curtain); stub it so this suite stays standalone.
+_register_package(f"{PACKAGE_NAME}.image")
+_register_package(f"{PACKAGE_NAME}.image.screen_curtain")
+
+
+class _ScreenCurtainErrorStub(Exception):
+	"""Stand-in for image.screen_curtain.ScreenCurtainError."""
+
+
+sys.modules[f"{PACKAGE_NAME}.image.screen_curtain"].ScreenCurtainError = _ScreenCurtainErrorStub
+
 interfaces_module = _load_module(
 	f"{PACKAGE_NAME}.providers.interfaces",
 	ROOT_DIR / "providers" / "interfaces.py",

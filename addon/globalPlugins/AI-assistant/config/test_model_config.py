@@ -232,6 +232,36 @@ class EffectiveFieldValueTests(unittest.TestCase):
 		self.assertEqual(value, 10)
 
 
+class FallbackFieldValueTests(unittest.TestCase):
+	"""Values shown next to a checked "Use default" box (P1)."""
+
+	def setUp(self) -> None:
+		_with_temp_store(self)
+
+	def test_wire_fallback_field_uses_provider_global(self) -> None:
+		base = ModelSamplingConfig(num_ctx=4096, temperature=0.5, top_p=0.9, max_tokens=512)
+		spec = model_config_module.MODEL_FIELD_BY_ID["temperature"]
+		value = model_config_module.fallback_field_value(base, "temperature", spec)
+		self.assertEqual(value, 0.5)
+
+	def test_pinned_only_field_uses_static_default(self) -> None:
+		# top_k has no global fallback — unpinned means static default.
+		base = ModelSamplingConfig(num_ctx=4096, temperature=0.5, top_p=0.9, max_tokens=512)
+		spec = model_config_module.MODEL_FIELD_BY_ID["top_k"]
+		value = model_config_module.fallback_field_value(base, "top_k", spec)
+		self.assertEqual(value, 10)
+
+	def test_repeat_penalty_falls_back_to_static_default(self) -> None:
+		base = ModelSamplingConfig(num_ctx=4096, temperature=0.5, top_p=0.9, max_tokens=512)
+		spec = model_config_module.MODEL_FIELD_BY_ID["repeat_penalty"]
+		value = model_config_module.fallback_field_value(base, "repeat_penalty", spec)
+		self.assertEqual(value, 0)
+
+	def test_unknown_spec_returns_zero(self) -> None:
+		base = ModelSamplingConfig(num_ctx=4096, temperature=0.5, top_p=0.9, max_tokens=512)
+		self.assertEqual(model_config_module.fallback_field_value(base, "bogus", None), 0)
+
+
 class ModelConfigureTitleTests(unittest.TestCase):
 	"""Title helper is wx-free and translatable."""
 

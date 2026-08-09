@@ -6,11 +6,14 @@ model are passed in; the dialog never re-asks which provider or model
 to configure).  Fields come from ``config.model_config.MODEL_CONFIG_FIELDS``
 — the dialog is generic and data-driven, with no provider-ID branches.
 
-The dialog answers *"how should this model generate responses?"*: it
-pins context window, temperature, top-k, top-p, max tokens, and
-repetition penalty for that model.  Saving pins **all** fields; the
-"Reset to defaults" button removes the model's pinned entry entirely,
-falling back to the provider's global settings.
+The dialog answers *"how should this model generate responses?"*: each
+sampling parameter (context window, temperature, top-k, top-p, max
+tokens, repetition penalty) can be pinned for that model.  A checked
+"Use default" box leaves a parameter unpinned, falling back to the
+provider's global setting (for context/temperature/top-p/max tokens)
+or off the wire entirely (for top-k/repetition penalty).  Only
+parameters the user overrides are persisted; "Reset to defaults"
+removes every override for the model.
 
 Model availability, download, and active-model selection stay in the
 model manager — this dialog never touches them.
@@ -19,6 +22,7 @@ model manager — this dialog never touches them.
 from __future__ import annotations
 
 import builtins
+import math
 from collections.abc import Callable
 from typing import cast
 
@@ -28,10 +32,13 @@ from logHandler import log
 
 from ..config.model_config import (
 	MODEL_CONFIG_FIELDS,
+	MODEL_FIELD_BY_ID,
 	ModelFieldSpec,
 	ModelSamplingConfig,
 	clear_model_sampling,
 	effective_field_value,
+	fallback_field_value,
+	get_model_sampling,
 	model_configure_title,
 	set_model_sampling,
 )
@@ -76,6 +83,7 @@ class ModelConfigureDialog(wx.Dialog):
 		self._display_name = display_name
 		self._base = _base_sampling(provider_id)
 		self._controls: dict[str, wx.TextCtrl] = {}
+		self._use_default_cbs: dict[str, wx.CheckBox] = {}
 
 		self._build_ui()
 		self._populate_fields()
@@ -96,11 +104,35 @@ class ModelConfigureDialog(wx.Dialog):
 		)
 		s_helper.addItem(section_label)
 
+		# TRANSLATORS: Hint explaining the "Use default" checkboxes in a model Configure dialog.
+		override_hint = wx.StaticText(
+			self,
+			label=_(
+				"Check “Use default” to follow the provider's global "
+				"setting for that parameter instead of overriding it here."
+			),
+		)
+		s_helper.addItem(override_hint)
+
 		for spec in MODEL_CONFIG_FIELDS:
 			label = wx.StaticText(self, label=spec.label)
 			s_helper.addItem(label)
+			row_sizer = wx.BoxSizer(wx.HORIZONTAL)
+			# TRANSLATORS: Checkbox that makes a sampling parameter follow the provider's global setting.
+			use_default_cb = wx.CheckBox(self, label=_("Use default"))
+			use_default_cb.Bind(
+				wx.EVT_CHECKBOX,
+				lambda event, field_id=spec.id: self._on_toggle_use_default(field_id),
+			)
 			ctrl = wx.TextCtrl(self)
-			s_helper.addItem(ctrl, flag=wx.EXPAND)
+			row_sizer.Add(
+				use_default_cb,
+				flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+				border=8,
+			)
+			row_sizer.Add(ctrl, proportion=1, flag=wx.ALIGN_CENTER_VERTICAL)
+			s_helper.addItem(row_sizer, flag=wx.EXPAND)
+			self._use_default_cbs[spec.id] = use_default_cb
 			self._controls[spec.id] = ctrl
 			s_helper.sizer.AddSpacer(4)
 
@@ -127,24 +159,82 @@ class ModelConfigureDialog(wx.Dialog):
 
 		self.SetSizer(main_sizer)
 		main_sizer.Fit(self)
-		self.SetMinSize(self.scaleSize((460, -1)))
+		self.SetMinSize(self.scaleSize((500, -1)))
 
 	def scaleSize(self, size: tuple[int, int]) -> wx.Size:
 		return wx.Size(*size)
 
 	def _populate_fields(self) -> None:
-		"""Fill each field with the current effective value."""
+		"""Fill each field, reflecting the model's pinned state.
+
+		Pinned parameters show their value with the "Use default" box
+		unchecked and the box editable.  Unpinned parameters show the
+		fallback value with the box checked and the box disabled.
+		"""
+		explicit = get_model_sampling(self._provider_id, self._model_id)
 		for spec in MODEL_CONFIG_FIELDS:
 			ctrl = self._controls.get(spec.id)
-			if ctrl is None:
+			use_default_cb = self._use_default_cbs.get(spec.id)
+			if ctrl is None or use_default_cb is None:
 				continue
-			value = effective_field_value(
-				self._provider_id,
-				self._model_id,
-				self._base,
-				spec.id,
+			pinned = getattr(explicit, spec.id) is not None
+			use_default_cb.Value = not pinned
+			if pinned:
+				ctrl.Enable()
+				ctrl.SetValue(
+					_format_value(
+						spec,
+						effective_field_value(
+							self._provider_id,
+							self._model_id,
+							self._base,
+							spec.id,
+						),
+					)
+				)
+			else:
+				ctrl.Disable()
+				ctrl.SetValue(
+					_format_value(
+						spec,
+						fallback_field_value(
+							self._base,
+							spec.id,
+							MODEL_FIELD_BY_ID.get(spec.id),
+						),
+					)
+				)
+
+	def _on_toggle_use_default(self, field_id: str) -> None:
+		"""Enable/disable the value box when the "Use default" box toggles."""
+		ctrl = self._controls.get(field_id)
+		use_default_cb = self._use_default_cbs.get(field_id)
+		if ctrl is None or use_default_cb is None:
+			return
+		spec = MODEL_FIELD_BY_ID.get(field_id)
+		if spec is None:
+			return
+		if use_default_cb.Value:
+			ctrl.Disable()
+			ctrl.SetValue(
+				_format_value(
+					spec,
+					fallback_field_value(self._base, field_id, spec),
+				)
 			)
-			ctrl.SetValue(_format_value(spec, value))
+		else:
+			ctrl.Enable()
+			ctrl.SetValue(
+				_format_value(
+					spec,
+					effective_field_value(
+						self._provider_id,
+						self._model_id,
+						self._base,
+						field_id,
+					),
+				)
+			)
 
 	# ------------------------------------------------------------------
 	# Field access
@@ -160,18 +250,27 @@ class ModelConfigureDialog(wx.Dialog):
 		try:
 			if spec.kind == "int":
 				return int(raw)
-			return float(raw)
+			value = float(raw)
 		except ValueError:
 			return None
+		if not math.isfinite(value):
+			# NaN/Infinity must never be pinned — the generic validation
+			# error in _draft_config reports this accessibly.
+			return None
+		return value
 
 	def _draft_config(self) -> ModelSamplingConfig | None:
-		"""Validate every field and build the config that would be saved.
+		"""Validate every overridden field and build the config to save.
 
-		Returns ``None`` (after showing an accessible error) when any
-		field is empty or invalid.
+		Fields whose "Use default" box is checked are left unpinned
+		(``None``).  Returns ``None`` (after showing an accessible error)
+		when any overridden field is empty or invalid.
 		"""
 		values: dict[str, int | float] = {}
 		for spec in MODEL_CONFIG_FIELDS:
+			use_default_cb = self._use_default_cbs.get(spec.id)
+			if use_default_cb is not None and use_default_cb.Value:
+				continue
 			value = self._read_spec_value(spec)
 			if value is None:
 				wx.MessageBox(

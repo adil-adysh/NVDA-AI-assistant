@@ -111,10 +111,46 @@ def _set_openai_compat_config(config: object, activate: bool = True) -> None:
 	saved_calls.append((config, activate))
 
 
+_enabled_providers: list[str] = ["ollama", "gemini", "openai", "litert-lm"]
+_active_provider: str = "ollama"
+save_calls: list[bool] = []
+
+
+def _get_enabled_providers() -> list[str]:
+	return list(_enabled_providers)
+
+
+def _set_enabled_providers(providers: list[str]) -> None:
+	global _enabled_providers  # pylint: disable=global-statement
+	_enabled_providers = list(providers)
+
+
+def _get_provider() -> str:
+	return _active_provider
+
+
+def _set_provider(provider: str) -> None:
+	global _active_provider  # pylint: disable=global-statement
+	_active_provider = provider
+
+
+def _save() -> None:
+	save_calls.append(True)
+
+
 settings_module = types.ModuleType(f"{PACKAGE_NAME}.config.settings")
 settings_module.build_provider_config = _build_provider_config
 settings_module.set_openai_compat_config = _set_openai_compat_config
+settings_module.get_enabled_providers = _get_enabled_providers
+settings_module.set_enabled_providers = _set_enabled_providers
+settings_module.get_provider = _get_provider
+settings_module.set_provider = _set_provider
+settings_module.save = _save
 sys.modules[settings_module.__name__] = settings_module
+
+# Test-visible aliases for the stubbed settings surface.
+get_enabled_providers = _get_enabled_providers
+get_provider = _get_provider
 
 
 class _FakeFeatures:
@@ -214,6 +250,8 @@ provider_display_name = registry_module.provider_display_name
 provider_kind = registry_module.provider_kind
 provider_kind_label = registry_module.provider_kind_label
 provider_state_label = registry_module.provider_state_label
+set_active_provider = registry_module.set_active_provider
+set_provider_enabled = registry_module.set_provider_enabled
 
 
 class ProviderInfoActionMatrixTests(unittest.TestCase):
@@ -580,6 +618,103 @@ class InstallationTests(unittest.TestCase):
 	def test_install_unknown_provider_raises(self) -> None:
 		with self.assertRaises(ValueError):
 			install_provider("openai", on_progress=lambda _m: None, on_bytes_progress=lambda _d, _t: None)
+
+
+class ProviderEnableDisableTests(unittest.TestCase):
+	"""Enable/disable and active-provider switching (P0/P2)."""
+
+	def setUp(self) -> None:
+		_reset_configs()
+		_set_installed(False)
+		global _enabled_providers, _active_provider  # pylint: disable=global-statement
+		_enabled_providers = ["ollama", "gemini", "openai", "litert-lm"]
+		_active_provider = "ollama"
+		saved_calls.clear()
+		save_calls.clear()
+
+	def test_provider_info_derives_enabled_and_active(self) -> None:
+		info = get_provider_info("ollama")
+		self.assertTrue(info.enabled)
+		self.assertTrue(info.active)
+		disabled = get_provider_info("gemini")
+		self.assertTrue(disabled.enabled)
+		self.assertFalse(disabled.active)
+
+	def test_provider_info_marks_disabled(self) -> None:
+		global _enabled_providers  # pylint: disable=global-statement
+		_enabled_providers = ["ollama"]
+		info = get_provider_info("gemini")
+		self.assertFalse(info.enabled)
+		self.assertFalse(info.active)
+
+	def test_get_provider_infos_carries_enabled_state(self) -> None:
+		global _enabled_providers  # pylint: disable=global-statement
+		_enabled_providers = ["ollama", "openai"]
+		by_id = {info.id: info for info in get_provider_infos()}
+		self.assertTrue(by_id["ollama"].enabled)
+		self.assertFalse(by_id["gemini"].enabled)
+		self.assertTrue(by_id["openai"].enabled)
+		self.assertFalse(by_id["litert-lm"].enabled)
+
+	def test_enable_adds_to_persisted_set(self) -> None:
+		global _enabled_providers  # pylint: disable=global-statement
+		_enabled_providers = ["ollama"]
+		set_provider_enabled("gemini", True)
+		self.assertIn("gemini", get_enabled_providers())
+
+	def test_enable_already_enabled_is_noop(self) -> None:
+		set_provider_enabled("gemini", True)
+		self.assertEqual(
+			get_enabled_providers(),
+			["ollama", "gemini", "openai", "litert-lm"],
+		)
+
+	def test_disable_removes_from_persisted_set(self) -> None:
+		set_provider_enabled("openai", False)
+		self.assertNotIn("openai", get_enabled_providers())
+		self.assertEqual(get_enabled_providers(), ["ollama", "gemini", "litert-lm"])
+
+	def test_disable_last_enabled_provider_raises(self) -> None:
+		global _enabled_providers  # pylint: disable=global-statement
+		_enabled_providers = ["ollama"]
+		with self.assertRaises(ValueError):
+			set_provider_enabled("ollama", False)
+		# The disabled provider must remain enabled.
+		self.assertEqual(get_enabled_providers(), ["ollama"])
+
+	def test_disable_already_disabled_is_noop(self) -> None:
+		global _enabled_providers  # pylint: disable=global-statement
+		_enabled_providers = ["ollama"]
+		set_provider_enabled("gemini", False)
+		self.assertEqual(get_enabled_providers(), ["ollama"])
+
+
+class SetActiveProviderTests(unittest.TestCase):
+	"""set_active_provider guards and persistence."""
+
+	def setUp(self) -> None:
+		global _active_provider, _enabled_providers  # pylint: disable=global-statement
+		_active_provider = "ollama"
+		_enabled_providers = ["ollama", "gemini", "openai", "litert-lm"]
+		save_calls.clear()
+
+	def test_activates_enabled_provider_and_saves(self) -> None:
+		set_active_provider("gemini")
+		self.assertEqual(get_provider(), "gemini")
+		self.assertEqual(save_calls, [True])
+
+	def test_activating_already_active_is_idempotent(self) -> None:
+		set_active_provider("ollama")
+		self.assertEqual(get_provider(), "ollama")
+		self.assertEqual(save_calls, [True])
+
+	def test_disabled_provider_cannot_become_active(self) -> None:
+		global _enabled_providers  # pylint: disable=global-statement
+		_enabled_providers = ["ollama"]
+		with self.assertRaises(ValueError):
+			set_active_provider("gemini")
+		self.assertEqual(get_provider(), "ollama")
+		self.assertEqual(save_calls, [])
 
 
 if __name__ == "__main__":

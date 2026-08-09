@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import math
 from pathlib import Path
 from typing import Any
 
@@ -11,12 +12,14 @@ from ..config import defaults
 from ..config.settings import (
 	build_provider_config,
 	get_enabled_providers,
+	get_generate_max_tokens,
+	get_generate_temperature,
+	get_generate_top_p,
 	get_image_format,
 	get_image_max_side,
 	get_image_quality,
 	get_language,
-	get_litert_think,
-	get_ollama_think,
+	get_num_ctx,
 	get_progress_enabled,
 	get_provider,
 	get_request_metrics_log_path,
@@ -24,14 +27,16 @@ from ..config.settings import (
 	get_streaming_enabled,
 	get_streaming_tone_enabled,
 	get_timeout_seconds,
-	set_enabled_providers,
+	set_generate_max_tokens,
+	set_generate_temperature,
+	set_generate_top_p,
 	set_image_format,
 	set_image_max_side,
 	set_image_quality,
 	set_language,
-	set_litert_think,
 	set_model_name,
-	set_ollama_think,
+	set_num_ctx,
+	set_progress_enabled,
 	set_provider,
 	set_request_metrics_log_path,
 	set_request_metrics_logging_enabled,
@@ -65,47 +70,6 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		sHelper = guiHelper.BoxSizerHelper(self, sizer=settingsSizer)
 
 		provider = get_provider()
-		enabled = get_enabled_providers()
-
-		# ── Enabled Providers ───────────────────────────────────────
-		# TRANSLATORS: Section label for enabling/disabling AI providers.
-		enabledGroupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Enabled Providers"))
-		enabledGroupHelper = sHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=enabledGroupSizer))
-		# TRANSLATORS: Label explaining the provider checkboxes.
-		enabledGroupHelper.addItem(
-			wx.StaticText(
-				self,
-				label=_("Select which AI providers are available for use:"),
-			)
-		)
-		# TRANSLATORS: Checkbox label for enabling the Ollama provider.
-		self.ollamaEnabledCheckbox = enabledGroupHelper.addItem(
-			wx.CheckBox(self, label=_("Ollama")),
-		)
-		self.ollamaEnabledCheckbox.Value = "ollama" in enabled
-		# TRANSLATORS: Checkbox label for enabling the Gemini provider.
-		self.geminiEnabledCheckbox = enabledGroupHelper.addItem(
-			wx.CheckBox(self, label=_("Gemini")),
-		)
-		self.geminiEnabledCheckbox.Value = "gemini" in enabled
-		# TRANSLATORS: Checkbox label for enabling the OpenAI provider.
-		self.openaiEnabledCheckbox = enabledGroupHelper.addItem(
-			wx.CheckBox(self, label=_("OpenAI")),
-		)
-		self.openaiEnabledCheckbox.Value = "openai" in enabled
-		# TRANSLATORS: Checkbox label for enabling the LiteRT-LM provider.
-		self.litertEnabledCheckbox = enabledGroupHelper.addItem(
-			wx.CheckBox(self, label=_("LiteRT-LM")),
-		)
-		self.litertEnabledCheckbox.Value = "litert-lm" in enabled
-		# Wire up checkboxes to refresh provider dropdown
-		for cb in (
-			self.ollamaEnabledCheckbox,
-			self.geminiEnabledCheckbox,
-			self.openaiEnabledCheckbox,
-			self.litertEnabledCheckbox,
-		):
-			cb.Bind(wx.EVT_CHECKBOX, self._on_enabled_provider_changed)
 
 		# ── Active AI ───────────────────────────────────────────────
 		# TRANSLATORS: Section label for the active provider/model selection.
@@ -135,11 +99,6 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		)
 		activeGroupHelper.addItem(self.modelCombo)
 
-		# TRANSLATORS: Checkbox to enable think/reasoning mode for the active provider.
-		self.thinkCheckbox = activeGroupHelper.addItem(
-			wx.CheckBox(self, label=_("Enable think mode (active provider)")),
-		)
-
 		# TRANSLATORS: Button that opens the provider management dialog from the settings page.
 		self.manageProvidersBtn = activeGroupHelper.addItem(
 			wx.Button(self, label=_("&Manage AI Providers...")),
@@ -164,9 +123,151 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 			)
 		)
 
-		self.sharedGroupSizer = self._build_advanced_settings(sHelper)
+		self._build_model_defaults(sHelper)
+		self._build_behavior_group(sHelper)
+		self._build_language_image_group(sHelper)
+		self._build_observability_group(sHelper)
+		self._build_advanced_group(sHelper)
 
 		self._update_active_ai_state()
+
+	def _build_model_defaults(self, parent_helper) -> None:
+		# TRANSLATORS: Section label for the global per-model generation defaults.
+		group_sizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Model Defaults"))
+		group_helper = parent_helper.addItem(guiHelper.BoxSizerHelper(self, sizer=group_sizer))
+		# TRANSLATORS: Hint explaining the global model defaults group.
+		group_helper.addItem(
+			wx.StaticText(
+				self,
+				label=_(
+					"Global generation parameters used by any model that does not "
+					"override them (see Configure Active Model)."
+				),
+			)
+		)
+		# TRANSLATORS: Label for the global context window size setting.
+		self.numCtxEdit = self._add_labeled_text_ctrl(
+			group_helper,
+			_("Context window size:"),
+			str(
+				get_num_ctx()
+				if get_num_ctx() is not None
+				else defaults.DEFAULT_NUM_CTX
+			),
+		)
+		# TRANSLATORS: Label for the global temperature setting.
+		self.temperatureEdit = self._add_labeled_text_ctrl(
+			group_helper,
+			_("Temperature:"),
+			str(get_generate_temperature()),
+		)
+		# TRANSLATORS: Label for the global top-p setting.
+		self.topPEdit = self._add_labeled_text_ctrl(
+			group_helper,
+			_("Top-p:"),
+			str(get_generate_top_p()),
+		)
+		# TRANSLATORS: Label for the global max tokens setting.
+		self.maxTokensEdit = self._add_labeled_text_ctrl(
+			group_helper,
+			_("Max tokens:"),
+			str(get_generate_max_tokens()),
+		)
+
+	def _build_behavior_group(self, parent_helper) -> None:
+		# TRANSLATORS: Section label for response behavior settings.
+		group_sizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Behavior"))
+		group_helper = parent_helper.addItem(guiHelper.BoxSizerHelper(self, sizer=group_sizer))
+		# TRANSLATORS: Checkbox label for enabling streaming.
+		self.streamingCheckbox = group_helper.addItem(
+			wx.CheckBox(self, label=_("Enable streaming"))
+		)
+		# TRANSLATORS: Checkbox label for announcing progress.
+		self.progressCheckbox = group_helper.addItem(
+			wx.CheckBox(self, label=_("Announce progress"))
+		)
+		# TRANSLATORS: Checkbox label for streaming tone feedback.
+		self.streamingToneCheckbox = group_helper.addItem(
+			wx.CheckBox(self, label=_("Enable streaming tone feedback"))
+		)
+		self.streamingCheckbox.Value = get_streaming_enabled()
+		self.progressCheckbox.Value = get_progress_enabled()
+		self.streamingToneCheckbox.Value = get_streaming_tone_enabled()
+
+	def _build_language_image_group(self, parent_helper) -> None:
+		# TRANSLATORS: Section label for language and image settings.
+		group_sizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Language & Image"))
+		group_helper = parent_helper.addItem(guiHelper.BoxSizerHelper(self, sizer=group_sizer))
+		# TRANSLATORS: Label for the prompt language chooser.
+		self._promptLanguageOptions = self._get_supported_prompt_language_options()
+		languageLabels = [label for _, label in self._promptLanguageOptions]
+		currentLanguageLabel = self._get_prompt_language_label(get_language())
+		self.promptLanguageChoice = self._add_labeled_combo_box(
+			group_helper,
+			_("Prompt language:"),
+			languageLabels,
+			currentLanguageLabel,
+		)
+		# TRANSLATORS: Label for the image max side length setting.
+		self.imageMaxSideEdit = self._add_labeled_text_ctrl(
+			group_helper,
+			_("Image max side length (pixels):"),
+			str(
+				get_image_max_side()
+				if get_image_max_side() is not None
+				else defaults.DEFAULT_IMAGE_MAX_SIDE
+			),
+		)
+		self.imageFormatChoice = wx.Choice(self, choices=["PNG", "JPEG"])
+		self.imageFormatChoice.SetSelection(
+			["PNG", "JPEG"].index(get_image_format())
+			if get_image_format() in {"PNG", "JPEG"}
+			else 0
+		)
+		# TRANSLATORS: Label for the image format dropdown.
+		group_helper.addItem(wx.StaticText(self, label=_("Image format: ")))
+		group_helper.addItem(self.imageFormatChoice)
+		# TRANSLATORS: Label for the JPEG quality setting.
+		self.imageQualityEdit = self._add_labeled_text_ctrl(
+			group_helper,
+			_("Image quality (JPEG only, 1-100):"),
+			str(
+				get_image_quality()
+				if get_image_quality() is not None
+				else defaults.DEFAULT_IMAGE_QUALITY
+			),
+		)
+
+	def _build_observability_group(self, parent_helper) -> None:
+		# TRANSLATORS: Section label for observability/logging settings.
+		group_sizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Observability"))
+		group_helper = parent_helper.addItem(guiHelper.BoxSizerHelper(self, sizer=group_sizer))
+		# TRANSLATORS: Checkbox label for request metrics logging.
+		self.requestMetricsLoggingCheckbox = group_helper.addItem(
+			wx.CheckBox(self, label=_("Enable request metrics logging"))
+		)
+		self.requestMetricsLoggingCheckbox.Value = get_request_metrics_logging_enabled()
+		# TRANSLATORS: Label for the metrics log file path setting.
+		self.requestMetricsLogPathEdit = self._add_labeled_text_ctrl(
+			group_helper,
+			_("Metrics log file path:"),
+			get_request_metrics_log_path(),
+		)
+
+	def _build_advanced_group(self, parent_helper) -> None:
+		# TRANSLATORS: Section label for advanced settings.
+		group_sizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Advanced"))
+		group_helper = parent_helper.addItem(guiHelper.BoxSizerHelper(self, sizer=group_sizer))
+		# TRANSLATORS: Label for the request timeout setting.
+		self.timeoutSecondsEdit = self._add_labeled_text_ctrl(
+			group_helper,
+			_("Request timeout (seconds):"),
+			str(
+				get_timeout_seconds()
+				if get_timeout_seconds() is not None
+				else defaults.DEFAULT_TIMEOUT_SECONDS
+			),
+		)
 
 	def _add_labeled_text_ctrl(self, helper, label, initialValue):
 		labelControl = wx.StaticText(self, label=label)
@@ -213,35 +314,22 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 	# ------------------------------------------------------------------
 
 	def _build_provider_choices(self) -> list[str]:
-		"""Return active-provider dropdown labels, filtered by enabled providers."""
-		enabled = get_enabled_providers()
-		return [provider_display_name(pid) for pid in PROVIDER_IDS if pid in enabled]
+		"""Return every provider's dropdown label, in canonical order.
+
+		The dropdown list is stable (never filtered by the enabled set) so
+		selection indexes stay valid even after the enabled set changes in
+		the management dialog.  Disabled providers remain selectable for
+		preview and are rejected with an explicit error on save.
+		"""
+		return [provider_display_name(pid) for pid in PROVIDER_IDS]
 
 	def _selected_provider_index(self, provider: str) -> int:
-		"""Return the dropdown index for *provider* in the filtered (enabled-only) list."""
+		"""Return the dropdown index for *provider* in the canonical provider list."""
 		choices = self._build_provider_choices()
 		for idx, label in enumerate(choices):
 			if label == provider_display_name(provider):
 				return idx
 		return 0
-
-	def _selected_provider_index(self, provider: str) -> int:
-		"""Return the dropdown index for *provider* in the filtered (enabled-only) list."""
-		choices = self._build_provider_choices()
-		for idx, label in enumerate(choices):
-			if label == provider_display_name(provider):
-				return idx
-		return 0
-
-	def _on_enabled_provider_changed(self, _event: wx.CommandEvent) -> None:
-		"""Refresh the provider dropdown when enable/disable checkboxes change."""
-		current_provider = self._selected_provider()
-		choices = self._build_provider_choices()
-		self.providerChoice.Clear()
-		self.providerChoice.AppendItems(choices)
-		idx = self._selected_provider_index(current_provider)
-		self.providerChoice.SetSelection(max(idx, 0))
-		self._update_active_ai_state()
 
 	# ------------------------------------------------------------------
 	# Active AI state
@@ -305,7 +393,14 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 	def _refresh_provider_status(self, provider_id: str) -> None:
 		info = get_provider_info(provider_id)
 		state_label = provider_state_label(info.state)
-		if info.state is ProviderLifecycleState.NOT_INSTALLED:
+		if not info.enabled:
+			# TRANSLATORS: Status message shown when the selected provider is disabled; {state} is the state name.
+			self.providerStatusText.SetLabel(
+				_("Status: {state}. This provider is disabled. Use Manage AI Providers to enable it.").format(
+					state=state_label
+				)
+			)
+		elif info.state is ProviderLifecycleState.NOT_INSTALLED:
 			# TRANSLATORS: Status message shown when the active provider is not installed; {state} is the state name.
 			self.providerStatusText.SetLabel(
 				_("Status: {state}. Use Manage AI Providers to install this provider.").format(
@@ -325,91 +420,11 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 				_("Status: {state}.").format(state=state_label)
 			)
 
-	def _refresh_think_checkbox(self, provider_id: str) -> None:
-		thinkable = provider_id in ("ollama", "litert-lm")
-		self.thinkCheckbox.Enable(thinkable)
-		if provider_id == "ollama":
-			self.thinkCheckbox.Value = get_ollama_think()
-		elif provider_id == "litert-lm":
-			self.thinkCheckbox.Value = get_litert_think()
-		else:
-			self.thinkCheckbox.Value = False
-
 	def _update_active_ai_state(self) -> None:
 		provider = self._selected_provider()
 		self._refresh_active_model_choices(provider)
 		self._refresh_provider_status(provider)
-		self._refresh_think_checkbox(provider)
 		self.Layout()
-
-	def _build_advanced_settings(self, parentHelper):
-		# TRANSLATORS: Section label for shared runtime settings.
-		groupSizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Shared Runtime Settings"))
-		groupHelper = parentHelper.addItem(guiHelper.BoxSizerHelper(self, sizer=groupSizer))
-		# TRANSLATORS: Label for the request timeout setting.
-		self.timeoutSecondsEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("Request timeout (seconds):"),
-			str(
-				get_timeout_seconds()
-				if get_timeout_seconds() is not None
-				else defaults.DEFAULT_TIMEOUT_SECONDS
-			),
-		)
-		# TRANSLATORS: Checkbox label for request metrics logging.
-		self.requestMetricsLoggingCheckbox = groupHelper.addItem(
-			wx.CheckBox(self, label=_("Enable request metrics logging"))
-		)
-		self.requestMetricsLoggingCheckbox.Value = get_request_metrics_logging_enabled()
-		# TRANSLATORS: Label for the metrics log file path setting.
-		self.requestMetricsLogPathEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("Metrics log file path:"),
-			get_request_metrics_log_path(),
-		)
-		# TRANSLATORS: Label for the prompt language chooser.
-		self._promptLanguageOptions = self._get_supported_prompt_language_options()
-		languageLabels = [label for _, label in self._promptLanguageOptions]
-		currentLanguageLabel = self._get_prompt_language_label(get_language())
-		self.promptLanguageChoice = self._add_labeled_combo_box(
-			groupHelper,
-			_("Prompt language:"),
-			languageLabels,
-			currentLanguageLabel,
-		)
-		# TRANSLATORS: Label for the image max side length setting.
-		self.imageMaxSideEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("Image max side length (pixels):"),
-			str(
-				get_image_max_side() if get_image_max_side() is not None else defaults.DEFAULT_IMAGE_MAX_SIDE
-			),
-		)
-		self.imageFormatChoice = wx.Choice(self, choices=["PNG", "JPEG"])
-		self.imageFormatChoice.SetSelection(
-			["PNG", "JPEG"].index(get_image_format()) if get_image_format() in {"PNG", "JPEG"} else 0
-		)
-		# TRANSLATORS: Label for the image format dropdown.
-		groupHelper.addItem(wx.StaticText(self, label=_("Image format: ")))
-		groupHelper.addItem(self.imageFormatChoice)
-		# TRANSLATORS: Label for the JPEG quality setting.
-		self.imageQualityEdit = self._add_labeled_text_ctrl(
-			groupHelper,
-			_("Image quality (JPEG only, 1-100):"),
-			str(get_image_quality() if get_image_quality() is not None else defaults.DEFAULT_IMAGE_QUALITY),
-		)
-		# TRANSLATORS: Checkbox label for enabling streaming.
-		self.streamingCheckbox = groupHelper.addItem(wx.CheckBox(self, label=_("Enable streaming")))
-		# TRANSLATORS: Checkbox label for announcing progress.
-		self.progressCheckbox = groupHelper.addItem(wx.CheckBox(self, label=_("Announce progress")))
-		# TRANSLATORS: Checkbox label for streaming tone feedback.
-		self.streamingToneCheckbox = groupHelper.addItem(
-			wx.CheckBox(self, label=_("Enable streaming tone feedback"))
-		)
-		self.streamingCheckbox.Value = get_streaming_enabled()
-		self.progressCheckbox.Value = get_progress_enabled()
-		self.streamingToneCheckbox.Value = get_streaming_tone_enabled()
-		return groupSizer
 
 	def _show_error(self, message: str) -> None:
 		# TRANSLATORS: Title of the generic error message dialog.
@@ -434,7 +449,7 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		except ValueError:
 			self._show_error(message)
 			return None
-		if minimum is not None and value < minimum:
+		if not math.isfinite(value) or (minimum is not None and value < minimum):
 			self._show_error(message)
 			return None
 		return value
@@ -445,28 +460,13 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 	def onSave(self):  # pylint: disable=too-many-locals,too-many-return-statements,too-many-branches,too-many-statements
 		provider = self._selected_provider()
 
-		# ── Collect enabled providers (deferred save until after validation) ──
-		enabled = []
-		if self.ollamaEnabledCheckbox.Value:
-			enabled.append("ollama")
-		if self.geminiEnabledCheckbox.Value:
-			enabled.append("gemini")
-		if self.openaiEnabledCheckbox.Value:
-			enabled.append("openai")
-		if self.litertEnabledCheckbox.Value:
-			enabled.append("litert-lm")
-		if not enabled:
-			self._show_error(_("At least one provider must be enabled."))
-			return
-
-		# ── Validate selected provider is enabled ──
-		if provider not in enabled:
-			# TRANSLATORS: Error when the active provider has been disabled in settings.
+		# ── Active provider validation ──
+		if provider not in get_enabled_providers():
+			# TRANSLATORS: Error when the selected provider is disabled; {name} is the provider name.
 			self._show_error(
-				_(
-					'The selected provider "{provider}" is currently disabled. '
-					"Please enable it or select a different active provider."
-				).format(provider=provider)
+				_("{name} is disabled. Enable it in Manage AI Providers first.").format(
+					name=provider_display_name(provider)
+				)
 			)
 			return
 
@@ -475,6 +475,36 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		if not model_name:
 			# TRANSLATORS: Error when the active model name is empty.
 			self._show_error(_("Active model name cannot be empty."))
+			return
+
+		# ── Model defaults validation ──
+		numCtx = self._parse_int(
+			self.numCtxEdit,
+			_("Context window size must be an integer of at least 256."),
+			minimum=256,
+		)
+		if numCtx is None:
+			return
+		temperature = self._parse_float(
+			self.temperatureEdit,
+			_("Temperature must be a number of at least 0."),
+			minimum=0.0,
+		)
+		if temperature is None:
+			return
+		topP = self._parse_float(
+			self.topPEdit,
+			_("Top-p must be a number of at least 0."),
+			minimum=0.0,
+		)
+		if topP is None:
+			return
+		maxTokens = self._parse_int(
+			self.maxTokensEdit,
+			_("Max tokens must be an integer of at least 1."),
+			minimum=1,
+		)
+		if maxTokens is None:
 			return
 
 		# ── Shared field validation ──
@@ -516,14 +546,12 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 			return
 
 		# ── All validation passed; persist everything ──
-		set_enabled_providers(enabled)
 		set_provider(provider)
 		set_model_name(model_name)
-		if provider == "ollama":
-			set_ollama_think(self.thinkCheckbox.Value)
-		elif provider == "litert-lm":
-			set_litert_think(self.thinkCheckbox.Value)
-
+		set_num_ctx(numCtx)
+		set_generate_temperature(temperature)
+		set_generate_top_p(topP)
+		set_generate_max_tokens(maxTokens)
 		set_image_max_side(imageMaxSide)
 		set_image_format(imageFormat)
 		set_image_quality(imageQuality)
@@ -537,6 +565,7 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		set_language(prompt_language_value)
 		set_streaming_enabled(self.streamingCheckbox.Value)
 		set_streaming_tone_enabled(self.streamingToneCheckbox.Value)
+		set_progress_enabled(self.progressCheckbox.Value)
 
 	def _on_provider_choice(self, _event: Any) -> None:
 		self._update_active_ai_state()
@@ -544,6 +573,12 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 	def _on_manage_providers(self, _event: wx.CommandEvent) -> None:
 		"""Open the provider management dialog, then refresh the active AI state."""
 		open_provider_dialog(self)
+		if self._selected_provider() not in get_enabled_providers():
+			# The management dialog may have disabled the provider currently
+			# shown (auto-switching the active provider), so re-align the
+			# dropdown with the persisted active provider.
+			index = self._selected_provider_index(get_provider())
+			self.providerChoice.SetSelection(max(index, 0))
 		self._update_active_ai_state()
 
 	def _on_configure_active_model(self, _event: wx.CommandEvent) -> None:
