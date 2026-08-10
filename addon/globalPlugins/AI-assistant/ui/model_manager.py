@@ -54,6 +54,10 @@ class ModelManagerDialog(wx.Dialog):
 
 		self._build_ui()
 		self._refresh_model_list()
+
+		# Escape closes the dialog.
+		self.SetEscapeId(wx.ID_CLOSE)
+
 		self.CentreOnScreen()
 
 	# ------------------------------------------------------------------
@@ -120,22 +124,22 @@ class ModelManagerDialog(wx.Dialog):
 		button_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
 		# TRANSLATORS: Button to download a model.
-		self._download_btn = wx.Button(self, label=_("&Download"))
+		self._download_btn = wx.Button(self, label=_("Download"))
 		self._download_btn.Bind(wx.EVT_BUTTON, self._on_download)
 		button_sizer.Add(self._download_btn, flag=wx.RIGHT, border=5)
 
 		# TRANSLATORS: Button to delete a downloaded model.
-		self._delete_btn = wx.Button(self, label=_("&Delete"))
+		self._delete_btn = wx.Button(self, label=_("Delete"))
 		self._delete_btn.Bind(wx.EVT_BUTTON, self._on_delete)
 		button_sizer.Add(self._delete_btn, flag=wx.RIGHT, border=5)
 
 		# TRANSLATORS: Button to set the selected model as active.
-		self._set_active_btn = wx.Button(self, label=_("Set &Active"))
+		self._set_active_btn = wx.Button(self, label=_("Set Active"))
 		self._set_active_btn.Bind(wx.EVT_BUTTON, self._on_set_active)
 		button_sizer.Add(self._set_active_btn)
 
 		# TRANSLATORS: Button to open the per-model Configure dialog.
-		self._configure_btn = wx.Button(self, label=_("Configure &Model..."))
+		self._configure_btn = wx.Button(self, label=_("Configure Model..."))
 		self._configure_btn.Bind(wx.EVT_BUTTON, self._on_configure_model)
 		button_sizer.Add(self._configure_btn, flag=wx.LEFT, border=5)
 

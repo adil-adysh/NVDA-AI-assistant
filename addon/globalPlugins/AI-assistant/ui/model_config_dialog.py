@@ -91,7 +91,17 @@ class ModelConfigureDialog(wx.Dialog):
 
 		self._build_ui()
 		self._populate_fields()
+
+		# Keyboard routing: Enter triggers OK (save), Escape triggers Cancel.
+		self.SetAffirmativeId(wx.ID_OK)
+		self.SetEscapeId(wx.ID_CANCEL)
+		# Intercept Enter in text fields to save the dialog (NVDA core pattern
+		# from settingsDialogs._enterActivatesOk_ctrlSActivatesApply).
+		self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
+
 		self.CentreOnScreen()
+		# Ensure initial focus lands on the first enabled text field.
+		self._set_initial_focus()
 
 	# ------------------------------------------------------------------
 	# UI construction
@@ -126,18 +136,23 @@ class ModelConfigureDialog(wx.Dialog):
 			# TRANSLATORS: Accessible name suffix for model config text fields.
 			lch.control.SetName(_("{} value").format(spec.label.rstrip(":")))
 
-			# TRANSLATORS: Checkbox that makes a sampling parameter follow the provider's global setting.
-			use_default_cb = wx.CheckBox(
-				self,
-				label=_("Use default"),
-				name=_("Use default for {}").format(spec.label.rstrip(":")),
+			# Each "Use default" checkbox gets a unique visible label
+			# so screen readers can distinguish them instead of hearing
+			# six identical "Use default checkbox" announcements.
+			# NVDA core intentionally avoids && accelerators on labels
+			# (they are a screen reader); keyboard access comes through
+			# Tab navigation and Space to toggle.
+			# TRANSLATORS: Checkbox that makes a sampling parameter follow the provider's global setting; {field} is the parameter name (e.g. "Temperature").
+			cb_label = _("Use default for {field}").format(
+				field=spec.label.rstrip(":")
 			)
+			use_default_cb = wx.CheckBox(self, label=cb_label)
 			use_default_cb.Bind(
 				wx.EVT_CHECKBOX,
 				lambda event, field_id=spec.id: self._on_toggle_use_default(field_id),
 			)
 
-			# Row: [Label: TextCtrl]  [Use default checkbox]
+			# Layout: [Label: TextCtrl] [Use default checkbox].
 			row_sizer = wx.BoxSizer(wx.HORIZONTAL)
 			row_sizer.Add(lch.sizer, proportion=1, flag=wx.ALIGN_CENTER_VERTICAL)
 			row_sizer.Add(use_default_cb, flag=wx.ALIGN_CENTER_VERTICAL | wx.LEFT, border=12)
@@ -171,14 +186,43 @@ class ModelConfigureDialog(wx.Dialog):
 		main_sizer.Fit(self)
 		self.SetMinSize(self.scaleSize((500, -1)))
 
-		# Set initial focus on the first editable field.
-		if MODEL_CONFIG_FIELDS:
-			first = self._lch.get(MODEL_CONFIG_FIELDS[0].id)
-			if first is not None and first.control.IsEnabled():
-				first.control.SetFocus()
-
 	def scaleSize(self, size: tuple[int, int]) -> wx.Size:
 		return wx.Size(*size)
+
+	def _set_initial_focus(self) -> None:
+		"""Place keyboard focus on the first enabled text field.
+
+		Called after CentreOnScreen so the dialog is visible before
+		focus is assigned.  Falls back to the OK button when every
+		field is disabled.
+		"""
+		for spec in MODEL_CONFIG_FIELDS:
+			lch = self._lch.get(spec.id)
+			if lch is not None and lch.control.IsEnabled():
+				lch.control.SetFocus()
+				return
+		# All fields disabled: focus the OK button.
+		ok_button = self.FindWindowById(wx.ID_OK)
+		if ok_button is not None:
+			ok_button.SetFocus()
+
+	def _on_char_hook(self, evt: wx.KeyEvent) -> None:
+		"""Intercept Enter in text fields to trigger OK (save).
+
+		Matches the pattern used in NVDA core
+		(SettingsDialog._enterActivatesOk_ctrlSActivatesApply).
+		Without this, Enter inside a wx.TextCtrl would be swallowed by
+		the control's own handling and never reach the dialog's default
+		button.
+		"""
+		if evt.KeyCode in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
+			focused = self.FindFocus()
+			if isinstance(focused, wx.TextCtrl):
+				self.ProcessEvent(
+					wx.CommandEvent(wx.wxEVT_COMMAND_BUTTON_CLICKED, wx.ID_OK)
+				)
+				return
+		evt.Skip()
 
 	def _populate_fields(self) -> None:
 		"""Fill each field, reflecting the model's pinned state.

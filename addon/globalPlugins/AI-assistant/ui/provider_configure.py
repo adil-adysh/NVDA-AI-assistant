@@ -22,6 +22,9 @@ from typing import Any, cast
 
 import wx
 from gui import guiHelper
+from gui.guiHelper import (
+	LabeledControlHelper,
+)
 from logHandler import log
 
 from ..config.settings import build_provider_config, set_openai_compat_config
@@ -75,11 +78,23 @@ class ProviderConfigureDialog(wx.Dialog):
 		self._provider_name = provider_name
 		self._config = build_provider_config(provider_id)
 		self._fields = get_configure_fields(provider_id)
-		self._controls: dict[str, wx.TextCtrl] = {}
+		#: Per-field LabeledControlHelper keyed by spec.id.
+		self._lch: dict[str, LabeledControlHelper] = {}
+		self._secret_cbs: dict[str, wx.CheckBox] = {}
 
 		self._build_ui()
 		self._populate_fields()
+
+		# Keyboard routing: Enter triggers OK (save), Escape triggers Cancel.
+		self.SetAffirmativeId(wx.ID_OK)
+		self.SetEscapeId(wx.ID_CANCEL)
+		# Intercept Enter in text fields to save the dialog (NVDA core pattern
+		# from settingsDialogs._enterActivatesOk_ctrlSActivatesApply).
+		self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
+
 		self.CentreOnScreen()
+		# Ensure initial focus lands on the first enabled text field.
+		self._set_initial_focus()
 
 	# ------------------------------------------------------------------
 	# UI construction
@@ -114,7 +129,7 @@ class ProviderConfigureDialog(wx.Dialog):
 
 		# ── Test connection ────────────────────────────────────────
 		# TRANSLATORS: Button that tests the provider connection from the Configure dialog.
-		self._test_btn = wx.Button(self, label=_("&Test Connection"))
+		self._test_btn = wx.Button(self, label=_("Test Connection"))
 		self._test_btn.Bind(wx.EVT_BUTTON, self._on_test_connection)
 		s_helper.addItem(self._test_btn)
 
@@ -138,19 +153,24 @@ class ProviderConfigureDialog(wx.Dialog):
 		return wx.Size(*size)
 
 	def _add_field_row(self, s_helper: Any, spec: ConfigureFieldSpec) -> None:
-		label = wx.StaticText(self, label=spec.label)
-		s_helper.addItem(label)
-		ctrl = wx.TextCtrl(self, style=(wx.TE_PASSWORD if spec.secret else 0))
-		s_helper.addItem(ctrl, flag=wx.EXPAND)
-		self._controls[spec.id] = ctrl
+		# Use NVDA's LabeledControlHelper so the label and text control
+		# are properly associated for screen readers and the label's
+		# enabled/disabled state tracks the control.
+		style = wx.TE_PASSWORD if spec.secret else 0
+		lch = LabeledControlHelper(self, spec.label, wx.TextCtrl, style=style)
+		# TRANSLATORS: Accessible name suffix for provider config text fields.
+		lch.control.SetName(_("{} value").format(spec.label.rstrip(":")))
+		s_helper.addItem(lch.sizer, flag=wx.EXPAND)
+		self._lch[spec.id] = lch
 		if spec.secret:
 			# TRANSLATORS: Checkbox that reveals the API key in a provider Configure dialog.
 			show_cb = wx.CheckBox(self, label=_("Show API key"))
 			show_cb.Bind(
 				wx.EVT_CHECKBOX,
-				lambda event: self._on_toggle_secret(spec.id, event),
+				lambda event, field_id=spec.id: self._on_toggle_secret(field_id, event),
 			)
 			s_helper.addItem(show_cb)
+			self._secret_cbs[spec.id] = show_cb
 
 	def _populate_fields(self) -> None:
 		"""Fill the fields from the persisted provider configuration."""
@@ -161,9 +181,9 @@ class ProviderConfigureDialog(wx.Dialog):
 			"chat_path": str(getattr(self._config, "chat_path", "") or ""),
 		}
 		for spec in self._fields:
-			ctrl = self._controls.get(spec.id)
-			if ctrl is not None:
-				ctrl.SetValue(values.get(spec.id, ""))
+			lch = self._lch.get(spec.id)
+			if lch is not None:
+				lch.control.SetValue(values.get(spec.id, ""))
 
 		if is_installable(self._provider_id):
 			self._refresh_runtime_status()
@@ -193,21 +213,21 @@ class ProviderConfigureDialog(wx.Dialog):
 			"chat_path": "chat_path",
 		}
 		for spec in self._fields:
-			ctrl = self._controls.get(spec.id)
-			if ctrl is None:
+			lch = self._lch.get(spec.id)
+			if lch is None:
 				continue
 			attr = field_to_attr.get(spec.id)
 			if attr is not None:
-				values[attr] = ctrl.GetValue().strip()
+				values[attr] = lch.control.GetValue().strip()
 		if hasattr(self, "_think_cb"):
 			values["think"] = self._think_cb.Value
 		return type(self._config)(**values)
 
 	def _on_toggle_secret(self, field_id: str, event: wx.CommandEvent) -> None:
-		ctrl = self._controls.get(field_id)
-		if ctrl is None:
+		lch = self._lch.get(field_id)
+		if lch is None:
 			return
-		ctrl.SetWindowStyle(wx.TE_PASSWORD if not event.IsChecked() else 0)
+		lch.control.SetWindowStyle(wx.TE_PASSWORD if not event.IsChecked() else 0)
 		event.Skip()
 
 	# ------------------------------------------------------------------
@@ -273,8 +293,8 @@ class ProviderConfigureDialog(wx.Dialog):
 		for spec in self._fields:
 			if not spec.required:
 				continue
-			ctrl = self._controls.get(spec.id)
-			value = ctrl.GetValue().strip() if ctrl is not None else ""
+			lch = self._lch.get(spec.id)
+			value = lch.control.GetValue().strip() if lch is not None else ""
 			if not value:
 				wx.MessageBox(
 					# TRANSLATORS: Error shown when a required field is empty in a provider Configure dialog; {label} is the field label.
@@ -301,3 +321,40 @@ class ProviderConfigureDialog(wx.Dialog):
 
 	def _on_cancel(self, _event: wx.CommandEvent) -> None:
 		self.EndModal(wx.ID_CANCEL)
+
+	# ------------------------------------------------------------------
+	# Keyboard handling
+	# ------------------------------------------------------------------
+
+	def _on_char_hook(self, evt: wx.KeyEvent) -> None:
+		"""Intercept Enter in text fields to save the dialog.
+
+		Follows the NVDA core pattern from
+		``settingsDialogs._enterActivatesOk_ctrlSActivatesApply``:
+		when Enter or NumPad Enter is pressed while a ``wx.TextCtrl``
+		has focus, post a ``wx.ID_OK`` button click event so the dialog
+		is saved.  All other keys are passed through normally.
+		"""
+		if evt.KeyCode in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
+			focused = self.FindFocus()
+			if isinstance(focused, wx.TextCtrl):
+				cmd = wx.CommandEvent(wx.wxEVT_COMMAND_BUTTON_CLICKED, wx.ID_OK)
+				self.ProcessEvent(cmd)
+				return
+		evt.Skip()
+
+	def _set_initial_focus(self) -> None:
+		"""Place keyboard focus on the first enabled text field.
+
+		Called after CentreOnScreen so the dialog is visible before
+		focus is assigned.  Falls back to the OK button when every
+		field is disabled.
+		"""
+		for spec in self._fields:
+			lch = self._lch.get(spec.id)
+			if lch is not None and lch.control.IsEnabled():
+				lch.control.SetFocus()
+				return
+		ok = self.FindWindowById(wx.ID_OK)
+		if ok is not None:
+			ok.SetFocus()

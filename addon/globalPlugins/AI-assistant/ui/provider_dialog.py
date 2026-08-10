@@ -64,6 +64,10 @@ class ProviderManagementDialog(wx.Dialog):
 
 		self._build_ui()
 		self._refresh_provider_list()
+
+		# Escape closes the dialog.
+		self.SetEscapeId(wx.ID_CLOSE)
+
 		self.CentreOnScreen()
 
 	# ------------------------------------------------------------------
@@ -199,28 +203,28 @@ class ProviderManagementDialog(wx.Dialog):
 
 		actions = set(info.actions)
 		self._install_btn.SetLabel(
-			_("&Install {name}").format(name=info.name),
+			_("Install {name}").format(name=info.name),
 		)
 		self._install_btn.Show(ProviderAction.INSTALL in actions)
 		self._configure_btn.SetLabel(
-			_("&Configure {name}").format(name=info.name),
+			_("Configure {name}").format(name=info.name),
 		)
 		self._configure_btn.Show(ProviderAction.CONFIGURE in actions)
 		self._manage_btn.SetLabel(
-			_("&Manage {name} Models").format(name=info.name),
+			_("Manage {name} Models").format(name=info.name),
 		)
 		self._manage_btn.Show(ProviderAction.MANAGE_MODELS in actions)
 
 		# TRANSLATORS: Button that makes the selected provider the active AI provider.
-		self._set_active_btn.SetLabel(_("&Set as Active"))
+		self._set_active_btn.SetLabel(_("Set as Active"))
 		self._set_active_btn.Show(info.enabled and not info.active)
 
 		if info.enabled:
 			# TRANSLATORS: Button that disables the selected provider; {name} is the provider name.
-			self._enable_btn.SetLabel(_("&Disable {name}").format(name=info.name))
+			self._enable_btn.SetLabel(_("Disable {name}").format(name=info.name))
 		else:
 			# TRANSLATORS: Button that enables the selected provider; {name} is the provider name.
-			self._enable_btn.SetLabel(_("&Enable {name}").format(name=info.name))
+			self._enable_btn.SetLabel(_("Enable {name}").format(name=info.name))
 		self._enable_btn.Show(True)
 		self.Layout()
 

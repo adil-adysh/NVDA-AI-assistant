@@ -105,6 +105,10 @@ class DownloadProgressDialog(wx.Dialog):
 		self.SetSizer(sizer)
 		sizer.Fit(self)
 		self.SetMinSize((420, -1))
+
+		# Escape key routes to cancel (dialog-level keyboard routing).
+		self.SetEscapeId(wx.ID_CANCEL)
+
 		self.CentreOnParent()
 		self.Raise()
 
