@@ -111,10 +111,12 @@ class OpenAICompatProvider(LLMProvider):
 		# roots such as /v1, Gemini's /v1beta/openai, and custom gateways.
 		self._client = llm_client.OpenAiClient(
 			base_url=self._endpoints.service_url,
-			api_key=config.api_key or "",
+			api_key=config.api_key or config.api_token or "",
 			timeout_seconds=config.timeout_seconds,
 			chat_url=self._endpoints.chat_url,
 			models_url=self._endpoints.models_url,
+			max_retries=config.max_retries,
+			retry_backoff_seconds=config.retry_backoff_seconds,
 		)
 
 		# Lazy native client for Ollama-specific endpoints (/api/tags, /api/chat).
@@ -275,6 +277,8 @@ class OpenAICompatProvider(LLMProvider):
 				base_url=self._native_base_url,
 				api_key="",
 				timeout_seconds=self._config.timeout_seconds,
+				max_retries=self._config.max_retries,
+				retry_backoff_seconds=self._config.retry_backoff_seconds,
 			)
 		return self._native_client_cache
 
@@ -840,14 +844,24 @@ class OpenAICompatProvider(LLMProvider):
 		``None`` (and are therefore omitted from the wire) unless the
 		model explicitly configures them, keeping OpenAI-compatible
 		cloud endpoints from receiving unknown request parameters.
+
+		``num_ctx`` is also suppressed for cloud providers (Gemini,
+		OpenAI) whose endpoints reject non-standard parameters with
+		HTTP 400.
 		"""
 		base = ModelSamplingConfig(
-			num_ctx=self._config.num_ctx,
+			num_ctx=self._config.num_ctx if self._is_local else None,
 			temperature=self._config.generate_temperature,
 			top_p=self._config.generate_top_p,
 			max_tokens=self._config.generate_max_tokens,
 		)
 		return resolve_model_sampling(self._provider_id, model_id, base)
+
+	@property
+	def _is_local(self) -> bool:
+		"""True when the provider is a local backend that accepts
+		``num_ctx``, ``top_k``, and ``repeat_penalty`` on the wire."""
+		return self._provider_id in ("ollama", "litert-lm")
 
 	@staticmethod
 	def _ollama_options(sampling: ModelSamplingConfig) -> dict[str, Any]:

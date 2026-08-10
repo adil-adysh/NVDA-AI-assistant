@@ -156,6 +156,15 @@ class CloudModelManagerAdapter:
 			return []
 		result: list[ManagedModel] = []
 		for m in raw:
+			# Filter out Gemini live-preview / deep-research models that
+			# cannot be used with the OpenAI-compat generateContent path.
+			if self.provider_id == "gemini":
+				from ..service.provider_readiness import (
+					is_gemini_generate_content_incompatible_model_name,
+				)
+
+				if is_gemini_generate_content_incompatible_model_name(m.id):
+					continue
 			result.append(
 				ManagedModel(
 					id=m.id,

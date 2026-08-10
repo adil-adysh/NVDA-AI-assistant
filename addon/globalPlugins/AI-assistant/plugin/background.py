@@ -136,18 +136,32 @@ def _ensure_model_imported(
 	"""Check that the configured model is registered in the server catalog.
 
 	If the model file exists locally but is not yet imported, run
-	``litert-lm import`` to register it.  If the file is missing,
-	raise an error directing the user to the model manager.
+	``litert-lm import`` to register it.  When the model has platform
+	variants (CPU, GPU, etc.) the best downloaded variant is imported
+	(GPU preferred on GPU-capable machines, CPU otherwise).
+
+	The stored model name is normalised through
+	:func:`~providers.litert_models.resolve_identity` so that old
+	configurations storing bare filenames are transparently migrated
+	to canonical HuggingFace model IDs.
 	"""
-	model_id = get_model_name()
-	if not model_id:
+	from ..providers.litert_models import resolve_identity as _resolve
+	from ..providers.litert_models import lookup_model as _lookup
+	from ..providers.runtime.model_download import ModelDownloadService
+
+	raw_model_name = get_model_name()
+	if not raw_model_name:
 		raise LiteRTServerError(
 			"No model configured for LiteRT-LM. Please select a model in the AI Assistant settings."
 		)
 
+	# Normalise to canonical model_id (handles legacy filename storage).
+	model_id = _resolve(raw_model_name)
+
 	server_models = supervisor.list_server_models()
 	log.debug(
-		"_ensure_model_imported: model_id=%s server_models=%s",
+		"_ensure_model_imported: raw=%s canonical=%s server_models=%s",
+		raw_model_name,
 		model_id,
 		server_models,
 	)
@@ -177,18 +191,21 @@ def _ensure_model_imported(
 			model_id,
 		)
 
-	# Model not registered — check if the file exists locally.
-	try:
-		from ..providers.litert_models import lookup_model as _lookup
-		from ..providers.runtime.model_download import ModelDownloadService
+	# Model not registered — find a downloaded file to import.
+	definition = _lookup(model_id)
+	svc = ModelDownloadService()
 
-		definition = _lookup(model_id)
-		svc = ModelDownloadService()
-		if definition is not None and svc.is_downloaded(definition.filename):
-			local_path = svc.model_path(definition.filename)
+	# Build a priority-ordered list of filenames to try: recommended
+	# variant first, then other variants, then the primary file.
+	candidate_filenames = _build_import_candidates(definition)
+
+	for filename in candidate_filenames:
+		if svc.is_downloaded(filename):
+			local_path = svc.model_path(filename)
 			log.debug(
-				"_ensure_model_imported: file exists at %s, importing...",
+				"_ensure_model_imported: importing %s as %s...",
 				local_path,
+				model_id,
 			)
 			supervisor.import_model(
 				local_path,
@@ -201,8 +218,6 @@ def _ensure_model_imported(
 					"cannot see the add-on-owned model registry."
 				)
 			return
-	except ImportError:
-		log.debug("_ensure_model_imported: model catalog or download service unavailable")
 
 	# File not found — user needs to download first.
 	raise LiteRTServerError(
@@ -210,6 +225,46 @@ def _ensure_model_imported(
 		"Please open the Model Manager from the AI Assistant menu "
 		"to download it."
 	)
+
+
+def _build_import_candidates(definition: object | None) -> list[str]:
+	"""Return an ordered list of filenames to try for import.
+
+	GPU variants come first on GPU-capable hardware, then CPU variants,
+	then the primary file.  This ensures the best available variant is
+	imported automatically.
+	"""
+	if definition is None or not hasattr(definition, "has_variants"):
+		return [definition.filename] if definition is not None else []
+
+	primary = getattr(definition, "filename", "")
+	variants: tuple = getattr(definition, "variants", ())
+	if not variants:
+		return [primary] if primary else []
+
+	from ..providers.litert_models import has_gpu
+
+	gpu_files: list[str] = []
+	cpu_files: list[str] = []
+
+	for v in variants:
+		fn = getattr(v, "filename", "")
+		if not fn:
+			continue
+		pf: str = getattr(v, "platform_hint", "cpu")
+		if pf == "gpu":
+			gpu_files.append(fn)
+		else:
+			cpu_files.append(fn)
+
+	if has_gpu():
+		result = gpu_files + cpu_files
+	else:
+		result = cpu_files + gpu_files
+
+	if primary and primary not in result:
+		result.append(primary)
+	return result if result else ([primary] if primary else [])
 
 
 def _translate(message: str) -> str:

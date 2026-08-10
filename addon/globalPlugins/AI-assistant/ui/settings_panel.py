@@ -547,6 +547,11 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 
 		# ── All validation passed; persist everything ──
 		set_provider(provider)
+		# Normalise LiteRT model identities to canonical HuggingFace IDs
+		# so the stored setting always matches the server registry.
+		if provider == "litert-lm":
+			from ..providers.litert_models import resolve_identity
+			model_name = resolve_identity(model_name)
 		set_model_name(model_name)
 		set_num_ctx(numCtx)
 		set_generate_temperature(temperature)

@@ -68,6 +68,10 @@ def _resolve_endpoint(base_url: str, endpoint: str) -> str:
 	parsed_base = urlsplit(base_url)
 	base_parts = [part for part in parsed_base.path.split("/") if part]
 	if endpoint_parts[: len(base_parts)] == base_parts:
+		# Endpoint already includes the base path prefix — use as-is.
+		combined_parts = endpoint_parts
+	elif base_parts and base_parts == endpoint_parts[-len(base_parts):]:
+		# Base path is a suffix of the endpoint — dedup by using endpoint only.
 		combined_parts = endpoint_parts
 	else:
 		combined_parts = [*base_parts, *endpoint_parts]

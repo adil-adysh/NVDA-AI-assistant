@@ -55,6 +55,8 @@ impl OpenAiClient {
     ///     base_url: Server service URL (e.g. "http://localhost:8080").
     ///     api_key: API key or token (empty string for no auth, e.g. local llama.cpp).
     ///     timeout_seconds: Request timeout in seconds (default 30.0).
+    ///     max_retries: Maximum retry attempts for failed requests (default 0).
+    ///     retry_backoff_seconds: Delay between retries in seconds (default 0.0).
     #[new]
     #[pyo3(signature = (
         base_url,
@@ -62,6 +64,8 @@ impl OpenAiClient {
         timeout_seconds = 30.0,
         chat_url = None,
         models_url = None,
+        max_retries = 0,
+        retry_backoff_seconds = 0.0,
     ))]
     fn new(
         base_url: String,
@@ -69,9 +73,11 @@ impl OpenAiClient {
         timeout_seconds: f64,
         chat_url: Option<String>,
         models_url: Option<String>,
+        max_retries: u32,
+        retry_backoff_seconds: f64,
     ) -> Self {
         Self {
-            http: HttpClient::new(base_url, api_key, timeout_seconds, chat_url, models_url),
+            http: HttpClient::new(base_url, api_key, timeout_seconds, chat_url, models_url, max_retries, retry_backoff_seconds),
         }
     }
 

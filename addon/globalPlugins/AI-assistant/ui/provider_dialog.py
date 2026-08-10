@@ -19,7 +19,6 @@ indicators.
 from __future__ import annotations
 
 import builtins
-import threading
 from collections.abc import Callable
 from typing import cast
 
@@ -39,6 +38,7 @@ from ..providers.registry import (
 	set_active_provider,
 	set_provider_enabled,
 )
+from .download_progress import DownloadProgressDialog
 from .model_manager import open_model_manager
 from .provider_configure import build_configure_dialog
 
@@ -61,7 +61,6 @@ class ProviderManagementDialog(wx.Dialog):
 			style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
 		)
 		self._provider_infos: list[ProviderInfo] = []
-		self._install_active = False
 
 		self._build_ui()
 		self._refresh_provider_list()
@@ -135,14 +134,6 @@ class ProviderManagementDialog(wx.Dialog):
 		button_sizer.Add(self._enable_btn)
 
 		s_helper.addItem(button_sizer)
-
-		# ── Install progress ──────────────────────────────────────
-		self._progress_label = wx.StaticText(self, label="")
-		self._progress_label.Hide()
-		self._progress_gauge = wx.Gauge(self, range=100, size=(-1, 20))
-		self._progress_gauge.Hide()
-		s_helper.addItem(self._progress_label)
-		s_helper.addItem(self._progress_gauge, flag=wx.EXPAND)
 
 		# ── Close button ──────────────────────────────────────────
 		close_sizer = guiHelper.ButtonHelper(wx.HORIZONTAL)
@@ -365,68 +356,34 @@ class ProviderManagementDialog(wx.Dialog):
 		info = self._selected_info()
 		if info is None or ProviderAction.INSTALL not in info.actions:
 			return
-		if self._install_active:
-			return
-		self._install_active = True
-		self._install_btn.Disable()
-		# TRANSLATORS: Progress message shown while installing a provider runtime; {name} is the provider name.
-		self._progress_label.SetLabel(
-			_("Installing {name}...").format(name=info.name),
+		provider_id = info.id
+		provider_name = info.name
+
+		def worker(dlg: DownloadProgressDialog) -> None:
+			def progress(msg: str) -> None:
+				dlg.update_message(msg)
+
+			def bytes_progress(downloaded: int, total: int) -> None:
+				dlg.update_progress(downloaded, total)
+
+			install_provider(
+				provider_id,
+				on_progress=progress,
+				on_bytes_progress=bytes_progress,
+			)
+			# TRANSLATORS: Success message after installing a provider runtime; {name} is the provider name.
+			dlg.signal_complete(
+				True,
+				_("{name} installed successfully.").format(name=provider_name),
+			)
+
+		DownloadProgressDialog.run(
+			self,
+			title=_("Provider Installation"),
+			worker=worker,
+			on_complete=self._refresh_provider_list,
+			initial_message=_("Installing {name}...").format(name=provider_name),
 		)
-		self._progress_label.Show()
-		self._progress_gauge.SetValue(0)
-		self._progress_gauge.Show()
-		self.Layout()
-
-		def worker() -> None:
-			try:
-				# Broad catch is deliberate: an install failure must never crash
-				# the dialog thread; it is reported to the user and the provider
-				# stays in its current state.
-				# pylint: disable=broad-exception-caught
-				def progress(msg: str) -> None:
-					wx.CallAfter(self._progress_label.SetLabel, msg)
-
-				def bytes_progress(downloaded: int, total: int) -> None:
-					wx.CallAfter(self._on_bytes_progress, downloaded, total)
-
-				install_provider(
-					info.id,
-					on_progress=progress,
-					on_bytes_progress=bytes_progress,
-				)
-				# TRANSLATORS: Success message after installing a provider runtime; {name} is the provider name.
-				success_msg = _("{name} installed successfully.").format(name=info.name)
-				wx.CallAfter(self._on_install_done, True, success_msg)
-			except Exception as exc:
-				log.error("Provider installation failed for %s: %s", info.id, exc)
-				# TRANSLATORS: Error message after a provider runtime installation fails; {name} is the provider name and {error} the reason.
-				fail_msg = _("{name} installation failed: {error}").format(
-					name=info.name,
-					error=exc,
-				)
-				wx.CallAfter(self._on_install_done, False, fail_msg)
-
-		thread = threading.Thread(target=worker, daemon=True)
-		thread.start()
-
-	def _on_bytes_progress(self, downloaded: int, total: int) -> None:
-		if total and total > 0:
-			pct = min(downloaded * 100 // total, 100)
-			self._progress_gauge.SetRange(100)
-			self._progress_gauge.SetValue(pct)
-		else:
-			val = self._progress_gauge.GetValue()
-			self._progress_gauge.SetValue(0 if val >= 100 else val + 5)
-
-	def _on_install_done(self, success: bool, message: str) -> None:
-		self._install_active = False
-		self._progress_gauge.Hide()
-		self._progress_label.Hide()
-		# TRANSLATORS: Title of the installation result message box.
-		icon = wx.ICON_INFORMATION if success else wx.ICON_ERROR
-		wx.MessageBox(message, _("Provider Installation"), icon)
-		self._refresh_provider_list()
 
 	def _on_close(self, _event: wx.Event) -> None:
 		self.EndModal(wx.ID_CANCEL)

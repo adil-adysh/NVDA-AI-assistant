@@ -332,6 +332,8 @@ class LiteRTServerSupervisor:
 		LiteRT-LM stores imported models under the directory supplied through
 		``LITERT_LM_DIR``.  This is deliberately not the global user home.
 		"""
+		if not model_id or ".." in model_id or "\\" in model_id or "\x00" in model_id:
+			return None
 		dir_name = model_id.replace("/", "--")
 		return self._litert_dir() / "models" / dir_name
 
@@ -408,7 +410,7 @@ class LiteRTServerSupervisor:
 		model_path = Path(model_path)
 		if not model_path.is_file():
 			raise LiteRTServerError(f"Model file does not exist: {model_path}")
-		if not model_id or "\\" in model_id or "\x00" in model_id:
+		if not model_id or "\\" in model_id or ".." in model_id or "\x00" in model_id:
 			raise LiteRTServerError(f"Invalid LiteRT-LM model ID: {model_id!r}")
 
 		import_args = _build_import_args(model_path, model_id)

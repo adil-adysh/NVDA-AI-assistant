@@ -13,6 +13,8 @@ pub(crate) struct HttpClient {
     models_url: String,
     api_key: String,
     timeout: Duration,
+    max_retries: u32,
+    retry_backoff: Duration,
 }
 
 impl HttpClient {
@@ -22,6 +24,8 @@ impl HttpClient {
         timeout_seconds: f64,
         chat_url: Option<String>,
         models_url: Option<String>,
+        max_retries: u32,
+        retry_backoff_seconds: f64,
     ) -> Self {
         let base_url = base_url.trim_end_matches('/').to_string();
         Self {
@@ -30,6 +34,8 @@ impl HttpClient {
             base_url,
             api_key,
             timeout: Duration::from_secs_f64(timeout_seconds.max(1.0)),
+            max_retries,
+            retry_backoff: Duration::from_secs_f64(retry_backoff_seconds.max(0.0)),
         }
     }
 
@@ -174,6 +180,24 @@ impl HttpClient {
     // ── HTTP helpers ────────────────────────────────────────────
 
     fn get(&self, url: &str) -> PyResult<(u16, String)> {
+        let mut last_err: Option<PyErr> = None;
+        for attempt in 0..=self.max_retries {
+            if attempt > 0 {
+                std::thread::sleep(self.retry_backoff);
+            }
+            match self.try_get(url) {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("GET request failed after retries")
+        }))
+    }
+
+    fn try_get(&self, url: &str) -> PyResult<(u16, String)> {
         let response = self
             .build_get(url)?
             .call()
@@ -186,6 +210,24 @@ impl HttpClient {
     }
 
     fn post_json(&self, url: &str, json_body: &str) -> PyResult<(u16, String)> {
+        let mut last_err: Option<PyErr> = None;
+        for attempt in 0..=self.max_retries {
+            if attempt > 0 {
+                std::thread::sleep(self.retry_backoff);
+            }
+            match self.try_post_json(url, json_body) {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("POST request failed after retries")
+        }))
+    }
+
+    fn try_post_json(&self, url: &str, json_body: &str) -> PyResult<(u16, String)> {
         let response = self
             .build_post(url)?
             .set("Content-Type", "application/json")

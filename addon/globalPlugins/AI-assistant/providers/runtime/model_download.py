@@ -19,9 +19,6 @@ from ..interfaces import ProgressCallback
 from .download import _download_url_resume
 
 
-HF_DEFAULT_BASE = "https://huggingface.co"
-
-
 class ModelDownloadError(RuntimeError):
 	"""Raised when a model download or verification fails."""
 
@@ -32,16 +29,13 @@ class ModelDownloadService:
 	Parameters:
 	    cache_dir: Root directory for cached models.  Defaults to
 	        ``%APPDATA%/nvda/AIAssistant/models/litert-lm/``.
-	    hf_base_url: Hugging Face base URL.  Override for mirrors.
 	"""
 
 	def __init__(
 		self,
 		cache_dir: str | Path | None = None,
-		hf_base_url: str = HF_DEFAULT_BASE,
 	) -> None:
 		self._cache_dir = Path(cache_dir) if cache_dir else _default_model_dir()
-		self._hf_base_url = hf_base_url.rstrip("/")
 
 	# ── Public API ──────────────────────────────────────────────────
 

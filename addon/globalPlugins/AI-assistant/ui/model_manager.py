@@ -10,13 +10,12 @@ active, enable/disable) driven by the provider's model features.
 
 from __future__ import annotations
 
-import threading
 import wx
 
 from gui import guiHelper
 from logHandler import log
 
-from ..providers.litert_models import recommended_models
+from ..providers.litert_models import LiteRTModelDef, recommended_models
 from ..providers.model_manager import (
 	ManagedModel,
 	ModelManagerProvider,
@@ -27,6 +26,7 @@ from ..providers.registry import (
 	model_manager_title,
 	provider_display_name,
 )
+from .download_progress import DownloadProgressDialog
 from .enabled_models import EnabledModelsStore
 
 _RECOMMENDED_PRIORITY = 50
@@ -52,7 +52,14 @@ class ModelManagerDialog(wx.Dialog):
 		self._models: list[ManagedModel] = []
 		self._displayed_models: list[ManagedModel] = []
 		self._pending_downloads: set[str] = set()
-		self._known_map = {m.filename: m for m in recommended_models()}
+		self._known_map: dict[str, LiteRTModelDef] = {}
+		_known_map = self._known_map
+		for m in recommended_models():
+			_known_map[m.model_id] = m
+			# Also map each variant filename → model for details lookup.
+			for v in m.variants:
+				if v.filename not in _known_map:
+					_known_map[v.filename] = m
 
 		self._build_ui()
 		self._refresh_model_list()
@@ -87,6 +94,7 @@ class ModelManagerDialog(wx.Dialog):
 		self._list.Bind(wx.EVT_LIST_ITEM_SELECTED, self._on_selection_change)
 		self._list.Bind(wx.EVT_LIST_ITEM_DESELECTED, self._on_selection_change)
 		self._list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_double_click)
+		self._list.Bind(wx.EVT_LEFT_DOWN, self._on_left_down)
 		s_helper.addItem(self._list, flag=wx.EXPAND, proportion=1)
 		s_helper.sizer.AddSpacer(8)
 
@@ -142,18 +150,6 @@ class ModelManagerDialog(wx.Dialog):
 
 		s_helper.addItem(button_sizer)
 
-		# ── Download progress bar ────────────────────────────────
-		self._progress_gauge = wx.Gauge(
-			self,
-			range=100,
-			size=(-1, 20),
-		)
-		self._progress_gauge.Hide()
-		self._progress_label = wx.StaticText(self, label="")
-		self._progress_label.Hide()
-		s_helper.addItem(self._progress_label)
-		s_helper.addItem(self._progress_gauge, flag=wx.EXPAND)
-
 		# ── Close button ─────────────────────────────────────────
 		close_sizer = guiHelper.ButtonHelper(wx.HORIZONTAL)
 		close_sizer.addButton(self, wx.ID_CLOSE, label="")
@@ -172,8 +168,13 @@ class ModelManagerDialog(wx.Dialog):
 	# Model list refresh
 	# ------------------------------------------------------------------
 
-	def _refresh_model_list(self) -> None:
+	def _refresh_model_list( self, focus_model_id: str | None = None) -> None:
 		"""Reload models from the provider and repopulate the list."""
+		# Save currently focused model ID before rebuilding.
+		if focus_model_id is None:
+			focused = self._get_selected_model()
+			focus_model_id = focused.id if focused else None
+
 		self._models = self._provider.list_managed_models()
 		enabled_ids = self._enabled_store.get_enabled(self._provider.provider_id)
 
@@ -219,7 +220,23 @@ class ModelManagerDialog(wx.Dialog):
 			self._add_section_header(_("── Other Models — Available to download ──"))
 			self._add_models(other_download, enabled_ids)
 
+		# Restore focus to the previously selected model.
+		if focus_model_id is not None:
+			self._select_displayed_model(focus_model_id)
+
 		self._update_buttons()
+
+	def _select_displayed_model(self, model_id: str) -> None:
+		"""Find *model_id* in displayed models and select its row."""
+		count = self._list.GetItemCount()
+		model_idx = 0
+		for i in range(count):
+			if self._list.GetItemText(i, 3):  # has status → real model
+				if model_idx < len(self._displayed_models) and self._displayed_models[model_idx].id == model_id:
+					self._list.Select(i, on=True)
+					self._list.Focus(i)
+					return
+				model_idx += 1
 
 	def _add_section_header(self, label: str) -> None:
 		idx = self._list.InsertItem(self._list.GetItemCount(), label)
@@ -259,24 +276,26 @@ class ModelManagerDialog(wx.Dialog):
 	# Button state
 	# ------------------------------------------------------------------
 
+	def _get_displayed_model_at(self, list_idx: int) -> ManagedModel | None:
+		"""Map a list-control index to the displayed model, skipping section headers."""
+		count = self._list.GetItemCount()
+		model_idx = 0
+		for i in range(count):
+			if i == list_idx:
+				if model_idx < len(self._displayed_models):
+					if self._list.GetItemText(i, 3):  # has status → real model
+						return self._displayed_models[model_idx]
+				return None
+			if self._list.GetItemText(i, 3):  # has a status → real model
+				model_idx += 1
+		return None
+
 	def _get_selected_model(self) -> ManagedModel | None:
 		"""Return the currently selected model, skipping section headers."""
 		sel = self._list.GetFirstSelected()
 		if sel < 0:
 			return None
-		count = self._list.GetItemCount()
-		model_idx = 0
-		for i in range(count):
-			if i == sel:
-				if model_idx < len(self._displayed_models):
-					# Verify this is a real model row, not a header
-					if self._list.GetItemText(i, 3):  # has status → real model
-						return self._displayed_models[model_idx]
-				return None
-			# Count non-header items
-			if self._list.GetItemText(i, 3):  # has a status → real model
-				model_idx += 1
-		return None
+		return self._get_displayed_model_at(sel)
 
 	def _update_buttons(self) -> None:
 		model = self._get_selected_model()
@@ -329,8 +348,25 @@ class ModelManagerDialog(wx.Dialog):
 		self._update_details()
 		event.Skip()
 
+	def _on_left_down(self, event: wx.MouseEvent) -> None:
+		"""Single-click on the checkbox column (col 0) toggles enabled."""
+		x_pos = event.GetPosition().x
+		col0_width = self._list.GetColumnWidth(0)
+		if x_pos <= col0_width:
+			idx = self._list.HitTest(event.GetPosition())[0]
+			if idx >= 0:
+				model = self._get_displayed_model_at(idx)
+				if model is not None:
+					is_enabled = self._enabled_store.is_enabled(
+						self._provider.provider_id,
+						model.id,
+					)
+					self._toggle_enabled(model, not is_enabled)
+					return  # handled; skip normal selection processing
+		event.Skip()
+
 	def _on_double_click(self, _event: wx.ListEvent) -> None:
-		"""Double-click / Enter: toggle enabled, or set active if ready."""
+		"""Double-click / Enter: toggle enabled."""
 		model = self._get_selected_model()
 		if model is None:
 			return
@@ -338,11 +374,7 @@ class ModelManagerDialog(wx.Dialog):
 			self._provider.provider_id,
 			model.id,
 		)
-		if is_enabled and model.state.is_ready():
-			self._provider.set_active_model(model.id)
-		else:
-			self._toggle_enabled(model, not is_enabled)
-		self._refresh_model_list()
+		self._toggle_enabled(model, not is_enabled)
 
 	def _on_show_disabled(self, _event: wx.CommandEvent) -> None:
 		self._refresh_model_list()
@@ -351,78 +383,34 @@ class ModelManagerDialog(wx.Dialog):
 		model = self._get_selected_model()
 		if model is None:
 			return
-		self._pending_downloads.add(model.id)
+		model_id = model.id
+		self._pending_downloads.add(model_id)
 		self._update_buttons()
 
-		# Show the gauge
-		self._progress_gauge.SetValue(0)
-		self._progress_gauge.SetRange(100)
-		self._progress_gauge.Show()
-		self._progress_label.SetLabel(
-			_("Downloading {}...").format(model.display_name),
+		def worker(dlg: DownloadProgressDialog) -> None:
+			def progress(msg: str, downloaded: int | None, total: int | None) -> None:
+				dlg.update_message(msg)
+				if downloaded is not None and total is not None:
+					dlg.update_progress(downloaded, total)
+
+			self._provider.download_model(model_id, on_progress=progress)
+			dlg.signal_complete(
+				True,
+				# TRANSLATORS: Success message after model download.
+				_("{name} downloaded successfully.").format(name=model.display_name),
+			)
+
+		def on_done() -> None:
+			self._pending_downloads.discard(model_id)
+			self._refresh_model_list()
+
+		DownloadProgressDialog.run(
+			self,
+			title=_("Downloading Model"),
+			worker=worker,
+			on_complete=on_done,
+			initial_message=_("Downloading {}...").format(model.display_name),
 		)
-		self._progress_label.Show()
-		self._list.Disable()
-		self._download_btn.Disable()
-		self.Layout()
-
-		def worker() -> None:
-			try:
-
-				def progress(
-					msg: str,
-					downloaded: int | None,
-					total: int | None,
-				) -> None:
-					wx.CallAfter(
-						self._on_download_progress,
-						model.id,
-						msg,
-						downloaded,
-						total,
-					)
-
-				self._provider.download_model(model.id, on_progress=progress)
-			except Exception as exc:
-				log.error("Model download failed: %s", exc)
-				err_msg = _("Download failed: {}").format(exc)
-				wx.CallAfter(
-					lambda: wx.MessageBox(
-						err_msg,
-						_("Error"),
-						wx.ICON_ERROR,
-					),
-				)
-			finally:
-				wx.CallAfter(self._on_download_complete, model.id)
-
-		thread = threading.Thread(target=worker, daemon=True)
-		thread.start()
-
-	def _on_download_progress(
-		self,
-		_model_id: str,
-		msg: str,
-		downloaded: int | None,
-		total: int | None,
-	) -> None:
-		self._progress_label.SetLabel(msg)
-		if total and total > 0 and downloaded is not None:
-			pct = min(downloaded * 100 // total, 100)
-			if self._progress_gauge.GetRange() != 100:
-				self._progress_gauge.SetRange(100)
-			self._progress_gauge.SetValue(pct)
-		else:
-			# Indeterminate: pulse the gauge
-			val = self._progress_gauge.GetValue()
-			self._progress_gauge.SetValue(0 if val >= 100 else val + 5)
-
-	def _on_download_complete(self, model_id: str) -> None:
-		self._pending_downloads.discard(model_id)
-		self._progress_gauge.Hide()
-		self._progress_label.Hide()
-		self._list.Enable()
-		self._refresh_model_list()
 
 	def _on_delete(self, _event: wx.CommandEvent) -> None:
 		model = self._get_selected_model()
@@ -474,7 +462,7 @@ class ModelManagerDialog(wx.Dialog):
 			model.id,
 			enabled,
 		)
-		self._refresh_model_list()
+		self._refresh_model_list(focus_model_id=model.id)
 
 
 # ── Module-level helpers ───────────────────────────────────────────
@@ -496,12 +484,37 @@ def _status_label(state: ModelState) -> str:
 
 
 def _model_matches_active(model_id: str, active_id: str | None) -> bool:
-	"""Check if model_id matches the active model (loose comparison)."""
+	"""Check if *model_id* matches the active model.
+
+	Handles three cases:
+	1. Exact match
+	2. Both resolve to the same canonical model identity
+	   (e.g. a variant filename matches its owning model).
+	3. Loose comparison as a fallback.
+	"""
 	if active_id is None:
 		return False
+	try:
+		from ..providers.litert_models import lookup_model, resolve_identity
+	except ImportError:
+		return (
+			model_id == active_id
+			or model_id.replace("-", "_") == active_id.replace("-", "_")
+			or model_id.replace("-", "").casefold() == active_id.replace("-", "").casefold()
+		)
+
+	# Exact match.
+	if resolve_identity(model_id) == resolve_identity(active_id):
+		return True
+
+	# A variant filename matches if it belongs to the active model.
+	owner = lookup_model(model_id)
+	if owner is not None and owner.model_id == resolve_identity(active_id):
+		return True
+
+	# Loose fallback.
 	return (
-		model_id == active_id
-		or model_id.replace("-", "_") == active_id.replace("-", "_")
+		model_id.replace("-", "_") == active_id.replace("-", "_")
 		or model_id.replace("-", "").casefold() == active_id.replace("-", "").casefold()
 	)
 

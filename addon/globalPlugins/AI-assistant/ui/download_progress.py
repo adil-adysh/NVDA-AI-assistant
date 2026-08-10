@@ -1,10 +1,20 @@
+from __future__ import annotations
+
+import builtins
 import math
 import re
 import subprocess
+import threading
 import time
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any, Optional, cast
+
+import wx
+from logHandler import log
 
 from ..config import defaults
+
+_ = cast(Callable[[str], str], getattr(builtins, "_", lambda s: s))
 
 _BYTES_PER_MB = 1024 * 1024
 _BYTES_PER_GB = 1024 * 1024 * 1024
@@ -38,6 +48,151 @@ def format_eta(seconds: float) -> str:
 		return f"{minutes} minutes remaining"
 	hours = int(round(rounded / 3600))
 	return f"{hours} hours remaining"
+
+
+# ------------------------------------------------------------------
+# Modal download progress dialog (reusable across model & runtime downloads)
+# ------------------------------------------------------------------
+
+
+class DownloadProgressDialog(wx.Dialog):
+	"""Modal progress dialog for background downloads.
+
+	Blocks all interaction with the parent window, shows a progress
+	label and gauge, and auto-closes when the download thread finishes.
+	"""
+
+	def __init__(
+		self,
+		parent: wx.Window,
+		title: str,
+		initial_message: str = "",
+	) -> None:
+		super().__init__(
+			parent,
+			title=title,
+			style=wx.CAPTION | wx.FRAME_TOOL_WINDOW,
+		)
+		self._completed = False
+
+		sizer = wx.BoxSizer(wx.VERTICAL)
+
+		self._label = wx.StaticText(self, label=initial_message)
+		sizer.Add(self._label, flag=wx.ALL | wx.EXPAND, border=12)
+
+		sizer.AddSpacer(8)
+
+		self._gauge = wx.Gauge(self, range=100, size=(380, 22))
+		sizer.Add(self._gauge, flag=wx.LEFT | wx.RIGHT | wx.EXPAND, border=12)
+
+		sizer.AddSpacer(12)
+
+		self.SetSizer(sizer)
+		sizer.Fit(self)
+		self.SetMinSize((420, -1))
+		self.CentreOnParent()
+
+		# Prevent closing via Escape/Alt+F4 while download is active.
+		self.Bind(wx.EVT_CLOSE, self._on_close)
+
+	def _on_close(self, event: wx.CloseEvent) -> None:
+		if self._completed:
+			event.Skip()
+		else:
+			event.Veto()
+
+	# ------------------------------------------------------------------
+	# Thread-safe progress updates
+	# ------------------------------------------------------------------
+
+	def update_message(self, message: str) -> None:
+		"""Update the label. Safe from any thread."""
+		wx.CallAfter(self._label.SetLabel, message)
+
+	def update_progress(self, downloaded: int, total: int) -> None:
+		"""Update the gauge. Safe from any thread."""
+		wx.CallAfter(self._do_update_progress, downloaded, total)
+
+	def _do_update_progress(self, downloaded: int, total: int) -> None:
+		if total and total > 0:
+			pct = min(downloaded * 100 // total, 100)
+			self._gauge.SetRange(100)
+			self._gauge.SetValue(pct)
+		else:
+			# Indeterminate — pulse the gauge.
+			val = self._gauge.GetValue()
+			self._gauge.SetValue(0 if val >= 100 else val + 5)
+
+	# ------------------------------------------------------------------
+	# Completion
+	# ------------------------------------------------------------------
+
+	def signal_complete(self, success: bool, message: str | None = None) -> None:
+		"""Mark download as finished and close the dialog.
+
+		On failure, shows an error message box before closing.
+		"""
+		if message:
+			wx.CallAfter(self._do_show_final_message, success, message)
+		wx.CallAfter(self._do_close)
+
+	def _do_show_final_message(self, success: bool, message: str) -> None:
+		icon = wx.ICON_INFORMATION if success else wx.ICON_ERROR
+		wx.MessageBox(message, self.GetTitle(), icon, parent=self)
+
+	def _do_close(self) -> None:
+		self._completed = True
+		self.EndModal(wx.ID_OK)
+
+	# ------------------------------------------------------------------
+	# Convenience launcher
+	# ------------------------------------------------------------------
+
+	@classmethod
+	def run(
+		cls,
+		parent: wx.Window,
+		title: str,
+		worker: Callable[..., Any],
+		on_complete: Callable[[], Any] | None = None,
+		initial_message: str = "",
+		worker_args: tuple[Any, ...] = (),
+	) -> None:
+		"""Create, show, and manage the dialog for a background download.
+
+		*worker* is called as ``worker(dialog, *worker_args)`` from a
+		daemon thread. It should periodically call
+		``dialog.update_message()`` / ``dialog.update_progress()`` and
+		finish with ``dialog.signal_complete(success, message)``.
+
+		If *worker* raises, the dialog closes and shows the error.
+		*on_complete* runs on the main thread after the dialog is destroyed.
+		"""
+		dlg = cls(parent, title, initial_message)
+
+		def wrapper() -> None:
+			try:
+				worker(dlg, *worker_args)
+			except Exception as exc:
+				log.error("Download failed: %s", exc)
+				dlg.signal_complete(
+					False,
+					# TRANSLATORS: Generic download failure; {error} is the reason.
+					_("Download failed: {error}").format(error=exc),
+				)
+
+		thread = threading.Thread(target=wrapper, daemon=True)
+		thread.start()
+		dlg.ShowModal()
+		dlg.Destroy()
+
+		if on_complete is not None:
+			on_complete()
+
+
+# ------------------------------------------------------------------
+# Ollama download progress tracker (pre-existing)
+# ------------------------------------------------------------------
 
 
 class DownloadProgressTracker:
