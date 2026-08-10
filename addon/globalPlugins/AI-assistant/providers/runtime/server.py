@@ -110,6 +110,11 @@ def _build_import_args(model_path: str | Path, model_id: str) -> list[str]:
 	return ["import", str(model_path), model_id]
 
 
+def _build_delete_args(model_id: str) -> list[str]:
+	"""Build the CLI argument list for ``litert-lm delete``."""
+	return ["delete", model_id]
+
+
 def _run_litert_cli(
 	python_exe: Path,
 	args: list[str],
@@ -452,6 +457,55 @@ class LiteRTServerSupervisor:
 
 		if on_progress:
 			on_progress(f"Model {model_id} registered.")
+
+	def delete_model(self, model_id: str) -> None:
+		"""Unregister *model_id* from the LiteRT-LM catalog via CLI.
+
+		Runs ``litert-lm delete <model_id>`` via the bundled Python
+		runtime against the same ``LITERT_LM_DIR`` used by serve and
+		import.  The LiteRT-LM CLI is idempotent — deleting an
+		already-absent model succeeds silently.
+
+		Args:
+		    model_id: The canonical model identifier (e.g.
+		        ``"litert-community/gemma-4-E2B-it-litert-lm"``).
+
+		Raises:
+		    LiteRTServerError: If the runtime is not installed, the
+		        model ID is invalid, or the CLI exits non-zero.
+		"""
+		python_exe = _resolve_litert_python(self._server_python())
+
+		if not model_id or "\\" in model_id or ".." in model_id or "\x00" in model_id:
+			raise LiteRTServerError(f"Invalid LiteRT-LM model ID: {model_id!r}")
+
+		log.debug("Unregistering model %s from LiteRT-LM catalog", model_id)
+
+		delete_args = _build_delete_args(model_id)
+		try:
+			result = _run_litert_cli(
+				python_exe,
+				delete_args,
+				env=self._process_environment(),
+				timeout=60,
+				capture=True,
+			)
+		except subprocess.TimeoutExpired as exc:
+			raise LiteRTServerError(
+				f"Model deletion timed out for {model_id}"
+			) from exc
+		except Exception as exc:
+			raise LiteRTServerError(
+				f"Failed to delete model {model_id}: {exc}"
+			) from exc
+
+		if result.returncode != 0:
+			stderr = result.stderr.strip() or result.stdout.strip()
+			raise LiteRTServerError(
+				f"Model deletion failed for {model_id}: {stderr}"
+			)
+
+		log.info("Model %s deleted from LiteRT-LM catalog", model_id)
 
 	def wait_until_ready(
 		self,

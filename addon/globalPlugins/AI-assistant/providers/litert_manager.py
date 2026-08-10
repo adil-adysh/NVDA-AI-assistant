@@ -231,27 +231,39 @@ class LiteRTModelManager(ModelManagerProvider):
 		)
 
 	def delete_model(self, model_id: str) -> None:
-		"""Remove the cached model file, if any.
+		"""Unregister *model_id* from LiteRT-LM and remove the cache file.
 
 		*model_id* may be either a canonical HuggingFace model ID, a
-		primary filename, or a variant filename.  The corresponding
-		``.litertlm`` file is resolved and removed from the download
-		cache.
+		primary filename, or a variant filename.
+
+		The LiteRT-LM catalog is unregistered first (via the ``litert-lm
+		delete`` CLI).  The download-cache artifact is only removed
+		**after** successful unregistration so that a failed unregister
+		does not orphan a model that is still in the catalog.
 		"""
-		# Resolve which file to delete.
+		canonical = resolve_identity(model_id)
 		model = lookup_model(model_id)
+
+		# Resolve the cache filename (variant-aware).
 		if model is not None and model.has_variants:
-			# *model_id* may be a variant filename — use it directly.
 			filename = model_id if model_id in model.all_filenames else model.filename
 		else:
 			filename = model.filename if model is not None else model_id
+
+		# ── Step 1: Unregister from LiteRT-LM catalog ───────────
+		supervisor = get_litert_supervisor()
+		catalog_dir = supervisor.catalog_model_dir(canonical)
+		if catalog_dir is not None and catalog_dir.is_dir():
+			supervisor.delete_model(canonical)
+
+		# ── Step 2: Remove download-cache artifact ──────────────
 		svc = self._download_service or ModelDownloadService()
 		path = svc.model_path(filename)
 		if path.exists():
 			path.unlink()
-			log.info("Deleted model: %s", path)
+			log.info("Deleted model from cache: %s", path)
 		else:
-			log.debug("Model not found for deletion: %s", path)
+			log.debug("Model not found in download cache: %s", path)
 
 	def set_active_model(self, model_id: str) -> None:
 		"""Persist *model_id* and import the variant file if needed.
