@@ -41,6 +41,15 @@ class UnsupportedModelError(ProviderConfigurationError):
 	"""Raised when the selected model is not supported for the current workflow."""
 
 
+class DownloadCancelledError(Exception):
+	"""Raised by download workers when the user cancels a download.
+
+	The partial file is preserved for future resume.  Catch this
+	specifically in download-progress UI code to distinguish
+	user-initiated cancellation from unexpected failures.
+	"""
+
+
 @dataclass(frozen=True)
 class SamplingDefaults:
 	temperature: float | None = None

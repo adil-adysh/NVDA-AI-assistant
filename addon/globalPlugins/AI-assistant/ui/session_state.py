@@ -68,6 +68,22 @@ def _resolve_think_enabled(provider: str) -> bool:
 	return get_think(provider)
 
 
+def _build_available_providers(translate: Translator) -> tuple[SessionProviderOption, ...]:
+	"""Build the list of available providers from the registry.
+
+	Uses :data:`providers.registry.PROVIDER_IDS` and
+	:func:`providers.registry.provider_display_name` so the provider
+	list stays in a single place and the UI layer never hardcodes
+	provider IDs or display names.
+	"""
+	from ..providers.registry import PROVIDER_IDS, provider_display_name
+
+	return tuple(
+		{"id": pid, "label": translate(provider_display_name(pid))}
+		for pid in PROVIDER_IDS
+	)
+
+
 # TRANSLATORS: Strings sent from the Python add-on to the WebView UI.
 # These labels appear in the chat workspace, session controls, buttons, and status notifications.
 def build_localized_strings(translate: Translator) -> dict[str, str]:
@@ -256,16 +272,7 @@ def build_session_state(
 			"can_list_models": resolved_readiness.can_list_models,
 			**({"reason": resolved_readiness.reason.value} if resolved_readiness.reason is not None else {}),
 		},
-		available_providers=(
-			# TRANSLATORS: Provider option label for Ollama in the session controls.
-			{"id": "ollama", "label": translate("Ollama")},
-			# TRANSLATORS: Provider option label for Gemini in the session controls.
-			{"id": "gemini", "label": translate("Gemini")},
-			# TRANSLATORS: Provider option label for OpenAI in the session controls.
-			{"id": "openai", "label": translate("OpenAI")},
-			# TRANSLATORS: Provider option label for LiteRT-LM in the session controls.
-			{"id": "litert-lm", "label": translate("LiteRT-LM")},
-		),
+		available_providers=_build_available_providers(translate),
 		available_models=resolved_available_models,
 		conversation_summaries=tuple(conversation_summaries or ()),
 		localized_strings=build_localized_strings(translate),
@@ -336,17 +343,33 @@ def _filter_available_models(
 	available_models: tuple[str, ...],
 	provider: str,
 ) -> tuple[str, ...]:
-	"""Only show models that the user has enabled in the model manager.
+	"""Filter models to only those not explicitly disabled by the user.
 
 	Model readiness (downloaded / imported) is already handled by
-	:meth:`ModelManagerProvider.get_available_model_ids` — this
-	function only applies the user's enable/disable preferences.
+	:meth:`ModelManagerProvider.get_available_model_ids`.
+
+	Models that appear in *available_models* but are not yet tracked
+	in the persistent store are treated as implicitly enabled — the
+	store tracks only models the user has explicitly toggled in the
+	model manager dialog.  This ensures newly downloaded models
+	appear in the WebView dropdown immediately without requiring
+	the user to visit the model manager first.
 	"""
 	from .enabled_models import EnabledModelsStore
 
 	store = EnabledModelsStore()
 	enabled_ids = store.get_enabled(provider)
 	if not enabled_ids:
-		return available_models  # First run — nothing disabled yet
+		return available_models  # First run — nothing tracked yet
+
+	# Auto-register newly discovered models so they appear in the
+	# dropdown without the user needing to enable them explicitly.
+	# Only models the user has explicitly **disabled** (removed from
+	# the enabled set via the model manager toggle) are filtered out.
+	newly_discovered = [m for m in available_models if m not in enabled_ids]
+	if newly_discovered:
+		for model_id in newly_discovered:
+			store.set_enabled(provider, model_id, True)
+		enabled_ids = store.get_enabled(provider)
 
 	return tuple(m for m in available_models if m in enabled_ids)

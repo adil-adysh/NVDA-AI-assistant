@@ -15,7 +15,6 @@ import wx
 from gui import guiHelper
 from logHandler import log
 
-from ..providers.litert_models import LiteRTModelDef, recommended_models
 from ..providers.model_manager import (
 	ManagedModel,
 	ModelManagerProvider,
@@ -52,14 +51,6 @@ class ModelManagerDialog(wx.Dialog):
 		self._models: list[ManagedModel] = []
 		self._displayed_models: list[ManagedModel] = []
 		self._pending_downloads: set[str] = set()
-		self._known_map: dict[str, LiteRTModelDef] = {}
-		_known_map = self._known_map
-		for m in recommended_models():
-			_known_map[m.model_id] = m
-			# Also map each variant filename → model for details lookup.
-			for v in m.variants:
-				if v.filename not in _known_map:
-					_known_map[v.filename] = m
 
 		self._build_ui()
 		self._refresh_model_list()
@@ -258,7 +249,7 @@ class ModelManagerDialog(wx.Dialog):
 			self._list.SetItem(idx, 0, "☑" if is_enabled else "☐")  # noqa: RUF001
 
 			# Column 1: active marker
-			is_active = _model_matches_active(m.id, self._active_id_clean)
+			is_active = _model_matches_active(m, self._active_id_clean)
 			self._list.SetItem(idx, 1, "◉" if is_active else "○")  # noqa: RUF001
 
 			# Column 2: display name
@@ -324,8 +315,7 @@ class ModelManagerDialog(wx.Dialog):
 			self._details_text.SetValue("")
 			return
 
-		known = self._known_map.get(model.id)
-		desc = known.description if known else ""
+		desc = model.description
 		caps = _capabilities_label(model)
 		lines = [
 			model.display_name,
@@ -487,40 +477,29 @@ def _status_label(state: ModelState) -> str:
 	return str(state.value)
 
 
-def _model_matches_active(model_id: str, active_id: str | None) -> bool:
-	"""Check if *model_id* matches the active model.
+def _model_matches_active(model: ManagedModel, active_id: str | None) -> bool:
+	"""Check if *model* matches the active model.
 
-	Handles three cases:
-	1. Exact match
-	2. Both resolve to the same canonical model identity
-	   (e.g. a variant filename matches its owning model).
-	3. Loose comparison as a fallback.
+	Checks both ``model.id`` and ``model.canonical_id`` (for variant
+	entries whose display ID is a filename but whose parent model is
+	the canonical repo ID).  Performs loose normalized comparison as
+	a fallback.
 	"""
 	if active_id is None:
 		return False
-	try:
-		from ..providers.litert_models import lookup_model, resolve_identity
-	except ImportError:
-		return (
-			model_id == active_id
-			or model_id.replace("-", "_") == active_id.replace("-", "_")
-			or model_id.replace("-", "").casefold() == active_id.replace("-", "").casefold()
-		)
-
-	# Exact match.
-	if resolve_identity(model_id) == resolve_identity(active_id):
-		return True
-
-	# A variant filename matches if it belongs to the active model.
-	owner = lookup_model(model_id)
-	if owner is not None and owner.model_id == resolve_identity(active_id):
-		return True
-
-	# Loose fallback.
-	return (
-		model_id.replace("-", "_") == active_id.replace("-", "_")
-		or model_id.replace("-", "").casefold() == active_id.replace("-", "").casefold()
-	)
+	ids_to_check = [model.id]
+	if model.canonical_id and model.canonical_id not in ids_to_check:
+		ids_to_check.append(model.canonical_id)
+	active = active_id.strip().lower()
+	for mid in ids_to_check:
+		norm = mid.strip().lower()
+		if (
+			norm == active
+			or norm.replace("-", "_") == active.replace("-", "_")
+			or norm.replace("-", "") == active.replace("-", "")
+		):
+			return True
+	return False
 
 
 def _capabilities_label(model: ManagedModel) -> str:

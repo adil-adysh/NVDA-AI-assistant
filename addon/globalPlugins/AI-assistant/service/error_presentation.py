@@ -4,48 +4,13 @@ from __future__ import annotations
 import builtins
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import cast
 
 from ..providers.error_mapping import (
 	ErrorSuggestion,
 	suggest_for_status,
 )
 from ..providers.interfaces import LLMProviderError, ProviderConfigurationError, UnsupportedModelError
-
-# ── Provider error mappers (optional — not all providers may be installed) ──
-
-_GeminiAPIError: type | None = None
-_map_gemini_error: Any = None
-try:
-	from ..gemini.errors import GeminiAPIError as _GeminiAPIE
-	from ..gemini.error_mapping import map_gemini_error as _map_gemini
-
-	_GeminiAPIError = _GeminiAPIE
-	_map_gemini_error = _map_gemini
-except ImportError:
-	pass
-
-_OpenAIClientError: type | None = None
-_map_openai_error: Any = None
-try:
-	from ..openai.errors import OpenAIClientError as _OpenAIClientE
-	from ..openai.error_mapping import map_openai_error as _map_openai
-
-	_OpenAIClientError = _OpenAIClientE
-	_map_openai_error = _map_openai
-except ImportError:
-	pass
-
-_OllamaClientError: type | None = None
-_map_ollama_error: Any = None
-try:
-	from ..ollama.errors import OllamaClientError as _OllamaClientE
-	from ..ollama.error_mapping import map_ollama_error as _map_ollama
-
-	_OllamaClientError = _OllamaClientE
-	_map_ollama_error = _map_ollama
-except ImportError:
-	pass
 
 
 def _translate(message: str) -> str:
@@ -117,32 +82,6 @@ def present_error(error: Exception, translate: Translator | None = None) -> Erro
 			# TRANSLATORS: Message shown when the selected provider is not set up correctly.
 			message=message_text or translate("The selected provider is not configured correctly."),
 		)
-
-	# ── Gemini API errors ──
-	if _GeminiAPIError is not None and isinstance(error, _GeminiAPIError):
-		suggestion = _map_gemini_error(error.status_code, error.body)
-		# TRANSLATORS: Title shown when a Gemini API request fails.
-		return _make_presentation(translate("Gemini request failed"), suggestion, translate)
-
-	# ── OpenAI API errors ──
-	if _OpenAIClientError is not None and isinstance(error, _OpenAIClientError):
-		suggestion = _map_openai_error(
-			getattr(error, "status_code", None),
-			message_text or None,
-			body=None,
-		)
-		# TRANSLATORS: Title shown when an OpenAI API request fails.
-		return _make_presentation(translate("OpenAI request failed"), suggestion, translate)
-
-	# ── Ollama errors ──
-	if _OllamaClientError is not None and isinstance(error, _OllamaClientError):
-		suggestion = _map_ollama_error(
-			status_code=None,
-			body=None,
-			message=message_text or None,
-		)
-		# TRANSLATORS: Title shown when an Ollama request fails.
-		return _make_presentation(translate("Ollama request failed"), suggestion, translate)
 
 	# ── Generic LLM provider error ──
 	if isinstance(error, LLMProviderError):

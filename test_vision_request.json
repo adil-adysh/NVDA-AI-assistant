@@ -1,0 +1,1 @@
+{"model": "litert-community/gemma-4-E2B-it-litert-lm", "messages": [{"role": "user", "content": [{"type": "text", "text": "Describe what you see in this image in one sentence."}, {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEUlEQVR4nGNgYPiPF41KY0EA8INjnagJNDwAAAAASUVORK5CYII="}}]}], "max_tokens": 100}

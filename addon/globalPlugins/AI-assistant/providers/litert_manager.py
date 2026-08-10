@@ -37,9 +37,6 @@ from .model_manager import (
 from .runtime.model_download import ModelDownloadService
 from .runtime.server import LiteRTServerError, get_litert_supervisor
 
-#: Repo ID of the default model, enabled automatically on first run.
-_DEFAULT_MODEL_ID = "litert-community/gemma-4-E2B-it-litert-lm"
-
 _TEXT_CAPABILITIES = ("completion", "chat", "streaming", "text_input", "text_output")
 
 
@@ -106,16 +103,6 @@ class LiteRTModelManager(ModelManagerProvider):
 		for m in models:
 			known_filenames.update(m.all_filenames)
 
-		# Ensure the default model is enabled on first run so it is
-		# immediately usable from the model manager.
-		from ..ui.enabled_models import EnabledModelsStore
-
-		enabled_store = EnabledModelsStore()
-		if not enabled_store.get_enabled("litert-lm"):
-			default = lookup_model(_DEFAULT_MODEL_ID)
-			if default is not None:
-				enabled_store.set_enabled("litert-lm", default.model_id, True)
-
 		think = bool(self._config.think if self._config is not None else None) or get_litert_think()
 
 		result: list[ManagedModel] = []
@@ -143,6 +130,8 @@ class LiteRTModelManager(ModelManagerProvider):
 							priority=model.priority,
 							size_hint=variant.size_hint_human or model.size_hint_human,
 							capabilities=caps,
+							description=model.description,
+							canonical_id=model.model_id,
 						)
 					)
 			else:
@@ -158,6 +147,7 @@ class LiteRTModelManager(ModelManagerProvider):
 						priority=model.priority,
 						size_hint=model.size_hint_human,
 						capabilities=caps,
+						description=model.description,
 					)
 				)
 
@@ -361,3 +351,12 @@ class LiteRTModelManager(ModelManagerProvider):
 						available.append(canonical_id)
 
 		return available
+
+	def resolve_model_identity(self, model_id: str) -> str:
+		"""Resolve *model_id* to its canonical HuggingFace repo ID.
+
+		Variant filenames and loose canonical IDs are all normalised
+		through ``resolve_identity`` so the persisted model name is
+		always the authoritative repo identifier.
+		"""
+		return resolve_identity(model_id)

@@ -53,6 +53,8 @@ class ManagedModel:
 	priority: int = 100  # lower → more recommended (10 = default model)
 	size_hint: str = ""
 	capabilities: tuple[str, ...] = field(default_factory=tuple)
+	description: str = ""  # plain-text description for the details panel
+	canonical_id: str = ""  # owning model's canonical ID (set for variant entries)
 
 
 @dataclass(frozen=True)
@@ -120,6 +122,15 @@ class ModelManagerProvider(Protocol):
 		This is the **single source of truth** for "what models appear
 		in the WebView dropdown and settings combo" — callers must not
 		re-implement readiness checks.
+		"""
+		...
+
+	def resolve_model_identity(self, model_id: str) -> str:
+		"""Normalise *model_id* to its canonical provider identity.
+
+		For local providers with variant filenames, this resolves a
+		variant filename back to the canonical model ID (e.g. Hugging
+		Face repo ID).  Cloud providers return *model_id* unchanged.
 		"""
 		...
 
@@ -211,3 +222,7 @@ class CloudModelManagerAdapter:
 	def get_available_model_ids(self) -> list[str]:
 		"""Return all listed model IDs (cloud models are always READY)."""
 		return [m.id for m in self.list_managed_models()]
+
+	def resolve_model_identity(self, model_id: str) -> str:
+		"""Cloud providers use model IDs as-is — no variant resolution."""
+		return model_id

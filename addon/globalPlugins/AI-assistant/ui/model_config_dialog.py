@@ -28,6 +28,9 @@ from typing import cast
 
 import wx
 from gui import guiHelper
+from gui.guiHelper import (
+	LabeledControlHelper,
+)
 from logHandler import log
 
 from ..config.model_config import (
@@ -82,7 +85,8 @@ class ModelConfigureDialog(wx.Dialog):
 		self._model_id = model_id
 		self._display_name = display_name
 		self._base = _base_sampling(provider_id)
-		self._controls: dict[str, wx.TextCtrl] = {}
+		#: Per-field LabeledControlHelper keyed by spec.id.
+		self._lch: dict[str, LabeledControlHelper] = {}
 		self._use_default_cbs: dict[str, wx.CheckBox] = {}
 
 		self._build_ui()
@@ -108,33 +112,39 @@ class ModelConfigureDialog(wx.Dialog):
 		override_hint = wx.StaticText(
 			self,
 			label=_(
-				"Check “Use default” to follow the provider's global "
+				'Check "Use default" to follow the provider\'s global '
 				"setting for that parameter instead of overriding it here."
 			),
 		)
 		s_helper.addItem(override_hint)
 
 		for spec in MODEL_CONFIG_FIELDS:
-			label = wx.StaticText(self, label=spec.label)
-			s_helper.addItem(label)
-			row_sizer = wx.BoxSizer(wx.HORIZONTAL)
+			# Use NVDA's LabeledControlHelper so the label and text
+			# control are properly associated for screen readers and
+			# the label's enabled/disabled state tracks the control.
+			lch = LabeledControlHelper(self, spec.label, wx.TextCtrl)
+			# TRANSLATORS: Accessible name suffix for model config text fields.
+			lch.control.SetName(_("{} value").format(spec.label.rstrip(":")))
+
 			# TRANSLATORS: Checkbox that makes a sampling parameter follow the provider's global setting.
-			use_default_cb = wx.CheckBox(self, label=_("Use default"))
+			use_default_cb = wx.CheckBox(
+				self,
+				label=_("Use default"),
+				name=_("Use default for {}").format(spec.label.rstrip(":")),
+			)
 			use_default_cb.Bind(
 				wx.EVT_CHECKBOX,
 				lambda event, field_id=spec.id: self._on_toggle_use_default(field_id),
 			)
-			ctrl = wx.TextCtrl(self)
-			row_sizer.Add(
-				use_default_cb,
-				flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
-				border=8,
-			)
-			row_sizer.Add(ctrl, proportion=1, flag=wx.ALIGN_CENTER_VERTICAL)
+
+			# Row: [Label: TextCtrl]  [Use default checkbox]
+			row_sizer = wx.BoxSizer(wx.HORIZONTAL)
+			row_sizer.Add(lch.sizer, proportion=1, flag=wx.ALIGN_CENTER_VERTICAL)
+			row_sizer.Add(use_default_cb, flag=wx.ALIGN_CENTER_VERTICAL | wx.LEFT, border=12)
 			s_helper.addItem(row_sizer, flag=wx.EXPAND)
+
 			self._use_default_cbs[spec.id] = use_default_cb
-			self._controls[spec.id] = ctrl
-			s_helper.sizer.AddSpacer(4)
+			self._lch[spec.id] = lch
 
 		# TRANSLATORS: Note shown in the model Configure dialog explaining the pinned-only fields.
 		hint_label = wx.StaticText(
@@ -161,6 +171,12 @@ class ModelConfigureDialog(wx.Dialog):
 		main_sizer.Fit(self)
 		self.SetMinSize(self.scaleSize((500, -1)))
 
+		# Set initial focus on the first editable field.
+		if MODEL_CONFIG_FIELDS:
+			first = self._lch.get(MODEL_CONFIG_FIELDS[0].id)
+			if first is not None and first.control.IsEnabled():
+				first.control.SetFocus()
+
 	def scaleSize(self, size: tuple[int, int]) -> wx.Size:
 		return wx.Size(*size)
 
@@ -170,15 +186,18 @@ class ModelConfigureDialog(wx.Dialog):
 		Pinned parameters show their value with the "Use default" box
 		unchecked and the box editable.  Unpinned parameters show the
 		fallback value with the box checked and the box disabled.
+		The LabeledControlHelper syncs the label enabled/disabled state
+		automatically when the control is enabled/disabled.
 		"""
 		explicit = get_model_sampling(self._provider_id, self._model_id)
 		for spec in MODEL_CONFIG_FIELDS:
-			ctrl = self._controls.get(spec.id)
+			lch = self._lch.get(spec.id)
 			use_default_cb = self._use_default_cbs.get(spec.id)
-			if ctrl is None or use_default_cb is None:
+			if lch is None or use_default_cb is None:
 				continue
 			pinned = getattr(explicit, spec.id) is not None
 			use_default_cb.Value = not pinned
+			ctrl = lch.control
 			if pinned:
 				ctrl.Enable()
 				ctrl.SetValue(
@@ -206,14 +225,20 @@ class ModelConfigureDialog(wx.Dialog):
 				)
 
 	def _on_toggle_use_default(self, field_id: str) -> None:
-		"""Enable/disable the value box when the "Use default" box toggles."""
-		ctrl = self._controls.get(field_id)
+		"""Enable/disable the value box when the "Use default" box toggles.
+
+		The LabeledControlHelper automatically syncs the label's enabled
+		state with the control, so the label greys out when the field is
+		disabled.
+		"""
+		lch = self._lch.get(field_id)
 		use_default_cb = self._use_default_cbs.get(field_id)
-		if ctrl is None or use_default_cb is None:
+		if lch is None or use_default_cb is None:
 			return
 		spec = MODEL_FIELD_BY_ID.get(field_id)
 		if spec is None:
 			return
+		ctrl = lch.control
 		if use_default_cb.Value:
 			ctrl.Disable()
 			ctrl.SetValue(
@@ -241,10 +266,10 @@ class ModelConfigureDialog(wx.Dialog):
 	# ------------------------------------------------------------------
 
 	def _read_spec_value(self, spec: ModelFieldSpec) -> int | float | None:
-		ctrl = self._controls.get(spec.id)
-		if ctrl is None:
+		lch = self._lch.get(spec.id)
+		if lch is None:
 			return None
-		raw = ctrl.GetValue().strip()
+		raw = lch.control.GetValue().strip()
 		if not raw:
 			return None
 		try:

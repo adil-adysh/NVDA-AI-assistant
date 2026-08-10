@@ -26,13 +26,9 @@ from typing import Any
 
 from logHandler import log
 
-from ..interfaces import ProgressCallback
+from ..interfaces import DownloadCancelledError, ProgressCallback
 from .config import RuntimeConfig
 from .paths import get_runtime_path
-
-
-class DownloadCancelledError(Exception):
-	"""Raised when a download is cancelled by the user."""
 
 
 class RuntimeDownloadError(RuntimeError):

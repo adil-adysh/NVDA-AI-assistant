@@ -14,7 +14,7 @@ from gui import guiHelper
 from logHandler import log
 
 from ..config import defaults
-from ..providers.runtime.download import DownloadCancelledError
+from ..providers.interfaces import DownloadCancelledError
 
 _ = cast(Callable[[str], str], getattr(builtins, "_", lambda s: s))
 

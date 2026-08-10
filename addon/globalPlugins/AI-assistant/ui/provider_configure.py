@@ -30,6 +30,7 @@ from ..providers.registry import (
 	ConfigureFieldSpec,
 	configure_dialog_title,
 	get_configure_fields,
+	get_provider_capabilities,
 	is_installable,
 	is_runtime_installed,
 	provider_display_name,
@@ -58,9 +59,6 @@ def build_configure_dialog(
 
 class ProviderConfigureDialog(wx.Dialog):
 	"""Generic provider configuration dialog driven by field specs."""
-
-	#: Providers whose runtime supports think/reasoning mode.
-	_THINKABLE_PROVIDERS = frozenset({"ollama", "litert-lm"})
 
 	def __init__(
 		self,
@@ -103,7 +101,8 @@ class ProviderConfigureDialog(wx.Dialog):
 			self._add_field_row(s_helper, spec)
 			s_helper.sizer.AddSpacer(4)
 
-		if self._provider_id in self._THINKABLE_PROVIDERS:
+		caps = get_provider_capabilities(self._provider_id)
+		if caps.think_config_key:
 			# TRANSLATORS: Checkbox that enables think/reasoning mode for a provider runtime.
 			self._think_cb = wx.CheckBox(
 				self,

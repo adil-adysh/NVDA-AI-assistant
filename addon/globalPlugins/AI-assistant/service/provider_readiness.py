@@ -25,18 +25,14 @@ class ProviderReadinessReason(str, Enum):
 
 
 def get_provider_display_name(provider: str) -> str:
-	normalized = str(provider or "").strip().lower()
-	# TRANSLATORS: Display name for the OpenAI provider shown in status messages.
-	if normalized == "openai":
-		return "OpenAI"
-	# TRANSLATORS: Display name for the Gemini provider shown in status messages.
-	if normalized == "gemini":
-		return "Gemini"
-	# TRANSLATORS: Display name for the LiteRT-LM provider shown in status messages.
-	if normalized == "litert-lm":
-		return "LiteRT-LM"
-	# TRANSLATORS: Display name for the Ollama provider shown in status messages.
-	return "Ollama"
+	"""Return the human-readable name for *provider*.
+
+	Delegates to ``providers.registry.provider_display_name`` so the
+	service layer does not duplicate the provider-name lookup.
+	"""
+	from ..providers.registry import provider_display_name as _display
+
+	return _display(provider)
 
 
 def is_gemini_generate_content_incompatible_model_name(model_name: str) -> bool:
@@ -79,7 +75,9 @@ class ProviderReadinessService:
 		api_key = str(getattr(config, "api_key", "") or "").strip()
 
 		if not model_name:
-			can_list = provider in {"litert-lm", "ollama", "openai", "gemini"}
+			from ..providers.registry import PROVIDER_IDS
+
+			can_list = provider in PROVIDER_IDS
 			return ProviderReadiness(
 				provider=config.provider,
 				state=ProviderReadinessState.UNCONFIGURED,

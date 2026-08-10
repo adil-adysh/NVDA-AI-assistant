@@ -43,10 +43,10 @@ from ..config.settings import (
 	set_streaming_enabled,
 	set_streaming_tone_enabled,
 )
-from ..providers.litert_models import recommended_models
 from ..providers.registry import (
 	PROVIDER_IDS,
 	ProviderLifecycleState,
+	build_model_manager,
 	get_provider_capabilities,
 	get_provider_info,
 	provider_display_name,
@@ -369,7 +369,11 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		choices: list[str] = []
 		caps = get_provider_capabilities(provider_id)
 		if caps.has_install_step:
-			choices.extend(m.model_id for m in recommended_models())
+			try:
+				mgr = build_model_manager(provider_id)
+				choices.extend(m.id for m in mgr.list_managed_models())
+			except Exception:
+				pass
 		try:
 			# Broad catch is deliberate: the enabled-models store must never
 			# break the settings page.
@@ -554,8 +558,11 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		# server registry.
 		caps = get_provider_capabilities(provider)
 		if caps.has_install_step:
-			from ..providers.litert_models import resolve_identity
-			model_name = resolve_identity(model_name)
+			try:
+				mgr = build_model_manager(provider)
+				model_name = mgr.resolve_model_identity(model_name)
+			except Exception:
+				pass
 		set_model_name(model_name)
 		set_num_ctx(numCtx)
 		set_generate_temperature(temperature)

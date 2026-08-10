@@ -345,10 +345,23 @@ class UseCasePresenter:
 		self._model_cache.refresh_async(provider_state)
 
 	def _on_models_cached(self, _provider: str, models: tuple[str, ...]) -> None:
+		# Guard against TOCTOU: the provider may have changed between
+		# the ModelCache stale-check and this callback.  If it did,
+		# discard the stale result — a new refresh will have been
+		# queued for the current provider.
+		current_state = get_provider_state()
+		if current_state.provider != _provider:
+			log.debug(
+				"Discarding stale model cache callback for %s; active provider is %s",
+				_provider,
+				current_state.provider,
+			)
+			return
+
 		ui_adapter.sync_session_state(
 			build_session_state(
 				_,
-				get_provider_state(),
+				current_state,
 				conversation_id=self._conversation_service.current_conversation_id(),
 				available_models=models,
 				conversation_summaries=self._build_conversation_summaries(),
