@@ -41,6 +41,7 @@ class ModelCache:
 
 	def _refresh(self, provider_state: ProviderState) -> None:
 		from ..config.settings import get_provider_state
+		from ..providers.registry import build_model_manager
 
 		current = get_provider_state()
 		if current.provider != provider_state.provider:
@@ -52,11 +53,8 @@ class ModelCache:
 			return
 
 		try:
-			models = tuple(
-				model.id
-				for model in self._provider_catalog.list_active_models()
-				if isinstance(model.id, str) and model.id.strip()
-			)
+			mgr = build_model_manager(provider_state.provider)
+			models = tuple(mgr.get_available_model_ids())
 		except Exception:
 			log.exception("Error refreshing provider models for %s", provider_state.provider)
 			return

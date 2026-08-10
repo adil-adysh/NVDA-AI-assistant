@@ -6,9 +6,8 @@ from dataclasses import dataclass
 
 from ..config.state import ProviderState
 from ..config.settings import (
-	get_litert_think,
-	get_ollama_think,
 	get_provider_state,
+	get_think,
 )
 from ..service.provider_readiness import (
 	ProviderReadiness,
@@ -66,9 +65,7 @@ _READINESS_SERVICE = ProviderReadinessService()
 
 def _resolve_think_enabled(provider: str) -> bool:
 	"""Return the think-mode setting for the active provider."""
-	if provider == "litert-lm":
-		return get_litert_think()
-	return get_ollama_think()
+	return get_think(provider)
 
 
 # TRANSLATORS: Strings sent from the Python add-on to the WebView UI.
@@ -341,9 +338,9 @@ def _filter_available_models(
 ) -> tuple[str, ...]:
 	"""Only show models that the user has enabled in the model manager.
 
-	For ``litert-lm`` additionally requires the model file to be on disk
-	(``state.is_ready()``).  For cloud providers the check is purely
-	against the enabled-IDs store — they are always "ready".
+	Model readiness (downloaded / imported) is already handled by
+	:meth:`ModelManagerProvider.get_available_model_ids` — this
+	function only applies the user's enable/disable preferences.
 	"""
 	from .enabled_models import EnabledModelsStore
 
@@ -352,37 +349,4 @@ def _filter_available_models(
 	if not enabled_ids:
 		return available_models  # First run — nothing disabled yet
 
-	if provider == "litert-lm":
-		from ..providers.litert_models import ALL_MODELS
-		from ..providers.runtime.model_download import ModelDownloadService
-		from ..providers.runtime.server import get_litert_supervisor
-
-		# available_models uses model_id (e.g. "litert-community/gemma-4-E2B-it-litert-lm")
-		# but enabled_ids and download check use model.filename.
-		known_map = {m.model_id: m for m in ALL_MODELS}
-		svc = ModelDownloadService()
-		supervisor = get_litert_supervisor()
-
-		filtered: list[str] = []
-		for model_str in available_models:
-			known = known_map.get(model_str)
-			if known is not None:
-				# Known catalog model — check enabled, then check if the
-				# file is still in the download cache OR already imported
-				# into the litert-lm catalog (the source is deleted after import).
-				if known.filename not in enabled_ids:
-					continue
-				if svc.is_downloaded(known.filename):
-					filtered.append(model_str)
-					continue
-				catalog_dir = supervisor.catalog_model_dir(model_str)
-				catalog_file = catalog_dir / "model.litertlm" if catalog_dir is not None else None
-				if catalog_file is not None and catalog_file.is_file():
-					filtered.append(model_str)
-			else:
-				# Not a known catalog model (e.g. custom .litertlm file)
-				filtered.append(model_str)
-		return tuple(filtered)
-
-	# Cloud providers: exact match against enabled IDs
 	return tuple(m for m in available_models if m in enabled_ids)

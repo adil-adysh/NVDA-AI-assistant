@@ -8,7 +8,7 @@ and loading local runtime backends (e.g., litert-lm, llama.cpp, ONNX Runtime).
 from __future__ import annotations
 
 from .config import DefaultRuntimeConfig, RuntimeConfig, RuntimeType
-from .download import RuntimeDownloadError, RuntimeDownloadService
+from .download import DownloadCancelledError, RuntimeDownloadError, RuntimeDownloadService
 from .loader import RuntimeImportError, RuntimeLoader, RuntimeLoadError
 from .manager import RuntimeManager, RuntimeManagerError
 from .model_download import ModelDownloadError, ModelDownloadService
@@ -17,6 +17,7 @@ from .server import LiteRTServerError, LiteRTServerSupervisor, get_litert_superv
 
 __all__ = [
     "DefaultRuntimeConfig",
+    "DownloadCancelledError",
     "LiteRTServerError",
     "LiteRTServerSupervisor",
     "ModelDownloadError",

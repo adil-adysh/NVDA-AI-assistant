@@ -47,6 +47,7 @@ from ..providers.litert_models import recommended_models
 from ..providers.registry import (
 	PROVIDER_IDS,
 	ProviderLifecycleState,
+	get_provider_capabilities,
 	get_provider_info,
 	provider_display_name,
 	provider_state_label,
@@ -360,13 +361,14 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 	def _model_choices_for(self, provider_id: str) -> list[str]:
 		"""Return non-blocking model choices for the Active Model combo.
 
-		Never performs network calls on the NVDA main thread: LiteRT-LM
-		models come from the local catalog, and other providers offer
-		the models previously enabled in their model manager plus the
-		stored active model.
+		Never performs network calls on the NVDA main thread: local
+		installable providers show the full static catalog, and other
+		providers offer the models previously enabled in their model
+		manager plus the stored active model.
 		"""
 		choices: list[str] = []
-		if provider_id == "litert-lm":
+		caps = get_provider_capabilities(provider_id)
+		if caps.has_install_step:
 			choices.extend(m.model_id for m in recommended_models())
 		try:
 			# Broad catch is deliberate: the enabled-models store must never
@@ -547,9 +549,11 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 
 		# ── All validation passed; persist everything ──
 		set_provider(provider)
-		# Normalise LiteRT model identities to canonical HuggingFace IDs
-		# so the stored setting always matches the server registry.
-		if provider == "litert-lm":
+		# Normalise local installable provider model identities to
+		# canonical IDs so the stored setting always matches the
+		# server registry.
+		caps = get_provider_capabilities(provider)
+		if caps.has_install_step:
 			from ..providers.litert_models import resolve_identity
 			model_name = resolve_identity(model_name)
 		set_model_name(model_name)

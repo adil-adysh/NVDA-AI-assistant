@@ -25,6 +25,7 @@ The name ``ProviderLifecycleState`` deliberately avoids colliding with
 from __future__ import annotations
 
 import builtins
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -185,18 +186,84 @@ _CONFIGURE_FIELDS: dict[str, tuple[ConfigureFieldSpec, ...]] = {
 def _install_litert(
 	on_progress: Callable[[str], None],
 	on_bytes_progress: Callable[[int, int], None],
+	cancel_event: threading.Event | None = None,
 ) -> None:
 	from .runtime.server import get_litert_supervisor
 
 	get_litert_supervisor().install(
 		on_progress=on_progress,
 		on_bytes_progress=on_bytes_progress,
+		cancel_event=cancel_event,
 	)
 
 
 _INSTALLERS: dict[str, Callable[..., None]] = {
 	"litert-lm": _install_litert,
 }
+
+
+# ---------------------------------------------------------------------------
+# Provider capabilities — data-driven replacement for if/elif chains
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ProviderCapabilities:
+	"""Data-driven provider differences — replaces scattered if/elif chains.
+
+	Each field answers one question that was previously answered by
+	branching on provider ID.  New providers add a row here instead of
+	touching ``_has_provider_config``, ``derive_provider_state``,
+	``set_think_mode``, or ``_resolve_think_enabled``.
+	"""
+
+	#: Credential field groups that must be present for CONFIGURED
+	#: state.  Each inner tuple is an "any of" group — at least one
+	#: field in the group must have a non-empty value.  Empty tuple
+	#: means no credentials are required.
+	credential_groups: tuple[tuple[str, ...], ...] = ()
+
+	#: Settings key for the think-mode toggle.  Empty string when the
+	#: provider does not support think mode.
+	think_config_key: str = ""
+
+	#: Whether this provider has an application-managed install step.
+	has_install_step: bool = False
+
+
+def _litert_install_check() -> bool:
+	"""Return ``True`` when the LiteRT-LM runtime is installed on disk."""
+	from .runtime.server import get_litert_supervisor
+
+	return get_litert_supervisor().is_installed
+
+
+#: Provider capabilities keyed by canonical provider ID.
+_PROVIDER_CAPABILITIES: dict[str, ProviderCapabilities] = {
+	"ollama": ProviderCapabilities(
+		think_config_key="ollamaThink",
+	),
+	"gemini": ProviderCapabilities(
+		credential_groups=(("api_key", "api_token"),),
+		think_config_key="ollamaThink",
+	),
+	"openai": ProviderCapabilities(
+		credential_groups=(("api_key",),),
+	),
+	"litert-lm": ProviderCapabilities(
+		think_config_key="litertThink",
+		has_install_step=True,
+	),
+}
+
+
+def get_provider_capabilities(provider_id: str) -> ProviderCapabilities:
+	"""Return the :class:`ProviderCapabilities` for *provider_id*.
+
+	Unknown providers return a default (empty) capabilities instance.
+	"""
+	normalized = str(provider_id or "").strip().lower()
+	return _PROVIDER_CAPABILITIES.get(normalized, ProviderCapabilities())
 
 
 # ---------------------------------------------------------------------------
@@ -256,28 +323,27 @@ def _has_provider_config(provider_id: str) -> bool:
 	base_url = str(getattr(config, "base_url", "") or "").strip()
 	if not model_name:
 		return False
-	if provider_id in ("gemini", "openai"):
-		api_key = str(getattr(config, "api_key", "") or "").strip()
-		api_token = str(getattr(config, "api_token", "") or "").strip()
-		return bool(base_url) and bool(api_key or api_token)
+	caps = get_provider_capabilities(provider_id)
+	for group in caps.credential_groups:
+		if not any(
+			str(getattr(config, field, "") or "").strip()
+			for field in group
+		):
+			return False
 	return bool(base_url)
 
 
 def derive_provider_state(provider_id: str) -> ProviderLifecycleState:
 	"""Derive the lifecycle state for *provider_id* from actual state."""
 	normalized = str(provider_id or "").strip().lower()
+	caps = get_provider_capabilities(normalized)
 
-	if normalized == "litert-lm":
-		from .runtime.server import get_litert_supervisor
-
-		if not get_litert_supervisor().is_installed:
-			return ProviderLifecycleState.NOT_INSTALLED
-		if _has_provider_config(normalized):
-			return ProviderLifecycleState.CONFIGURED
-		return ProviderLifecycleState.INSTALLED
-
+	if caps.has_install_step and not _litert_install_check():
+		return ProviderLifecycleState.NOT_INSTALLED
 	if _has_provider_config(normalized):
 		return ProviderLifecycleState.CONFIGURED
+	if caps.has_install_step:
+		return ProviderLifecycleState.INSTALLED
 	return ProviderLifecycleState.AVAILABLE
 
 
@@ -398,18 +464,22 @@ def install_provider(
 	provider_id: str,
 	on_progress: Callable[[str], None],
 	on_bytes_progress: Callable[[int, int], None],
+	cancel_event: threading.Event | None = None,
 ) -> None:
 	"""Run the installation routine for *provider_id* (blocking).
 
 	Runs in a background thread — callers must dispatch UI updates via
 	``wx.CallAfter`` or equivalent.  Raises if the provider has no
 	install hook.
+
+	*cancel_event* (optional) allows the caller to request cancellation;
+	partial downloads are preserved for future resume.
 	"""
 	normalized = str(provider_id or "").strip().lower()
 	installer = _INSTALLERS.get(normalized)
 	if installer is None:
 		raise ValueError(f"Provider '{normalized}' is not installable")
-	installer(on_progress, on_bytes_progress)
+	installer(on_progress, on_bytes_progress, cancel_event=cancel_event)
 
 
 # ---------------------------------------------------------------------------

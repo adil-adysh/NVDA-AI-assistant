@@ -15,6 +15,8 @@ owns the model catalog and the on-disk cache.
 
 from __future__ import annotations
 
+import threading
+
 from logHandler import log
 
 from ..config.settings import (
@@ -182,6 +184,7 @@ class LiteRTModelManager(ModelManagerProvider):
 		self,
 		model_id: str,
 		on_progress: DownloadProgressCallback,
+		cancel_event: threading.Event | None = None,
 	) -> None:
 		"""Download *model_id* to the local cache.
 
@@ -191,6 +194,9 @@ class LiteRTModelManager(ModelManagerProvider):
 		When *model_id* resolves to a model with variants, only the
 		matching variant file is downloaded.  When it resolves to a
 		model without variants, the primary file is downloaded.
+
+		*cancel_event* (optional) allows the caller to request
+		cancellation; the partial file is preserved for future resume.
 
 		Runs in a **background thread** — the caller must dispatch UI
 		updates via ``wx.CallAfter`` or equivalent.
@@ -231,6 +237,7 @@ class LiteRTModelManager(ModelManagerProvider):
 			url=download_url(model, download_filename),
 			on_progress=None,
 			on_bytes_progress=_on_bytes,
+			cancel_event=cancel_event,
 		)
 
 	def delete_model(self, model_id: str) -> None:
@@ -302,3 +309,55 @@ class LiteRTModelManager(ModelManagerProvider):
 			raise LLMProviderError(
 				f"Failed to import variant {download_filename}: {exc}"
 			) from exc
+
+	def get_available_model_ids(self) -> list[str]:
+		"""Return canonical model IDs that are downloaded or imported.
+
+		Only models with at least one variant file on disk (or already
+		imported into the runtime catalog) are returned.  This is the
+		single source of truth for the WebView model dropdown — callers
+		must not re-implement readiness checks.
+		"""
+		models = recommended_models()
+		svc = self._download_service or ModelDownloadService()
+		supervisor = get_litert_supervisor()
+
+		available: list[str] = []
+
+		for model in models:
+			# Check download cache for any variant.
+			any_downloaded = False
+			if model.has_variants:
+				for v in model.variants:
+					if svc.is_downloaded(v.filename):
+						any_downloaded = True
+						break
+			elif svc.is_downloaded(model.filename):
+				any_downloaded = True
+
+			# Check runtime catalog (model may have been imported,
+			# after which the source file is deleted).
+			if not any_downloaded:
+				catalog_dir = supervisor.catalog_model_dir(model.model_id)
+				catalog_file = (
+					catalog_dir / "model.litertlm"
+					if catalog_dir is not None
+					else None
+				)
+				if catalog_file is not None and catalog_file.is_file():
+					any_downloaded = True
+
+			if any_downloaded:
+				available.append(model.model_id)
+
+		# Surface locally cached files not in the catalog (e.g.
+		# custom .litertlm files copied in manually).
+		if svc.cache_dir.exists():
+			for f in sorted(svc.cache_dir.iterdir()):
+				if f.suffix == ".litertlm":
+					owner = lookup_model(f.name)
+					canonical_id = owner.model_id if owner is not None else f.name
+					if canonical_id not in available:
+						available.append(canonical_id)
+
+		return available

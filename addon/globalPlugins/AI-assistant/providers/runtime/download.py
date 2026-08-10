@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 import time
 import urllib.request
 import zipfile
@@ -28,6 +29,10 @@ from logHandler import log
 from ..interfaces import ProgressCallback
 from .config import RuntimeConfig
 from .paths import get_runtime_path
+
+
+class DownloadCancelledError(Exception):
+	"""Raised when a download is cancelled by the user."""
 
 
 class RuntimeDownloadError(RuntimeError):
@@ -81,6 +86,7 @@ class RuntimeDownloadService:
 		url: str | None = None,
 		on_progress: ProgressCallback | None = None,
 		on_bytes_progress: Callable[[int, int], None] | None = None,
+		cancel_event: threading.Event | None = None,
 	) -> Path:
 		"""Download, verify, and extract a runtime bundle.
 
@@ -93,6 +99,8 @@ class RuntimeDownloadService:
 		    on_progress: Optional callback receiving status strings.
 		    on_bytes_progress: Optional callback ``(downloaded_bytes, total_bytes)``
 		        for byte-level progress during download.
+		    cancel_event: Optional ``threading.Event``; when set the download
+		        is cancelled and partial data is preserved.
 
 		Returns:
 		    Path to the extracted runtime directory.
@@ -121,7 +129,15 @@ class RuntimeDownloadService:
 				download_url,
 				Path(tmp_path),
 				on_bytes_progress=on_bytes_progress,
+				cancel_event=cancel_event,
 			)
+		except DownloadCancelledError:
+			# Clean up temp file on cancel; leave partial data alone.
+			try:
+				os.unlink(tmp_path)
+			except OSError:
+				pass
+			raise
 		except Exception as exc:
 			raise RuntimeDownloadError(
 				f"Failed to download {runtime} {version} from {download_url}: {exc}"
@@ -271,6 +287,7 @@ def _download_url_resume(
 	dest_path: Path,
 	resume_from: int = 0,
 	on_bytes_progress: Callable[[int, int], None] | None = None,
+	cancel_event: threading.Event | None = None,
 ) -> None:
 	"""Stream *url* into *dest_path* with HTTP Range resume and retry.
 
@@ -284,10 +301,18 @@ def _download_url_resume(
 
 	The *on_bytes_progress* callback receives ``(total_downloaded, total_size)``
 	where *total_downloaded* includes the already-cached bytes.
+
+	If *cancel_event* is set before or during the download,
+	:exc:`DownloadCancelledError` is raised and the partial file is
+	preserved for future resume.
 	"""
 	last_error: Exception | None = None
 
 	for attempt in range(_MAX_RETRIES + 1):
+		# Check cancellation before each retry.
+		if cancel_event and cancel_event.is_set():
+			raise DownloadCancelledError()
+
 		# On retry, re-check what's actually on disk
 		if attempt > 0:
 			resume_from = dest_path.stat().st_size if dest_path.exists() else 0
@@ -342,6 +367,9 @@ def _download_url_resume(
 
 			with open(dest_path, mode) as f:
 				while True:
+					# Check for user cancellation every chunk.
+					if cancel_event and cancel_event.is_set():
+						raise DownloadCancelledError()
 					try:
 						chunk = resp.read(_CHUNK_SIZE)
 						if not chunk:
@@ -354,6 +382,8 @@ def _download_url_resume(
 								total_downloaded,
 								total_size or total_downloaded,
 							)
+					except DownloadCancelledError:
+						raise
 					except Exception as read_err:
 						# Mid-stream failure — retry connection from last byte
 						last_error = read_err

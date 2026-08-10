@@ -480,6 +480,30 @@ def set_litert_server_url(serverUrl: str) -> None:
 	_set_value("litertServerUrl", str(serverUrl).strip().rstrip("/"), notify=True)
 
 
+def get_think(provider_id: str) -> bool:
+	"""Return the think-mode toggle for *provider_id*.
+
+	Uses :class:`ProviderCapabilities` to resolve the correct config
+	key, eliminating the need for callers to branch on provider ID.
+	"""
+	from ..providers.registry import get_provider_capabilities  # pylint: disable=import-outside-toplevel
+
+	caps = get_provider_capabilities(provider_id)
+	if not caps.think_config_key:
+		return False
+	return _read_bool(caps.think_config_key, False)
+
+
+def set_think(provider_id: str, enabled: bool) -> None:
+	"""Persist the think-mode toggle for *provider_id*."""
+	from ..providers.registry import get_provider_capabilities  # pylint: disable=import-outside-toplevel
+
+	caps = get_provider_capabilities(provider_id)
+	if not caps.think_config_key:
+		return
+	_set_value(caps.think_config_key, bool(enabled), notify=True)
+
+
 # ---------------------------------------------------------------------------
 # Unified config setter
 # ---------------------------------------------------------------------------

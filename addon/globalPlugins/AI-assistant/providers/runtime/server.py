@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .config import RuntimeConfig
-from .download import RuntimeDownloadService
+from .download import DownloadCancelledError, RuntimeDownloadService
 from .paths import get_runtime_path
 from ..interfaces import LLMProviderError
 
@@ -207,6 +207,7 @@ class LiteRTServerSupervisor:
 		self,
 		on_progress: Callable[[str], None] | None = None,
 		on_bytes_progress: Callable[[int, int], None] | None = None,
+		cancel_event: threading.Event | None = None,
 	) -> Path:
 		"""Download and extract the self-contained litert-lm runtime.
 
@@ -217,6 +218,8 @@ class LiteRTServerSupervisor:
 		    on_progress: Optional callback receiving status strings.
 		    on_bytes_progress: Optional callback ``(downloaded_bytes, total_bytes)``
 		        for byte-level progress during download.
+		    cancel_event: Optional ``threading.Event``; when set the download
+		        is cancelled and partial data is preserved.
 
 		Returns the path to the runtime directory.
 
@@ -239,7 +242,10 @@ class LiteRTServerSupervisor:
 				platform="windows-x64",
 				on_progress=on_progress,
 				on_bytes_progress=on_bytes_progress,
+				cancel_event=cancel_event,
 			)
+		except DownloadCancelledError:
+			raise
 		except Exception as exc:
 			raise LiteRTServerError(f"Failed to download LiteRT-LM runtime {self._version}: {exc}") from exc
 

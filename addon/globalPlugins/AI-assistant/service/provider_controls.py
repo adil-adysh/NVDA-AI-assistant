@@ -8,10 +8,9 @@ from ..config.settings import (
 	get_provider,
 	get_provider_state,
 	save,
-	set_litert_think,
 	set_model_name,
-	set_ollama_think,
 	set_provider,
+	set_think,
 )
 from ..config.state import ProviderState
 from ..providers.registry import PROVIDER_IDS
@@ -70,10 +69,7 @@ class ProviderControlService:
 
 	def set_think_mode(self, enabled: bool) -> ProviderControlResult:
 		provider = get_provider()
-		if provider == "litert-lm":
-			set_litert_think(enabled)
-		else:
-			set_ollama_think(enabled)
+		set_think(provider, enabled)
 		save()
 		return self.current_state()
 

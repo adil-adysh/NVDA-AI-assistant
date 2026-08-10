@@ -370,6 +370,7 @@ class ProviderManagementDialog(wx.Dialog):
 				provider_id,
 				on_progress=progress,
 				on_bytes_progress=bytes_progress,
+				cancel_event=dlg.cancel_event,
 			)
 			# TRANSLATORS: Success message after installing a provider runtime; {name} is the provider name.
 			dlg.signal_complete(

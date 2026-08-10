@@ -393,7 +393,11 @@ class ModelManagerDialog(wx.Dialog):
 				if downloaded is not None and total is not None:
 					dlg.update_progress(downloaded, total)
 
-			self._provider.download_model(model_id, on_progress=progress)
+			self._provider.download_model(
+				model_id,
+				on_progress=progress,
+				cancel_event=dlg.cancel_event,
+			)
 			dlg.signal_complete(
 				True,
 				# TRANSLATORS: Success message after model download.

@@ -8,6 +8,7 @@ types consumed by the model manager dialog.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -86,11 +87,15 @@ class ModelManagerProvider(Protocol):
 		self,
 		model_id: str,
 		on_progress: DownloadProgressCallback,
+		cancel_event: threading.Event | None = None,
 	) -> None:
 		"""Download *model_id* to the local cache.
 
 		*on_progress* is called with ``(message, downloaded_bytes, total_bytes)``
 		where the byte values may be ``None`` when the total size is unknown.
+
+		*cancel_event* (optional) allows the caller to request cancellation;
+		the partial file is preserved for future resume.
 
 		Runs in a **background thread** — callers must dispatch UI
 		updates via ``wx.CallAfter`` or equivalent.
@@ -103,6 +108,19 @@ class ModelManagerProvider(Protocol):
 
 	def set_active_model(self, model_id: str) -> None:
 		"""Persist *model_id* as the active model for this provider."""
+		...
+
+	def get_available_model_ids(self) -> list[str]:
+		"""Return model IDs that are ready for use in the UI dropdown.
+
+		Cloud providers return all listed model IDs (always READY).
+		Local providers return only models whose files are on disk
+		or have been imported into the runtime catalog.
+
+		This is the **single source of truth** for "what models appear
+		in the WebView dropdown and settings combo" — callers must not
+		re-implement readiness checks.
+		"""
 		...
 
 
@@ -180,6 +198,7 @@ class CloudModelManagerAdapter:
 		self,
 		model_id: str,
 		on_progress: DownloadProgressCallback,
+		cancel_event: threading.Event | None = None,
 	) -> None:
 		raise NotImplementedError("Cloud providers do not support model download")
 
@@ -188,3 +207,7 @@ class CloudModelManagerAdapter:
 
 	def set_active_model(self, model_id: str) -> None:
 		self._set_model_fn(model_id)
+
+	def get_available_model_ids(self) -> list[str]:
+		"""Return all listed model IDs (cloud models are always READY)."""
+		return [m.id for m in self.list_managed_models()]

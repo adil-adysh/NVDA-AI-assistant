@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
 from logHandler import log
 
 from ..interfaces import ProgressCallback
-from .download import _download_url_resume
+from .download import DownloadCancelledError, _download_url_resume
 
 
 class ModelDownloadError(RuntimeError):
@@ -59,6 +60,7 @@ class ModelDownloadService:
 		expected_sha256: str | None = None,
 		on_progress: ProgressCallback | None = None,
 		on_bytes_progress: Callable[[int, int], None] | None = None,
+		cancel_event: threading.Event | None = None,
 	) -> Path:
 		"""Download a model file to the cache directory, with resume support.
 
@@ -74,6 +76,8 @@ class ModelDownloadService:
 		    on_progress: Optional progress callback receiving text messages.
 		    on_bytes_progress: Optional callback ``(downloaded_bytes, total_bytes)``
 		        — during a resume *downloaded_bytes* includes already-cached bytes.
+		    cancel_event: Optional ``threading.Event``; when set the download is
+		        cancelled and the partial ``.part`` file is preserved.
 
 		Returns:
 		    Path to the downloaded and verified model file.
@@ -109,7 +113,11 @@ class ModelDownloadService:
 				)
 				if on_bytes_progress
 				else None,
+				cancel_event=cancel_event,
 			)
+		except DownloadCancelledError:
+			# Leave .part in place for future resume attempts.
+			raise
 		except Exception as exc:
 			# Leave .part in place for future resume attempts
 			raise ModelDownloadError(f"Failed to download {model_name} from {url}: {exc}") from exc

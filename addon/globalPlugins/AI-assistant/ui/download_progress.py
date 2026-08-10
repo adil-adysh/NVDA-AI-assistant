@@ -10,9 +10,11 @@ from collections.abc import Callable
 from typing import Any, Optional, cast
 
 import wx
+from gui import guiHelper
 from logHandler import log
 
 from ..config import defaults
+from ..providers.runtime.download import DownloadCancelledError
 
 _ = cast(Callable[[str], str], getattr(builtins, "_", lambda s: s))
 
@@ -60,6 +62,7 @@ class DownloadProgressDialog(wx.Dialog):
 
 	Blocks all interaction with the parent window, shows a progress
 	label and gauge, and auto-closes when the download thread finishes.
+	The user can cancel the download via a Cancel button or Escape key.
 	"""
 
 	def __init__(
@@ -71,9 +74,10 @@ class DownloadProgressDialog(wx.Dialog):
 		super().__init__(
 			parent,
 			title=title,
-			style=wx.CAPTION | wx.FRAME_TOOL_WINDOW,
+			style=wx.DEFAULT_DIALOG_STYLE,
 		)
 		self._completed = False
+		self._cancel_event = threading.Event()
 
 		sizer = wx.BoxSizer(wx.VERTICAL)
 
@@ -87,19 +91,50 @@ class DownloadProgressDialog(wx.Dialog):
 
 		sizer.AddSpacer(12)
 
+		# Cancel button
+		button_sizer = guiHelper.ButtonHelper(wx.HORIZONTAL)
+		self._cancel_btn = button_sizer.addButton(
+			self,
+			wx.ID_CANCEL,
+			# TRANSLATORS: Button to cancel an in-progress download.
+			label=_("Cancel"),
+		)
+		self._cancel_btn.Bind(wx.EVT_BUTTON, self._on_cancel)
+		sizer.Add(button_sizer.sizer, flag=wx.ALIGN_CENTER | wx.BOTTOM, border=12)
+
 		self.SetSizer(sizer)
 		sizer.Fit(self)
 		self.SetMinSize((420, -1))
 		self.CentreOnParent()
+		self.Raise()
 
-		# Prevent closing via Escape/Alt+F4 while download is active.
+		# Close button / Alt+F4 / Escape all route through cancel.
 		self.Bind(wx.EVT_CLOSE, self._on_close)
 
+	@property
+	def cancel_event(self) -> threading.Event:
+		"""A ``threading.Event`` that is set when the user requests cancellation.
+
+		Download worker threads should check ``cancel_event.is_set()``
+		periodically and raise :exc:`DownloadCancelledError` to abort.
+		"""
+		return self._cancel_event
+
+	def _on_cancel(self, _event: wx.Event) -> None:
+		"""User pressed Cancel — signal the worker thread to stop."""
+		if self._completed:
+			return
+		self._cancel_event.set()
+		self._cancel_btn.Disable()
+		# TRANSLATORS: Label shown when user has requested download cancellation.
+		wx.CallAfter(self._label.SetLabel, _("Cancelling..."))
+
 	def _on_close(self, event: wx.CloseEvent) -> None:
+		"""Route title-bar close / Alt+F4 to cancel; allow close when done."""
 		if self._completed:
 			event.Skip()
 		else:
-			event.Veto()
+			self._on_cancel(event)
 
 	# ------------------------------------------------------------------
 	# Thread-safe progress updates
@@ -131,8 +166,12 @@ class DownloadProgressDialog(wx.Dialog):
 		"""Mark download as finished and close the dialog.
 
 		On failure, shows an error message box before closing.
+		Cancelled downloads close silently (the partial file is kept).
 		"""
-		if message:
+		if self._cancel_event.is_set():
+			# User cancelled — close without error message.
+			wx.CallAfter(self._do_close)
+		elif message:
 			wx.CallAfter(self._do_show_final_message, success, message)
 		wx.CallAfter(self._do_close)
 
@@ -165,6 +204,10 @@ class DownloadProgressDialog(wx.Dialog):
 		``dialog.update_message()`` / ``dialog.update_progress()`` and
 		finish with ``dialog.signal_complete(success, message)``.
 
+		The worker can check ``dialog.cancel_event.is_set()`` to detect
+		user cancellation and should raise :exc:`DownloadCancelledError`
+		to abort cleanly.
+
 		If *worker* raises, the dialog closes and shows the error.
 		*on_complete* runs on the main thread after the dialog is destroyed.
 		"""
@@ -173,6 +216,10 @@ class DownloadProgressDialog(wx.Dialog):
 		def wrapper() -> None:
 			try:
 				worker(dlg, *worker_args)
+			except DownloadCancelledError:
+				log.debug("Download cancelled by user")
+				# Partial file left in place for future resume.
+				dlg.signal_complete(False)
 			except Exception as exc:
 				log.error("Download failed: %s", exc)
 				dlg.signal_complete(
