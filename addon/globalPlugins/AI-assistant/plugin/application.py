@@ -12,7 +12,7 @@ import gui
 from logHandler import log
 
 from ..config.state import ProviderState, subscribe_provider_state_change, unsubscribe_provider_state_change
-from ..config.settings import get_provider, get_provider_state
+from ..config.settings import get_enabled_providers, get_provider, get_provider_state
 from ..context.extractors.selection import safe_extract_selection
 from ..service import get_provider_display_name, provider_control_service
 from ..ui.host_process import stop_host
@@ -75,8 +75,7 @@ class AIAssistantApplication:
 				("z", host.script_attachFocusedObjectToChat),
 				("v", host.script_attachSelectionToChat),
 				("b", host.script_attachClipboardToChat),
-				("t", host.script_toggleAIProvider),
-				("h", host.script_assistantLayerHelp),
+				("t", host.script_toggleAIProvider),			("m", host.script_selectModel),				("h", host.script_assistantLayerHelp),
 			),
 			bind_gesture=host.bindGesture,
 			clear_gesture_bindings=host.clearGestureBindings,
@@ -276,14 +275,35 @@ class AIAssistantApplication:
 		self.layer_mode.activate()
 
 	def toggle_provider(self) -> None:
+		"""Announce enabled providers with digit labels and enter digit-selection mode."""
+		enabled = get_enabled_providers()
+		if not enabled:
+			# TRANSLATORS: Message spoken when no AI providers are enabled.
+			nvda_ui.message(_("No AI providers are enabled."))
+			self.layer_mode.finish()
+			return
+		# Build announcement with digit labels.
+		lines: list[str] = []
+		for i, pid in enumerate(enabled):
+			digit = (i + 1) % 10  # 1-9, 0 for 10th
+			label = get_provider_display_name(pid)
+			lines.append(f"{digit}: {label}")
+		nvda_ui.message("\n".join(lines))
+		# Enter digit-selection mode.
+		def _on_provider_digit(digit: int) -> None:
+			idx = (digit - 1) if digit != 0 else 9
+			if idx < len(enabled):
+				self._select_provider_by_id(enabled[idx])
+		self.layer_mode.enter_digit_selection(_on_provider_digit)
+
+	def _select_provider_by_id(self, provider_id: str) -> None:
+		"""Activate a provider by ID and announce the result."""
 		try:
-			result = provider_control_service.cycle_provider()
+			result = provider_control_service.select_provider(provider_id)
 		except Exception as error:
 			from ..service.error_presentation import present_error
-
 			nvda_ui.message(present_error(error, _).message)
 			return
-
 		provider_label = get_provider_display_name(result.provider_state.provider)
 		# TRANSLATORS: Message spoken when the AI provider is switched.
 		message = _("AI provider switched to {provider}.").format(provider=provider_label)
@@ -292,11 +312,54 @@ class AIAssistantApplication:
 			message = f"{message} {guidance}"
 		nvda_ui.message(message)
 
+	def select_model_for_current_provider(self) -> None:
+		"""Announce available models for the current provider with digit labels."""
+		try:
+			models = self._services.llm_service.list_models()
+		except Exception:
+			log.exception("Failed to list models")
+			# TRANSLATORS: Message spoken when model listing fails.
+			nvda_ui.message(_("Could not list models for the current provider."))
+			self.layer_mode.finish()
+			return
+		if not models:
+			# TRANSLATORS: Message spoken when the current provider has no models available.
+			nvda_ui.message(_("No models found for the current provider."))
+			self.layer_mode.finish()
+			return
+		lines: list[str] = []
+		for i, m in enumerate(models):
+			digit = (i + 1) % 10
+			label = m.display_name or m.id
+			lines.append(f"{digit}: {label}")
+		nvda_ui.message("\n".join(lines))
+		def _on_model_digit(digit: int) -> None:
+			idx = (digit - 1) if digit != 0 else 9
+			if idx < len(models):
+				self._select_model_by_id(models[idx].id)
+		self.layer_mode.enter_digit_selection(_on_model_digit)
+
+	def _select_model_by_id(self, model_id: str) -> None:
+		"""Activate a model by ID and announce the result."""
+		try:
+			result = provider_control_service.select_model(model_id)
+		except Exception as error:
+			from ..service.error_presentation import present_error
+			nvda_ui.message(present_error(error, _).message)
+			return
+		provider_label = get_provider_display_name(result.provider_state.provider)
+		model_label = model_id
+		# TRANSLATORS: Message spoken when the AI model is switched.
+		message = _("Model switched to {model} on {provider}.").format(
+			model=model_label, provider=provider_label
+		)
+		nvda_ui.message(message)
+
 	def show_assistant_layer_help(self) -> None:
 		nvda_ui.message(
 			# TRANSLATORS: Help message listing all available AI assistant layer commands.
 			_(
-				"Assistant layer commands: S for summary, O for structure summary, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object to chat, V for attach selection to chat, B for attach clipboard to chat, T for provider toggle, H for help. Press the key after activating the layer with NVDA+Shift+A."
+				"Assistant layer commands: S for summary, O for structure summary, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object to chat, V for attach selection to chat, B for attach clipboard to chat, T for provider select, M for model select, H for help. Press the key after activating the layer with NVDA+Shift+A."
 			)
 		)
 

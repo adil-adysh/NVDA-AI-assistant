@@ -133,12 +133,20 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._app.activate_assistant_layer()
 
 	@script(
-		# TRANSLATORS: Description for the script that toggles the active AI provider.
-		description=_("Toggles the active AI provider."),
+		# TRANSLATORS: Description for the script that selects the active AI provider from a numbered list.
+		description=_("Selects the active AI provider from a numbered list."),
 	)
 	def script_toggleAIProvider(self, gesture: Any):
 		log.debug("Script toggleAIProvider invoked gesture=%s", gesture)
 		self._app.toggle_provider()
+
+	@script(
+		# TRANSLATORS: Description for the script that selects a model for the current provider from a numbered list.
+		description=_("Selects a model for the current AI provider from a numbered list."),
+	)
+	def script_selectModel(self, gesture: Any):
+		log.debug("Script selectModel invoked gesture=%s", gesture)
+		self._app.select_model_for_current_provider()
 
 	@script(
 		# TRANSLATORS: Description for the script that lists available AI assistant layer commands.
