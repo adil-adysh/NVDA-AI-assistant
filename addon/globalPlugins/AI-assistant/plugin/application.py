@@ -12,7 +12,7 @@ import gui
 from logHandler import log
 
 from ..config.state import ProviderState, subscribe_provider_state_change, unsubscribe_provider_state_change
-from ..config.settings import get_provider_state
+from ..config.settings import get_provider, get_provider_state
 from ..context.extractors.selection import safe_extract_selection
 from ..service import get_provider_display_name, provider_control_service
 from ..ui.host_process import stop_host
@@ -51,6 +51,7 @@ class AIAssistantApplication:
 		log.debug("Browser Assistant plugin initializing")
 		self._host = host
 		self._services = build_plugin_services()
+		self._auto_start_litert_if_active()
 		self._last_provider_state = get_provider_state()
 		self.presenter = UseCasePresenter(
 			chat_coordinator=self._services.chat_coordinator,
@@ -88,6 +89,34 @@ class AIAssistantApplication:
 	@property
 	def services(self) -> PluginServices:
 		return self._services
+
+	def _auto_start_litert_if_active(self) -> None:
+		"""Start the LiteRT-LM server in a background thread when it is the active provider.
+
+		The check is cheap — only reads config and checks disk paths.
+		Actual server startup runs on a daemon thread so NVDA startup
+		is never delayed.
+		"""
+		try:
+			if get_provider() != "litert-lm":
+				return
+			from ..providers.runtime.server import get_litert_supervisor
+			supervisor = get_litert_supervisor()
+			if not supervisor.is_installed:
+				return
+			# Server already running or reachable — nothing to do.
+			if supervisor.is_running or supervisor.is_healthy():
+				return
+
+			from .background import ensure_litert_server_ready
+			threading.Thread(
+				target=ensure_litert_server_ready,
+				name="LiteRTServerAutoStart",
+				daemon=True,
+			).start()
+			log.debug("LiteRT server auto-start scheduled in background")
+		except Exception:
+			log.exception("Error during LiteRT server auto-start check")
 
 	def terminate(self) -> None:
 		try:

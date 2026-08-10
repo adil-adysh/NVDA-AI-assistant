@@ -408,6 +408,17 @@ class OpenAICompatProvider(LLMProvider):
 		if litert_info is None and (lowered.endswith(".litertlm") or "litert-community/" in lowered):
 			capabilities.add("tools")
 
+		# Server-aware LiteRT resolution: query the server's model list
+		# to resolve friendly names back to catalog entries.
+		if litert_info is None and self._is_litert_provider():
+			litert_info = self._lookup_litert_via_server(model_id)
+			if litert_info is not None:
+				model_def, variant = litert_info
+				think = bool(getattr(self._config, "think", False))
+				variant_caps = self._capabilities_for_litert(model_def, variant, think)
+				capabilities.update(variant_caps)
+				capabilities.add("tools")
+
 		# Gemma models may support vision (generic catch for unknown Gemma variants).
 		if litert_info is None and "gemma" in lowered:
 			capabilities.add("image_input")
@@ -453,26 +464,53 @@ class OpenAICompatProvider(LLMProvider):
 
 	@staticmethod
 	def _lookup_litert_model(model_id: str) -> tuple[object, object | None] | None:
-		"""Try to resolve *model_id* against the known LiteRT model catalog.
+		"""Try to resolve *model_id* against the LiteRT model catalog.
 
-		Returns a ``(LiteRTModelDef, ModelVariant | None)`` tuple, or
-		``None`` if *model_id* is not recognized.  The variant is
-		populated when *model_id* matches a variant filename (e.g.
-		``"gemma-4-E2B-it-gpu.litertlm"``); it is ``None`` when
-		*model_id* matches the canonical ``model_id`` directly.
+		*model_id* is typically a friendly_name (e.g.
+		``"gemma-4-e2b-gpu"``).  Returns ``(LiteRTModelDef, ModelVariant|None)``
+		or ``None``.
 		"""
 		try:
-			from ..litert_models import lookup_model, lookup_variant  # type: ignore[attr-defined]
+			from ..litert_models import lookup_by_friendly_name  # type: ignore[attr-defined]
 		except ImportError:
 			return None
-		# Try variant-level lookup first (filename → model+variant).
-		variant_match = lookup_variant(model_id)
-		if variant_match is not None:
-			return variant_match
-		# Fall back to model-level lookup (canonical id).
-		model_def = lookup_model(model_id)
-		if model_def is not None:
-			return (model_def, None)
+		return lookup_by_friendly_name(model_id)
+
+	@staticmethod
+	def _is_litert_provider() -> bool:
+		"""Return ``True`` when the provider is likely talking to a LiteRT-LM server."""
+		try:
+			from ..runtime.server import get_litert_supervisor  # type: ignore[attr-defined]
+		except ImportError:
+			return False
+		try:
+			return get_litert_supervisor().is_healthy()
+		except Exception:
+			return False
+
+	@staticmethod
+	def _lookup_litert_via_server(model_id: str) -> tuple[object, object | None] | None:
+		"""Resolve *model_id* by querying the server's ``/v1/models`` and
+		mapping it back to the catalog.
+
+		Handles friendly names and legacy IDs that may appear in the
+		server list but not in the static catalog.
+		"""
+		try:
+			from ..litert_models import lookup_by_friendly_name  # type: ignore[attr-defined]
+			from ..runtime.server import get_litert_supervisor  # type: ignore[attr-defined]
+		except ImportError:
+			return None
+
+		try:
+			server_models = get_litert_supervisor().list_server_models()
+		except Exception:
+			return None
+
+		# Direct match in server list.
+		if model_id in server_models:
+			return lookup_by_friendly_name(model_id)
+
 		return None
 
 	# ==================================================================

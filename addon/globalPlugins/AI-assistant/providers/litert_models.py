@@ -23,7 +23,11 @@ class ModelVariant:
 
 	Attributes:
 	    variant_id: Short identifier (e.g. ``"cpu"``, ``"gpu"``,
-	        ``"intel-lnl"``).  Used as a key in compound identities.
+	        ``"intel-lnl"``).  Used as a key for variant selection.
+	    friendly_name: Universal short name used everywhere — server
+	        import ID, config value, UI row ID, chat model field.
+	        e.g. ``"gemma-4-e2b-gpu"``.  Must be unique across all
+	        models and variants.
 	    filename: Name of the ``.litertlm`` file inside the repo
 	        (e.g. ``"gemma-4-E2B-it-gpu.litertlm"``).
 	    display_label: Human-readable label for the variant shown in
@@ -41,6 +45,7 @@ class ModelVariant:
 	"""
 
 	variant_id: str
+	friendly_name: str
 	filename: str
 	display_label: str = ""
 	platform_hint: Literal["cpu", "gpu", "universal"] = "cpu"
@@ -55,7 +60,11 @@ class LiteRTModelDef:
 	"""Description of a downloadable LiteRT-LM model.
 
 	Attributes:
-	    model_id: Hugging Face repo id.
+	    model_id: Hugging Face repo id (used only for download URLs).
+	    friendly_name: Universal short name used everywhere — server
+	        import ID, config value, UI row ID, chat model field.
+	        e.g. ``"gemma-4-e2b"`` for single-file models.  Must be
+	        unique across all models.
 	    filename: Name of the primary ``.litertlm`` file.  When
 	        ``variants`` is non-empty this is the default/CPU variant
 	        and is kept for backward compatibility with code that
@@ -80,6 +89,7 @@ class LiteRTModelDef:
 	"""
 
 	model_id: str
+	friendly_name: str
 	filename: str
 	display_name: str
 	description: str = ""
@@ -138,23 +148,23 @@ class LiteRTModelDef:
 
 # Gemma 4 E2B variants (from: litert-community/gemma-4-E2B-it-litert-lm)
 _GEMMA4_E2B_VARIANTS: tuple[ModelVariant, ...] = (
-	ModelVariant("cpu", "gemma-4-E2B-it.litertlm", "CPU (XNNPACK)",
+	ModelVariant("cpu", "gemma-4-e2b-cpu", "gemma-4-E2B-it.litertlm", "CPU (XNNPACK)",
 		"cpu", "~2.1 GB",
 		"Optimised for CPU inference via XNNPACK. Full multimodal: vision + audio + text.",
 		vision=True),
-	ModelVariant("gpu", "gemma-4-E2B-it-gpu.litertlm", "GPU (WebGPU / D3D12)",
+	ModelVariant("gpu", "gemma-4-e2b-gpu", "gemma-4-E2B-it-gpu.litertlm", "GPU (WebGPU / D3D12)",
 		"gpu", "~1.9 GB",
 		"Accelerated via WebGPU on Direct3D 12. Text-only — no vision encoder.",
 		vision=False),
-	ModelVariant("web", "gemma-4-E2B-it-web.litertlm", "Web (WebGPU)",
+	ModelVariant("web", "gemma-4-e2b-web", "gemma-4-E2B-it-web.litertlm", "Web (WebGPU)",
 		"gpu", "~1.9 GB",
 		"WebGPU build for browser-based runtimes. Text-only — no vision encoder.",
 		vision=False),
-	ModelVariant("intel-lnl", "gemma-4-E2B-it_intel_LNL.litertlm", "Intel Lunar Lake (NPU)",
+	ModelVariant("intel-lnl", "gemma-4-e2b-intel-lnl", "gemma-4-E2B-it_intel_LNL.litertlm", "Intel Lunar Lake (NPU)",
 		"gpu", "~2.8 GB",
 		"Intel Lunar Lake NPU-accelerated build.",
 		vision=False),
-	ModelVariant("intel-ptl", "gemma-4-E2B-it_intel_PTL.litertlm", "Intel Panther Lake (NPU)",
+	ModelVariant("intel-ptl", "gemma-4-e2b-intel-ptl", "gemma-4-E2B-it_intel_PTL.litertlm", "Intel Panther Lake (NPU)",
 		"gpu", "~2.8 GB",
 		"Intel Panther Lake NPU-accelerated build.",
 		vision=False),
@@ -162,6 +172,7 @@ _GEMMA4_E2B_VARIANTS: tuple[ModelVariant, ...] = (
 
 GEMMA_4_E2B = LiteRTModelDef(
 	model_id="litert-community/gemma-4-E2B-it-litert-lm",
+	friendly_name="gemma-4-e2b",
 	filename="gemma-4-E2B-it.litertlm",
 	display_name="Gemma 4 E2B (2.6B)",
 	description="Google Gemma 4 E2B — 2.6B parameter instruction-tuned vision-language model in LiteRT-LM format.",
@@ -176,15 +187,15 @@ GEMMA_4_E2B = LiteRTModelDef(
 
 # Gemma 4 E4B variants (from: litert-community/gemma-4-E4B-it-litert-lm)
 _GEMMA4_E4B_VARIANTS: tuple[ModelVariant, ...] = (
-	ModelVariant("cpu", "gemma-4-E4B-it.litertlm", "CPU (XNNPACK)",
+	ModelVariant("cpu", "gemma-4-e4b-cpu", "gemma-4-E4B-it.litertlm", "CPU (XNNPACK)",
 		"cpu", "~3.7 GB",
 		"Optimised for CPU inference via XNNPACK. Full multimodal: vision + audio + text.",
 		vision=True),
-	ModelVariant("gpu", "gemma-4-E4B-it-gpu.litertlm", "GPU (WebGPU / D3D12)",
+	ModelVariant("gpu", "gemma-4-e4b-gpu", "gemma-4-E4B-it-gpu.litertlm", "GPU (WebGPU / D3D12)",
 		"gpu", "~3.0 GB",
 		"Accelerated via WebGPU on Direct3D 12. Text-only — no vision encoder.",
 		vision=False),
-	ModelVariant("web", "gemma-4-E4B-it-web.litertlm", "Web (WebGPU)",
+	ModelVariant("web", "gemma-4-e4b-web", "gemma-4-E4B-it-web.litertlm", "Web (WebGPU)",
 		"gpu", "~3.0 GB",
 		"WebGPU build for browser-based runtimes. Text-only — no vision encoder.",
 		vision=False),
@@ -192,6 +203,7 @@ _GEMMA4_E4B_VARIANTS: tuple[ModelVariant, ...] = (
 
 GEMMA_4_E4B = LiteRTModelDef(
 	model_id="litert-community/gemma-4-E4B-it-litert-lm",
+	friendly_name="gemma-4-e4b",
 	filename="gemma-4-E4B-it.litertlm",
 	display_name="Gemma 4 E4B (4.7B)",
 	description="Google Gemma 4 E4B — 4.7B parameter instruction-tuned vision-language model in LiteRT-LM format.",
@@ -205,19 +217,20 @@ GEMMA_4_E4B = LiteRTModelDef(
 
 # Gemma 4 12B variants (from: litert-community/gemma-4-12B-it-litert-lm)
 _GEMMA4_12B_VARIANTS: tuple[ModelVariant, ...] = (
-	ModelVariant("cpu", "gemma-4-12B-it.litertlm", "CPU (XNNPACK)",
+	ModelVariant("cpu", "gemma-4-12b-cpu", "gemma-4-12B-it.litertlm", "CPU (XNNPACK)",
 		"cpu", "~6.5 GB",
 		"Optimised for CPU inference via XNNPACK."),
-	ModelVariant("gpu", "gemma-4-12B-it-gpu.litertlm", "GPU (WebGPU / D3D12)",
+	ModelVariant("gpu", "gemma-4-12b-gpu", "gemma-4-12B-it-gpu.litertlm", "GPU (WebGPU / D3D12)",
 		"gpu", "~6.0 GB",
 		"Accelerated via WebGPU on Direct3D 12."),
-	ModelVariant("web", "gemma-4-12B-it-web.litertlm", "Web (WebGPU)",
+	ModelVariant("web", "gemma-4-12b-web", "gemma-4-12B-it-web.litertlm", "Web (WebGPU)",
 		"gpu", "~6.0 GB",
 		"WebGPU build for browser-based runtimes."),
 )
 
 GEMMA_4_12B = LiteRTModelDef(
 	model_id="litert-community/gemma-4-12B-it-litert-lm",
+	friendly_name="gemma-4-12b",
 	filename="gemma-4-12B-it.litertlm",
 	display_name="Gemma 4 12B",
 	description="Google Gemma 4 12B — large instruction-tuned model for desktop use, text+audio, 32K context, Apache 2.0.",
@@ -234,16 +247,17 @@ GEMMA_4_12B = LiteRTModelDef(
 
 # PeppX variants (from: PeppX/gemma-4-e2b-uncensored-litertlm)
 _PEPPX_VARIANTS: tuple[ModelVariant, ...] = (
-	ModelVariant("max", "gemma-4-E2B-it-Uncensored-MAX.litertlm", "MAX (FP32)",
+	ModelVariant("max", "peppx-uncensored-max", "gemma-4-E2B-it-Uncensored-MAX.litertlm", "MAX (FP32)",
 		"gpu", "~2.5 GB",
 		"Full-precision uncensored fine-tune."),
-	ModelVariant("int4", "gemma4_uncensored_INT4_8192.litertlm", "INT4 (8K context)",
+	ModelVariant("int4", "peppx-uncensored-int4", "gemma4_uncensored_INT4_8192.litertlm", "INT4 (8K context)",
 		"cpu", "~2.6 GB",
 		"INT4 quantized with 8192 context window."),
 )
 
 PEPPX_UNCENSORED = LiteRTModelDef(
 	model_id="PeppX/gemma-4-e2b-uncensored-litertlm",
+	friendly_name="peppx-uncensored",
 	filename="gemma-4-E2B-it-Uncensored-MAX.litertlm",
 	display_name="Gemma 4 E2B Uncensored",
 	description="Community uncensored fine-tune of Gemma 4 E2B — text-only (vision stripped), 2.37 GB, 32K context, Apache 2.0.",
@@ -259,19 +273,20 @@ PEPPX_UNCENSORED = LiteRTModelDef(
 
 # Qwen3 0.6B variants (from: litert-community/Qwen3-0.6B)
 _QWEN3_0_6B_VARIANTS: tuple[ModelVariant, ...] = (
-	ModelVariant("base", "Qwen3-0.6B.litertlm", "Base (FP32)",
+	ModelVariant("base", "qwen3-0.6b-base", "Qwen3-0.6B.litertlm", "Base (FP32)",
 		"cpu", "~614 MB",
 		"Full-precision base model, 4K context."),
-	ModelVariant("int4", "qwen3_0_6b_mixed_int4.litertlm", "Mixed INT4",
+	ModelVariant("int4", "qwen3-0.6b-int4", "qwen3_0_6b_mixed_int4.litertlm", "Mixed INT4",
 		"cpu", "~498 MB",
 		"Mixed INT4 quantized for reduced memory."),
-	ModelVariant("dynamic", "Qwen3-0.6B_dynamic_wi4b32_afp32.litertlm", "Dynamic INT4 (AFP32)",
+	ModelVariant("dynamic", "qwen3-0.6b-dynamic", "Qwen3-0.6B_dynamic_wi4b32_afp32.litertlm", "Dynamic INT4 (AFP32)",
 		"cpu", "~344 MB",
 		"Dynamic weight INT4 with asymmetric FP32 activations."),
 )
 
 QWEN3_0_6B = LiteRTModelDef(
 	model_id="litert-community/Qwen3-0.6B",
+	friendly_name="qwen3-0.6b",
 	filename="Qwen3-0.6B.litertlm",
 	display_name="Qwen3 0.6B",
 	description="Alibaba Qwen3 0.6B — tiny efficient model, dynamic INT8, 4K context, 586 MB, Apache 2.0.",
@@ -286,16 +301,17 @@ QWEN3_0_6B = LiteRTModelDef(
 
 # Qwen3 1.7B variants (from: litert-community/Qwen3-1.7B)
 _QWEN3_1_7B_VARIANTS: tuple[ModelVariant, ...] = (
-	ModelVariant("base", "Qwen3_1.7B.litertlm", "Base (FP32)",
+	ModelVariant("base", "qwen3-1.7b-base", "Qwen3_1.7B.litertlm", "Base (FP32)",
 		"cpu", "~2.1 GB",
 		"Full-precision base model."),
-	ModelVariant("dynamic", "Qwen3-1.7B_dynamic_wi4b32_afp32.litertlm", "Dynamic INT4 (AFP32)",
+	ModelVariant("dynamic", "qwen3-1.7b-dynamic", "Qwen3-1.7B_dynamic_wi4b32_afp32.litertlm", "Dynamic INT4 (AFP32)",
 		"cpu", "~977 MB",
 		"Dynamic weight INT4 with asymmetric FP32 activations."),
 )
 
 QWEN3_1_7B = LiteRTModelDef(
 	model_id="litert-community/Qwen3-1.7B",
+	friendly_name="qwen3-1.7b",
 	filename="Qwen3_1.7B.litertlm",
 	display_name="Qwen3 1.7B",
 	description="Alibaba Qwen3 1.7B — lightweight instruction model, dynamic INT8, 2.1 GB, Apache 2.0.",
@@ -310,16 +326,17 @@ QWEN3_1_7B = LiteRTModelDef(
 
 # Qwen3 4B variants (from: litert-community/Qwen3-4B)
 _QWEN3_4B_VARIANTS: tuple[ModelVariant, ...] = (
-	ModelVariant("int4", "qwen3_4b_mixed_int4.litertlm", "Mixed INT4",
+	ModelVariant("int4", "qwen3-4b-int4", "qwen3_4b_mixed_int4.litertlm", "Mixed INT4",
 		"cpu", "~2.7 GB",
 		"Mixed INT4 quantized, balanced performance/size."),
-	ModelVariant("int8", "qwen3_4b_channelwise_int8_float32kv.litertlm", "Channelwise INT8 (FP32 KV)",
+	ModelVariant("int8", "qwen3-4b-int8", "qwen3_4b_channelwise_int8_float32kv.litertlm", "Channelwise INT8 (FP32 KV)",
 		"cpu", "~5.7 GB",
 		"Channelwise INT8 with FP32 KV cache for higher quality."),
 )
 
 QWEN3_4B = LiteRTModelDef(
 	model_id="litert-community/Qwen3-4B",
+	friendly_name="qwen3-4b",
 	filename="qwen3_4b_mixed_int4.litertlm",
 	display_name="Qwen3 4B",
 	description="Alibaba Qwen3 4B — balanced model, mixed INT4, 2.5 GB, competitive with Gemma 4 E4B, Apache 2.0.",
@@ -334,16 +351,17 @@ QWEN3_4B = LiteRTModelDef(
 
 # Qwen3 8B variants (from: litert-community/Qwen3-8B)
 _QWEN3_8B_VARIANTS: tuple[ModelVariant, ...] = (
-	ModelVariant("int4", "qwen3_8b_mixed_int4.litertlm", "Mixed INT4",
+	ModelVariant("int4", "qwen3-8b-int4", "qwen3_8b_mixed_int4.litertlm", "Mixed INT4",
 		"cpu", "~4.9 GB",
 		"Mixed INT4 quantized, good desktop performance."),
-	ModelVariant("int8", "qwen3_8b_channelwise_int8_float32kv.litertlm", "Channelwise INT8 (FP32 KV)",
+	ModelVariant("int8", "qwen3-8b-int8", "qwen3_8b_channelwise_int8_float32kv.litertlm", "Channelwise INT8 (FP32 KV)",
 		"cpu", "~8.3 GB",
 		"Channelwise INT8 with FP32 KV cache for higher quality."),
 )
 
 QWEN3_8B = LiteRTModelDef(
 	model_id="litert-community/Qwen3-8B",
+	friendly_name="qwen3-8b",
 	filename="qwen3_8b_mixed_int4.litertlm",
 	display_name="Qwen3 8B",
 	description="Alibaba Qwen3 8B — large desktop model, mixed INT4, 4.7 GB, strong reasoning, Apache 2.0.",
@@ -358,16 +376,17 @@ QWEN3_8B = LiteRTModelDef(
 
 # Qwen3 14B variants (from: litert-community/Qwen3-14B)
 _QWEN3_14B_VARIANTS: tuple[ModelVariant, ...] = (
-	ModelVariant("int4", "qwen3_14b_mixed_int4.litertlm", "Mixed INT4",
+	ModelVariant("int4", "qwen3-14b-int4", "qwen3_14b_mixed_int4.litertlm", "Mixed INT4",
 		"cpu", "~8.7 GB",
 		"Mixed INT4 quantized, largest Qwen3 for desktop."),
-	ModelVariant("int8", "qwen3_14b_channelwise_int8_float32kv.litertlm", "Channelwise INT8 (FP32 KV)",
+	ModelVariant("int8", "qwen3-14b-int8", "qwen3_14b_channelwise_int8_float32kv.litertlm", "Channelwise INT8 (FP32 KV)",
 		"cpu", "~14.9 GB",
 		"Channelwise INT8 with FP32 KV cache for best quality."),
 )
 
 QWEN3_14B = LiteRTModelDef(
 	model_id="litert-community/Qwen3-14B",
+	friendly_name="qwen3-14b",
 	filename="qwen3_14b_mixed_int4.litertlm",
 	display_name="Qwen3 14B",
 	description="Alibaba Qwen3 14B — largest Qwen3 for LiteRT-LM, mixed INT4, 8.3 GB, best quality, Apache 2.0.",
@@ -444,20 +463,48 @@ def lookup_variant(variant_filename: str) -> tuple[LiteRTModelDef, ModelVariant]
 	return None
 
 
-def resolve_identity(name: str) -> str:
-	"""Normalize any model reference to the canonical HuggingFace ``model_id``.
+def lookup_by_friendly_name(name: str) -> tuple[LiteRTModelDef, ModelVariant | None] | None:
+	"""Resolve a friendly name to ``(model, variant|None)``.
 
-	Accepts either a ``model_id`` (e.g.
-	``"litert-community/gemma-4-E2B-it-litert-lm"``) or a ``filename``
-	(e.g. ``"gemma-4-E2B-it.litertlm"``) and returns the canonical
-	``model_id``.  If *name* is not recognised, it is returned as-is.
+	The friendly name is the universal identity — it matches
+	``ModelVariant.friendly_name``, ``LiteRTModelDef.friendly_name``,
+	and also the legacy HF filename and model_id for backward compat.
 
-	This is the **single source of truth** for LiteRT model identity
-	resolution — use it whenever a stored model name may be in either
-	form (e.g. after migrating from an older add-on version).
+	Returns ``(model, None)`` when *name* matches a model-level
+	friendly_name (single-file model).  Returns ``(model, variant)``
+	when *name* matches a variant's friendly_name.
 	"""
+	lowered = name.lower().strip()
+	for m in ALL_MODELS:
+		# Check model-level friendly_name.
+		if m.friendly_name.lower() == lowered:
+			return (m, None)
+		# Check variant friendly_names.
+		for v in m.variants:
+			if v.friendly_name.lower() == lowered:
+				return (m, v)
+	# Legacy: fall back to filename/model_id lookup.
 	model = lookup_model(name)
-	return model.model_id if model is not None else name
+	if model is not None:
+		return (model, None)
+	return None
+
+
+def resolve_identity(name: str) -> str:
+	"""Return the canonical friendly_name for any model reference.
+
+	Accepts friendly names (``"gemma-4-e2b-gpu"``), HF model IDs
+	(``"litert-community/gemma-4-E2B-it-litert-lm"``), and variant
+	filenames (``"gemma-4-E2B-it-gpu.litertlm"``).  Returns the
+	corresponding friendly_name, or *name* unchanged if unrecognised.
+	"""
+	parsed = lookup_by_friendly_name(name)
+	if parsed is not None:
+		model_def, variant = parsed
+		if variant is not None:
+			return variant.friendly_name
+		return model_def.friendly_name
+	return name
 
 
 def download_url(model: LiteRTModelDef, variant_filename: str | None = None) -> str:

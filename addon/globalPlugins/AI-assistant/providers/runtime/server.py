@@ -115,6 +115,11 @@ def _build_delete_args(model_id: str) -> list[str]:
 	return ["delete", model_id]
 
 
+def _build_rename_args(old_id: str, new_id: str) -> list[str]:
+	"""Build the CLI argument list for ``litert-lm rename``."""
+	return ["rename", old_id, new_id]
+
+
 def _run_litert_cli(
 	python_exe: Path,
 	args: list[str],
@@ -506,6 +511,50 @@ class LiteRTServerSupervisor:
 			)
 
 		log.info("Model %s deleted from LiteRT-LM catalog", model_id)
+
+	def rename_model(self, old_id: str, new_id: str) -> None:
+		"""Rename a registered model via ``litert-lm rename`` CLI.
+
+		Args:
+		    old_id: Current model identifier in the catalog.
+		    new_id: New model identifier.
+
+		Raises:
+		    LiteRTServerError: If the rename fails.
+		"""
+		python_exe = _resolve_litert_python(self._server_python())
+
+		for model_id in (old_id, new_id):
+			if not model_id or "\\" in model_id or ".." in model_id or "\x00" in model_id:
+				raise LiteRTServerError(f"Invalid LiteRT-LM model ID: {model_id!r}")
+
+		log.debug("Renaming model %s → %s", old_id, new_id)
+
+		rename_args = _build_rename_args(old_id, new_id)
+		try:
+			result = _run_litert_cli(
+				python_exe,
+				rename_args,
+				env=self._process_environment(),
+				timeout=30,
+				capture=True,
+			)
+		except subprocess.TimeoutExpired as exc:
+			raise LiteRTServerError(
+				f"Model rename timed out for {old_id}"
+			) from exc
+		except Exception as exc:
+			raise LiteRTServerError(
+				f"Failed to rename model {old_id}: {exc}"
+			) from exc
+
+		if result.returncode != 0:
+			stderr = result.stderr.strip() or result.stdout.strip()
+			raise LiteRTServerError(
+				f"Model rename failed for {old_id} → {new_id}: {stderr}"
+			)
+
+		log.info("Model renamed from %s to %s", old_id, new_id)
 
 	def wait_until_ready(
 		self,
