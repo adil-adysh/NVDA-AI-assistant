@@ -203,3 +203,16 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	def script_error(self, gesture: Any):
 		self._app.layer_mode.script_error(gesture)
+
+	def script_digitSelect(self, gesture: Any):
+		"""Digit key handler invoked directly by NVDA for bound ``kb:0``-``kb:9``.
+
+		NVDA's ``_getObjScript`` resolves bound gestures via
+		``getattr(obj, 'script_%s' % scriptName)``, bypassing
+		``getScript`` entirely.  This method re-enters the layer
+		through ``resolve_script`` so ``_digit_handler`` can
+		dispatch the selected digit.
+		"""
+		script_fn = self._app.layer_mode.resolve_script(gesture)
+		if script_fn is not None:
+			script_fn(gesture)

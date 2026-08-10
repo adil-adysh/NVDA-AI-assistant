@@ -75,6 +75,19 @@ _OPENAI_VISION_FAMILIES = (
 # OpenAI model families that support thinking/reasoning.
 _OPENAI_THINKING_FAMILIES = ("gpt-5", "o1", "o3", "o4")
 
+# Gemini API returns model IDs with a "models/" prefix (e.g.
+# "models/gemini-2.5-flash").  Strip it for display purposes while
+# keeping the raw id intact for API calls.
+_MODELS_PREFIX = "models/"
+
+
+def _strip_models_prefix(model_id: str) -> str:
+	"""Return *model_id* without the ``models/`` prefix if present."""
+	if model_id.startswith(_MODELS_PREFIX):
+		return model_id[len(_MODELS_PREFIX):]
+	return model_id
+
+
 # Streaming engines can deliver a large burst of already-buffered SSE events.
 # Keep UI callbacks useful without allowing a worker to monopolize the GIL and
 # starve NVDA's main event loop.
@@ -426,7 +439,7 @@ class OpenAICompatProvider(LLMProvider):
 		return ProviderModelInfo(
 			id=model_id,
 			provider=self.provider_name(),
-			display_name=model_id,
+			display_name=_strip_models_prefix(model_id),
 			capabilities=tuple(sorted(capabilities)),
 			sampling_defaults=SamplingDefaults(temperature=1.0, top_p=1.0),
 		)

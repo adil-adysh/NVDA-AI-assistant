@@ -10,6 +10,7 @@ active, enable/disable) driven by the provider's model features.
 
 from __future__ import annotations
 
+import threading
 import wx
 
 from gui import guiHelper
@@ -51,9 +52,11 @@ class ModelManagerDialog(wx.Dialog):
 		self._models: list[ManagedModel] = []
 		self._displayed_models: list[ManagedModel] = []
 		self._pending_downloads: set[str] = set()
+		self._fetch_thread: threading.Thread | None = None
+		self._is_destroyed = False
 
 		self._build_ui()
-		self._refresh_model_list()
+		self._start_initial_load()
 
 		# Escape closes the dialog.
 		self.SetEscapeId(wx.ID_CLOSE)
@@ -162,14 +165,71 @@ class ModelManagerDialog(wx.Dialog):
 	# Model list refresh
 	# ------------------------------------------------------------------
 
-	def _refresh_model_list( self, focus_model_id: str | None = None) -> None:
-		"""Reload models from the provider and repopulate the list."""
+	def _start_initial_load(self) -> None:
+		"""Show a loading placeholder and start fetching models in the background.
+
+		This prevents the dialog from freezing when the provider needs
+		to make a network round-trip (e.g. Gemini /v1/models).
+		"""
+		self._list.DeleteAllItems()
+		self._show_loading_indicator()
+		self._update_buttons()
+		self._fetch_thread = threading.Thread(
+			target=self._fetch_models_background,
+			daemon=True,
+		)
+		self._fetch_thread.start()
+
+	def _fetch_models_background(self) -> None:
+		"""Fetch models in a background thread, then post results to the UI."""
+		try:
+			models = self._provider.list_managed_models()
+		except Exception:
+			models = []
+		wx.CallAfter(self._on_models_fetched, models)
+
+	def _on_models_fetched(self, models: list[ManagedModel]) -> None:
+		"""Populate the list with fetched models (called on the main thread)."""
+		if self._is_destroyed:
+			return
+		self._fetch_thread = None
+		self._populate_model_list(models)
+
+	def _show_loading_indicator(self) -> None:
+		"""Display a 'Loading models...' placeholder."""
+		idx = self._list.InsertItem(0, _("Loading models..."))
+		font = self._list.GetFont()
+		font.Italic = True
+		self._list.SetItemFont(idx, font)
+
+	def _refresh_model_list(self, focus_model_id: str | None = None) -> None:
+		"""Reload models from the provider and repopulate the list.
+
+		If a background fetch is already in progress the call is a
+		no-op — the UI will be repopulated when the fetch completes.
+		"""
+		if self._fetch_thread is not None and self._fetch_thread.is_alive():
+			return
+
 		# Save currently focused model ID before rebuilding.
 		if focus_model_id is None:
 			focused = self._get_selected_model()
 			focus_model_id = focused.id if focused else None
 
-		self._models = self._provider.list_managed_models()
+		try:
+			models = self._provider.list_managed_models()
+		except Exception:
+			models = []
+
+		self._populate_model_list(models, focus_model_id)
+
+	def _populate_model_list(
+		self,
+		models: list[ManagedModel],
+		focus_model_id: str | None = None,
+	) -> None:
+		"""Populate the list control from *models* (must be called on main thread)."""
+		self._models = models
 		enabled_ids = self._enabled_store.get_enabled(self._provider.provider_id)
 
 		# Separate by download state + priority
@@ -447,6 +507,7 @@ class ModelManagerDialog(wx.Dialog):
 		)
 
 	def _on_close(self, _event: wx.Event) -> None:
+		self._is_destroyed = True
 		self.EndModal(wx.ID_CANCEL)
 
 	# ------------------------------------------------------------------

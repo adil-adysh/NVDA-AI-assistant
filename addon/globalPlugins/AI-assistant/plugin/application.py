@@ -15,6 +15,7 @@ from ..config.state import ProviderState, subscribe_provider_state_change, unsub
 from ..config.settings import get_enabled_providers, get_provider, get_provider_state
 from ..context.extractors.selection import safe_extract_selection
 from ..service import get_provider_display_name, provider_control_service
+from ..service.model_cache import model_catalog_cache
 from ..ui.host_process import stop_host
 from ..ui.settings_panel import AIAssistantSettingsPanel
 from ..ui import nvda_ui
@@ -83,6 +84,12 @@ class AIAssistantApplication:
 		)
 		subscribe_provider_state_change(self._on_provider_state_change)
 		self._register_settings_panel()
+		# Preload model catalog for all enabled providers in the background
+		# so that the first "m" gesture or model manager dialog open is instant.
+		try:
+			model_catalog_cache.preload_all()
+		except Exception:
+			log.exception("Failed to start model catalog preload")
 		log.debug("Browser Assistant plugin initialized")
 
 	@property
@@ -148,6 +155,21 @@ class AIAssistantApplication:
 		self._unregister_settings_panel()
 
 	def _on_provider_state_change(self, provider_state: ProviderState) -> None:
+		"""Handle provider state changes off the main thread.
+
+		The call chain includes synchronous IPC (``sync_session_state``
+		via ``update_provider_state``) which can block for seconds while
+		the host process starts or responds.  We must not block the
+		NVDA main thread.
+		"""
+		threading.Thread(
+			target=self._handle_provider_state_change,
+			args=(provider_state,),
+			name="ProviderStateChange",
+			daemon=True,
+		).start()
+
+	def _handle_provider_state_change(self, provider_state: ProviderState) -> None:
 		previous_state = self._last_provider_state
 		self._last_provider_state = provider_state
 		self.presenter.update_provider_state(provider_state)
@@ -313,45 +335,70 @@ class AIAssistantApplication:
 		nvda_ui.message(message)
 
 	def select_model_for_current_provider(self) -> None:
-		"""Announce available models for the current provider with digit labels."""
-		try:
-			models = self._services.llm_service.list_models()
-		except Exception:
-			log.exception("Failed to list models")
-			# TRANSLATORS: Message spoken when model listing fails.
-			nvda_ui.message(_("Could not list models for the current provider."))
-			self.layer_mode.finish()
-			return
-		if not models:
-			# TRANSLATORS: Message spoken when the current provider has no models available.
-			nvda_ui.message(_("No models found for the current provider."))
-			self.layer_mode.finish()
-			return
-		lines: list[str] = []
-		for i, m in enumerate(models):
-			digit = (i + 1) % 10
-			label = m.display_name or m.id
-			lines.append(f"{digit}: {label}")
-		nvda_ui.message("\n".join(lines))
-		def _on_model_digit(digit: int) -> None:
-			idx = (digit - 1) if digit != 0 else 9
-			if idx < len(models):
-				self._select_model_by_id(models[idx].id)
-		self.layer_mode.enter_digit_selection(_on_model_digit)
+		"""Fetch enabled models from cache on a background thread, then announce digit labels.
+
+		Model lists are served from the central ``ModelCatalogCache`` which is
+		preloaded at startup.  A cache miss will trigger a synchronous network
+		fetch on the background thread — the NVDA main thread is never blocked.
+		"""
+		layer = self.layer_mode
+
+		def _fetch_and_announce() -> None:
+			try:
+				provider_id = get_provider()
+				models = provider_control_service.list_enabled_models(provider_id)
+			except Exception:
+				log.exception("Failed to list models")
+				def _announce_error() -> None:
+					# TRANSLATORS: Message spoken when model listing fails.
+					nvda_ui.message(_("Could not list models for the current provider."))
+					layer.finish()
+				nvda_ui.call(_announce_error)
+				return
+			if not models:
+				def _announce_empty() -> None:
+					# TRANSLATORS: Message spoken when the current provider has no enabled models.
+					nvda_ui.message(_("No enabled models for the current provider."))
+					layer.finish()
+				nvda_ui.call(_announce_empty)
+				return
+			def _announce_and_prompt() -> None:
+				lines: list[str] = []
+				for i, m in enumerate(models):
+					digit = (i + 1) % 10
+					label = m.display_name or m.id
+					lines.append(f"{digit}: {label}")
+				nvda_ui.message("\n".join(lines))
+				def _on_model_digit(digit: int) -> None:
+					idx = (digit - 1) if digit != 0 else 9
+					if idx < len(models):
+						self._select_model_by_id(models[idx].id)
+				layer.enter_digit_selection(_on_model_digit)
+			nvda_ui.call(_announce_and_prompt)
+
+		threading.Thread(
+			target=_fetch_and_announce,
+			name="ModelListFetch",
+			daemon=True,
+		).start()
 
 	def _select_model_by_id(self, model_id: str) -> None:
-		"""Activate a model by ID and announce the result."""
+		"""Activate a model by ID and announce the result.
+
+		Uses ``ProviderControlService.select_model`` which returns a
+		``ModelSwitchResult`` with pre-resolved display names — the
+		gesture layer no longer performs its own model info lookups.
+		"""
 		try:
 			result = provider_control_service.select_model(model_id)
 		except Exception as error:
 			from ..service.error_presentation import present_error
 			nvda_ui.message(present_error(error, _).message)
 			return
-		provider_label = get_provider_display_name(result.provider_state.provider)
-		model_label = model_id
 		# TRANSLATORS: Message spoken when the AI model is switched.
 		message = _("Model switched to {model} on {provider}.").format(
-			model=model_label, provider=provider_label
+			model=result.model_display_name,
+			provider=result.provider_display_name,
 		)
 		nvda_ui.message(message)
 

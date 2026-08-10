@@ -12,7 +12,10 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+	from ..service.model_cache import ModelCatalogCache
 
 
 # ── Type aliases ────────────────────────────────────────────────────
@@ -151,13 +154,16 @@ class CloudModelManagerAdapter:
 		provider_class: Any,
 		set_model_fn: Callable[[str], None],
 		get_config_fn: Callable[[], Any] | None = None,
+		model_cache: ModelCatalogCache | None = None,
 	) -> None:
 		self.provider_id = provider_id
 		self._config = config
 		self._provider_class = provider_class
 		self._set_model_fn = set_model_fn
 		self._get_config_fn = get_config_fn
+		self._model_cache = model_cache
 		self._cached_models: list[ManagedModel] | None = None
+		self._cache_lock = threading.Lock()
 
 	@property
 	def features(self) -> ProviderFeatures:
@@ -175,16 +181,45 @@ class CloudModelManagerAdapter:
 		return str(cfg.model_name or "").strip() or None
 
 	def list_managed_models(self) -> list[ManagedModel]:
-		"""Fetch models from the cloud provider (cached for dialog lifetime)."""
-		if self._cached_models is not None:
-			return self._cached_models
+		"""Fetch models from the cloud provider (cached for dialog lifetime).
+
+		If a ``ModelCatalogCache`` is available, uses it as the first
+		data source — this avoids a network round-trip when the cache
+		was preloaded at startup.  Falls back to a direct provider call
+		when the cache is cold or unavailable.
+		"""
+		with self._cache_lock:
+			if self._cached_models is not None:
+				return self._cached_models
+
+		# 1. Try the central model cache (populated at startup).
+		if self._model_cache is not None:
+			cached_info = self._model_cache.get_models_or_empty(self.provider_id)
+			if cached_info:
+				result = self._convert_to_managed(cached_info)
+				with self._cache_lock:
+					self._cached_models = result
+				return result
+
+		# 2. Fall back to direct provider call.
 		try:
 			provider = self._provider_class(config=self._config)
 			raw = provider.list_models()
 		except Exception:
 			return []
+		result = self._convert_to_managed(raw)
+		with self._cache_lock:
+			self._cached_models = result
+		return result
+
+	def _convert_to_managed(
+		self,
+		raw: tuple[Any, ...] | list[Any],
+	) -> list[ManagedModel]:
+		"""Convert ``ProviderModelInfo`` items to ``ManagedModel``."""
 		result: list[ManagedModel] = []
 		for m in raw:
+			model_id = m.id
 			# Filter out Gemini live-preview / deep-research models that
 			# cannot be used with the OpenAI-compat generateContent path.
 			if self.provider_id == "gemini":
@@ -192,17 +227,16 @@ class CloudModelManagerAdapter:
 					is_gemini_generate_content_incompatible_model_name,
 				)
 
-				if is_gemini_generate_content_incompatible_model_name(m.id):
+				if is_gemini_generate_content_incompatible_model_name(model_id):
 					continue
 			result.append(
 				ManagedModel(
-					id=m.id,
-					display_name=m.display_name or m.id,
+					id=model_id,
+					display_name=m.display_name or model_id,
 					state=ModelState.READY,
 					capabilities=m.capabilities if m.capabilities else (),
 				)
 			)
-		self._cached_models = result
 		return result
 
 	def download_model(

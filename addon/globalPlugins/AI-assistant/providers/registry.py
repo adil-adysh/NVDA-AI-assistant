@@ -440,18 +440,23 @@ def build_model_manager(provider_id: str) -> ModelManagerProvider:
 
 	The returned object is bound to that provider — the model manager
 	dialog opened from a provider must never re-ask which provider to
-	manage.
+	manage.  A ``ModelCatalogCache`` reference is injected so that the
+	initial dialog load can be served from the startup cache without
+	a network round-trip.
 	"""
 	normalized = str(provider_id or "").strip().lower()
 	config = build_provider_config(normalized)
 	if normalized == "litert-lm":
 		return LiteRTModelManager(config=config)
+	# Lazy-import the cache to avoid circular deps at module level.
+	from ..service.model_cache import model_catalog_cache
 	return CloudModelManagerAdapter(
 		provider_id=normalized,
 		config=config,
 		provider_class=OpenAICompatProvider,
 		set_model_fn=_make_set_model(normalized),
 		get_config_fn=lambda: build_provider_config(normalized),
+		model_cache=model_catalog_cache,
 	)
 
 

@@ -120,11 +120,17 @@ class AssistantLayerController:
 
 		*handler* receives the selected digit (0-9).  Non-digit keys
 		trigger an error and exit the layer.
+
+		All 10 digit keys are bound to ``digitSelect`` on the
+		controller.  NVDA's ``_getObjScript`` resolves bound gestures
+		directly via ``getattr(obj, 'script_%s')``, so
+		``controller.script_digitSelect`` must actively call back
+		into ``resolve_script`` for ``_digit_handler`` dispatch.
 		"""
 		self._digit_handler = handler
 		self._clear_gesture_bindings()
 		for d in range(10):
-			self._bind_gesture(f"kb:{d}", f"digit_{d}")
+			self._bind_gesture(f"kb:{d}", "digitSelect")
 
 	def finish(self) -> None:
 		self._active = False
