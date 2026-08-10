@@ -159,6 +159,37 @@ class ModelSamplingHelpersTests(unittest.TestCase):
 		# Wire-fallback fields still come from the base.
 		self.assertEqual(resolved.num_ctx, 8192)
 
+	def test_resolve_cloud_suppresses_num_ctx(self) -> None:
+		"""num_ctx must be None for cloud providers when not explicitly pinned."""
+		base = ModelSamplingConfig(num_ctx=8192, temperature=0.2, top_p=0.85, max_tokens=1024)
+		resolved = model_config_module.resolve_model_sampling(
+			"openai", "gpt-4o", base, local_backend=False,
+		)
+		self.assertIsNone(resolved.num_ctx)
+		self.assertEqual(resolved.temperature, 0.2)
+		self.assertEqual(resolved.max_tokens, 1024)
+
+	def test_resolve_cloud_respects_explicit_num_ctx(self) -> None:
+		"""Explicitly pinned num_ctx is still sent for cloud providers."""
+		base = ModelSamplingConfig(num_ctx=8192, temperature=0.2, top_p=0.85, max_tokens=1024)
+		model_config_module.set_model_sampling(
+			"openai",
+			"gpt-4o",
+			ModelSamplingConfig(num_ctx=2048),
+		)
+		resolved = model_config_module.resolve_model_sampling(
+			"openai", "gpt-4o", base, local_backend=False,
+		)
+		self.assertEqual(resolved.num_ctx, 2048)
+
+	def test_resolve_local_falls_back_num_ctx(self) -> None:
+		"""num_ctx falls back to base for local backends (existing behavior)."""
+		base = ModelSamplingConfig(num_ctx=4096, temperature=0.1, top_p=0.9, max_tokens=512)
+		resolved = model_config_module.resolve_model_sampling(
+			"ollama", "llama3.2", base, local_backend=True,
+		)
+		self.assertEqual(resolved.num_ctx, 4096)
+
 	def test_clear_model_sampling_removes_entry(self) -> None:
 		base = ModelSamplingConfig(num_ctx=8192, temperature=0.2, top_p=0.85, max_tokens=1024)
 		model_config_module.set_model_sampling(

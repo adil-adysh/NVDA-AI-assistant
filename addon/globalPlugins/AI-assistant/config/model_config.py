@@ -66,7 +66,13 @@ class ModelSamplingConfig:
 
 #: Fields resolved as *explicit override → provider global setting*.
 #: These are always sent (as today) — the model value just wins.
-_WIRE_FALLBACK_FIELDS: tuple[str, ...] = ("num_ctx", "temperature", "top_p", "max_tokens")
+_WIRE_FALLBACK_FIELDS: tuple[str, ...] = ("temperature", "top_p", "max_tokens")
+
+#: Fields that fall back to the provider global for *local* backends
+#: (Ollama, LiteRT-LM) but are suppressed for cloud providers (Gemini,
+#: OpenAI) unless a model pins them explicitly.  Cloud endpoints reject
+#: non-standard request parameters with HTTP 400.
+_LOCAL_FALLBACK_FIELDS: tuple[str, ...] = ("num_ctx",)
 
 #: Fields sent only when a model pins them explicitly.  OpenAI-compatible
 #: cloud endpoints reject unknown request parameters, so these must never
@@ -74,7 +80,9 @@ _WIRE_FALLBACK_FIELDS: tuple[str, ...] = ("num_ctx", "temperature", "top_p", "ma
 _PINNED_ONLY_FIELDS: tuple[str, ...] = ("top_k", "repeat_penalty")
 
 #: All user-configurable sampling field IDs, in dialog order.
-SAMPLING_FIELD_IDS: tuple[str, ...] = _WIRE_FALLBACK_FIELDS + _PINNED_ONLY_FIELDS
+SAMPLING_FIELD_IDS: tuple[str, ...] = (
+	_WIRE_FALLBACK_FIELDS + _LOCAL_FALLBACK_FIELDS + _PINNED_ONLY_FIELDS
+)
 
 
 @dataclass(frozen=True)
@@ -246,11 +254,15 @@ def resolve_model_sampling(
 	provider_id: str,
 	model_id: str,
 	base: ModelSamplingConfig,
+	*,
+	local_backend: bool = True,
 ) -> ModelSamplingConfig:
 	"""Merge pinned per-model values over *base*.
 
-	*base* supplies the fallback for wire-fallback fields (context,
-	temperature, top-p, max tokens) — a pinned value wins.  Pinned-only
+	*base* supplies the fallback for wire-fallback fields (temperature,
+	top-p, max tokens) — a pinned value wins.  Local-fallback fields
+	(``num_ctx``) behave like wire-fallback for *local_backend* but are
+	suppressed for cloud providers unless explicitly pinned.  Pinned-only
 	fields (top-k, repetition penalty) resolve to ``None`` unless the
 	model pins them explicitly, so they are never sent by accident.
 	"""
@@ -261,6 +273,14 @@ def resolve_model_sampling(
 		values[field] = (
 			explicit_value if explicit_value is not None else getattr(base, field)
 		)
+	for field in _LOCAL_FALLBACK_FIELDS:
+		explicit_value = getattr(explicit, field)
+		if local_backend:
+			values[field] = (
+				explicit_value if explicit_value is not None else getattr(base, field)
+			)
+		else:
+			values[field] = explicit_value if explicit_value is not None else None
 	for field in _PINNED_ONLY_FIELDS:
 		explicit_value = getattr(explicit, field)
 		values[field] = explicit_value if explicit_value is not None else None

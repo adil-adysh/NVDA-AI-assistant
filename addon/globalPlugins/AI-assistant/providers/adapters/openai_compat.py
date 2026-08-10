@@ -840,22 +840,23 @@ class OpenAICompatProvider(LLMProvider):
 		"""Return the effective sampling parameters for *model_id*.
 
 		Per-model pinned values override the provider's global settings.
-		``top_k`` and ``repeat_penalty`` are pinned-only: they stay
-		``None`` (and are therefore omitted from the wire) unless the
-		model explicitly configures them, keeping OpenAI-compatible
-		cloud endpoints from receiving unknown request parameters.
-
-		``num_ctx`` is also suppressed for cloud providers (Gemini,
+		``local_backend`` is passed through to ``resolve_model_sampling``
+		so that ``num_ctx`` is suppressed for cloud providers (Gemini,
 		OpenAI) whose endpoints reject non-standard parameters with
-		HTTP 400.
+		HTTP 400.  ``top_k`` and ``repeat_penalty`` are always
+		pinned-only — they stay ``None`` unless the model explicitly
+		configures them.
 		"""
 		base = ModelSamplingConfig(
-			num_ctx=self._config.num_ctx if self._is_local else None,
+			num_ctx=self._config.num_ctx,
 			temperature=self._config.generate_temperature,
 			top_p=self._config.generate_top_p,
 			max_tokens=self._config.generate_max_tokens,
 		)
-		return resolve_model_sampling(self._provider_id, model_id, base)
+		return resolve_model_sampling(
+			self._provider_id, model_id, base,
+			local_backend=self._is_local,
+		)
 
 	@property
 	def _is_local(self) -> bool:
