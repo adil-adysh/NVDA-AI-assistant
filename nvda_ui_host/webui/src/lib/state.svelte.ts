@@ -36,6 +36,7 @@ export const appState = $state({
 	control: {
 		availableProviders: [] as (string | { id?: string; value?: string; label?: string })[],
 		availableModels: [] as string[],
+		availableModelLabels: {} as Record<string, string>,
 		selectedProvider: '',
 		selectedModel: '',
 		thinkEnabled: false,

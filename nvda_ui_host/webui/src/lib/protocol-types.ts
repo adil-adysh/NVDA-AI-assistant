@@ -53,6 +53,7 @@ export interface PresentationMetadata {
 	provider_status?: ProviderStatus;
 	available_providers?: (string | ProviderOption)[];
 	available_models?: string[];
+	available_model_labels?: Record<string, string>;
 	think_enabled?: boolean;
 	chat_enabled?: boolean;
 	display_presentation?: DisplayPresentation;

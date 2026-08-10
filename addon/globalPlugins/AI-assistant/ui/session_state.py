@@ -32,6 +32,7 @@ class UISessionState:
 	provider_status: SessionProviderStatus
 	available_providers: tuple[SessionProviderOption, ...]
 	available_models: tuple[str, ...]
+	available_model_labels: dict[str, str]
 	conversation_summaries: tuple[SessionConversationSummary, ...]
 	localized_strings: dict[str, str]
 	think_enabled: bool
@@ -48,6 +49,7 @@ class UISessionState:
 			"provider_status": dict(self.provider_status),
 			"available_providers": [dict(option) for option in self.available_providers],
 			"available_models": list(self.available_models),
+			"available_model_labels": dict(self.available_model_labels),
 			"conversation_summaries": [dict(item) for item in self.conversation_summaries],
 			"localized_strings": dict(self.localized_strings),
 			"think_enabled": self.think_enabled,
@@ -248,6 +250,7 @@ def build_session_state(
 	provider_state: ProviderState | None = None,
 	conversation_id: str | None = None,
 	available_models: tuple[str, ...] | list[str] | None = None,
+	available_model_labels: dict[str, str] | None = None,
 	conversation_summaries: tuple[SessionConversationSummary, ...] | list[SessionConversationSummary] | None = None,
 	readiness: ProviderReadiness | None = None,
 ) -> UISessionState:
@@ -263,6 +266,16 @@ def build_session_state(
 		resolved_available_models,
 		active_provider_state.provider,
 	)
+	# Build human-readable labels for the model dropdown.
+	# Local providers (e.g. LiteRT-LM) use canonical repo IDs as
+	# identifiers — the label map translates those to user-facing
+	# display names so the WebView shows the same names as the
+	# model manager dialog.
+	resolved_labels = _resolve_model_labels(
+		active_provider_state.provider,
+		resolved_available_models,
+		available_model_labels,
+	)
 	return UISessionState(
 		provider=active_provider_state.provider,
 		model=active_provider_state.model_name,
@@ -274,6 +287,7 @@ def build_session_state(
 		},
 		available_providers=_build_available_providers(translate),
 		available_models=resolved_available_models,
+		available_model_labels=resolved_labels,
 		conversation_summaries=tuple(conversation_summaries or ()),
 		localized_strings=build_localized_strings(translate),
 		think_enabled=_resolve_think_enabled(provider_state.provider),
@@ -373,3 +387,42 @@ def _filter_available_models(
 		enabled_ids = store.get_enabled(provider)
 
 	return tuple(m for m in available_models if m in enabled_ids)
+
+
+def _resolve_model_labels(
+	provider: str,
+	available_models: tuple[str, ...],
+	explicit_labels: dict[str, str] | None = None,
+) -> dict[str, str]:
+	"""Build a ``canonical_id → display_name`` map for the WebView dropdown.
+
+	Prefers *explicit_labels* when provided by the caller (e.g. from a
+	model cache).  Otherwise queries :meth:`ModelManagerProvider.list_managed_models`
+	to map canonical IDs back to the human-readable names shown in the
+	model manager dialog.
+
+	Falls back gracefully — when the model manager is unavailable or a
+	model has no display name entry, the raw ID is used by the WebView.
+	"""
+	if explicit_labels:
+		return dict(explicit_labels)
+
+	available_set = set(available_models)
+	if not available_set:
+		return {}
+
+	try:
+		from ..providers.registry import build_model_manager
+
+		mgr = build_model_manager(provider)
+		all_models = mgr.list_managed_models()
+	except Exception:
+		return {}
+
+	labels: dict[str, str] = {}
+	for m in all_models:
+		key = m.canonical_id or m.id
+		if key in available_set and key not in labels:
+			labels[key] = m.display_name
+
+	return labels

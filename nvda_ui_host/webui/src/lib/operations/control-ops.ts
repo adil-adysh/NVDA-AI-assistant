@@ -41,6 +41,10 @@ export function updateControlState(payload: Record<string, unknown>): void {
 
 	if (Array.isArray(availableProviders)) appState.control.availableProviders = availableProviders;
 	if (Array.isArray(availableModels)) appState.control.availableModels = availableModels;
+	const availableModelLabels = readPresentationValue<Record<string, string>>(payload, 'available_model_labels');
+	if (availableModelLabels && typeof availableModelLabels === 'object') {
+		appState.control.availableModelLabels = availableModelLabels;
+	}
 	if (typeof providerState?.provider === 'string') {
 		appState.control.selectedProvider = providerState.provider;
 		appState.control.providerDraft = providerState.provider;

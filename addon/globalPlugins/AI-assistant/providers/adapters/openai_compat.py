@@ -380,14 +380,12 @@ class OpenAICompatProvider(LLMProvider):
 		capabilities.update(("chat", "streaming"))
 
 		# ── LiteRT model detection (must run before generic patterns) ──
-		litert_def = self._lookup_litert_model(model_id)
-		if litert_def is not None:
-			if litert_def.vision:
-				capabilities.add("image_input")
-			if litert_def.thinking:
-				capabilities.add("thinking")
-			if litert_def.mtp:
-				capabilities.add("mtp")
+		litert_info = self._lookup_litert_model(model_id)
+		if litert_info is not None:
+			model_def, variant = litert_info
+			think = bool(getattr(self._config, "think", False))
+			variant_caps = self._capabilities_for_litert(model_def, variant, think)
+			capabilities.update(variant_caps)
 			capabilities.add("tools")
 
 		# GPT/OpenAI family.
@@ -407,11 +405,11 @@ class OpenAICompatProvider(LLMProvider):
 			capabilities.update(("tools", "image_input"))
 
 		# LiteRT .litertlm filename pattern (fallback if lookup missed).
-		if litert_def is None and (lowered.endswith(".litertlm") or "litert-community/" in lowered):
+		if litert_info is None and (lowered.endswith(".litertlm") or "litert-community/" in lowered):
 			capabilities.add("tools")
 
 		# Gemma models may support vision (generic catch for unknown Gemma variants).
-		if litert_def is None and "gemma" in lowered:
+		if litert_info is None and "gemma" in lowered:
 			capabilities.add("image_input")
 
 		return ProviderModelInfo(
@@ -423,16 +421,59 @@ class OpenAICompatProvider(LLMProvider):
 		)
 
 	@staticmethod
-	def _lookup_litert_model(model_id: str) -> object | None:
-		"""Try to resolve *model_id* against the known LiteRT model catalog.
+	def _capabilities_for_litert(
+		model_def: object,
+		variant: object | None,
+		think: bool,
+	) -> set[str]:
+		"""Build a capabilities set for a LiteRT model+variant using the
+		merged catalog definition.
 
-		Returns a ``LiteRTModelDef`` or ``None``.
+		This is a static helper shared between runtime provider and
+		model manager paths so capability logic stays in one place.
 		"""
 		try:
-			from ..litert_models import lookup_model  # type: ignore[attr-defined]
+			from ..litert_models import effective_capabilities_for  # type: ignore[attr-defined]
+		except ImportError:
+			effective_capabilities_for = None  # type: ignore[assignment]
+
+		if effective_capabilities_for is not None:
+			caps_tuple = effective_capabilities_for(model_def, variant, think)
+			return set(caps_tuple)
+
+		# Fallback if litert_models module not available.
+		caps: set[str] = set()
+		if getattr(model_def, "vision", False):
+			caps.add("image_input")
+		if think and getattr(model_def, "thinking", False):
+			caps.add("thinking")
+		if getattr(model_def, "mtp", False):
+			caps.add("mtp")
+		return caps
+
+	@staticmethod
+	def _lookup_litert_model(model_id: str) -> tuple[object, object | None] | None:
+		"""Try to resolve *model_id* against the known LiteRT model catalog.
+
+		Returns a ``(LiteRTModelDef, ModelVariant | None)`` tuple, or
+		``None`` if *model_id* is not recognized.  The variant is
+		populated when *model_id* matches a variant filename (e.g.
+		``"gemma-4-E2B-it-gpu.litertlm"``); it is ``None`` when
+		*model_id* matches the canonical ``model_id`` directly.
+		"""
+		try:
+			from ..litert_models import lookup_model, lookup_variant  # type: ignore[attr-defined]
 		except ImportError:
 			return None
-		return lookup_model(model_id)
+		# Try variant-level lookup first (filename → model+variant).
+		variant_match = lookup_variant(model_id)
+		if variant_match is not None:
+			return variant_match
+		# Fall back to model-level lookup (canonical id).
+		model_def = lookup_model(model_id)
+		if model_def is not None:
+			return (model_def, None)
+		return None
 
 	# ==================================================================
 	# Internal: image description

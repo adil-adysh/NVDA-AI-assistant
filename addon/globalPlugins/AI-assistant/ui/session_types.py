@@ -45,6 +45,7 @@ class UISessionMetadata(TypedDict, total=False):
 	provider_status: SessionProviderStatus
 	available_providers: list[SessionProviderOption]
 	available_models: list[str]
+	available_model_labels: dict[str, str]
 	conversation_summaries: list[SessionConversationSummary]
 	localized_strings: dict[str, str]
 	think_enabled: bool

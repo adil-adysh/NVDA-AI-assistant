@@ -79,8 +79,7 @@ class ModelManagerDialog(wx.Dialog):
 		)
 		self._list.AppendColumn("", width=40)
 		self._list.AppendColumn("", width=40)
-		# TRANSLATORS: Column header for the model name.
-		self._list.AppendColumn(_("Model"), width=280)
+		self._list.AppendColumn("", width=280)
 		# TRANSLATORS: Column header for the download status.
 		self._list.AppendColumn(_("Status"), width=180)
 		# TRANSLATORS: Column header for the model file size.

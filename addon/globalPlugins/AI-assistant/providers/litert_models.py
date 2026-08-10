@@ -31,6 +31,13 @@ class ModelVariant:
 	    platform_hint: Target platform / architecture.
 	    size_hint_human: Human-readable size (e.g. ``"~2.1 GB"``).
 	    description: Short description of this variant.
+	    vision: Override for the parent model's ``vision`` flag.
+	        ``None`` (default) inherits from the parent
+	        :class:`LiteRTModelDef`.  Set ``False`` for GPU/text-only
+	        builds of vision-language models (they lack the vision
+	        encoder section).
+	    thinking: Override for the parent model's ``thinking`` flag.
+	        ``None`` (default) inherits from the parent.
 	"""
 
 	variant_id: str
@@ -39,6 +46,8 @@ class ModelVariant:
 	platform_hint: Literal["cpu", "gpu", "universal"] = "cpu"
 	size_hint_human: str = ""
 	description: str = ""
+	vision: bool | None = None
+	thinking: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -131,19 +140,24 @@ class LiteRTModelDef:
 _GEMMA4_E2B_VARIANTS: tuple[ModelVariant, ...] = (
 	ModelVariant("cpu", "gemma-4-E2B-it.litertlm", "CPU (XNNPACK)",
 		"cpu", "~2.1 GB",
-		"Optimised for CPU inference via XNNPACK. Works on any Windows machine."),
+		"Optimised for CPU inference via XNNPACK. Full multimodal: vision + audio + text.",
+		vision=True),
 	ModelVariant("gpu", "gemma-4-E2B-it-gpu.litertlm", "GPU (WebGPU / D3D12)",
-		"gpu", "~2.1 GB",
-		"Accelerated via WebGPU on Direct3D 12. NVIDIA, AMD, Intel Arc."),
+		"gpu", "~1.9 GB",
+		"Accelerated via WebGPU on Direct3D 12. Text-only — no vision encoder.",
+		vision=False),
 	ModelVariant("web", "gemma-4-E2B-it-web.litertlm", "Web (WebGPU)",
-		"gpu", "~2.1 GB",
-		"WebGPU build for browser-based runtimes."),
+		"gpu", "~1.9 GB",
+		"WebGPU build for browser-based runtimes. Text-only — no vision encoder.",
+		vision=False),
 	ModelVariant("intel-lnl", "gemma-4-E2B-it_intel_LNL.litertlm", "Intel Lunar Lake (NPU)",
-		"gpu", "~2.1 GB",
-		"Intel Lunar Lake NPU-accelerated build."),
+		"gpu", "~2.8 GB",
+		"Intel Lunar Lake NPU-accelerated build.",
+		vision=False),
 	ModelVariant("intel-ptl", "gemma-4-E2B-it_intel_PTL.litertlm", "Intel Panther Lake (NPU)",
-		"gpu", "~2.1 GB",
-		"Intel Panther Lake NPU-accelerated build."),
+		"gpu", "~2.8 GB",
+		"Intel Panther Lake NPU-accelerated build.",
+		vision=False),
 )
 
 GEMMA_4_E2B = LiteRTModelDef(
@@ -164,13 +178,16 @@ GEMMA_4_E2B = LiteRTModelDef(
 _GEMMA4_E4B_VARIANTS: tuple[ModelVariant, ...] = (
 	ModelVariant("cpu", "gemma-4-E4B-it.litertlm", "CPU (XNNPACK)",
 		"cpu", "~3.7 GB",
-		"Optimised for CPU inference via XNNPACK."),
+		"Optimised for CPU inference via XNNPACK. Full multimodal: vision + audio + text.",
+		vision=True),
 	ModelVariant("gpu", "gemma-4-E4B-it-gpu.litertlm", "GPU (WebGPU / D3D12)",
 		"gpu", "~3.0 GB",
-		"Accelerated via WebGPU on Direct3D 12."),
+		"Accelerated via WebGPU on Direct3D 12. Text-only — no vision encoder.",
+		vision=False),
 	ModelVariant("web", "gemma-4-E4B-it-web.litertlm", "Web (WebGPU)",
 		"gpu", "~3.0 GB",
-		"WebGPU build for browser-based runtimes."),
+		"WebGPU build for browser-based runtimes. Text-only — no vision encoder.",
+		vision=False),
 )
 
 GEMMA_4_E4B = LiteRTModelDef(
@@ -504,3 +521,49 @@ def recommended_models() -> tuple[LiteRTModelDef, ...]:
 			m for m in ALL_MODELS if m.platform_hint in ("cpu", "universal", "gpu") and m.priority <= 60
 		)
 	return tuple(m for m in ALL_MODELS if m.platform_hint in ("cpu", "universal"))
+
+
+def effective_capabilities_for(
+	model: LiteRTModelDef,
+	variant: ModelVariant | None = None,
+	think: bool = False,
+) -> tuple[str, ...]:
+	"""Return the effective capabilities tuple for *model*, optionally
+	overridden by *variant*.
+
+	When *variant* is provided and has ``vision`` or ``thinking`` set to a
+	non-``None`` value, the variant's flag takes precedence over the
+	parent model's flag.  This is critical for GPU/text-only variants of
+	vision-language models (e.g. ``gemma-4-E2B-it-gpu.litertlm`` lacks a
+	vision encoder).
+
+	Args:
+	    model: The parent model definition.
+	    variant: An optional specific variant to check overrides for.
+	    think: Whether the user has enabled thinking mode in settings.
+
+	Returns:
+	    A tuple of capability strings sorted alphabetically.
+	"""
+	# Base text capabilities — all LiteRT-LM models support these.
+	caps: list[str] = ["completion", "chat", "streaming", "text_input", "text_output"]
+
+	# Vision: variant override → model default.
+	vision_flag = model.vision
+	if variant is not None and variant.vision is not None:
+		vision_flag = variant.vision
+	if vision_flag:
+		caps.extend(("vision", "image_input"))
+
+	# Thinking: variant override → model default → think setting.
+	thinking_flag = model.thinking
+	if variant is not None and variant.thinking is not None:
+		thinking_flag = variant.thinking
+	if think and thinking_flag:
+		caps.append("thinking")
+
+	# Multi-Token Prediction (MTP) — model-level only, no variant override.
+	if model.mtp:
+		caps.append("mtp")
+
+	return tuple(sorted(caps))

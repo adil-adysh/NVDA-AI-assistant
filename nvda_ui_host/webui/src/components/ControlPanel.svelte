@@ -110,7 +110,7 @@
             {/if}
 
             {#each appState.control.availableModels as model (`option-${model}`)}
-                <option value={String(model)}>{String(model)}</option>
+                <option value={String(model)}>{appState.control.availableModelLabels[String(model)] || String(model)}</option>
             {/each}
         </select>
     </label>

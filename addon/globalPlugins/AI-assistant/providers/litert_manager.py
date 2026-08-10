@@ -26,7 +26,7 @@ from ..config.settings import (
 )
 from .config import OpenAICompatConfig
 from .interfaces import LLMProviderError
-from .litert_models import LiteRTModelDef, download_url, lookup_model, recommended_models, resolve_identity
+from .litert_models import download_url, effective_capabilities_for, lookup_model, recommended_models, resolve_identity
 from .model_manager import (
 	DownloadProgressCallback,
 	ManagedModel,
@@ -36,19 +36,6 @@ from .model_manager import (
 )
 from .runtime.model_download import ModelDownloadService
 from .runtime.server import LiteRTServerError, get_litert_supervisor
-
-_TEXT_CAPABILITIES = ("completion", "chat", "streaming", "text_input", "text_output")
-
-
-def _capabilities_for(model: LiteRTModelDef, think: bool) -> tuple[str, ...]:
-	"""Return a capabilities tuple for a model definition."""
-	caps = list(_TEXT_CAPABILITIES)
-	if model.vision:
-		caps.extend(("vision", "image_input"))
-	if think and model.thinking:
-		caps.append("thinking")
-	return tuple(caps)
-
 
 class LiteRTModelManager(ModelManagerProvider):
 	"""Model manager for LiteRT-LM local models."""
@@ -109,7 +96,6 @@ class LiteRTModelManager(ModelManagerProvider):
 
 		for model in models:
 			model_imported = model.model_id in imported
-			caps = _capabilities_for(model, think)
 
 			if model.has_variants:
 				# ── Emit one row per variant ───────────────────────
@@ -118,6 +104,7 @@ class LiteRTModelManager(ModelManagerProvider):
 					downloaded = svc.is_downloaded(vid) or (
 						model_imported and variant is model.variants[0]
 					)
+					caps = effective_capabilities_for(model, variant, think)
 					# Variant display: "Model Name — Variant Label"
 					display = f"{model.display_name} — {variant.display_label}"
 					result.append(
@@ -137,6 +124,7 @@ class LiteRTModelManager(ModelManagerProvider):
 			else:
 				# ── Single-file model (no variants) ───────────────
 				downloaded = svc.is_downloaded(model.filename) or model_imported
+				caps = effective_capabilities_for(model, think=think)
 				result.append(
 					ManagedModel(
 						id=model.model_id,
@@ -158,13 +146,14 @@ class LiteRTModelManager(ModelManagerProvider):
 				if f.suffix == ".litertlm" and f.name not in known_filenames:
 					owner = lookup_model(f.name)
 					canonical_id = owner.model_id if owner is not None else f.name
+					caps = effective_capabilities_for(owner, think=think) if owner is not None else ("completion", "chat", "streaming", "text_input", "text_output")
 					result.append(
 						ManagedModel(
 							id=canonical_id,
 							display_name=f.stem,
 							state=ModelState.DOWNLOADED,
 							priority=100,
-							capabilities=_TEXT_CAPABILITIES,
+							capabilities=caps,
 						)
 					)
 
