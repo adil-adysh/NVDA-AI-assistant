@@ -1,4 +1,5 @@
 use std::ptr::null;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use windows::{
     core::{PCWSTR, Result, w},
@@ -18,6 +19,7 @@ use crate::host_dispatch::HostCommand;
 
 const WM_HOST_COMMAND: u32 = WM_APP + 1;
 pub(crate) const WM_HOST_CLOSE: u32 = WM_APP + 2;
+const WM_DEFERRED_FOCUS_WEBVIEW: u32 = WM_APP + 3;
 const HOST_QUEUE_CAPACITY: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +33,28 @@ static WINDOW_HANDLE: OnceLock<usize> = OnceLock::new();
 static WINDOW_STATE: OnceLock<Mutex<WindowState>> = OnceLock::new();
 static CLOSE_REASON: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static HOST_COMMAND_QUEUE: OnceLock<Mutex<Vec<HostCommand>>> = OnceLock::new();
+static PENDING_UI_APPLIED_FOCUS: OnceLock<AtomicBool> = OnceLock::new();
+
+fn pending_ui_applied_focus() -> &'static AtomicBool {
+    PENDING_UI_APPLIED_FOCUS.get_or_init(|| AtomicBool::new(false))
+}
+
+/// Called by the WebView event handler when `ui_applied` is received —
+/// meaning Svelte has finished processing the command and `element.focus()`
+/// has been called on the target element.  Only then is it safe to move
+/// host-level focus into the WebView without NVDA reading the container
+/// role ("pane").
+pub(crate) fn request_deferred_focus_webview() {
+    // Clear the gate flag so future WM_ACTIVATE events (e.g. Alt+Tab)
+    // are allowed to call focus_webview directly.
+    pending_ui_applied_focus().store(false, Ordering::SeqCst);
+    if let Some(hwnd_value) = WINDOW_HANDLE.get() {
+        let hwnd = HWND(*hwnd_value as _);
+        unsafe {
+            let _ = PostMessageW(Some(hwnd), WM_DEFERRED_FOCUS_WEBVIEW, WPARAM(0), LPARAM(0));
+        }
+    }
+}
 
 fn window_state() -> &'static Mutex<WindowState> {
     WINDOW_STATE.get_or_init(|| Mutex::new(WindowState::Hidden))
@@ -63,7 +87,6 @@ pub enum DispatchError {
 
 #[link(name = "user32")]
 extern "system" {
-    fn SetFocus(hwnd: HWND) -> HWND;
     fn AttachThreadInput(id_attach: u32, id_attach_to: u32, attach: i32) -> i32;
     fn SetActiveWindow(hwnd: HWND) -> HWND;
 }
@@ -268,6 +291,8 @@ fn handle_window_close(hwnd: HWND, source: &str) -> LRESULT {
     logger::info("Window state transitioning to Closing");
     clear_host_command_queue();
     crate::webview::clear_pending_messages();
+    // Clear any pending focus gate so the next activation works correctly.
+    pending_ui_applied_focus().store(false, Ordering::SeqCst);
     let reason = if source == "WM_CLOSE" {
         let _ = take_close_reason();
         "os_close".to_string()
@@ -289,8 +314,16 @@ fn handle_window_close(hwnd: HWND, source: &str) -> LRESULT {
     .to_string();
     ipc::queue_ui_event(event_message);
     let visible_before = unsafe { IsWindowVisible(hwnd).as_bool() };
-    logger::info(&format!("Window close before hide: hwnd={:?} visible_before={} state={:?}", hwnd, visible_before, current_window_state()));
+    let iconic_before = unsafe { IsIconic(hwnd).as_bool() };
+    logger::info(&format!("Window close before hide: hwnd={:?} visible_before={} iconic_before={} state={:?}", hwnd, visible_before, iconic_before, current_window_state()));
     unsafe {
+        // Restore from minimized before hiding so the window cleanly
+        // transitions out of the iconic state instead of staying hidden
+        // while still logically minimized.
+        if iconic_before {
+            logger::info("Restoring minimized window before hiding");
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        }
         let _ = ShowWindow(hwnd, SW_HIDE);
     }
     let visible_after = unsafe { IsWindowVisible(hwnd).as_bool() };
@@ -312,6 +345,9 @@ fn activate_window(hwnd: HWND) {
         } else {
             ShowWindow(hwnd, SW_SHOWNORMAL)
         };
+        // Always maximise the window when a user-initiated action brings
+        // it forward so the full content and chat interface are visible.
+        let _ = ShowWindow(hwnd, SW_MAXIMIZE);
         let _ = SetWindowPos(
             hwnd,
             None,
@@ -357,9 +393,16 @@ fn activate_window(hwnd: HWND) {
             && foreground_thread_id != current_thread_id
             && AttachThreadInput(foreground_thread_id, current_thread_id, 1) != 0;
 
-        let _ = SetForegroundWindow(hwnd);
+        // Gate WM_ACTIVATE / WM_SETFOCUS from calling focus_webview()
+        // synchronously.  When SetForegroundWindow fires these messages,
+        // the WebView hasn't received the open_chat / render_display
+        // command yet, so no DOM element is focused.  NVDA would read
+        // the container role ("pane") instead of the target element.
+        // We defer focus_webview until the WebView sends ui_applied.
+        pending_ui_applied_focus().store(true, Ordering::SeqCst);
+        let foreground_result = SetForegroundWindow(hwnd);
         let _ = SetActiveWindow(hwnd);
-        let _ = SetFocus(hwnd);
+        logger::debug(&format!("SetForegroundWindow result={:?}", foreground_result));
 
         if attached {
             let _ = AttachThreadInput(foreground_thread_id, current_thread_id, 0);
@@ -407,22 +450,61 @@ unsafe extern "system" fn wndproc(
         WM_CLOSE => handle_window_close(hwnd, "WM_CLOSE"),
         WM_HOST_CLOSE => handle_window_close(hwnd, "WM_HOST_CLOSE"),
         WM_SETFOCUS => {
-            let _ = crate::webview::focus_webview();
+            // When the window is brought forward programmatically
+            // (activate_window), focus is deferred until ui_applied.
+            // The ui_applied handler posts WM_DEFERRED_FOCUS_WEBVIEW.
+            // For user-initiated activation (Alt+Tab, click) the
+            // pending flag won't be set, so we focus immediately.
+            if !pending_ui_applied_focus().load(Ordering::SeqCst) {
+                let _ = crate::webview::focus_webview();
+            } else {
+                logger::debug("WM_SETFOCUS: deferring focus_webview until ui_applied");
+            }
             LRESULT(0)
         }
         WM_ACTIVATE => {
             if (wparam.0 & 0xFFFF) != WA_INACTIVE as usize {
-                let _ = crate::webview::focus_webview();
+                if !pending_ui_applied_focus().load(Ordering::SeqCst) {
+                    let _ = crate::webview::focus_webview();
+                } else {
+                    logger::debug("WM_ACTIVATE: deferring focus_webview until ui_applied");
+                }
             }
             DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        WM_DEFERRED_FOCUS_WEBVIEW => {
+            logger::debug("WM_DEFERRED_FOCUS_WEBVIEW: applying deferred focus_webview");
+            let _ = crate::webview::focus_webview();
+            LRESULT(0)
         }
         WM_DESTROY => {
             PostQuitMessage(0);
             LRESULT(0)
         }
         WM_SIZE => {
+            let minimized = wparam.0 as u32 == SIZE_MINIMIZED;
+            let restored = wparam.0 as u32 == SIZE_RESTORED;
+            if minimized {
+                logger::info("Window minimized by user; tracking state");
+            } else if restored {
+                logger::info("Window restored from minimized; ensuring WebView focus");
+                let _ = crate::webview::focus_webview();
+            }
             crate::webview::resize_webview(hwnd);
             LRESULT(0)
+        }
+        WM_KEYDOWN => {
+            // Native Escape fallback: when WebView loses focus, the JS keyboard
+            // handler won't fire.  Handle Escape here so the window can always
+            // be dismissed even in edge cases (minimized, focus stolen, etc.).
+            if wparam.0 == 0x1B /* VK_ESCAPE */ {
+                logger::info("Escape key received by native window procedure; requesting host close");
+                if let Err(dispatch_error) = request_close_window("user_escape") {
+                    logger::error(&format!("Failed to request host close on Escape: {:?}", dispatch_error));
+                }
+                return LRESULT(0);
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         WM_HOST_COMMAND => {
             logger::debug("Window procedure received WM_HOST_COMMAND");

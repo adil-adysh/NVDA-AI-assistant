@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
+    import { onMount, tick } from 'svelte';
     import AccessibilityAnnouncer from './components/AccessibilityAnnouncer.svelte';
     import ChatComposer from './components/ChatComposer.svelte';
     import ChatPanel from './components/ChatPanel.svelte';
@@ -28,11 +28,14 @@
     let firstResultActionElement: HTMLElement | null = $state(null);
     let fileInputElement: HTMLInputElement | null = $state(null);
 
-    function focusElement(element: HTMLElement | null) {
+    async function focusElement(element: HTMLElement | null) {
         if (!element) return;
-        window.requestAnimationFrame(() => {
-            element.focus({ preventScroll: false });
-        });
+        // Wait for all pending Svelte DOM mutations to flush (including
+        // child-component bind:this registrations).  tick() resolves in
+        // microseconds via microtask — fast enough that the screen reader
+        // hasn't processed the foreground event yet, unlike rAF (~16ms).
+        await tick();
+        element.focus({ preventScroll: false });
     }
 
     onMount(() => {

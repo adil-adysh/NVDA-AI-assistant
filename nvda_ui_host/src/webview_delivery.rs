@@ -59,7 +59,11 @@ fn send_pending_command(controller: &ICoreWebView2Controller, command: HostComma
         return Ok(DeliveryOutcome::DeferredVisibility);
     }
 
-    if command.request_webview_focus || command.activation_policy == ActivationPolicy::ActivateAndFocus {
+    // When ActivateAndFocus brings the window forward, wndproc's WM_SETFOCUS
+    // handler already calls focus_webview(). Skip the duplicate call here to
+    // avoid a spurious "parameter is incorrect" warning when the WebView2
+    // controller hasn't finished compositing yet.
+    if command.request_webview_focus {
         let _ = focus_webview();
     }
 

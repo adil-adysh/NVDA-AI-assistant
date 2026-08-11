@@ -42,6 +42,7 @@ fn maybe_transition_to_ready() {
 enum WebViewEvent {
     WebUiReady,
     CloseHost,
+    UiApplied,
     Other,
 }
 
@@ -55,6 +56,7 @@ fn parse_webview_event(payload: &serde_json::Value) -> Option<WebViewEvent> {
     match event_name {
         Some("web_ui_ready") => Some(WebViewEvent::WebUiReady),
         Some("close_host") => Some(WebViewEvent::CloseHost),
+        Some("ui_applied") => Some(WebViewEvent::UiApplied),
         Some(_) => Some(WebViewEvent::Other),
         None => None,
     }

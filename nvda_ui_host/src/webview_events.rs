@@ -55,6 +55,11 @@ fn handle_js_event(message: &str, _hwnd: HWND) -> Result<()> {
                 logger::error(&format!("Failed to request host close from WebView event: {:?}", dispatch_error));
             }
         }
+        Some(WebViewEvent::UiApplied) => {
+            logger::debug("WebView ui_applied received; requesting deferred focus_webview");
+            crate::window::request_deferred_focus_webview();
+            ipc::queue_ui_event(message.to_string());
+        }
         Some(WebViewEvent::Other) => {
             ipc::queue_ui_event(message.to_string());
         }
