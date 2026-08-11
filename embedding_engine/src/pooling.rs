@@ -1,7 +1,9 @@
-//! Attention-mask-aware mean pooling and L2 normalization.
+//! Attention-mask-aware pooling and L2 normalization.
 //!
-//! These functions are shared across all BERT-derived embedding models
-//! that use mean pooling (MiniLM, BGE, E5, etc.).
+//! Supports multiple pooling strategies shared across embedding models:
+//!   - mean_pool: SBERT-style mean over token embeddings (MiniLM, BGE, E5)
+//!   - cls_pool:   first-token ([CLS]) pooling (Granite, ModernBERT)
+//!   - last_token_pool: last non-padding token (Harrier, Gemma3 decoder)
 
 use anyhow::Result;
 use candle_core::Tensor;
@@ -67,6 +69,88 @@ pub fn pool_and_normalize(
 ) -> Result<Tensor> {
     let pooled = mean_pool(token_embeddings, attention_mask)
         .map_err(|e| anyhow::anyhow!("mean_pool failed: {e}"))?;
+    l2_normalize(&pooled)
+        .map_err(|e| anyhow::anyhow!("l2_normalize failed: {e}"))
+}
+
+/// Extract the first token (CLS) from `(batch, seq_len, hidden)` embeddings.
+///
+/// Used by ModernBERT / Granite embedding models that use CLS pooling.
+pub fn cls_pool(token_embeddings: &Tensor) -> Result<Tensor> {
+    // token_embeddings shape: (batch, seq_len, hidden)
+    // Take the first token: (batch, hidden)
+    token_embeddings
+        .get_on_dim(1, 0)
+        .map_err(|e| anyhow::anyhow!("cls_pool get_on_dim: {e}"))
+}
+
+/// Extract the last non-padding token from `(batch, seq_len, hidden)` embeddings.
+///
+/// Finds the last position where attention_mask == 1 for each sequence,
+/// and extracts the corresponding hidden state.  Used by decoder models
+/// (Harrier / Gemma3) where the last meaningful token carries the embedding.
+pub fn last_token_pool(
+    token_embeddings: &Tensor,
+    attention_mask: &Tensor,
+) -> Result<Tensor> {
+    let (_batch_size, seq_len, _hidden_dim) = token_embeddings.dims3()
+        .map_err(|e| anyhow::anyhow!("last_token_pool dims3: {e}"))?;
+
+    // Find the index of the last non-padded token for each row:
+    // last_idx[b] = sum(mask[b,:]) - 1
+    let seq_lens = attention_mask
+        .sum(1)
+        .map_err(|e| anyhow::anyhow!("last_token_pool sum: {e}"))?;
+    // shape: (batch, 1)
+    let seq_lens = seq_lens
+        .broadcast_sub(&Tensor::new(&[1f32], attention_mask.device())
+            .map_err(|e| anyhow::anyhow!("last_token_pool sub scalar: {e}"))?)
+        .map_err(|e| anyhow::anyhow!("last_token_pool sub: {e}"))?;
+    // Clamp negative (all-zero rows) to 0
+    let seq_lens = seq_lens
+        .clamp(0f64, (seq_len - 1) as f64)
+        .map_err(|e| anyhow::anyhow!("last_token_pool clamp: {e}"))?;
+    // Convert to u32 indices
+    let seq_lens_u32 = seq_lens
+        .to_dtype(candle_core::DType::U32)
+        .map_err(|e| anyhow::anyhow!("last_token_pool to_dtype: {e}"))?;
+    let indices: Vec<u32> = seq_lens_u32.flatten_all()
+        .map_err(|e| anyhow::anyhow!("last_token_pool flatten: {e}"))?
+        .to_vec1()
+        .map_err(|e| anyhow::anyhow!("last_token_pool to_vec1: {e}"))?;
+
+    // Gather the last token for each batch item
+    let batch_size = indices.len();
+    let mut rows = Vec::with_capacity(batch_size);
+    for (b, &idx) in indices.iter().enumerate() {
+        let row = token_embeddings
+            .get(b)
+            .map_err(|e| anyhow::anyhow!("last_token_pool get batch {b}: {e}"))?
+            .get(idx as usize)
+            .map_err(|e| anyhow::anyhow!("last_token_pool get idx {idx}: {e}"))?;
+        rows.push(row);
+    }
+    let pooled = Tensor::stack(&rows.iter().map(|t| t as &Tensor).collect::<Vec<_>>(), 0)
+        .map_err(|e| anyhow::anyhow!("last_token_pool stack: {e}"))?;
+
+    Ok(pooled)
+}
+
+/// CLS pool + L2 normalize (Granite-style pipeline).
+pub fn cls_pool_and_normalize(token_embeddings: &Tensor) -> Result<Tensor> {
+    let pooled = cls_pool(token_embeddings)
+        .map_err(|e| anyhow::anyhow!("cls_pool failed: {e}"))?;
+    l2_normalize(&pooled)
+        .map_err(|e| anyhow::anyhow!("l2_normalize failed: {e}"))
+}
+
+/// Last-token pool + L2 normalize (Harrier-style pipeline).
+pub fn last_token_pool_and_normalize(
+    token_embeddings: &Tensor,
+    attention_mask: &Tensor,
+) -> Result<Tensor> {
+    let pooled = last_token_pool(token_embeddings, attention_mask)
+        .map_err(|e| anyhow::anyhow!("last_token_pool failed: {e}"))?;
     l2_normalize(&pooled)
         .map_err(|e| anyhow::anyhow!("l2_normalize failed: {e}"))
 }

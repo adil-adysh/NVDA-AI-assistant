@@ -1,0 +1,44 @@
+{
+    "$schema": "embedding_cases.schema.json",
+    "description": "Qualitative regression fixture pairs for embedding model sanity checks.",
+    "models": {
+        "all-MiniLM-L6-v2": {
+            "similar_pairs": [
+                [
+                    "The quick brown fox jumps over the lazy dog.",
+                    "A fast brown fox leaped over a sleepy canine."
+                ],
+                [
+                    "I enjoy reading books about science.",
+                    "Reading scientific literature is something I like."
+                ],
+                [
+                    "The weather is sunny and warm today.",
+                    "It's a bright and hot day outside."
+                ]
+            ],
+            "unrelated_pairs": [
+                [
+                    "The quick brown fox jumps over the lazy dog.",
+                    "Machine learning models require large amounts of training data."
+                ],
+                [
+                    "I enjoy reading books about science.",
+                    "The football match was cancelled due to rain."
+                ],
+                [
+                    "The weather is sunny and warm today.",
+                    "Quantum computing uses qubits instead of classical bits."
+                ]
+            ],
+            "unicode_texts": [
+                "Hello world",
+                "नमस्ते दुनिया",
+                "ગુજરાતી લખાણ",
+                "مرحبا بالعالم",
+                "こんにちは世界",
+                "émojis and café"
+            ]
+        }
+    }
+}

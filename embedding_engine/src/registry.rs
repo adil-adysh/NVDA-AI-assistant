@@ -9,6 +9,8 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::models::granite::GraniteModel;
+use crate::models::harrier::HarrierModel;
 use crate::models::minilm::MiniLMModel;
 
 /// Trait for a fully-initialized model ready to produce embeddings.
@@ -86,6 +88,68 @@ impl Default for ModelRegistry {
                 mini_lm_id.clone(),
                 Box::new(move || {
                     MiniLMModel::load(&cache, "all-MiniLM-L6-v2")
+                        .map(|m| Box::new(m) as Box<dyn InitializedModel>)
+                }),
+            );
+        }
+
+        // ── granite-embedding-97m-multilingual-r2 ──────────────────
+        let granite_id = "granite-embedding-97m-multilingual-r2".to_string();
+        descriptors.insert(
+            granite_id.clone(),
+            ModelDescriptor {
+                id: granite_id.clone(),
+                repository: "ibm-granite/granite-embedding-97m-multilingual-r2".to_string(),
+                architecture: "ModernBERT".to_string(),
+                dimensions: 384,
+                max_tokens: 32768,
+                languages: vec![
+                    "en".to_string(), "de".to_string(), "fr".to_string(),
+                    "es".to_string(), "it".to_string(), "pt".to_string(),
+                    "nl".to_string(), "ja".to_string(), "ko".to_string(),
+                    "zh".to_string(), "ar".to_string(), "hi".to_string(),
+                ],
+                model_size_mb: 186.0,
+            },
+        );
+        {
+            let cache = cache_dir.clone();
+            factories.insert(
+                granite_id.clone(),
+                Box::new(move || {
+                    GraniteModel::load(&cache, "granite-embedding-97m-multilingual-r2")
+                        .map(|m| Box::new(m) as Box<dyn InitializedModel>)
+                }),
+            );
+        }
+
+        // ── harrier-oss-v1-270m ─────────────────────────────────────
+        let harrier_id = "harrier-oss-v1-270m".to_string();
+        descriptors.insert(
+            harrier_id.clone(),
+            ModelDescriptor {
+                id: harrier_id.clone(),
+                repository: "microsoft/harrier-oss-v1-270m".to_string(),
+                architecture: "Gemma3".to_string(),
+                dimensions: 640,
+                max_tokens: 32768,
+                languages: vec![
+                    "en".to_string(), "ar".to_string(), "de".to_string(),
+                    "es".to_string(), "fr".to_string(), "hi".to_string(),
+                    "it".to_string(), "ja".to_string(), "ko".to_string(),
+                    "nl".to_string(), "pl".to_string(), "pt".to_string(),
+                    "ru".to_string(), "th".to_string(), "tr".to_string(),
+                    "vi".to_string(), "zh".to_string(),
+                ],
+                model_size_mb: 545.0,
+            },
+        );
+        {
+            let cache = cache_dir.clone();
+            factories.insert(
+                harrier_id.clone(),
+                Box::new(move || {
+                    HarrierModel::load(&cache, "harrier-oss-v1-270m")
                         .map(|m| Box::new(m) as Box<dyn InitializedModel>)
                 }),
             );

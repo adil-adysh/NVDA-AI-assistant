@@ -113,7 +113,14 @@ impl EmbeddingEngine {
     /// Produce an embedding vector for a single text.
     ///
     /// Returns a ``list[float]`` of length ``self.dimensions()``.
+    ///
+    /// Raises ``ValueError`` for empty or whitespace-only input.
     fn embed(&mut self, text: &str) -> PyResult<Vec<f32>> {
+        if text.trim().is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Input text is empty or whitespace-only",
+            ));
+        }
         let results = self.embed_batch(vec![text.to_string()])?;
         results
             .into_iter()
@@ -124,7 +131,16 @@ impl EmbeddingEngine {
     /// Produce embedding vectors for multiple texts.
     ///
     /// Returns ``list[list[float]]`` — one vector per input text.
+    ///
+    /// Raises ``ValueError`` if any text is empty or whitespace-only.
     fn embed_batch(&mut self, texts: Vec<String>) -> PyResult<Vec<Vec<f32>>> {
+        for (i, text) in texts.iter().enumerate() {
+            if text.trim().is_empty() {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Input text at index {i} is empty or whitespace-only",
+                )));
+            }
+        }
         let model_id = self
             .loaded_model_id
             .as_ref()
