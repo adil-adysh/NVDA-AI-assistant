@@ -384,6 +384,18 @@ fn activate_window(hwnd: HWND) {
     let style_before = unsafe { GetWindowLongW(hwnd, GWL_STYLE) };
     logger::info(&format!("activate_window called hwnd={:?} visible_before={} style_before=0x{:x}", hwnd, visible_before, style_before));
 
+    // Gate WM_ACTIVATE / WM_SETFOCUS from calling focus_webview()
+    // synchronously.  SetForegroundWindow and ShowWindow fire these
+    // messages, but the WebView hasn't received the open_chat /
+    // render_display command yet, so no DOM element is focused.  NVDA
+    // would read the container role ("pane") instead of the target
+    // element.  We defer focus_webview until the WebView sends
+    // ui_applied.  The gate must be armed BEFORE any window-activation
+    // call (ShowWindow, SetForegroundWindow, etc.) so that inline
+    // WM_SETFOCUS / WM_ACTIVATE messages from ShowWindow are also
+    // captured.
+    pending_ui_applied_focus().store(true, Ordering::SeqCst);
+
     unsafe {
         let result = if IsIconic(hwnd).as_bool() {
             ShowWindow(hwnd, SW_RESTORE)
@@ -440,13 +452,6 @@ fn activate_window(hwnd: HWND) {
             && foreground_thread_id != current_thread_id
             && AttachThreadInput(foreground_thread_id, current_thread_id, 1) != 0;
 
-        // Gate WM_ACTIVATE / WM_SETFOCUS from calling focus_webview()
-        // synchronously.  When SetForegroundWindow fires these messages,
-        // the WebView hasn't received the open_chat / render_display
-        // command yet, so no DOM element is focused.  NVDA would read
-        // the container role ("pane") instead of the target element.
-        // We defer focus_webview until the WebView sends ui_applied.
-        pending_ui_applied_focus().store(true, Ordering::SeqCst);
         let foreground_result = SetForegroundWindow(hwnd);
         let _ = SetActiveWindow(hwnd);
         logger::debug(&format!("SetForegroundWindow result={:?}", foreground_result));
