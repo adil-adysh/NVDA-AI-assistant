@@ -1,0 +1,197 @@
+    Checking embedding_engine v0.1.0 (D:\nvda-addons\NVDA-AI-assistant\embedding_engine)
+error[E0433]: cannot find `api` in `hf_hub`
+  --> src\models\minilm.rs:13:13
+   |
+13 | use hf_hub::api::sync::Api;
+   |             ^^^ could not find `api` in `hf_hub`
+
+warning: unused import: `Context`
+ --> src\pooling.rs:6:14
+  |
+6 | use anyhow::{Context, Result};
+  |              ^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Device`
+ --> src\pooling.rs:7:19
+  |
+7 | use candle_core::{Device, Tensor};
+  |                   ^^^^^^
+
+error[E0599]: no method named `map_err` found for struct `ModelRegistry` in the current scope
+  --> src\lib.rs:54:49
+   |
+54 |         let registry = ModelRegistry::default().map_err(to_py_err)?;
+   |                                                 ^^^^^^^ method not found in `ModelRegistry`
+   |
+  ::: src\registry.rs:49:1
+   |
+49 | pub struct ModelRegistry {
+   | ------------------------ method `map_err` not found for this struct
+   |
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following traits define an item `map_err`, perhaps you need to implement one of them:
+           candidate #1: `futures_util::future::try_future::TryFutureExt`
+           candidate #2: `futures_util::stream::try_stream::TryStreamExt`
+           candidate #3: `http_body_util::BodyExt`
+           candidate #4: `tower::util::ServiceExt`
+
+error[E0599]: `ModelRegistry` is not an iterator
+  --> src\lib.rs:70:14
+   |
+69 | /         ModelRegistry::default()
+70 | |             .map(|r| r.model_ids())
+   | |             -^^^ `ModelRegistry` is not an iterator
+   | |_____________|
+   |
+   |
+  ::: src\registry.rs:49:1
+   |
+49 |   pub struct ModelRegistry {
+   |   ------------------------ method `map` not found for this struct because it doesn't satisfy `ModelRegistry: Iterator`
+   |
+   = note: the following trait bounds were not satisfied:
+           `ModelRegistry: Iterator`
+           which is required by `&mut ModelRegistry: Iterator`
+note: the trait `Iterator` must be implemented
+  --> D:\rustup\toolchains\1.97.1-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\iter\traits\iterator.rs:42:1
+   |
+42 | pub const trait Iterator {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following traits define an item `map`, perhaps you need to implement one of them:
+           candidate #1: `Iterator`
+           candidate #2: `Map1`
+           candidate #3: `Map1Any`
+           candidate #4: `Map2`
+           candidate #5: `Map2InPlace`
+           candidate #6: `Map2U8`
+           candidate #7: `futures_util::future::future::FutureExt`
+           candidate #8: `futures_util::stream::stream::StreamExt`
+           candidate #9: `nom::internal::Parser`
+           candidate #10: `rand::distr::distribution::Distribution`
+           candidate #11: `rand::distr::distribution::Distribution`
+           candidate #12: `rayon::iter::ParallelIterator`
+           candidate #13: `zerocopy::pointer::ptr::_casts::TryWithError`
+
+error[E0599]: no method named `map_err` found for struct `ModelRegistry` in the current scope
+  --> src\lib.rs:80:49
+   |
+80 |         let registry = ModelRegistry::default().map_err(to_py_err)?;
+   |                                                 ^^^^^^^ method not found in `ModelRegistry`
+   |
+  ::: src\registry.rs:49:1
+   |
+49 | pub struct ModelRegistry {
+   | ------------------------ method `map_err` not found for this struct
+   |
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following traits define an item `map_err`, perhaps you need to implement one of them:
+           candidate #1: `futures_util::future::try_future::TryFutureExt`
+           candidate #2: `futures_util::stream::try_stream::TryStreamExt`
+           candidate #3: `http_body_util::BodyExt`
+           candidate #4: `tower::util::ServiceExt`
+
+error[E0308]: mismatched types
+  --> src\lib.rs:88:40
+   |
+88 |         let results = self.embed_batch(&[text.to_string()])?;
+   |                            ----------- ^^^^^^^^^^^^^^^^^^^ expected `Vec<String>`, found `&[String; 1]`
+   |                            |
+   |                            arguments to this method are incorrect
+   |
+   = note: expected struct `Vec<std::string::String>`
+           found reference `&[std::string::String; 1]`
+note: method defined here
+  --> src\lib.rs:98:8
+   |
+98 |     fn embed_batch(&mut self, texts: Vec<String>) -> PyResult<Vec<Vec<f32>>> {
+   |        ^^^^^^^^^^^            ------------------
+help: try using a conversion method
+   |
+88 |         let results = self.embed_batch((&[text.to_string()]).to_vec())?;
+   |                                        +                   ++++++++++
+
+error[E0277]: `serde_json::Value` cannot be converted to a Python object
+   --> src\lib.rs:79:38
+    |
+ 79 |     fn model_info(model_id: &str) -> PyResult<Option<serde_json::Value>> {
+    |                                      ^^^^^^^^ the trait `IntoPyObject<'_>` is not implemented for `serde_json::Value`
+    |
+    = note: `IntoPyObject` is automatically implemented by the `#[pyclass]` macro
+    = note: if you do not wish to have a corresponding Python type, implement it manually
+    = note: if you do not own `serde_json::Value` you can perform a manual conversion to one of the types in `pyo3::types::*`
+    = help: the following other types implement trait `IntoPyObject<'py>`:
+              &&'a T
+              &&OsStr
+              &&Path
+              &&str
+              &'a (T0, T1)
+              &'a (T0, T1, T2)
+              &'a (T0, T1, T2, T3)
+              &'a (T0, T1, T2, T3, T4)
+            and 139 others
+    = note: required for `Option<serde_json::Value>` to implement `IntoPyObject<'_>`
+note: required by a bound in `pyo3::impl_::wrap::UnknownReturnResultType::<Result<T, E>>::wrap`
+   --> D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\pyo3-0.23.5\src\impl_\wrap.rs:141:12
+    |
+139 |     pub fn wrap<'py>(&self, _: Result<T, E>) -> Result<T, E>
+    |            ---- required by a bound in this associated function
+140 |     where
+141 |         T: IntoPyObject<'py>,
+    |            ^^^^^^^^^^^^^^^^^ required by this bound in `UnknownReturnResultType::<Result<T, E>>::wrap`
+
+error[E0277]: `Result<Option<serde_json::Value>, pyo3::PyErr>` cannot be converted to a Python object
+   --> src\lib.rs:79:38
+    |
+ 79 |     fn model_info(model_id: &str) -> PyResult<Option<serde_json::Value>> {
+    |                                      ^^^^^^^^ the trait `IntoPyObject<'_>` is not implemented for `Result<Option<serde_json::Value>, pyo3::PyErr>`
+    |
+    = note: `IntoPyObject` is automatically implemented by the `#[pyclass]` macro
+    = note: if you do not wish to have a corresponding Python type, implement it manually
+    = note: if you do not own `Result<Option<serde_json::Value>, pyo3::PyErr>` you can perform a manual conversion to one of the types in `pyo3::types::*`
+    = help: the following other types implement trait `IntoPyObject<'py>`:
+              &&'a T
+              &&OsStr
+              &&Path
+              &&str
+              &'a (T0, T1)
+              &'a (T0, T1, T2)
+              &'a (T0, T1, T2, T3)
+              &'a (T0, T1, T2, T3, T4)
+            and 139 others
+note: required by a bound in `pyo3::impl_::wrap::UnknownReturnType::<T>::map_into_ptr`
+   --> D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\pyo3-0.23.5\src\impl_\wrap.rs:167:12
+    |
+165 |     pub fn map_into_ptr<'py>(&self, _: Python<'py>, _: PyResult<T>) -> PyResult<*mut ffi::PyObject>
+    |            ------------ required by a bound in this associated function
+166 |     where
+167 |         T: IntoPyObject<'py>,
+    |            ^^^^^^^^^^^^^^^^^ required by this bound in `UnknownReturnType::<T>::map_into_ptr`
+
+error[E0308]: mismatched types
+   --> src\lib.rs:79:38
+    |
+ 79 |     fn model_info(model_id: &str) -> PyResult<Option<serde_json::Value>> {
+    |                                      ^^^^^^^^
+    |                                      |
+    |                                      expected `Result<Result<Option<Value>, ...>, ...>`, found `Result<Option<Value>, PyErr>`
+    |                                      arguments to this method are incorrect
+    |
+    = note: expected enum `Result<Result<Option<_>, pyo3::PyErr>, _>`
+               found enum `Result<Option<_>, _>`
+note: method defined here
+   --> D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\pyo3-0.23.5\src\impl_\wrap.rs:165:12
+    |
+165 |     pub fn map_into_ptr<'py>(&self, _: Python<'py>, _: PyResult<T>) -> PyResult<*mut ffi::PyObject>
+    |            ^^^^^^^^^^^^
+help: try wrapping the expression in `Ok`
+    |
+ 79 |     fn model_info(model_id: &str) -> Ok(PyResult)<Option<serde_json::Value>> {
+    |                                      +++        +
+
+Some errors have detailed explanations: E0277, E0308, E0433, E0599.
+For more information about an error, try `rustc --explain E0277`.
+warning: `embedding_engine` (lib) generated 2 warnings
+error: could not compile `embedding_engine` (lib) due to 8 previous errors; 2 warnings emitted

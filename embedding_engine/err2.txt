@@ -1,0 +1,37 @@
+    Checking embedding_engine v0.1.0 (D:\nvda-addons\NVDA-AI-assistant\embedding_engine)
+error[E0277]: the trait bound `Py<PyAny>: From<pyo3::Borrowed<'_, '_, PyBool>>` is not satisfied
+    --> src\lib.rs:36:68
+     |
+  36 |         serde_json::Value::Bool(b) => b.into_pyobject(py).unwrap().into(),
+     |                                                                    ^^^^ the trait `From<pyo3::Borrowed<'_, '_, PyBool>>` is not implemented for `Py<PyAny>`
+     |
+help: `Py<PyAny>` implements trait `From<T>`
+    --> D:\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\pyo3-0.23.5\src\instance.rs:1799:1
+     |
+1799 | / impl<T> std::convert::From<Py<T>> for PyObject
+1800 | | where
+1801 | |     T: AsRef<PyAny>,
+     | |____________________^ `From<Py<T>>`
+...
+1809 | / impl<T> std::convert::From<Bound<'_, T>> for PyObject
+1810 | | where
+1811 | |     T: AsRef<PyAny>,
+     | |____________________^ `From<pyo3::Bound<'_, T>>`
+     = note: required for `pyo3::Borrowed<'_, '_, PyBool>` to implement `Into<Py<PyAny>>`
+
+error[E0133]: call to unsafe function `VarBuilderArgs::<'a, Box<(dyn SimpleBackend + 'a)>>::from_mmaped_safetensors` is unsafe and requires unsafe function or block
+  --> src\models\minilm.rs:66:18
+   |
+66 |           let vb = VarBuilder::from_mmaped_safetensors(
+   |  __________________^
+67 | |             &[model_path],
+68 | |             candle_core::DType::F32,
+69 | |             &device,
+70 | |         )
+   | |_________^ call to unsafe function
+   |
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+Some errors have detailed explanations: E0133, E0277.
+For more information about an error, try `rustc --explain E0133`.
+error: could not compile `embedding_engine` (lib) due to 2 previous errors

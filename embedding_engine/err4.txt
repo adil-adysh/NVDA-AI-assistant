@@ -1,0 +1,40 @@
+    Checking embedding_engine v0.1.0 (D:\nvda-addons\NVDA-AI-assistant\embedding_engine)
+warning: field `model_id` is never read
+  --> src\models\minilm.rs:27:5
+   |
+23 | pub struct MiniLMModel {
+   |            ----------- field in this struct
+...
+27 |     model_id: String,
+   |     ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `model_id` is never used
+  --> src\registry.rs:16:8
+   |
+15 | pub trait InitializedModel: Send + Sync {
+   |           ---------------- method in this trait
+16 |     fn model_id(&self) -> &str;
+   |        ^^^^^^^^
+
+warning: field `cache_dir` is never read
+  --> src\registry.rs:52:5
+   |
+49 | pub struct ModelRegistry {
+   |            ------------- field in this struct
+...
+52 |     cache_dir: PathBuf,
+   |     ^^^^^^^^^
+
+warning: method `cache_dir` is never used
+   --> src\registry.rs:128:12
+    |
+103 | impl ModelRegistry {
+    | ------------------ method in this implementation
+...
+128 |     pub fn cache_dir(&self) -> &PathBuf {
+    |            ^^^^^^^^^
+
+warning: `embedding_engine` (lib) generated 4 warnings
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.64s
