@@ -769,6 +769,15 @@ class OpenAICompatProvider(LLMProvider):
 				repeat_penalty=sampling.repeat_penalty,
 			):
 				chunks.append(chunk)
+
+				# SSE error chunk (e.g. litert-lm sends
+				# {"error": "..."} when the model rejects a request
+				# mid-stream).  Surface it immediately instead of
+				# silently returning an empty response.
+				sse_error = chunk.get("error")
+				if isinstance(sse_error, str) and sse_error.strip():
+					raise LLMProviderError(sse_error.strip())
+
 				choices = chunk.get("choices")
 				if not isinstance(choices, list):
 					continue

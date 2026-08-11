@@ -135,7 +135,13 @@ pub(crate) fn window_ready_for_delivery(
 ) -> bool {
     let visible_before = is_window_visible();
     match policy {
-        ActivationPolicy::NoActivate => visible_before,
+        // NoActivate messages (streaming deltas, history sync, etc.) can be
+        // delivered even when the parent window is hidden.  The WebView2
+        // controller stays alive during a soft-dismiss (Escape key), so
+        // JavaScript continues to receive and render streaming responses.
+        // The host_ready() guard in post_host_command ensures the WebView
+        // has been initialized — the HWND visibility is irrelevant.
+        ActivationPolicy::NoActivate => visible_before || crate::window::is_window_hidden(),
         ActivationPolicy::ActivateIfBackground => {
             if visible_before {
                 if should_activate_visible_window() {
@@ -157,7 +163,10 @@ mod tests {
     use std::cell::RefCell;
 
     #[test]
-    fn no_activate_requires_visible_window() {
+    fn no_activate_allows_hidden_window_for_background_streaming() {
+        // NoActivate (streaming, sync, etc.) should not be gated by HWND
+        // visibility — the WebView2 controller stays alive and can receive
+        // messages even while the parent window is dismissed via Escape.
         let ready = window_ready_for_delivery(
             ActivationPolicy::NoActivate,
             || false,
@@ -165,7 +174,7 @@ mod tests {
             |_| panic!("should not try to activate when no_activate"),
         );
 
-        assert!(!ready);
+        assert!(ready);
     }
 
     #[test]

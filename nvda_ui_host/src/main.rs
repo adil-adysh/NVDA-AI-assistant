@@ -11,10 +11,6 @@ use windows::{
     Win32::System::Com::*,
 };
 
-// ── Idle timeout: exit after 10 minutes without a command client ──────
-const IDLE_TIMEOUT_MINUTES: u64 = 10;
-// ──────────────────────────────────────────────────────────────────────
-
 fn main() {
     logger::init();
 
@@ -38,14 +34,6 @@ fn real_main() -> Result<()> {
     unsafe {
         CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
         logger::info("COM initialized");
-
-        #[link(name = "kernel32")]
-        extern "system" {
-            fn GetCurrentThreadId() -> u32;
-        }
-        let main_thread_id = GetCurrentThreadId();
-        ipc::watchdog::start(main_thread_id, IDLE_TIMEOUT_MINUTES);
-        logger::info("Idle watchdog started");
 
         let hwnd = window::create_window()?;
         logger::info(&format!("Window created: {:?}", hwnd));

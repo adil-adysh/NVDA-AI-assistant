@@ -14,7 +14,6 @@ use windows::{
 use crate::app::ActivationPolicy;
 use crate::host_dispatch::{self, DeliveryOutcome, HostCommand, WebViewState};
 use crate::logger;
-use crate::window::request_close_window;
 use serde_json::Value;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use webview2_com::{

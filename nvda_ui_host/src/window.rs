@@ -213,6 +213,49 @@ pub(crate) fn request_close_window(reason: &str) -> std::result::Result<(), Disp
     Err(DispatchError::NotInitialized)
 }
 
+/// Soft-dismiss the window: hide it without clearing command queues or
+/// sending a close_host IPC event.  The WebView stays alive so streaming
+/// responses continue to flow in the background.  When the next command
+/// arrives with ActivateIfBackground (e.g. ChatStreamEnd) the window
+/// will automatically re-appear with the full response visible.
+pub(crate) fn dismiss_window() {
+    if let Some(hwnd_value) = WINDOW_HANDLE.get() {
+        let state = current_window_state();
+        if state != WindowState::Visible {
+            logger::debug(&format!("dismiss_window ignored because window state is {:?}", state));
+            return;
+        }
+        let hwnd = HWND(*hwnd_value as _);
+        logger::info("dismiss_window: hiding window (soft dismiss, queues preserved)");
+        // Clear any pending focus gate so the next activation works correctly.
+        pending_ui_applied_focus().store(false, Ordering::SeqCst);
+        unsafe {
+            if IsIconic(hwnd).as_bool() {
+                let _ = ShowWindow(hwnd, SW_RESTORE);
+            }
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+        set_window_state(WindowState::Hidden);
+        // Notify Python that the window was dismissed so it can set its
+        // lifecycle to HIDDEN (preserving conversation for next open).
+        let event_message = json!({
+            "schema": "nvda.ui_host",
+            "version": 2,
+            "type": "event",
+            "event": {
+                "name": "close_host",
+                "payload": {
+                    "reason": "user_dismissed",
+                    "source": "dismiss_window",
+                }
+            }
+        })
+        .to_string();
+        ipc::queue_ui_event(event_message);
+        logger::info("dismiss_window: complete, streaming will continue in background");
+    }
+}
+
 fn drain_host_commands() {
     let messages = {
         let mut queue = command_queue().lock().unwrap();
@@ -248,6 +291,10 @@ fn hwnd() -> HWND {
 
 pub(crate) fn is_window_visible() -> bool {
     unsafe { IsWindowVisible(hwnd()).as_bool() }
+}
+
+pub(crate) fn is_window_hidden() -> bool {
+    current_window_state() == WindowState::Hidden
 }
 
 pub(crate) fn should_activate_visible_window() -> bool {
@@ -498,10 +545,8 @@ unsafe extern "system" fn wndproc(
             // handler won't fire.  Handle Escape here so the window can always
             // be dismissed even in edge cases (minimized, focus stolen, etc.).
             if wparam.0 == 0x1B /* VK_ESCAPE */ {
-                logger::info("Escape key received by native window procedure; requesting host close");
-                if let Err(dispatch_error) = request_close_window("user_escape") {
-                    logger::error(&format!("Failed to request host close on Escape: {:?}", dispatch_error));
-                }
+                logger::info("Escape key received by native window procedure; dismissing window");
+                dismiss_window();
                 return LRESULT(0);
             }
             DefWindowProcW(hwnd, msg, wparam, lparam)

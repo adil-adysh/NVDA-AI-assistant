@@ -50,10 +50,8 @@ fn handle_js_event(message: &str, _hwnd: HWND) -> Result<()> {
             maybe_transition_to_ready();
         }
         Some(WebViewEvent::CloseHost) => {
-            logger::info("WebView close event received, requesting host close");
-            if let Err(dispatch_error) = request_close_window("user_escape") {
-                logger::error(&format!("Failed to request host close from WebView event: {:?}", dispatch_error));
-            }
+            logger::info("WebView close event received, dismissing window (soft dismiss)");
+            crate::window::dismiss_window();
         }
         Some(WebViewEvent::UiApplied) => {
             logger::debug("WebView ui_applied received; requesting deferred focus_webview");
