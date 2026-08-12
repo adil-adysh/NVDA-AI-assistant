@@ -282,7 +282,6 @@ _PROVIDER_CAPABILITIES: dict[str, ProviderCapabilities] = {
 	),
 	"gemini": ProviderCapabilities(
 		credential_groups=(("api_key", "api_token"),),
-		think_config_key="ollamaThink",
 	),
 	"openai": ProviderCapabilities(
 		credential_groups=(("api_key",),),

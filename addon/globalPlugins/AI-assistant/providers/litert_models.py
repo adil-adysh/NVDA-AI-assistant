@@ -483,7 +483,13 @@ def lookup_by_friendly_name(name: str) -> tuple[LiteRTModelDef, ModelVariant | N
 		for v in m.variants:
 			if v.friendly_name.lower() == lowered:
 				return (m, v)
-	# Legacy: fall back to filename/model_id lookup.
+	# Legacy: fall back to filename/model_id lookup.  Prefer the
+	# variant-aware lookup so variant filenames resolve to their
+	# overriding ModelVariant (which may disable the parent model's
+	# vision/thinking flags) rather than the parent model.
+	variant_hit = lookup_variant(name)
+	if variant_hit is not None:
+		return variant_hit
 	model = lookup_model(name)
 	if model is not None:
 		return (model, None)

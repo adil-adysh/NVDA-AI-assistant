@@ -50,13 +50,44 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 # Model name tokens that indicate image-input support (Ollama models).
+# Last-resort heuristic only — prefer server-advertised capabilities.
 _OLLAMA_VISION_TOKENS = (
 	"llava",
-	"vision",
 	"moondream",
 	"bakllava",
 	"minicpm-v",
 )
+
+# Ollama /api/tags capability tokens (Ollama >= 0.3) mapped to our
+# canonical capability ids.  ``vision`` maps to ``image_input``.
+_OLLAMA_CAPABILITY_MAP = {
+	"completion": "completion",
+	"vision": "image_input",
+	"tools": "tools",
+	"thinking": "thinking",
+}
+
+# Ollama ``details.families`` architecture families that imply a vision
+# encoder.  Used when the ``capabilities`` field is absent (older servers).
+_OLLAMA_VISION_FAMILIES = ("clip", "mllama", "llava", "moondream")
+
+
+def _extract_advertised_capabilities(item: dict[str, Any]) -> set[str] | None:
+	"""Extract canonical capabilities from an OpenAI-compat ``/v1/models``
+	item's ``capabilities`` field, if present.
+
+	Returns ``None`` when the server does not advertise any capabilities so
+	callers can distinguish "no signal" from "empty set".
+	"""
+	raw = item.get("capabilities")
+	if not isinstance(raw, list):
+		return None
+	caps: set[str] = set()
+	for token in raw:
+		mapped = _OLLAMA_CAPABILITY_MAP.get(str(token).lower().strip())
+		if mapped:
+			caps.add(mapped)
+	return caps or None
 
 # OpenAI model families that support image input.
 _OPENAI_VISION_FAMILIES = (
@@ -271,15 +302,20 @@ class OpenAICompatProvider(LLMProvider):
 	# ==================================================================
 
 	def _detect_ollama(self) -> bool:
-		"""Probe whether the server is Ollama (cached after first call)."""
-		if self._is_ollama is not None:
-			return self._is_ollama
+		"""Probe whether the server is Ollama (success cached after first call).
+
+		Only a successful probe is cached.  A transient failure (server not
+		yet started, brief network blip) must not permanently disable the
+		Ollama-native path for the instance lifetime.
+		"""
+		if self._is_ollama is True:
+			return True
 		try:
 			self._native_client().get("/api/tags")
 			self._is_ollama = True
+			return True
 		except Exception:
-			self._is_ollama = False
-		return self._is_ollama
+			return False
 
 	def _native_client(self) -> Any:
 		"""Lazy-initialised client pointed at the Ollama-native base URL."""
@@ -336,17 +372,44 @@ class OpenAICompatProvider(LLMProvider):
 			"tools",
 		}
 
-		lowered = name.lower()
-		if any(token in lowered for token in _OLLAMA_VISION_TOKENS):
-			capabilities.add("image_input")
+		# ── Authoritative: server-advertised capabilities (Ollama >= 0.3) ──
+		advertised = data.get("capabilities")
+		advertised_tokens = (
+			{str(t).lower().strip() for t in advertised}
+			if isinstance(advertised, list)
+			else set()
+		)
+		for token in advertised_tokens:
+			mapped = _OLLAMA_CAPABILITY_MAP.get(token)
+			if mapped:
+				capabilities.add(mapped)
+
+		has_signal = bool(advertised_tokens)
+
+		# ── Authoritative: architecture families (older Ollama) ──
+		families = details.get("families")
+		if isinstance(families, list):
+			family_set = {str(f).lower().strip() for f in families if str(f).strip()}
+			has_signal = has_signal or bool(family_set)
+			if any(f in _OLLAMA_VISION_FAMILIES for f in family_set):
+				capabilities.add("image_input")
+		else:
+			family = str(details.get("family", "")).strip().lower()
+			if family:
+				has_signal = True
+				if any(f in family for f in _OLLAMA_VISION_FAMILIES):
+					capabilities.add("image_input")
+
+		# ── Last resort: name-token heuristic when the server advertised
+		#    no capability/family metadata at all. ──
+		if not has_signal:
+			lowered = name.lower()
+			if any(token in lowered for token in _OLLAMA_VISION_TOKENS):
+				capabilities.add("image_input")
+
+		# Think mode: the user toggle still gates "thinking" (unchanged).
 		if self._config.think:
 			capabilities.add("thinking")
-
-		family = str(details.get("family", "")).strip().lower()
-		if family and family not in lowered:
-			lowered_family = family
-			if any(t in lowered_family for t in _OLLAMA_VISION_TOKENS):
-				capabilities.add("image_input")
 
 		context_window = None
 		if isinstance(details.get("context_length"), int):
@@ -381,25 +444,47 @@ class OpenAICompatProvider(LLMProvider):
 			model_id = str(item.get("id", "")).strip()
 			if not model_id:
 				continue
-			result.append(self._capabilities_for_model(model_id))
+			result.append(
+				self._capabilities_for_model(
+					model_id,
+					_extract_advertised_capabilities(item),
+				)
+			)
 		return tuple(result)
 
-	def _capabilities_for_model(self, model_id: str) -> ProviderModelInfo:
-		"""Build ProviderModelInfo with name-based capability inference."""
+	def _capabilities_for_model(
+		self,
+		model_id: str,
+		advertised: set[str] | None = None,
+	) -> ProviderModelInfo:
+		"""Build ProviderModelInfo with authoritative-first capability detection.
+
+		Detection order (most authoritative first):
+		1. LiteRT catalog flags (only for the LiteRT-LM backend).
+		2. Server-advertised capabilities from ``/v1/models``.
+		3. Vendor-family-scoped name inference for cloud providers whose
+		   endpoints expose no capability metadata (OpenAI/Gemini).
+		"""
 		lowered = model_id.lower().strip()
 		capabilities: set[str] = {"completion", "text_input", "text_output"}
 
 		# Nearly everything supports chat + streaming.
 		capabilities.update(("chat", "streaming"))
 
-		# ── LiteRT model detection (must run before generic patterns) ──
-		litert_info = self._lookup_litert_model(model_id)
+		# ── LiteRT model detection (catalog is authoritative for LiteRT-LM) ──
+		litert_info = None
+		if self._is_litert_backend():
+			litert_info = self._lookup_litert_model(model_id)
 		if litert_info is not None:
 			model_def, variant = litert_info
 			think = bool(getattr(self._config, "think", False))
 			variant_caps = self._capabilities_for_litert(model_def, variant, think)
 			capabilities.update(variant_caps)
 			capabilities.add("tools")
+
+		# ── Server-advertised capabilities (authoritative) ──
+		if advertised:
+			capabilities.update(advertised)
 
 		# GPT/OpenAI family.
 		if any(t in lowered for t in ("gpt", "chatgpt", "o1", "o3", "o4")):
@@ -409,13 +494,16 @@ class OpenAICompatProvider(LLMProvider):
 		if lowered.startswith(_OPENAI_VISION_FAMILIES):
 			capabilities.add("image_input")
 
-		# Generic image-input detection for non-OpenAI models.
+		# Generic image-input detection for known vision model families.
 		if any(t in lowered for t in _OLLAMA_VISION_TOKENS):
 			capabilities.add("image_input")
 
-		# Gemini models.
+		# Gemini models: tools for all; image input only for multimodal
+		# families (Gemini 1.x text models are not vision-capable).
 		if "gemini" in lowered:
-			capabilities.update(("tools", "image_input"))
+			capabilities.add("tools")
+			if any(t in lowered for t in ("gemini-1.5", "gemini-2", "gemini-3")):
+				capabilities.add("image_input")
 
 		# LiteRT .litertlm filename pattern (fallback if lookup missed).
 		if litert_info is None and (lowered.endswith(".litertlm") or "litert-community/" in lowered):
@@ -431,10 +519,6 @@ class OpenAICompatProvider(LLMProvider):
 				variant_caps = self._capabilities_for_litert(model_def, variant, think)
 				capabilities.update(variant_caps)
 				capabilities.add("tools")
-
-		# Gemma models may support vision (generic catch for unknown Gemma variants).
-		if litert_info is None and "gemma" in lowered:
-			capabilities.add("image_input")
 
 		return ProviderModelInfo(
 			id=model_id,
@@ -489,9 +573,19 @@ class OpenAICompatProvider(LLMProvider):
 			return None
 		return lookup_by_friendly_name(model_id)
 
-	@staticmethod
-	def _is_litert_provider() -> bool:
-		"""Return ``True`` when the provider is likely talking to a LiteRT-LM server."""
+	def _is_litert_backend(self) -> bool:
+		"""Return ``True`` when this provider is configured against LiteRT-LM."""
+		return self._provider_id == "litert-lm"
+
+	def _is_litert_provider(self) -> bool:
+		"""Return ``True`` when this provider is LiteRT-LM *and* its server is healthy.
+
+		The health check alone is insufficient: a LiteRT supervisor can be
+		healthy while this provider is configured against Ollama/OpenAI, and
+		we must not apply LiteRT catalog capabilities to unrelated models.
+		"""
+		if not self._is_litert_backend():
+			return False
 		try:
 			from ..runtime.server import get_litert_supervisor  # type: ignore[attr-defined]
 		except ImportError:
