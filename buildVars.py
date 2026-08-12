@@ -39,7 +39,7 @@ The add-on includes a WebView-based chat interface with streaming responses, con
 	"""
 	),
 	# version
-	addon_version="0.13.0",
+	addon_version="0.13.1",
 	# Brief changelog for this version
 	# Translators: what's new content for this add-on version to be shown in the add-on store
 	addon_changelog=_(
