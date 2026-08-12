@@ -77,6 +77,19 @@ def _load_module(module_name: str, file_path: Path):
 	return module
 
 
+# Register the config package so config.model_config (used by
+# build_server_config) can be loaded for constructing ModelSamplingConfig.
+config_dir = ROOT_DIR.parent / "config"
+config_pkg = types.ModuleType(f"{PACKAGE_NAME}.config")
+config_pkg.__path__ = [str(config_dir)]
+sys.modules[f"{PACKAGE_NAME}.config"] = config_pkg
+
+_load_module(f"{PACKAGE_NAME}.config.defaults", config_dir / "defaults.py")
+_load_module(
+	f"{PACKAGE_NAME}.config.model_config",
+	config_dir / "model_config.py",
+)
+
 server_module = _load_module(
 	f"{PACKAGE_NAME}.providers.runtime.server",
 	MODULE_DIR / "server.py",
@@ -87,23 +100,31 @@ _build_delete_args = server_module._build_delete_args
 LiteRTServerSupervisor = server_module.LiteRTServerSupervisor
 LiteRTServerError = server_module.LiteRTServerError
 
+ModelSamplingConfig = sys.modules[
+	f"{PACKAGE_NAME}.config.model_config"
+].ModelSamplingConfig
+
+
+def _pinned(**kwargs) -> ModelSamplingConfig:
+	"""Build a ModelSamplingConfig with the given explicit pins."""
+	return ModelSamplingConfig(**kwargs)
+
 
 class BuildServerConfigTests(unittest.TestCase):
 	"""Tests for build_server_config — the pure config.json payload builder."""
 
 	def test_default_only_when_no_pin(self) -> None:
-		config = server_module.build_server_config(
-			"litert-community/gemma-4-E2B-it-litert-lm-gpu",
-			16384,
-			None,
-		)
+		config = server_module.build_server_config(16384, {})
 		self.assertEqual(config, {"default": {"max_num_tokens": 16384}})
 
 	def test_per_model_override_when_pin_differs(self) -> None:
 		config = server_module.build_server_config(
-			"litert-community/gemma-4-E2B-it-litert-lm-gpu",
 			8192,
-			32768,
+			{
+				"litert-community/gemma-4-E2B-it-litert-lm-gpu": _pinned(
+					num_ctx=32768
+				)
+			},
 		)
 		self.assertEqual(
 			config,
@@ -118,16 +139,152 @@ class BuildServerConfigTests(unittest.TestCase):
 		)
 
 	def test_no_per_model_override_when_pin_matches_default(self) -> None:
-		config = server_module.build_server_config("model-x", 8192, 8192)
+		config = server_module.build_server_config(
+			8192,
+			{"model-x": _pinned(num_ctx=8192)},
+		)
 		self.assertEqual(config, {"default": {"max_num_tokens": 8192}})
 
-	def test_ignores_pin_without_model_id(self) -> None:
-		config = server_module.build_server_config(None, 8192, 16384)
-		self.assertEqual(config, {"default": {"max_num_tokens": 8192}})
+	def test_emits_multiple_pinned_models(self) -> None:
+		"""Pins for every model are emitted, not just an active one."""
+		config = server_module.build_server_config(
+			8192,
+			{
+				"model-a": _pinned(num_ctx=32768),
+				"model-b": _pinned(temperature=0.5),
+			},
+		)
+		self.assertEqual(
+			config,
+			{
+				"default": {"max_num_tokens": 8192},
+				"models": {
+					"model-a": {"max_num_tokens": 32768},
+					"model-b": {"temperature": 0.5},
+				},
+			},
+		)
 
 	def test_empty_when_default_is_zero(self) -> None:
-		config = server_module.build_server_config(None, 0, None)
+		config = server_module.build_server_config(0, {})
 		self.assertEqual(config, {})
+
+	def test_emits_backend_when_provided(self) -> None:
+		config = server_module.build_server_config(8192, {}, backend="gpu")
+		self.assertEqual(
+			config,
+			{"default": {"max_num_tokens": 8192, "backend": "gpu"}},
+		)
+
+	def test_emits_cache_and_cpu_threads_when_provided(self) -> None:
+		config = server_module.build_server_config(
+			16384,
+			{},
+			cache="memory",
+			cpu_thread_count=4,
+		)
+		self.assertEqual(
+			config,
+			{
+				"default": {
+					"max_num_tokens": 16384,
+					"cache": "memory",
+					"cpu_thread_count": 4,
+				},
+			},
+		)
+
+	def test_omits_engine_knobs_by_default(self) -> None:
+		config = server_module.build_server_config(8192, {})
+		self.assertEqual(config, {"default": {"max_num_tokens": 8192}})
+
+	def test_omits_engine_knobs_when_explicitly_default(self) -> None:
+		"""Empty backend/cache/zero threads ("default") are not written."""
+		config = server_module.build_server_config(
+			8192,
+			{},
+			backend="",
+			cache="",
+			cpu_thread_count=0,
+		)
+		self.assertEqual(config, {"default": {"max_num_tokens": 8192}})
+
+	def test_ignores_zero_cpu_threads(self) -> None:
+		config = server_module.build_server_config(
+			8192,
+			{},
+			cpu_thread_count=0,
+		)
+		self.assertEqual(config, {"default": {"max_num_tokens": 8192}})
+
+	def test_emits_pinned_sampling_with_num_ctx(self) -> None:
+		config = server_module.build_server_config(
+			8192,
+			{"model-x": _pinned(num_ctx=32768, temperature=0.7, top_k=40, top_p=0.9)},
+		)
+		self.assertEqual(
+			config,
+			{
+				"default": {"max_num_tokens": 8192},
+				"models": {
+					"model-x": {
+						"max_num_tokens": 32768,
+						"temperature": 0.7,
+						"top_k": 40,
+						"top_p": 0.9,
+					},
+				},
+			},
+		)
+
+	def test_emits_sampling_without_num_ctx_pin(self) -> None:
+		"""Sampling pins alone still produce a models.<id> section."""
+		config = server_module.build_server_config(
+			8192,
+			{"model-x": _pinned(temperature=0.5)},
+		)
+		self.assertEqual(
+			config,
+			{
+				"default": {"max_num_tokens": 8192},
+				"models": {"model-x": {"temperature": 0.5}},
+			},
+		)
+
+	def test_omits_unpinned_sampling(self) -> None:
+		config = server_module.build_server_config(
+			8192,
+			{"model-x": _pinned(num_ctx=32768)},
+		)
+		self.assertEqual(
+			config,
+			{
+				"default": {"max_num_tokens": 8192},
+				"models": {"model-x": {"max_num_tokens": 32768}},
+			},
+		)
+
+	def test_omits_out_of_range_sampling(self) -> None:
+		"""Schema-invalid sampling values never reach config.json."""
+		config = server_module.build_server_config(
+			8192,
+			{
+				"model-x": _pinned(
+					temperature=-0.5,
+					top_k=0,
+					top_p=1.5,
+				)
+			},
+		)
+		self.assertEqual(config, {"default": {"max_num_tokens": 8192}})
+
+	def test_unsupported_sampling_keys_omitted(self) -> None:
+		"""max_tokens/repeat_penalty have no litert-lm config key."""
+		config = server_module.build_server_config(
+			8192,
+			{"model-x": _pinned(max_tokens=2048, repeat_penalty=1.1)},
+		)
+		self.assertEqual(config, {"default": {"max_num_tokens": 8192}})
 
 
 class BuildDeleteArgsTests(unittest.TestCase):
@@ -369,9 +526,27 @@ class SupervisorStartConfigTests(unittest.TestCase):
 
 		self.assertFalse(config_path.is_file())
 
+	def test_start_writes_engine_knobs(self) -> None:
+		"""config.json carries backend/cache/cpu_thread_count when configured."""
+		self.mock_config.return_value = {
+			"default": {
+				"max_num_tokens": 16384,
+				"backend": "gpu",
+				"cpu_thread_count": 4,
+			},
+		}
 
-class SupervisorRestartConfigTests(unittest.TestCase):
-	"""Tests for restart_if_config_changed — restart when engine config changes."""
+		self.supervisor.start()
+
+		config_path = Path(self._tmp.name) / "config.json"
+		data = json.loads(config_path.read_text(encoding="utf-8"))
+		self.assertEqual(data["default"]["backend"], "gpu")
+		self.assertEqual(data["default"]["cpu_thread_count"], 4)
+		self.mock_run_cli.assert_called_once()
+
+
+class SupervisorRestartTests(unittest.TestCase):
+	"""Tests for LiteRTServerSupervisor.restart — stop + start with fresh config."""
 
 	def setUp(self) -> None:
 		self._resolve_patcher = mock.patch.object(
@@ -416,73 +591,25 @@ class SupervisorRestartConfigTests(unittest.TestCase):
 		self._run_cli_patcher.stop()
 		self._config_patcher.stop()
 
-	def test_restarts_when_config_changed(self) -> None:
-		"""A changed num_ctx triggers stop + start with the new config."""
+	def test_restart_regenerates_config_and_respawns(self) -> None:
+		"""restart() stops and starts, regenerating config.json from settings."""
 		self.supervisor.start()
 		self.assertEqual(self.mock_run_cli.call_count, 1)
 
-		self.mock_config.return_value = {"default": {"max_num_tokens": 32768}}
-		restarted = self.supervisor.restart_if_config_changed()
+		self.supervisor.restart()
 
-		self.assertTrue(restarted)
 		self.assertEqual(self.mock_run_cli.call_count, 2)
 		config_path = Path(self._tmp.name) / "config.json"
 		data = json.loads(config_path.read_text(encoding="utf-8"))
-		self.assertEqual(data["default"]["max_num_tokens"], 32768)
+		self.assertEqual(data["default"]["max_num_tokens"], 8192)
 
-	def test_no_restart_when_config_unchanged(self) -> None:
-		"""Same config → signature match, no restart."""
-		self.supervisor.start()
+	def test_restart_when_not_running_starts(self) -> None:
+		"""restart() with no running server just starts it with fresh config."""
+		self.supervisor.restart()
 
-		restarted = self.supervisor.restart_if_config_changed()
-
-		self.assertFalse(restarted)
 		self.assertEqual(self.mock_run_cli.call_count, 1)
-
-	def test_no_restart_when_server_not_running(self) -> None:
-		"""Nothing running → no restart; the next start() applies the config."""
-		self.mock_config.return_value = {"default": {"max_num_tokens": 32768}}
-
-		restarted = self.supervisor.restart_if_config_changed()
-
-		self.assertFalse(restarted)
-		self.mock_run_cli.assert_not_called()
-
-	def test_restarts_adopted_server_with_stale_disk_config(self) -> None:
-		"""No recorded signature → falls back to the config.json on disk."""
-		# Simulate an adopted server: a running process we did not spawn.
-		self.supervisor._process = mock.MagicMock(poll=lambda: None)  # pylint: disable=protected-access
 		config_path = Path(self._tmp.name) / "config.json"
-		config_path.parent.mkdir(parents=True, exist_ok=True)
-		config_path.write_text(
-			json.dumps({"default": {"max_num_tokens": 4096}}),
-			encoding="utf-8",
-		)
-		# Desired config differs from what the adopted server was started with.
-		self.mock_config.return_value = {"default": {"max_num_tokens": 16384}}
-
-		restarted = self.supervisor.restart_if_config_changed()
-
-		self.assertTrue(restarted)
-		self.assertEqual(self.mock_run_cli.call_count, 1)  # stop + fresh start
-		data = json.loads(config_path.read_text(encoding="utf-8"))
-		self.assertEqual(data["default"]["max_num_tokens"], 16384)
-
-	def test_no_restart_when_adopted_config_matches_disk(self) -> None:
-		"""Adopted server whose disk config matches desired → no restart."""
-		self.supervisor._process = mock.MagicMock(poll=lambda: None)  # pylint: disable=protected-access
-		config_path = Path(self._tmp.name) / "config.json"
-		config_path.parent.mkdir(parents=True, exist_ok=True)
-		config_path.write_text(
-			json.dumps({"default": {"max_num_tokens": 8192}}),
-			encoding="utf-8",
-		)
-		self.mock_config.return_value = {"default": {"max_num_tokens": 8192}}
-
-		restarted = self.supervisor.restart_if_config_changed()
-
-		self.assertFalse(restarted)
-		self.mock_run_cli.assert_not_called()
+		self.assertTrue(config_path.is_file())
 
 
 if __name__ == "__main__":

@@ -10,7 +10,12 @@ from ..providers.error_mapping import (
 	ErrorSuggestion,
 	suggest_for_status,
 )
-from ..providers.interfaces import LLMProviderError, ProviderConfigurationError, UnsupportedModelError
+from ..providers.interfaces import (
+	FeatureNotSupportedError,
+	LLMProviderError,
+	ProviderConfigurationError,
+	UnsupportedModelError,
+)
 
 
 def _translate(message: str) -> str:
@@ -81,6 +86,15 @@ def present_error(error: Exception, translate: Translator | None = None) -> Erro
 			title=translate("Provider configuration problem"),
 			# TRANSLATORS: Message shown when the selected provider is not set up correctly.
 			message=message_text or translate("The selected provider is not configured correctly."),
+		)
+
+	# ── Feature not supported by the active provider (e.g. image description on a text-only model) ──
+	if isinstance(error, FeatureNotSupportedError):
+		return ErrorPresentation(
+			# TRANSLATORS: Title shown when the active provider does not support the requested feature.
+			title=translate("Feature not supported"),
+			# TRANSLATORS: Message shown when the active provider lacks a capability required by the requested operation.
+			message=message_text or translate("The active provider does not support this feature."),
 		)
 
 	# ── Generic LLM provider error ──

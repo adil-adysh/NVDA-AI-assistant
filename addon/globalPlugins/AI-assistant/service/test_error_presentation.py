@@ -66,6 +66,7 @@ error_presentation_module = _load_module(
 LLMProviderError = interfaces_module.LLMProviderError
 MissingCredentialsError = interfaces_module.MissingCredentialsError
 UnsupportedModelError = interfaces_module.UnsupportedModelError
+FeatureNotSupportedError = interfaces_module.FeatureNotSupportedError
 present_error = error_presentation_module.present_error
 suggest_for_status = error_mapping_module.suggest_for_status
 
@@ -83,6 +84,25 @@ class ErrorPresentationTests(unittest.TestCase):
 
 		self.assertEqual(presentation.title, "Unsupported model")
 		self.assertEqual(presentation.message, "This model only supports Interactions API.")
+
+	def test_feature_not_supported_is_actionable(self) -> None:
+		presentation = present_error(
+			FeatureNotSupportedError(
+				"The selected model gemma-4-e2b-gpu does not support image description. "
+				"Switch to a vision-capable model on LiteRT-LM to describe images."
+			)
+		)
+
+		self.assertEqual(presentation.title, "Feature not supported")
+		self.assertIn("The selected model gemma-4-e2b-gpu does not support image description", presentation.message)
+		self.assertIn("Switch to a vision-capable model", presentation.message)
+		self.assertFalse(presentation.is_internal)
+
+	def test_feature_not_supported_falls_back_gracefully(self) -> None:
+		presentation = present_error(FeatureNotSupportedError(""))
+
+		self.assertEqual(presentation.title, "Feature not supported")
+		self.assertFalse(presentation.is_internal)
 
 	def test_provider_runtime_errors_are_not_hidden(self) -> None:
 		presentation = present_error(LLMProviderError("Gemini request timed out."))

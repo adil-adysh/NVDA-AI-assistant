@@ -10,6 +10,7 @@ from logHandler import log
 from . import defaults
 from .state import (
 	ProviderState,
+	_notify_litert_server_config_changed as _notify_litert_server_config_changed_impl,
 	_notify_provider_state_changed as _notify_provider_state_changed_impl,
 	get_provider_state as _build_provider_state,
 )
@@ -97,6 +98,10 @@ def _read_bool(key: str, default: bool) -> bool:
 
 def _notify_provider_state_changed() -> None:
 	_notify_provider_state_changed_impl(get_provider_state)
+
+
+def _notify_litert_server_config_changed() -> None:
+	_notify_litert_server_config_changed_impl()
 
 
 def get_provider() -> str:
@@ -249,6 +254,40 @@ def get_litert_think() -> bool:
 def get_litert_server_url() -> str:
 	return _get_base_url_for("litert-lm")
 
+def get_litert_backend() -> str:
+	"""Return the LiteRT-LM compute backend, or ``""`` when left at the default.
+
+	``""`` means "let litert-lm decide" — no ``backend`` key is written to
+	``config.json``.  Non-default values: ``'cpu'``, ``'gpu'``, ``'npu'``.
+	"""
+	value = _read_string(
+		"litertBackend", defaults.DEFAULT_LITERT_BACKEND
+	).strip().lower()
+	if value in {"cpu", "gpu", "npu"}:
+		return value
+	return ""
+
+
+def get_litert_cache() -> str:
+	"""Return the LiteRT-LM cache policy, or ``""`` when left at the default.
+
+	``""`` means "let litert-lm decide" — no ``cache`` key is written to
+	``config.json``.  Non-default values: ``'disk'``, ``'memory'``, ``'no'``.
+	"""
+	value = _read_string(
+		"litertCache", defaults.DEFAULT_LITERT_CACHE
+	).strip().lower()
+	if value in {"disk", "memory", "no"}:
+		return value
+	return ""
+
+
+def get_litert_cpu_threads() -> int:
+	"""Return the LiteRT-LM CPU thread count; ``0`` means let the runtime decide."""
+	return _read_int(
+		"litertCpuThreads", defaults.DEFAULT_LITERT_CPU_THREADS, minimum=0
+	)
+
 
 def _get_openai_endpoint_paths(provider: str) -> tuple[str, str]:
 	"""Return the OpenAI-compatible endpoint paths for *provider*."""
@@ -294,6 +333,9 @@ def build_provider_config(provider: str) -> "OpenAICompatConfig":
 		generate_max_tokens=get_generate_max_tokens(),
 		generate_presence_penalty=get_generate_presence_penalty(),
 		think=_get_think_for(provider),
+		litert_backend=get_litert_backend() if provider == "litert-lm" else "",
+		litert_cache=get_litert_cache() if provider == "litert-lm" else "",
+		litert_cpu_threads=get_litert_cpu_threads() if provider == "litert-lm" else 0,
 	)
 
 
@@ -471,6 +513,7 @@ def set_gemini_api_token(apiToken: str | None) -> None:
 
 def set_litert_model_name(modelName: str) -> None:
 	_set_value("litertModelName", str(modelName).strip(), notify=True)
+	_notify_litert_server_config_changed()
 
 
 def set_litert_think(think: bool) -> None:
@@ -478,6 +521,30 @@ def set_litert_think(think: bool) -> None:
 
 def set_litert_server_url(serverUrl: str) -> None:
 	_set_value("litertServerUrl", str(serverUrl).strip().rstrip("/"), notify=True)
+
+
+def set_litert_backend(backend: str) -> None:
+	"""Persist the LiteRT compute backend; anything invalid or ``"default"`` → ``""``."""
+	value = str(backend or "").strip().lower()
+	_set_value(
+		"litertBackend",
+		value if value in {"cpu", "gpu", "npu"} else "",
+		notify=True,
+	)
+
+
+def set_litert_cache(cache: str) -> None:
+	"""Persist the LiteRT cache policy; anything invalid or ``"default"`` → ``""``."""
+	value = str(cache or "").strip().lower()
+	_set_value(
+		"litertCache",
+		value if value in {"disk", "memory", "no"} else "",
+		notify=True,
+	)
+
+
+def set_litert_cpu_threads(threads: int) -> None:
+	_set_value("litertCpuThreads", int(threads), notify=True)
 
 
 def get_think(provider_id: str) -> bool:
@@ -575,7 +642,15 @@ def set_openai_compat_config(config: "OpenAICompatConfig", activate: bool = True
 	if think_key := think_keys.get(provider):
 		values[think_key] = config.think
 
+	# LiteRT-LM engine knobs (provider-specific).
+	if provider == "litert-lm":
+		values["litertBackend"] = config.litert_backend
+		values["litertCache"] = config.litert_cache
+		values["litertCpuThreads"] = config.litert_cpu_threads
+
 	_set_values(values, notify=False)
+	if provider == "litert-lm":
+		_notify_litert_server_config_changed()
 	_notify_provider_state_changed()
 
 
@@ -630,6 +705,7 @@ def set_timeout_seconds(timeoutSeconds: float) -> None:
 
 def set_num_ctx(numCtx: int) -> None:
 	_set_value("numCtx", int(numCtx))
+	_notify_litert_server_config_changed()
 
 
 def set_keep_alive(keepAlive: str) -> None:

@@ -15,6 +15,7 @@ from ..service.error_presentation import present_error
 from ..service.llm import LLMService
 from ..service.provider_readiness import ProviderReadinessService, get_provider_display_name
 from ..config.settings import get_provider, get_model_name
+from ..config.state import subscribe_litert_server_config_change
 from ..ui import nvda_ui
 from ..ui.session_state import build_provider_status_message
 from ..use_case.engine import UseCaseEngine
@@ -39,6 +40,60 @@ _NON_LLM_USE_CASES = frozenset(
 
 
 _litert_readiness_lock = threading.Lock()
+_litert_restart_lock = threading.Lock()
+_litert_restart_pending = False
+
+
+def _on_litert_server_config_changed() -> None:
+	"""Queue a LiteRT server restart when engine settings changed.
+
+	Fired from the config layer (NVDA main thread) whenever a
+	server-relevant setting — backend, cache, cpu thread count, num_ctx
+	or the active model — is persisted.  The actual stop/start is
+	deferred to a daemon worker so the dialog that saved the setting
+	never blocks on a server restart.
+	"""
+	global _litert_restart_pending  # pylint: disable=global-statement
+	if not get_litert_supervisor().is_running:
+		return
+	with _litert_restart_lock:
+		if _litert_restart_pending:
+			return
+		_litert_restart_pending = True
+	threading.Thread(
+		target=_restart_litert_server_worker,
+		name="litert-restart-on-config-change",
+		daemon=True,
+	).start()
+
+
+def _restart_litert_server_worker() -> None:
+	"""Worker thread body performing the deferred LiteRT server restart."""
+	global _litert_restart_pending  # pylint: disable=global-statement
+	try:
+		# Serialize with the readiness path so a restart never races a
+		# concurrent start/import triggered by opening chat.
+		with _litert_readiness_lock:
+			_restart_litert_server_locked()
+	except Exception:
+		log.exception("LiteRT server restart after config change failed")
+	finally:
+		with _litert_restart_lock:
+			_litert_restart_pending = False
+
+
+def _restart_litert_server_locked() -> None:
+	"""Stop and restart the running LiteRT server (caller holds the readiness lock)."""
+	supervisor = get_litert_supervisor()
+	if not supervisor.is_running:
+		return
+	log.info("LiteRT engine settings changed; restarting server to apply")
+	supervisor.restart()
+	if not supervisor.wait_until_ready(timeout=60.0):
+		log.error("LiteRT server did not become ready after config-change restart")
+
+
+subscribe_litert_server_config_change(_on_litert_server_config_changed)
 
 
 def ensure_litert_server_ready(on_progress: Callable[[str], None] | None = None) -> None:
@@ -83,12 +138,9 @@ def _ensure_litert_server_ready_locked(
 
 	if supervisor.is_running and healthy:
 		log.debug("ensure_litert_server_ready: server already healthy")
-		# Engine-level settings (e.g. num_ctx → max_num_tokens) bind at
-		# server start; restart when the running server no longer matches
-		# the add-on config.  This is a no-op unless the config changed.
-		supervisor.restart_if_config_changed(on_progress=on_progress)
-		# A healthy HTTP process does not imply that the selected model is
-		# present.  Validate the registry on every provider/model switch.
+		# Engine-setting changes (backend, cache, cpu threads, num_ctx,
+		# model) restart the server via the config-change event, not here;
+		# this path only re-validates the model registry.
 		_ensure_model_imported(supervisor, on_progress=on_progress)
 		return
 

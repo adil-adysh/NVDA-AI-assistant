@@ -185,6 +185,124 @@ class SetOpenAICompatConfigActivationTests(unittest.TestCase):
 		# Shared sampling values are persisted alongside.
 		self.assertEqual(store.data["numCtx"], 8192)
 
+	def test_litert_configure_persists_engine_knobs(self) -> None:
+		"""LiteRT engine knobs persist under their own YAML keys."""
+		config = config_module.OpenAICompatConfig(
+			**{
+				**_make_config(
+					"litert-lm",
+					model_name="gemma",
+					base_url="http://127.0.0.1:9379",
+					api_key="",
+				).__dict__,
+				"litert_backend": "gpu",
+				"litert_cache": "memory",
+				"litert_cpu_threads": 4,
+			}
+		)
+		set_openai_compat_config(config, activate=False)
+
+		store = settings_module._config_store  # pylint: disable=protected-access
+		self.assertEqual(store.data["litertBackend"], "gpu")
+		self.assertEqual(store.data["litertCache"], "memory")
+		self.assertEqual(store.data["litertCpuThreads"], 4)
+		# Active provider unchanged by a Configure-dialog save.
+		self.assertEqual(store.data["provider"], "ollama")
+
+	def test_non_litert_configure_skips_engine_knobs(self) -> None:
+		"""Engine knobs are not persisted for other providers."""
+		config = _make_config(
+			"openai",
+			model_name="gpt-4o-mini",
+			api_key="sk-new",
+		)
+		set_openai_compat_config(config, activate=False)
+
+		store = settings_module._config_store  # pylint: disable=protected-access
+		self.assertNotIn("litertBackend", store.data)
+		self.assertNotIn("litertCache", store.data)
+		self.assertNotIn("litertCpuThreads", store.data)
+
+
+class LiteRTServerConfigChangeEventTests(unittest.TestCase):
+	"""The config-change event fires only for LiteRT-relevant persistence."""
+
+	def setUp(self) -> None:
+		store = _FakeStore()
+		store.data["provider"] = "ollama"
+		settings_module._config_store = store  # pylint: disable=protected-access
+		self.fired: list[bool] = []
+		self._state = sys.modules[f"{PACKAGE_NAME}.config.state"]
+		self._state.subscribe_litert_server_config_change(self._record)
+
+	def tearDown(self) -> None:
+		self._state.unsubscribe_litert_server_config_change(self._record)
+
+	def _record(self) -> None:
+		self.fired.append(True)
+
+	def test_litert_configure_fires_event(self) -> None:
+		config = config_module.OpenAICompatConfig(
+			**{
+				**_make_config(
+					"litert-lm",
+					model_name="gemma",
+					base_url="http://127.0.0.1:9379",
+					api_key="",
+				).__dict__,
+				"litert_backend": "gpu",
+			}
+		)
+		set_openai_compat_config(config, activate=False)
+		self.assertEqual(len(self.fired), 1)
+
+	def test_non_litert_configure_does_not_fire(self) -> None:
+		config = _make_config("openai", model_name="gpt-4o-mini", api_key="sk-new")
+		set_openai_compat_config(config, activate=False)
+		self.assertEqual(self.fired, [])
+
+	def test_num_ctx_change_fires_event(self) -> None:
+		settings_module.set_num_ctx(16384)
+		self.assertEqual(len(self.fired), 1)
+
+
+class LiteRTEngineDefaultTests(unittest.TestCase):
+	"""Empty engine values mean "use the engine default" (omit from config.json)."""
+
+	def setUp(self) -> None:
+		settings_module._config_store = _FakeStore()  # pylint: disable=protected-access
+
+	def test_getters_default_to_empty(self) -> None:
+		self.assertEqual(settings_module.get_litert_backend(), "")
+		self.assertEqual(settings_module.get_litert_cache(), "")
+
+	def test_getters_accept_full_value_domains(self) -> None:
+		store = settings_module._config_store  # pylint: disable=protected-access
+		store.data["litertBackend"] = "npu"
+		store.data["litertCache"] = "memory"
+		self.assertEqual(settings_module.get_litert_backend(), "npu")
+		self.assertEqual(settings_module.get_litert_cache(), "memory")
+
+	def test_setters_normalize_default_to_empty(self) -> None:
+		settings_module.set_litert_backend("default")
+		settings_module.set_litert_cache("default")
+		store = settings_module._config_store  # pylint: disable=protected-access
+		self.assertEqual(store.data["litertBackend"], "")
+		self.assertEqual(store.data["litertCache"], "")
+
+	def test_litert_configure_defaults_persist_empty(self) -> None:
+		config = _make_config(
+			"litert-lm",
+			model_name="gemma",
+			base_url="http://127.0.0.1:9379",
+			api_key="",
+		)
+		set_openai_compat_config(config, activate=False)
+		store = settings_module._config_store  # pylint: disable=protected-access
+		self.assertEqual(store.data["litertBackend"], "")
+		self.assertEqual(store.data["litertCache"], "")
+		self.assertEqual(store.data["litertCpuThreads"], 0)
+
 
 if __name__ == "__main__":
 	unittest.main()

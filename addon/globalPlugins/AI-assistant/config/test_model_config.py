@@ -41,6 +41,14 @@ def _load_module(module_name: str, file_path: Path):
 _register_package(PACKAGE_NAME, ROOT_DIR)
 _register_package(f"{PACKAGE_NAME}.config", ROOT_DIR / "config")
 
+log_handler_module = types.ModuleType("logHandler")
+log_handler_module.log = types.SimpleNamespace(
+	debug=lambda *args, **kwargs: None,
+	warning=lambda *args, **kwargs: None,
+	exception=lambda *args, **kwargs: None,
+)
+sys.modules["logHandler"] = log_handler_module
+
 model_config_module = _load_module(
 	f"{PACKAGE_NAME}.config.model_config",
 	ROOT_DIR / "config" / "model_config.py",
@@ -93,6 +101,30 @@ class ModelConfigStoreTests(unittest.TestCase):
 		self.assertEqual(store.get("ollama", "a"), {})
 		self.assertEqual(store.get("ollama", "b"), {"temperature": 0.9})
 
+	def test_all_returns_every_pinned_model_for_provider(self) -> None:
+		store = model_config_module.ModelConfigStore()
+		store.set("litert-lm", "model-a", {"num_ctx": 32768})
+		store.set("litert-lm", "model-b", {"temperature": 0.5})
+		store.set("openai", "gpt-4o", {"temperature": 0.7})
+		self.assertEqual(
+			store.all("litert-lm"),
+			{
+				"model-a": {"num_ctx": 32768},
+				"model-b": {"temperature": 0.5},
+			},
+		)
+
+	def test_all_empty_for_unconfigured_provider(self) -> None:
+		store = model_config_module.ModelConfigStore()
+		self.assertEqual(store.all("litert-lm"), {})
+
+	def test_all_does_not_share_mutable_values(self) -> None:
+		store = model_config_module.ModelConfigStore()
+		store.set("litert-lm", "model-a", {"num_ctx": 32768})
+		all_pins = store.all("litert-lm")
+		all_pins["model-a"]["num_ctx"] = 999
+		self.assertEqual(store.get("litert-lm", "model-a"), {"num_ctx": 32768})
+
 
 class ModelSamplingHelpersTests(unittest.TestCase):
 	"""API helpers: get / set / clear / resolve semantics."""
@@ -120,6 +152,28 @@ class ModelSamplingHelpersTests(unittest.TestCase):
 		self.assertEqual(cfg.top_k, 20)
 		self.assertIsNone(cfg.temperature)
 		self.assertIsNone(cfg.repeat_penalty)
+
+	def test_get_all_returns_explicit_only_for_all_models(self) -> None:
+		model_config_module.set_model_sampling(
+			"litert-lm",
+			"model-a",
+			ModelSamplingConfig(num_ctx=32768, top_k=40),
+		)
+		model_config_module.set_model_sampling(
+			"litert-lm",
+			"model-b",
+			ModelSamplingConfig(temperature=0.5),
+		)
+		all_cfg = model_config_module.get_all_model_sampling("litert-lm")
+		self.assertEqual(set(all_cfg), {"model-a", "model-b"})
+		self.assertEqual(all_cfg["model-a"].num_ctx, 32768)
+		self.assertEqual(all_cfg["model-a"].top_k, 40)
+		self.assertIsNone(all_cfg["model-a"].temperature)
+		self.assertEqual(all_cfg["model-b"].temperature, 0.5)
+		self.assertIsNone(all_cfg["model-b"].num_ctx)
+
+	def test_get_all_empty_for_unconfigured_provider(self) -> None:
+		self.assertEqual(model_config_module.get_all_model_sampling("litert-lm"), {})
 
 	def test_resolve_explicit_overrides_base(self) -> None:
 		base = ModelSamplingConfig(num_ctx=8192, temperature=0.2, top_p=0.85, max_tokens=1024)
@@ -301,6 +355,38 @@ class ModelConfigureTitleTests(unittest.TestCase):
 			model_config_module.model_configure_title("Gemma 4 E2B"),
 			"Configure Gemma 4 E2B",
 		)
+
+
+class LiteRTServerConfigChangeEventTests(unittest.TestCase):
+	"""set_model_sampling fires the LiteRT config-change event for litert-lm."""
+
+	def setUp(self) -> None:
+		_with_temp_store(self)
+		self.fired: list[bool] = []
+		self._state = importlib.import_module(f"{PACKAGE_NAME}.config.state")
+		self._state.subscribe_litert_server_config_change(self._record)
+
+	def tearDown(self) -> None:
+		self._state.unsubscribe_litert_server_config_change(self._record)
+
+	def _record(self) -> None:
+		self.fired.append(True)
+
+	def test_litert_pin_fires_event(self) -> None:
+		model_config_module.set_model_sampling(
+			"litert-lm",
+			"gemma-4-E2B",
+			ModelSamplingConfig(num_ctx=32768),
+		)
+		self.assertEqual(len(self.fired), 1)
+
+	def test_other_provider_pin_does_not_fire(self) -> None:
+		model_config_module.set_model_sampling(
+			"openai",
+			"gpt-4o",
+			ModelSamplingConfig(num_ctx=32768),
+		)
+		self.assertEqual(self.fired, [])
 
 
 if __name__ == "__main__":

@@ -90,6 +90,7 @@ state_module = types.ModuleType(f"{PACKAGE_NAME}.config.state")
 state_module.ProviderState = type("ProviderState", (), {})
 state_module.get_provider_state = mock.MagicMock()
 state_module._notify_provider_state_changed = mock.MagicMock()
+state_module._notify_litert_server_config_changed = mock.MagicMock()
 sys.modules[state_module.__name__] = state_module
 
 # ── Stub core modules that interfaces.py transitively imports ────

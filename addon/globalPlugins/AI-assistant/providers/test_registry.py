@@ -577,7 +577,20 @@ class ConfigureFieldSpecTests(unittest.TestCase):
 
 	def test_litert_fields_no_model_selection(self) -> None:
 		fields = {spec.id: spec for spec in get_configure_fields("litert-lm")}
-		self.assertEqual(fields, {"server_url": fields["server_url"]})
+		self.assertEqual(
+			set(fields),
+			{"server_url", "backend", "cache", "cpu_thread_count"},
+		)
+		self.assertEqual(fields["backend"].kind, "choice")
+		self.assertEqual(fields["backend"].choices, ("cpu", "gpu", "npu"))
+		self.assertEqual(fields["backend"].default_choice, "default")
+		self.assertEqual(fields["cache"].kind, "choice")
+		self.assertEqual(fields["cache"].choices, ("disk", "memory", "no"))
+		self.assertEqual(fields["cache"].default_choice, "default")
+		self.assertEqual(fields["cpu_thread_count"].kind, "int")
+		self.assertFalse(fields["backend"].required)
+		self.assertFalse(fields["cache"].required)
+		self.assertFalse(fields["cpu_thread_count"].required)
 
 
 class DialogTitleTests(unittest.TestCase):

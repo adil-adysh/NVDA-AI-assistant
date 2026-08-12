@@ -177,6 +177,20 @@ class ModelConfigStore:
 			data = self._read()
 			return dict(data.get(provider, {}).get(model_id, {}))
 
+	def all(self, provider: str) -> dict[str, dict[str, int | float]]:
+		"""Return every pinned model's sampling values for *provider*.
+
+		Maps ``model_id`` to its explicit pinned values.  Used by the
+		LiteRT server config writer so ``config.json`` can carry pins for
+		all models, not just the currently active one.
+		"""
+		with self._lock:
+			data = self._read()
+			provider_map = data.get(provider, {})
+			return {
+				model_id: dict(values) for model_id, values in provider_map.items()
+			}
+
 	def set(self, provider: str, model_id: str, values: dict[str, int | float]) -> None:
 		"""Persist the pinned sampling values for *model_id*."""
 		with self._lock:
@@ -226,6 +240,22 @@ def get_model_sampling(provider_id: str, model_id: str) -> ModelSamplingConfig:
 	return ModelSamplingConfig(**{field: raw.get(field) for field in SAMPLING_FIELD_IDS})
 
 
+def get_all_model_sampling(provider_id: str) -> dict[str, ModelSamplingConfig]:
+	"""Return pinned sampling for every model of *provider_id*.
+
+	Explicit values only, keyed by ``model_id``.  The LiteRT server
+	config writer uses this to emit ``models.<id>`` entries for all
+	pinned models, since litert-lm resolves per-model config at request
+	time for whichever model a chat request targets.
+	"""
+	return {
+		model_id: ModelSamplingConfig(
+			**{field: raw.get(field) for field in SAMPLING_FIELD_IDS}
+		)
+		for model_id, raw in ModelConfigStore().all(provider_id).items()
+	}
+
+
 def set_model_sampling(
 	provider_id: str,
 	model_id: str,
@@ -238,6 +268,12 @@ def set_model_sampling(
 		if (value := getattr(config, field)) is not None
 	}
 	ModelConfigStore().set(provider_id, model_id, values)
+	if str(provider_id or "").strip().lower() == "litert-lm":
+		# A pinned num_ctx changes the server's per-model max_num_tokens,
+		# so the LiteRT server must restart to apply it.
+		from .state import _notify_litert_server_config_changed
+
+		_notify_litert_server_config_changed()
 
 
 def clear_model_sampling(provider_id: str, model_id: str) -> None:

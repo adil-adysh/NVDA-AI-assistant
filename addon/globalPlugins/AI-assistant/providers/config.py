@@ -34,6 +34,11 @@ class OpenAICompatConfig(ProviderConfig):
 	organization: str | None = None
 	think: bool = False
 	generate_presence_penalty: float = 0.0
+	# LiteRT-LM server engine knobs.  These are provider-specific and
+	# unused by other OpenAI-compatible providers (empty/zero defaults).
+	litert_backend: str = ""
+	litert_cache: str = ""
+	litert_cpu_threads: int = 0
 
 
 # ---------------------------------------------------------------------------

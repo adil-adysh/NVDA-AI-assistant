@@ -123,8 +123,13 @@ context_types_module.ForegroundImageRequest = ForegroundImageRequest
 context_types_module.ExtractionIntent = ExtractionIntent
 sys.modules[context_types_module.__name__] = context_types_module
 
+class _FeatureNotSupportedErrorStub(Exception):
+	"""Stand-in for providers.interfaces.FeatureNotSupportedError."""
+
+
 providers_interfaces_module = types.ModuleType(f"{PACKAGE_NAME}.providers.interfaces")
 providers_interfaces_module.PartialCallback = object
+providers_interfaces_module.FeatureNotSupportedError = _FeatureNotSupportedErrorStub
 sys.modules[providers_interfaces_module.__name__] = providers_interfaces_module
 
 service_llm_module = types.ModuleType(f"{PACKAGE_NAME}.service.llm")

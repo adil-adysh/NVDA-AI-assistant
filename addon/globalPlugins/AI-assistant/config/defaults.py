@@ -39,6 +39,14 @@ DEFAULT_LITERT_MODEL = "litert-community/gemma-4-E2B-it-litert-lm"
 DEFAULT_LITERT_URL = "http://127.0.0.1:9379"
 DEFAULT_LITERT_THINK = False
 
+# LiteRT-LM server engine defaults.  An empty backend/cache means "use the
+# engine default" — the key is omitted from config.json entirely and litert-lm
+# falls back to the model's metadata default (CPU inference, disk cache).
+# cpu_threads 0 means "let the runtime decide".
+DEFAULT_LITERT_BACKEND = ""
+DEFAULT_LITERT_CACHE = ""
+DEFAULT_LITERT_CPU_THREADS = 0
+
 DEFAULT_ENABLED_PROVIDERS = ["ollama", "gemini", "openai", "litert-lm"]
 
 DEFAULT_IMAGE_MAX_SIDE = 1024

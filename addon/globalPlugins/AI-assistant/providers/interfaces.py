@@ -41,6 +41,16 @@ class UnsupportedModelError(ProviderConfigurationError):
 	"""Raised when the selected model is not supported for the current workflow."""
 
 
+class FeatureNotSupportedError(LLMProviderError):
+	"""Raised when the active provider lacks a capability a use case requires.
+
+	Unlike :class:`UnsupportedModelError` (a configuration problem), the
+	provider is configured correctly but simply cannot perform the requested
+	operation (for example, image description on a text-only model). The user
+	should switch to a provider or model that supports the feature.
+	"""
+
+
 class DownloadCancelledError(Exception):
 	"""Raised by download workers when the user cancels a download.
 

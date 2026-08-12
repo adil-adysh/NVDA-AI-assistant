@@ -44,3 +44,31 @@ def _notify_provider_state_changed(get_current_state: Callable[[], ProviderState
 			listener(state)
 		except Exception:
 			log.exception("Error notifying provider state listener")
+
+
+_litert_server_config_listeners: list[Callable[[], None]] = []
+
+
+def subscribe_litert_server_config_change(listener: Callable[[], None]) -> None:
+	"""Register *listener* to fire when LiteRT server engine settings change.
+
+	The listener runs synchronously on the thread that persisted the
+	change (typically the NVDA main thread) and must not block.
+	"""
+	if listener not in _litert_server_config_listeners:
+		_litert_server_config_listeners.append(listener)
+
+
+def unsubscribe_litert_server_config_change(listener: Callable[[], None]) -> None:
+	"""Remove a previously registered *listener*."""
+	if listener in _litert_server_config_listeners:
+		_litert_server_config_listeners.remove(listener)
+
+
+def _notify_litert_server_config_changed() -> None:
+	"""Fire the LiteRT server engine-config-change event to all listeners."""
+	for listener in list(_litert_server_config_listeners):
+		try:
+			listener()
+		except Exception:
+			log.exception("Error notifying LiteRT server config listener")

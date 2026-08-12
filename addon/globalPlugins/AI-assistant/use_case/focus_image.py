@@ -12,6 +12,7 @@ from ..context.types import ExtractionIntent, ImageContext, PromptContext
 from ..image import capture_focused_object
 from ..image.services import ImageEncoder, ImagePreprocessor
 from ..prompts import build_image_description_prompt
+from ..providers.interfaces import FeatureNotSupportedError
 from ..service.llm import LLMService
 from .base import UseCase
 from .types import ResultContextItem, ResultOutputItem, UseCaseResult, UseCaseSpec
@@ -40,8 +41,16 @@ class DescribeFocusedImageUseCase(UseCase):
 		**kwargs: object,
 	) -> UseCaseResult:
 		if not llm_service.supports_image_description():
-			provider_name = llm_service.provider_name()
-			raise ValueError(f"Image description is not supported by the active provider: {provider_name}")
+			from ..config.settings import get_model_name
+			from ..service.provider_readiness import get_provider_display_name
+
+			provider_name = get_provider_display_name(llm_service.provider_name())
+			model_name = get_model_name().strip()
+			model_label = f"model {model_name}" if model_name else "model"
+			raise FeatureNotSupportedError(
+				f"The selected {model_label} does not support image description. "
+				f"Switch to a vision-capable model on {provider_name} to describe images."
+			)
 
 		if emit is not None:
 			emit("collecting_context", "Capturing focused object image...")

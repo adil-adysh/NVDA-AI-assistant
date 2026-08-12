@@ -153,12 +153,32 @@ class ProviderConfigureDialog(wx.Dialog):
 		return wx.Size(*size)
 
 	def _add_field_row(self, s_helper: Any, spec: ConfigureFieldSpec) -> None:
-		# Use NVDA's LabeledControlHelper so the label and text control
-		# are properly associated for screen readers and the label's
+		# Use NVDA's LabeledControlHelper so the label and control are
+		# properly associated for screen readers and the label's
 		# enabled/disabled state tracks the control.
-		style = wx.TE_PASSWORD if spec.secret else 0
-		lch = LabeledControlHelper(self, spec.label, wx.TextCtrl, style=style)
-		# TRANSLATORS: Accessible name suffix for provider config text fields.
+		if spec.kind == "choice":
+			items = list(spec.choices)
+			if spec.default_choice and spec.default_choice not in items:
+				items.insert(0, spec.default_choice)
+			lch = LabeledControlHelper(
+				self,
+				spec.label,
+				wx.Choice,
+				choices=items,
+			)
+		elif spec.kind == "int":
+			lch = LabeledControlHelper(
+				self,
+				spec.label,
+				wx.SpinCtrl,
+				min=0,
+				max=64,
+				initial=0,
+			)
+		else:
+			style = wx.TE_PASSWORD if spec.secret else 0
+			lch = LabeledControlHelper(self, spec.label, wx.TextCtrl, style=style)
+		# TRANSLATORS: Accessible name suffix for provider config fields.
 		lch.control.SetName(_("{} value").format(spec.label.rstrip(":")))
 		s_helper.addItem(lch.sizer, flag=wx.EXPAND)
 		self._lch[spec.id] = lch
@@ -179,11 +199,25 @@ class ProviderConfigureDialog(wx.Dialog):
 			"base_url": str(getattr(self._config, "base_url", "") or ""),
 			"server_url": str(getattr(self._config, "base_url", "") or ""),
 			"chat_path": str(getattr(self._config, "chat_path", "") or ""),
+			"backend": str(getattr(self._config, "litert_backend", "") or ""),
+			"cache": str(getattr(self._config, "litert_cache", "") or ""),
+			"cpu_thread_count": int(getattr(self._config, "litert_cpu_threads", 0) or 0),
 		}
 		for spec in self._fields:
 			lch = self._lch.get(spec.id)
-			if lch is not None:
-				lch.control.SetValue(values.get(spec.id, ""))
+			if lch is None:
+				continue
+			value = values.get(spec.id, "")
+			if spec.kind == "choice":
+				selected = str(value or "")
+				if selected in spec.choices:
+					lch.control.SetStringSelection(selected)
+				elif spec.default_choice:
+					lch.control.SetStringSelection(spec.default_choice)
+			elif spec.kind == "int":
+				lch.control.SetValue(int(value))
+			else:
+				lch.control.SetValue(str(value or ""))
 
 		if is_installable(self._provider_id):
 			self._refresh_runtime_status()
@@ -211,13 +245,26 @@ class ProviderConfigureDialog(wx.Dialog):
 			"base_url": "base_url",
 			"server_url": "base_url",
 			"chat_path": "chat_path",
+			"backend": "litert_backend",
+			"cache": "litert_cache",
+			"cpu_thread_count": "litert_cpu_threads",
 		}
 		for spec in self._fields:
 			lch = self._lch.get(spec.id)
 			if lch is None:
 				continue
 			attr = field_to_attr.get(spec.id)
-			if attr is not None:
+			if attr is None:
+				continue
+			if spec.kind == "choice":
+				selected = lch.control.GetStringSelection().strip()
+				if spec.default_choice and selected == spec.default_choice:
+					values[attr] = ""
+				else:
+					values[attr] = selected
+			elif spec.kind == "int":
+				values[attr] = int(lch.control.GetValue())
+			else:
 				values[attr] = lch.control.GetValue().strip()
 		if hasattr(self, "_think_cb"):
 			values["think"] = self._think_cb.Value

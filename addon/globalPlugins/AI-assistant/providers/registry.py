@@ -152,6 +152,10 @@ class ConfigureFieldSpec:
 	``base_url`` and is used for local runtimes where the URL is the
 	connection point.  There are deliberately **no model fields** here —
 	model selection belongs to the model manager, never to Configure.
+
+	``kind`` selects the widget rendered by the dialog: ``text``
+	(default), ``choice`` (a combo box restricted to ``choices``), or
+	``int`` (a numeric spin control).
 	"""
 
 	id: str
@@ -159,6 +163,14 @@ class ConfigureFieldSpec:
 	label: str
 	secret: bool = False
 	required: bool = True
+	#: Widget kind: ``"text"``, ``"choice"`` or ``"int"``.
+	kind: str = "text"
+	#: Allowed values when ``kind == "choice"``.
+	choices: tuple[str, ...] = ()
+	#: For ``kind == "choice"``, a leading "use engine default" item.  When
+	#: selected, the persisted value is ``""`` so the key is omitted from the
+	#: server config and litert-lm falls back to its own default.
+	default_choice: str = ""
 
 
 #: Configuration fields exposed by each provider's Configure dialog.
@@ -177,6 +189,31 @@ _CONFIGURE_FIELDS: dict[str, tuple[ConfigureFieldSpec, ...]] = {
 	),
 	"litert-lm": (
 		ConfigureFieldSpec("server_url", _("Server URL:")),
+		# TRANSLATORS: LiteRT-LM compute backend selection in the Configure dialog; "default" leaves the engine default.
+		ConfigureFieldSpec(
+			"backend",
+			_("Compute backend:"),
+			kind="choice",
+			choices=("cpu", "gpu", "npu"),
+			default_choice="default",
+			required=False,
+		),
+		# TRANSLATORS: LiteRT-LM cache policy selection in the Configure dialog; "default" leaves the engine default.
+		ConfigureFieldSpec(
+			"cache",
+			_("Inference cache:"),
+			kind="choice",
+			choices=("disk", "memory", "no"),
+			default_choice="default",
+			required=False,
+		),
+		# TRANSLATORS: LiteRT-LM CPU thread count in the Configure dialog; 0 means automatic.
+		ConfigureFieldSpec(
+			"cpu_thread_count",
+			_("CPU threads (0 = auto):"),
+			kind="int",
+			required=False,
+		),
 	),
 }
 
