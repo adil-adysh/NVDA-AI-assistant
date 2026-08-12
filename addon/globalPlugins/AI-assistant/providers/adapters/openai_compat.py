@@ -106,6 +106,21 @@ _OPENAI_VISION_FAMILIES = (
 # OpenAI model families that support thinking/reasoning.
 _OPENAI_THINKING_FAMILIES = ("gpt-5", "o1", "o3", "o4")
 
+# Gemini model families that support image (vision) input.  Gemini's
+# native and OpenAI-compat model listings expose NO per-model modality
+# flag (unlike Ollama's ``capabilities`` array), so vision support is
+# curated from Google's published model matrix.  Matched with
+# ``str.startswith`` against the model id (``models/`` prefix stripped) to
+# cover the ``-latest`` / ``-lite`` / ``-flash`` aliases that a substring
+# check would miss (e.g. the default ``gemini-flash-latest``).
+_GEMINI_VISION_FAMILIES = (
+	"gemini-1.5",     # gemini-1.5-flash / -pro (multimodal)
+	"gemini-2",       # all gemini-2.0 / 2.5 variants are multimodal
+	"gemini-3",       # all gemini-3 variants
+	"gemini-flash",   # gemini-flash, -latest, -lite, -8b
+	"gemini-pro",     # gemini-pro, -latest, -vision
+)
+
 # Gemini API returns model IDs with a "models/" prefix (e.g.
 # "models/gemini-2.5-flash").  Strip it for display purposes while
 # keeping the raw id intact for API calls.
@@ -179,10 +194,11 @@ class OpenAICompatProvider(LLMProvider):
 		return True
 
 	def supports_image_description(self) -> bool:
-		# Capability is per-model, not per-backend: probing an Ollama server does
-		# not mean the selected model accepts images (e.g. llama3 is text-only).
-		# Name-based inference covers both Ollama (/api/tags) and OpenAI-compat
-		# model listings.
+		# Capability is per-model, not per-backend.  Resolve from the most
+		# authoritative source: Ollama's native /api/tags (which advertises a
+		# per-model ``capabilities`` list), then /v1/models, then name-based
+		# inference as a last resort.  ``get_model_info`` already encodes this
+		# priority order, so route through it rather than re-deriving.
 		return self._model_supports_images(self._resolve_model())
 
 	# ------------------------------------------------------------------
@@ -498,11 +514,15 @@ class OpenAICompatProvider(LLMProvider):
 		if any(t in lowered for t in _OLLAMA_VISION_TOKENS):
 			capabilities.add("image_input")
 
-		# Gemini models: tools for all; image input only for multimodal
-		# families (Gemini 1.x text models are not vision-capable).
-		if "gemini" in lowered:
+		# Gemini models: tools for all; vision only for curated multimodal
+		# families.  Gemini exposes no per-model modality flag, so capability
+		# comes from the maintained ``_GEMINI_VISION_FAMILIES`` registry with
+		# the ``models/`` prefix stripped, rather than loose substring matching
+		# (which would mis-classify ``gemini-flash-latest`` and other aliases).
+		gemini_name = _strip_models_prefix(lowered)
+		if gemini_name.startswith("gemini"):
 			capabilities.add("tools")
-			if any(t in lowered for t in ("gemini-1.5", "gemini-2", "gemini-3")):
+			if gemini_name.startswith(_GEMINI_VISION_FAMILIES):
 				capabilities.add("image_input")
 
 		# LiteRT .litertlm filename pattern (fallback if lookup missed).
@@ -1074,8 +1094,15 @@ class OpenAICompatProvider(LLMProvider):
 		return options
 
 	def _model_supports_images(self, model_id: str) -> bool:
-		info = self._capabilities_for_model(model_id)
-		return info.supports("image_input")
+		"""Whether the active model supports image input.
+
+		Uses :meth:`get_model_info` so the server-advertised capabilities
+		(Ollama ``/api/tags`` ``capabilities`` list) take precedence over
+		name-based inference.  Name guessing alone would mis-classify models
+		like ``ministral-3:8b`` whose server metadata declares vision support.
+		"""
+		info = self.get_model_info(model_id)
+		return info.supports("image_input") if info is not None else False
 
 	@staticmethod
 	def _has_image_parts(messages: list[Message]) -> bool:
