@@ -16,6 +16,8 @@ without leaving NVDA.
 
 The add-on combines quick actions with a persistent chat workflow, allowing summaries, screenshots, and page content to continue naturally into follow-up conversation.
 
+For fully local inference it can also run **LiteRT-LM**, a self-contained on-device runtime that is downloaded on demand — no separate Python or Ollama installation needed.
+
 ---
 
 # Features
@@ -29,7 +31,7 @@ Summarize:
 * documents
 * active application content
 
-Quick actions can continue directly into chat for follow-up interaction.
+Quick actions can continue directly into chat for follow-up interaction, or open the result in a brand-new conversation (`Add to chat` / `Open in new chat` actions).
 
 ---
 
@@ -71,6 +73,7 @@ You can:
 * switch conversations
 * attach screenshots and page context
 * continue the same conversation across different models
+* press `Escape` to hide the window while a response keeps streaming in the background — it reappears automatically when the answer is ready
 
 ---
 
@@ -102,6 +105,9 @@ Supports:
 * Ollama
 * OpenAI-compatible APIs
 * Gemini
+* LiteRT-LM (fully local)
+
+The unified OpenAI-compatible adapter also works with any other server that speaks the `/v1/chat/completions` protocol (for example, llama.cpp server).
 
 Features include:
 
@@ -109,14 +115,32 @@ Features include:
 * local and cloud inference
 * runtime provider switching
 * runtime model switching
+* provider enable / disable
+* one-click LiteRT-LM runtime installation
+* per-model sampling settings
+* human-readable model labels
 
-Providers and models can be changed directly from the chat interface without restarting the conversation.
+Providers and models can be changed directly from the chat interface without restarting the conversation, or from the assistant layer with `T` / `M` followed by a number.
+
+---
+
+## LiteRT-LM (local inference)
+
+LiteRT-LM is a self-contained local inference runtime. The add-on downloads it on demand, so you can run models on your own machine without installing Python or Ollama:
+
+* download the runtime and models with a progress dialog
+* choose CPU, GPU, or Intel NPU-accelerated variants
+* download or delete models from the model manager
+* supports vision, thinking, and multi-token-prediction models
+* the local server starts automatically and applies engine settings on restart
+
+Recommended LiteRT-LM models include Gemma 4 E2B/E4B and Qwen3 1.7B/4B/8B.
 
 ---
 
 ## Think mode
 
-Some providers and models support optional think mode for extended reasoning workflows.
+Some providers and models (including most LiteRT-LM and Qwen3 models) support optional think mode for extended reasoning workflows.
 
 ---
 
@@ -130,6 +154,7 @@ Some providers and models support optional think mode for extended reasoning wor
   * Ollama
   * OpenAI-compatible API
   * Gemini
+  * LiteRT-LM (local — runtime downloaded on demand)
 
 ---
 
@@ -165,9 +190,11 @@ ollama ls
 
 1. Install the NVDA AI Assistant add-on.
 2. Open the AI Assistant settings panel.
-3. Configure your provider.
+3. Use **Manage AI Providers** to enable a provider, install the LiteRT-LM runtime if needed, and set the active provider.
 4. Choose a model or endpoint.
 5. Press `NVDA+Shift+A` to start using the assistant.
+
+Tip: Use **Configure Active Model** to tune per-model sampling settings (context window, temperature, top-k, top-p, max tokens, repetition penalty).
 
 ---
 
@@ -193,8 +220,11 @@ Then press:
 | `Z` | Attach focused object image to chat|
 | `V` | Attach selected text to chat       |
 | `B` | Attach clipboard content to chat   |
-| `T` | Toggle provider                    |
+| `T` | Select provider (then a digit)     |
+| `M` | Select model (then a digit)        |
 | `H` | Help                               |
+
+Press `T` or `M` to hear the available providers or models announced with numbers, then press the number to switch instantly.
 
 ---
 
@@ -204,7 +234,7 @@ The following shortcuts are available inside the chat window:
 
 | Shortcut | Action |
 | -------- | ------ |
-| `Escape` | Close the chat window |
+| `Escape` | Hide the chat window (streaming continues in the background) |
 | `Alt+I` | Focus the message input box |
 | `Alt+S` | Send the current message |
 | `Shift+Enter` | Insert a new line in the message input |
@@ -222,16 +252,22 @@ The following shortcuts are available inside the chat window:
 
 The settings panel allows you to:
 
-* choose the active provider
+* choose the active provider and model
+* manage AI providers (enable / disable, install the LiteRT-LM runtime, set active provider)
+* configure per-model sampling settings (context window, temperature, top-k, top-p, max tokens, repetition penalty)
+* set global model defaults
 * configure API keys and endpoints
 * enable or disable streaming
 * configure image quality and size
 * adjust timeout behavior
 * enable optional think mode
+* log request metrics to a file
 
 ---
 
 # Recommended local models
+
+## Ollama
 
 | Model            | Usage                                      |
 | ---------------- | ------------------------------------------ |
@@ -246,6 +282,18 @@ Inspect model details with:
 ollama show gemma4:e4b
 ```
 
+## LiteRT-LM
+
+Download these from the model manager (Hugging Face). CPU and GPU/NPU variants are available where noted.
+
+| Model           | Usage                                                |
+| --------------- | ---------------------------------------------------- |
+| `gemma-4-e2b`   | Lightweight vision-language model (CPU / GPU / NPU)   |
+| `gemma-4-e4b`   | Stronger vision-language model (CPU / GPU)            |
+| `qwen3-1.7b`    | Lightweight reasoning model (thinking)                |
+| `qwen3-4b`      | Balanced model, competitive with Gemma 4 E4B          |
+| `qwen3-8b`      | Stronger reasoning on larger desktops                 |
+
 ---
 
 # Technical notes
@@ -259,6 +307,7 @@ ollama show gemma4:e4b
 
 * Verify provider configuration if requests fail.
 * Ensure Ollama is running for local inference.
+* For LiteRT-LM, install the runtime and download a model from **Manage AI Providers** before use; the local server starts automatically.
 * Download required models before use.
 
 ---

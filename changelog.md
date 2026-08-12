@@ -1,3 +1,59 @@
+v0.13.0
+Added
+• 
+LiteRT-LM local inference provider — a fully self-contained local runtime that is downloaded on demand (no separate Python or Ollama install required), with one-click model download from Hugging Face
+• 
+Unified OpenAI-compatible provider adapter — a single adapter now serves Ollama, OpenAI, Gemini, LiteRT-LM, and any other server that speaks the /v1/chat/completions protocol
+• 
+Manage AI Providers dialog — enable or disable providers, install the LiteRT-LM runtime, set the active provider, and manage models from one place
+• 
+Per-model sampling configuration — context window, temperature, top-k, top-p, max tokens, and repetition penalty can now be pinned per model, with a "use default" fallback and a reset option
+• 
+Global model defaults for context window, temperature, top-p, and max tokens
+• 
+Digit-based provider and model selection in the assistant layer — press T or M, then a number, to switch instantly
+• 
+Human-readable model labels in the chat model selector
+• 
+"Add to chat" and "Open in new chat" actions for one-shot results such as summaries and image descriptions
+• 
+LiteRT-LM model download and deletion with a progress dialog and automatic HTTP retry
+• 
+Centralized model catalog cache with background preloading, so model lists load without blocking the interface
+• 
+Soft-dismiss chat window — pressing Escape hides the window while streaming continues in the background; it reappears automatically when the response is ready
+• 
+LiteRT-LM backend selection (CPU, GPU, NPU) and context window configuration, with automatic server restart when engine settings change
+• 
+Keyboard navigation, accessible field labels, and unique checkbox labels across configuration dialogs
+Changed
+• 
+Adopted friendly model names as the universal identity across configuration, server, and UI
+• 
+LiteRT-LM server now starts automatically with the add-on
+• 
+Provider configuration rebuilt around a registry with per-model sampling and provider enable/disable
+Improved
+• 
+Model lists load faster and no longer block the interface, thanks to background preloading and caching
+• 
+Provider and model switching in the assistant layer now uses numbered choices
+Fixed
+• 
+WebView focus deferred until after the UI re-renders, preventing NVDA from reading the pane role on programmatic activation
+• 
+Focus capture moved to the main thread and tool call IDs propagated correctly
+• 
+Deleted source models now stay visible in the model list
+• 
+Console window suppressed when running the LiteRT-LM CLI
+Developer Notes
+• 
+Added native PyO3 LLM client extension with a Rust OpenAI-compatible client used by providers
+• 
+Added embedding engine PyO3 extension with Candle-based MiniLM and Granite/Harrier embedding models, benchmarks, and validation tests
+• 
+Added a CI workflow for building and releasing LiteRT-LM runtime bundles
 v0.10.0
 Added
 • 
