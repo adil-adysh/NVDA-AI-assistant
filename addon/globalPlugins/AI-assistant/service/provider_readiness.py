@@ -95,7 +95,7 @@ class ProviderReadinessService:
 			# stopping. Chat readiness is established asynchronously by
 			# ensure_litert_server_ready(); the UI can safely report a pending
 			# provider until then.
-			if not supervisor.is_running:
+			if not supervisor.is_running and not supervisor.is_adopted:
 				return ProviderReadiness(
 					provider=config.provider,
 					state=ProviderReadinessState.UNCONFIGURED,

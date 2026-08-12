@@ -521,6 +521,7 @@ def set_litert_think(think: bool) -> None:
 
 def set_litert_server_url(serverUrl: str) -> None:
 	_set_value("litertServerUrl", str(serverUrl).strip().rstrip("/"), notify=True)
+	_notify_litert_server_config_changed()
 
 
 def set_litert_backend(backend: str) -> None:
@@ -531,6 +532,7 @@ def set_litert_backend(backend: str) -> None:
 		value if value in {"cpu", "gpu", "npu"} else "",
 		notify=True,
 	)
+	_notify_litert_server_config_changed()
 
 
 def set_litert_cache(cache: str) -> None:
@@ -541,10 +543,12 @@ def set_litert_cache(cache: str) -> None:
 		value if value in {"disk", "memory", "no"} else "",
 		notify=True,
 	)
+	_notify_litert_server_config_changed()
 
 
 def set_litert_cpu_threads(threads: int) -> None:
 	_set_value("litertCpuThreads", int(threads), notify=True)
+	_notify_litert_server_config_changed()
 
 
 def get_think(provider_id: str) -> bool:

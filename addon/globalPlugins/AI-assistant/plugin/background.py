@@ -54,7 +54,20 @@ def _on_litert_server_config_changed() -> None:
 	never blocks on a server restart.
 	"""
 	global _litert_restart_pending  # pylint: disable=global-statement
-	if not get_litert_supervisor().is_running:
+	supervisor = get_litert_supervisor()
+	if not supervisor.is_running:
+		if supervisor.is_adopted:
+			# An adopted server has no process handle we can stop, so it
+			# cannot be restarted here. Regenerate config.json so the next
+			# start uses the new settings and surface the limitation.
+			try:
+				supervisor.sync_config()
+			except Exception:
+				log.exception("Failed to regenerate LiteRT config.json")
+			log.warning(
+				"LiteRT engine settings changed but the server was adopted "
+				"(no process handle). Stop the server or restart NVDA to apply."
+			)
 		return
 	with _litert_restart_lock:
 		if _litert_restart_pending:
@@ -156,6 +169,16 @@ def _ensure_litert_server_ready_locked(
 		supervisor.adopt()
 		_ensure_model_imported(supervisor, on_progress=on_progress)
 		return
+
+	# A live process that is not responding is hung/zombie.  start() would
+	# no-op on the stale is_running handle, so stop it first to allow a
+	# fresh process to be spawned.
+	if supervisor.is_running:
+		log.warning(
+			"ensure_litert_server_ready: process alive but unhealthy; "
+			"stopping before restart"
+		)
+		supervisor.stop()
 
 	if not supervisor.is_installed:
 		log.warning("ensure_litert_server_ready: runtime not installed")

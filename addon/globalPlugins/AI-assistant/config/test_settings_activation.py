@@ -265,6 +265,22 @@ class LiteRTServerConfigChangeEventTests(unittest.TestCase):
 		settings_module.set_num_ctx(16384)
 		self.assertEqual(len(self.fired), 1)
 
+	def test_server_url_change_fires_event(self) -> None:
+		settings_module.set_litert_server_url("http://127.0.0.1:9555")
+		self.assertEqual(len(self.fired), 1)
+
+	def test_backend_change_fires_event(self) -> None:
+		settings_module.set_litert_backend("gpu")
+		self.assertEqual(len(self.fired), 1)
+
+	def test_cache_change_fires_event(self) -> None:
+		settings_module.set_litert_cache("memory")
+		self.assertEqual(len(self.fired), 1)
+
+	def test_cpu_threads_change_fires_event(self) -> None:
+		settings_module.set_litert_cpu_threads(4)
+		self.assertEqual(len(self.fired), 1)
+
 
 class LiteRTEngineDefaultTests(unittest.TestCase):
 	"""Empty engine values mean "use the engine default" (omit from config.json)."""

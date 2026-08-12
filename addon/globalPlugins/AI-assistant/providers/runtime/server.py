@@ -25,6 +25,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -303,6 +304,7 @@ class LiteRTServerSupervisor:
 		self._host = host
 		self._version = version
 		self._process: subprocess.Popen[str] | None = None
+		self._adopted = False
 		self._lifecycle_lock = threading.RLock()
 		self._download_service = RuntimeDownloadService(
 			url_builder=self._build_download_url,
@@ -315,7 +317,8 @@ class LiteRTServerSupervisor:
 	@property
 	def base_url(self) -> str:
 		"""The base URL clients should use to reach the server."""
-		return f"http://{self._host}:{self._port}"
+		host, port = self._effective_host_port()
+		return f"http://{host}:{port}"
 
 	@property
 	def is_installed(self) -> bool:
@@ -326,6 +329,17 @@ class LiteRTServerSupervisor:
 	def is_running(self) -> bool:
 		"""True when the server process is alive."""
 		return self._process is not None and self._process.poll() is None
+
+	@property
+	def is_adopted(self) -> bool:
+		"""True when a healthy server was adopted without a process handle.
+
+		After an NVDA restart the process handle is lost but the server may
+		still be reachable.  ``adopt()`` records that fact so readiness
+		evaluation can treat the server as available without issuing a
+		blocking socket request on the main thread.
+		"""
+		return self._adopted
 
 	def install(
 		self,
@@ -411,12 +425,14 @@ class LiteRTServerSupervisor:
 			try:
 				self._litert_dir().mkdir(parents=True, exist_ok=True)
 				self._write_server_config()
-				serve_args = _build_serve_args(self._host, self._port)
+				host, port = self._effective_host_port()
+				serve_args = _build_serve_args(host, port)
 				self._process = _run_litert_cli(
 					python_exe,
 					serve_args,
 					env=self._process_environment(),
 				)
+				self._adopted = False
 			except Exception as exc:
 				raise LiteRTServerError(f"Failed to start LiteRT-LM server: {exc}") from exc
 
@@ -447,22 +463,26 @@ class LiteRTServerSupervisor:
 			self.start(on_progress=on_progress)
 
 	def stop(self) -> None:
-		"""Stop the server process gracefully, then forcefully if needed."""
-		with self._lifecycle_lock:
-			if self._process is None:
-				return
+		"""Stop the server process gracefully, then forcefully if needed.
 
-			if self._process.poll() is None:
-				log.debug("Stopping LiteRT server (pid=%d)...", self._process.pid)
-				self._process.terminate()
+		Always clears any adopted state so a stopped or handleless server is
+		never reported as available afterwards.  All state mutations happen
+		under the lifecycle lock to avoid racing a concurrent ``start()``.
+		"""
+		with self._lifecycle_lock:
+			process = self._process
+			if process is not None and process.poll() is None:
+				log.debug("Stopping LiteRT server (pid=%d)...", process.pid)
+				process.terminate()
 				try:
-					self._process.wait(timeout=10)
+					process.wait(timeout=10)
 				except subprocess.TimeoutExpired:
 					log.warning("LiteRT server did not stop; killing")
-					self._process.kill()
-					self._process.wait(timeout=5)
+					process.kill()
+					process.wait(timeout=5)
 
-		self._process = None
+			self._process = None
+			self._adopted = False
 		log.info("LiteRT server stopped")
 
 	def adopt(self) -> None:
@@ -473,9 +493,21 @@ class LiteRTServerSupervisor:
 		though ``is_running`` is False so the supervisor treats the server
 		as available without trying to start a new one.
 		"""
-		# Nothing to do — the absence of a process handle is the signal.
-		# Callers check is_healthy() independently to decide whether the
-		# existing server is usable.
+		with self._lifecycle_lock:
+			if self.is_running:
+				# A live process handle already exists; nothing to adopt.
+				return
+			self._adopted = True
+		log.info("LiteRT server adopted (no process handle) at %s", self.base_url)
+
+	def sync_config(self) -> None:
+		"""Regenerate ``config.json`` from current settings without starting.
+
+		Used by the config-change path when the server was adopted (no
+		process handle) and therefore cannot be restarted to apply engine
+		settings; the next ``start()`` then picks up the new configuration.
+		"""
+		self._write_server_config()
 
 	def catalog_model_dir(self, model_id: str) -> Path | None:
 		"""Return the on-disk catalog directory for *model_id*, if any.
@@ -501,9 +533,20 @@ class LiteRTServerSupervisor:
 				method="GET",
 			)
 			with urllib.request.urlopen(req, timeout=timeout) as resp:
-				return resp.status == 200
+				healthy = resp.status == 200
 		except Exception:
-			return False
+			healthy = False
+
+		# A failed liveness probe invalidates any previously recorded
+		# "adopted" state (a handleless server that has since died) so a
+		# later readiness evaluation does not keep reporting it as ready.
+		# is_healthy() performs socket I/O and is only ever invoked from
+		# worker threads, never the NVDA main thread.
+		if not healthy:
+			with self._lifecycle_lock:
+				self._adopted = False
+
+		return healthy
 
 	def list_server_models(self) -> set[str]:
 		"""Return the set of model IDs currently registered with the server.
@@ -703,7 +746,7 @@ class LiteRTServerSupervisor:
 		"""
 		deadline = time.monotonic() + timeout
 		while time.monotonic() < deadline:
-			if not self.is_running:
+			if not self.is_running and not self.is_adopted:
 				raise LiteRTServerError(
 					"LiteRT server process exited unexpectedly. Check the server logs for details."
 				)
@@ -724,6 +767,30 @@ class LiteRTServerSupervisor:
 	# ------------------------------------------------------------------
 	# internal helpers
 	# ------------------------------------------------------------------
+
+	def _effective_host_port(self) -> tuple[str, int]:
+		"""Resolve the server bind address from the configured ``litertServerUrl``.
+
+		The client adapter connects to the user-configurable server URL
+		(``litertServerUrl``), so the ``serve`` process must bind the same
+		host/port or the client and server drift apart.  The settings module
+		is imported lazily and the parse is defensive so this stays usable in
+		isolated environments without NVDA's config stack; on any failure the
+		constructor-provided host/port are kept.
+		"""
+		try:
+			from ...config.settings import get_litert_server_url  # pylint: disable=import-outside-toplevel
+
+			url = get_litert_server_url()
+			parsed = urllib.parse.urlparse(str(url or "").strip())
+			if parsed.hostname and parsed.port:
+				return parsed.hostname, parsed.port
+		except Exception:
+			log.debug(
+				"Could not resolve LiteRT server URL from settings; using default host/port",
+				exc_info=True,
+			)
+		return self._host, self._port
 
 	def _server_dir(self) -> Path:
 		"""Return the path to the self-contained runtime directory."""

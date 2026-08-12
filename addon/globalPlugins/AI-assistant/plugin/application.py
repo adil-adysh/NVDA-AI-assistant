@@ -100,8 +100,9 @@ class AIAssistantApplication:
 		"""Start the LiteRT-LM server in a background thread when it is the active provider.
 
 		The check is cheap — only reads config and checks disk paths.
-		Actual server startup runs on a daemon thread so NVDA startup
-		is never delayed.
+		Actual server startup (including the health/adopt probe for a
+		server that survived an NVDA restart) runs on a daemon thread so
+		NVDA startup is never delayed or blocked on socket I/O.
 		"""
 		try:
 			if get_provider() != "litert-lm":
@@ -110,10 +111,13 @@ class AIAssistantApplication:
 			supervisor = get_litert_supervisor()
 			if not supervisor.is_installed:
 				return
-			# Server already running or reachable — nothing to do.
-			if supervisor.is_running or supervisor.is_healthy():
+			# A live process handle means the server is already running.
+			if supervisor.is_running:
 				return
 
+			# Delegate health/adopt/start to a daemon thread. The readiness
+			# path adopts a healthy server whose handle was lost after an
+			# NVDA restart, and starts one otherwise — without blocking here.
 			from .background import ensure_litert_server_ready
 			threading.Thread(
 				target=ensure_litert_server_ready,

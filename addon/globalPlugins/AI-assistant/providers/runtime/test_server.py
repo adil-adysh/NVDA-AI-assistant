@@ -612,5 +612,105 @@ class SupervisorRestartTests(unittest.TestCase):
 		self.assertTrue(config_path.is_file())
 
 
+class SupervisorHostPortTests(unittest.TestCase):
+	"""Tests for _effective_host_port resolving the configured server URL."""
+
+	def setUp(self) -> None:
+		self.supervisor = LiteRTServerSupervisor()
+		self._settings_mod = types.ModuleType(f"{PACKAGE_NAME}.config.settings")
+		self._settings_mod.get_litert_server_url = mock.MagicMock()
+		sys.modules[self._settings_mod.__name__] = self._settings_mod
+		self.addCleanup(sys.modules.pop, self._settings_mod.__name__, None)
+
+	def test_uses_configured_url_host_and_port(self) -> None:
+		"""A configured URL with a port drives the bind address."""
+		self._settings_mod.get_litert_server_url.return_value = (
+			"http://127.0.0.1:9555"
+		)
+		self.assertEqual(
+			self.supervisor._effective_host_port(),  # pylint: disable=protected-access
+			("127.0.0.1", 9555),
+		)
+
+	def test_falls_back_to_defaults_when_no_port(self) -> None:
+		"""A URL without a port keeps the constructor-provided defaults."""
+		self._settings_mod.get_litert_server_url.return_value = "http://127.0.0.1"
+		self.assertEqual(
+			self.supervisor._effective_host_port(),  # pylint: disable=protected-access
+			("127.0.0.1", 9379),
+		)
+
+	def test_falls_back_to_defaults_when_settings_raise(self) -> None:
+		"""A failing settings read must not break server startup."""
+		self._settings_mod.get_litert_server_url.side_effect = RuntimeError("boom")
+		self.assertEqual(
+			self.supervisor._effective_host_port(),  # pylint: disable=protected-access
+			("127.0.0.1", 9379),
+		)
+
+
+class AdoptStateTests(unittest.TestCase):
+	"""Tests for the adopted-server state consumed by readiness evaluation."""
+
+	def test_not_adopted_initially(self) -> None:
+		supervisor = LiteRTServerSupervisor()
+		self.assertFalse(supervisor.is_adopted)
+		self.assertFalse(supervisor.is_running)
+
+	def test_adopt_marks_adopted_without_handle(self) -> None:
+		supervisor = LiteRTServerSupervisor()
+		supervisor.adopt()
+		self.assertTrue(supervisor.is_adopted)
+		self.assertFalse(supervisor.is_running)
+
+	def test_adopt_ignored_when_process_running(self) -> None:
+		supervisor = LiteRTServerSupervisor()
+		supervisor._process = mock.MagicMock(  # pylint: disable=protected-access
+			pid=123, poll=lambda: None
+		)
+		supervisor.adopt()
+		self.assertFalse(supervisor.is_adopted)
+		self.assertTrue(supervisor.is_running)
+
+	def test_start_clears_adopted_state(self) -> None:
+		supervisor = LiteRTServerSupervisor()
+		supervisor._adopted = True  # pylint: disable=protected-access
+		supervisor._server_dir = mock.MagicMock(  # pylint: disable=protected-access
+			return_value=Path("/fake/runtime"),
+		)
+		supervisor._server_python = mock.MagicMock(  # pylint: disable=protected-access
+			return_value=Path("/fake/runtime/python.exe"),
+		)
+		with mock.patch.object(
+			server_module, "_resolve_litert_python",
+			return_value=Path("/fake/runtime/python.exe"),
+		), mock.patch.object(
+			server_module, "_run_litert_cli",
+			return_value=mock.MagicMock(pid=123, poll=lambda: None),
+		), mock.patch.object(
+			server_module, "_current_server_config", return_value={},
+		), mock.patch.object(
+			server_module, "_default_litert_dir",
+			return_value=Path(tempfile.gettempdir()),
+		):
+			supervisor.start()
+
+		self.assertTrue(supervisor.is_running)
+		self.assertFalse(supervisor.is_adopted)
+
+	def test_stop_clears_adopted_state(self) -> None:
+		supervisor = LiteRTServerSupervisor()
+		process = mock.MagicMock(pid=123)
+		process.poll.return_value = None
+		process.wait.return_value = 0
+		supervisor._process = process  # pylint: disable=protected-access
+		supervisor._adopted = True  # pylint: disable=protected-access
+
+		supervisor.stop()
+
+		self.assertFalse(supervisor.is_adopted)
+		self.assertFalse(supervisor.is_running)
+
+
 if __name__ == "__main__":
 	unittest.main()
