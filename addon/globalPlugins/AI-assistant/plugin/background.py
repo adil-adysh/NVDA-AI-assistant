@@ -83,6 +83,10 @@ def _ensure_litert_server_ready_locked(
 
 	if supervisor.is_running and healthy:
 		log.debug("ensure_litert_server_ready: server already healthy")
+		# Engine-level settings (e.g. num_ctx → max_num_tokens) bind at
+		# server start; restart when the running server no longer matches
+		# the add-on config.  This is a no-op unless the config changed.
+		supervisor.restart_if_config_changed(on_progress=on_progress)
 		# A healthy HTTP process does not imply that the selected model is
 		# present.  Validate the registry on every provider/model switch.
 		_ensure_model_imported(supervisor, on_progress=on_progress)

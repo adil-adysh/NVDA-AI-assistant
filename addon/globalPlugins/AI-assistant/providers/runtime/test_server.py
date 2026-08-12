@@ -8,8 +8,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -84,6 +86,48 @@ server_module = _load_module(
 _build_delete_args = server_module._build_delete_args
 LiteRTServerSupervisor = server_module.LiteRTServerSupervisor
 LiteRTServerError = server_module.LiteRTServerError
+
+
+class BuildServerConfigTests(unittest.TestCase):
+	"""Tests for build_server_config — the pure config.json payload builder."""
+
+	def test_default_only_when_no_pin(self) -> None:
+		config = server_module.build_server_config(
+			"litert-community/gemma-4-E2B-it-litert-lm-gpu",
+			16384,
+			None,
+		)
+		self.assertEqual(config, {"default": {"max_num_tokens": 16384}})
+
+	def test_per_model_override_when_pin_differs(self) -> None:
+		config = server_module.build_server_config(
+			"litert-community/gemma-4-E2B-it-litert-lm-gpu",
+			8192,
+			32768,
+		)
+		self.assertEqual(
+			config,
+			{
+				"default": {"max_num_tokens": 8192},
+				"models": {
+					"litert-community/gemma-4-E2B-it-litert-lm-gpu": {
+						"max_num_tokens": 32768,
+					},
+				},
+			},
+		)
+
+	def test_no_per_model_override_when_pin_matches_default(self) -> None:
+		config = server_module.build_server_config("model-x", 8192, 8192)
+		self.assertEqual(config, {"default": {"max_num_tokens": 8192}})
+
+	def test_ignores_pin_without_model_id(self) -> None:
+		config = server_module.build_server_config(None, 8192, 16384)
+		self.assertEqual(config, {"default": {"max_num_tokens": 8192}})
+
+	def test_empty_when_default_is_zero(self) -> None:
+		config = server_module.build_server_config(None, 0, None)
+		self.assertEqual(config, {})
 
 
 class BuildDeleteArgsTests(unittest.TestCase):
@@ -233,6 +277,212 @@ class SupervisorDeleteModelTests(unittest.TestCase):
 		self.assertIn("nvda", litert_dir)
 		self.assertIn("AIAssistant", litert_dir)
 		self.assertIn("litert-lm", litert_dir)
+
+
+class SupervisorStartConfigTests(unittest.TestCase):
+	"""Tests that start() writes config.json before spawning the server."""
+
+	def setUp(self) -> None:
+		self._resolve_patcher = mock.patch.object(
+			server_module,
+			"_resolve_litert_python",
+			return_value=Path("/fake/runtime/python.exe"),
+		)
+		self._run_cli_patcher = mock.patch.object(
+			server_module,
+			"_run_litert_cli",
+			return_value=mock.MagicMock(pid=4242, poll=lambda: None),
+		)
+		self._config_patcher = mock.patch.object(
+			server_module,
+			"_current_server_config",
+			return_value={
+				"default": {"max_num_tokens": 16384},
+				"models": {"gemma-e2b": {"max_num_tokens": 32768}},
+			},
+		)
+		self.mock_resolve = self._resolve_patcher.start()
+		self.mock_run_cli = self._run_cli_patcher.start()
+		self.mock_config = self._config_patcher.start()
+
+		self._tmp = tempfile.TemporaryDirectory()
+		self.addCleanup(self._tmp.cleanup)
+		self._litert_dir_patcher = mock.patch.object(
+			server_module,
+			"_default_litert_dir",
+			return_value=Path(self._tmp.name),
+		)
+		self._litert_dir_patcher.start()
+		self.addCleanup(self._litert_dir_patcher.stop)
+
+		self.supervisor = LiteRTServerSupervisor()
+		self.supervisor._server_dir = mock.MagicMock(  # pylint: disable=protected-access
+			return_value=Path("/fake/runtime"),
+		)
+		self.supervisor._server_python = mock.MagicMock(  # pylint: disable=protected-access
+			return_value=Path("/fake/runtime/python.exe"),
+		)
+
+	def tearDown(self) -> None:
+		self._resolve_patcher.stop()
+		self._run_cli_patcher.stop()
+		self._config_patcher.stop()
+
+	def test_start_writes_config_json_before_serve(self) -> None:
+		"""config.json must be written with max_num_tokens before spawning."""
+		self.supervisor.start()
+
+		config_path = Path(self._tmp.name) / "config.json"
+		self.assertTrue(config_path.is_file())
+		data = json.loads(config_path.read_text(encoding="utf-8"))
+		self.assertEqual(data["default"]["max_num_tokens"], 16384)
+		self.assertEqual(data["models"]["gemma-e2b"]["max_num_tokens"], 32768)
+
+		call_args, _ = self.mock_run_cli.call_args
+		self.assertEqual(
+			call_args[1],
+			["serve", "--host", "127.0.0.1", "--port", "9379"],
+		)
+		self.assertIn("LITERT_LM_DIR", self.mock_run_cli.call_args.kwargs["env"])
+
+	def test_start_skips_config_json_when_empty(self) -> None:
+		"""No config.json when there is nothing to configure."""
+		self.mock_config.return_value = {}
+
+		self.supervisor.start()
+
+		config_path = Path(self._tmp.name) / "config.json"
+		self.assertFalse(config_path.is_file())
+		self.mock_run_cli.assert_called_once()
+
+	def test_start_removes_stale_config_when_empty(self) -> None:
+		"""An empty payload removes any stale config.json from a prior run."""
+		config_path = Path(self._tmp.name) / "config.json"
+		config_path.parent.mkdir(parents=True, exist_ok=True)
+		config_path.write_text(
+			json.dumps({"default": {"max_num_tokens": 8192}}),
+			encoding="utf-8",
+		)
+
+		self.mock_config.return_value = {}
+		self.supervisor.start()
+
+		self.assertFalse(config_path.is_file())
+
+
+class SupervisorRestartConfigTests(unittest.TestCase):
+	"""Tests for restart_if_config_changed — restart when engine config changes."""
+
+	def setUp(self) -> None:
+		self._resolve_patcher = mock.patch.object(
+			server_module,
+			"_resolve_litert_python",
+			return_value=Path("/fake/runtime/python.exe"),
+		)
+		self._run_cli_patcher = mock.patch.object(
+			server_module,
+			"_run_litert_cli",
+			return_value=mock.MagicMock(pid=4242, poll=lambda: None),
+		)
+		self._config_patcher = mock.patch.object(
+			server_module,
+			"_current_server_config",
+			return_value={"default": {"max_num_tokens": 8192}},
+		)
+		self.mock_resolve = self._resolve_patcher.start()
+		self.mock_run_cli = self._run_cli_patcher.start()
+		self.mock_config = self._config_patcher.start()
+
+		self._tmp = tempfile.TemporaryDirectory()
+		self.addCleanup(self._tmp.cleanup)
+		self._litert_dir_patcher = mock.patch.object(
+			server_module,
+			"_default_litert_dir",
+			return_value=Path(self._tmp.name),
+		)
+		self._litert_dir_patcher.start()
+		self.addCleanup(self._litert_dir_patcher.stop)
+
+		self.supervisor = LiteRTServerSupervisor()
+		self.supervisor._server_dir = mock.MagicMock(  # pylint: disable=protected-access
+			return_value=Path("/fake/runtime"),
+		)
+		self.supervisor._server_python = mock.MagicMock(  # pylint: disable=protected-access
+			return_value=Path("/fake/runtime/python.exe"),
+		)
+
+	def tearDown(self) -> None:
+		self._resolve_patcher.stop()
+		self._run_cli_patcher.stop()
+		self._config_patcher.stop()
+
+	def test_restarts_when_config_changed(self) -> None:
+		"""A changed num_ctx triggers stop + start with the new config."""
+		self.supervisor.start()
+		self.assertEqual(self.mock_run_cli.call_count, 1)
+
+		self.mock_config.return_value = {"default": {"max_num_tokens": 32768}}
+		restarted = self.supervisor.restart_if_config_changed()
+
+		self.assertTrue(restarted)
+		self.assertEqual(self.mock_run_cli.call_count, 2)
+		config_path = Path(self._tmp.name) / "config.json"
+		data = json.loads(config_path.read_text(encoding="utf-8"))
+		self.assertEqual(data["default"]["max_num_tokens"], 32768)
+
+	def test_no_restart_when_config_unchanged(self) -> None:
+		"""Same config → signature match, no restart."""
+		self.supervisor.start()
+
+		restarted = self.supervisor.restart_if_config_changed()
+
+		self.assertFalse(restarted)
+		self.assertEqual(self.mock_run_cli.call_count, 1)
+
+	def test_no_restart_when_server_not_running(self) -> None:
+		"""Nothing running → no restart; the next start() applies the config."""
+		self.mock_config.return_value = {"default": {"max_num_tokens": 32768}}
+
+		restarted = self.supervisor.restart_if_config_changed()
+
+		self.assertFalse(restarted)
+		self.mock_run_cli.assert_not_called()
+
+	def test_restarts_adopted_server_with_stale_disk_config(self) -> None:
+		"""No recorded signature → falls back to the config.json on disk."""
+		# Simulate an adopted server: a running process we did not spawn.
+		self.supervisor._process = mock.MagicMock(poll=lambda: None)  # pylint: disable=protected-access
+		config_path = Path(self._tmp.name) / "config.json"
+		config_path.parent.mkdir(parents=True, exist_ok=True)
+		config_path.write_text(
+			json.dumps({"default": {"max_num_tokens": 4096}}),
+			encoding="utf-8",
+		)
+		# Desired config differs from what the adopted server was started with.
+		self.mock_config.return_value = {"default": {"max_num_tokens": 16384}}
+
+		restarted = self.supervisor.restart_if_config_changed()
+
+		self.assertTrue(restarted)
+		self.assertEqual(self.mock_run_cli.call_count, 1)  # stop + fresh start
+		data = json.loads(config_path.read_text(encoding="utf-8"))
+		self.assertEqual(data["default"]["max_num_tokens"], 16384)
+
+	def test_no_restart_when_adopted_config_matches_disk(self) -> None:
+		"""Adopted server whose disk config matches desired → no restart."""
+		self.supervisor._process = mock.MagicMock(poll=lambda: None)  # pylint: disable=protected-access
+		config_path = Path(self._tmp.name) / "config.json"
+		config_path.parent.mkdir(parents=True, exist_ok=True)
+		config_path.write_text(
+			json.dumps({"default": {"max_num_tokens": 8192}}),
+			encoding="utf-8",
+		)
+		self.mock_config.return_value = {"default": {"max_num_tokens": 8192}}
+
+		restarted = self.supervisor.restart_if_config_changed()
+
+		self.assertFalse(restarted)
+		self.mock_run_cli.assert_not_called()
 
 
 if __name__ == "__main__":

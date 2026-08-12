@@ -27,7 +27,7 @@ import threading
 import time
 import urllib.request
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .config import RuntimeConfig
 from .download import DownloadCancelledError, RuntimeDownloadService
@@ -120,6 +120,75 @@ def _build_rename_args(old_id: str, new_id: str) -> list[str]:
 	return ["rename", old_id, new_id]
 
 
+def build_server_config(
+	model_id: str | None,
+	default_num_ctx: int,
+	pinned_num_ctx: int | None,
+) -> dict[str, Any]:
+	"""Build the ``config.json`` payload for the LiteRT-LM server engine.
+
+	Maps the add-on's context-window setting (``num_ctx``) onto
+	litert-lm's ``max_num_tokens`` — the engine's combined input+output
+	KV-cache budget.  ``max_num_tokens`` is fixed when the engine is
+	first initialized and has no ``serve`` CLI flag, so it belongs in
+	the server config rather than the request body (litert-lm ignores
+	``num_ctx`` on the wire).  The add-on's global ``num_ctx`` becomes
+	``default``; a per-model pin that differs from the global value
+	becomes a per-model override, mirroring ``resolve_model_sampling``.
+
+	Args:
+	    model_id: The active model's server registration ID
+	        (``friendly_name``) sent on the wire, or ``None``.
+	    default_num_ctx: The global context window size.
+	    pinned_num_ctx: The model's pinned context window, or ``None``
+	        when the model has no explicit pin.
+
+	Returns:
+	    The config dict to write to ``LITERT_LM_DIR/config.json``.
+	    Empty when there is nothing meaningful to configure.
+	"""
+	config: dict[str, Any] = {}
+	if default_num_ctx:
+		config["default"] = {"max_num_tokens": default_num_ctx}
+	if (
+		model_id
+		and pinned_num_ctx is not None
+		and pinned_num_ctx != default_num_ctx
+	):
+		config["models"] = {model_id: {"max_num_tokens": pinned_num_ctx}}
+	return config
+
+
+def _current_server_config() -> dict[str, Any]:
+	"""Return the server ``config.json`` payload from the add-on settings.
+
+	The active model's pinned context window wins over the global
+	``num_ctx``, exactly as the request-time ``resolve_model_sampling``
+	does for the provider adapter.  The config modules are imported
+	lazily so this module stays importable in isolated test environments
+	that do not have NVDA's config stack available.
+	"""
+	from ...config.model_config import get_model_sampling
+	from ...config.settings import get_litert_model_name, get_num_ctx
+
+	model_id = get_litert_model_name()
+	pinned_num_ctx = (
+		get_model_sampling("litert-lm", model_id).num_ctx if model_id else None
+	)
+	return build_server_config(model_id, get_num_ctx(), pinned_num_ctx)
+
+
+def _config_signature(config: dict[str, Any]) -> str:
+	"""Return a canonical, order-independent signature for *config*.
+
+	Empty configs map to ``""`` so "nothing to configure" compares equal
+	to an absent (or freshly removed) ``config.json`` on disk.
+	"""
+	if not config:
+		return ""
+	return json.dumps(config, sort_keys=True, separators=(",", ":"))
+
+
 def _run_litert_cli(
 	python_exe: Path,
 	args: list[str],
@@ -189,6 +258,9 @@ class LiteRTServerSupervisor:
 		self._host = host
 		self._version = version
 		self._process: subprocess.Popen[str] | None = None
+		# Signature of the engine config the running server was started with.
+		# ``None`` means "not recorded" (e.g. server adopted after restart).
+		self._applied_config_signature: str | None = None
 		self._lifecycle_lock = threading.RLock()
 		self._download_service = RuntimeDownloadService(
 			url_builder=self._build_download_url,
@@ -296,6 +368,7 @@ class LiteRTServerSupervisor:
 				return
 			try:
 				self._litert_dir().mkdir(parents=True, exist_ok=True)
+				self._applied_config_signature = self._write_server_config()
 				serve_args = _build_serve_args(self._host, self._port)
 				self._process = _run_litert_cli(
 					python_exe,
@@ -310,6 +383,50 @@ class LiteRTServerSupervisor:
 			self._process.pid,
 			self.base_url,
 		)
+
+	def restart_if_config_changed(
+		self,
+		on_progress: Callable[[str], None] | None = None,
+	) -> bool:
+		"""Restart the server when the engine config no longer matches settings.
+
+		Engine-level parameters such as ``max_num_tokens`` (the KV-cache
+		budget mapped from the add-on's ``num_ctx``) bind when the engine
+		initializes and cannot be changed on a running process.  This
+		compares the config the running server was started with against the
+		currently desired config and, on a mismatch, stops and restarts the
+		server so the new values take effect.
+
+		Call this from the readiness path whenever the server is already
+		healthy — it is a cheap signature comparison in the common case and
+		only restarts when the engine config actually changed.
+
+		Args:
+		    on_progress: Optional status callback forwarded to ``start()``.
+
+		Returns:
+		    ``True`` when the server was restarted, ``False`` when there was
+		    nothing to do (server not running or config unchanged).
+		"""
+		with self._lifecycle_lock:
+			if not self.is_running:
+				return False
+
+			desired = _config_signature(_current_server_config())
+			applied = self._applied_config_signature
+			if applied is None:
+				# No recorded signature (e.g. the process handle was lost and
+				# the server adopted): fall back to the config.json on disk,
+				# which reflects what the running server was started with.
+				applied = self._read_config_signature()
+
+			if applied == desired:
+				return False
+
+			log.info("LiteRT server config changed; restarting to apply it")
+			self.stop()
+			self.start(on_progress=on_progress)
+			return True
 
 	def stop(self) -> None:
 		"""Stop the server process gracefully, then forcefully if needed."""
@@ -607,6 +724,49 @@ class LiteRTServerSupervisor:
 		env = os.environ.copy()
 		env["LITERT_LM_DIR"] = str(cls._litert_dir())
 		return env
+
+	def _write_server_config(self) -> str | None:
+		"""Write ``config.json`` into ``LITERT_LM_DIR`` for the engine.
+
+		litert-lm's ``serve`` binds ``max_num_tokens`` (the KV-cache
+		budget) when the engine is first initialized, and there is no
+		serve CLI flag for it — the value is read from ``config.json``.
+		Writing it here, immediately before spawning the process, makes
+		the add-on's context-window setting take effect.  When the
+		payload is empty any stale ``config.json`` is removed so a later
+		restart does not resurrect an outdated engine configuration.
+		The engine caches its value for the process lifetime, so
+		changing ``num_ctx`` requires a server restart to apply.
+
+		Returns:
+		    The signature of the applied config, or ``None`` when nothing
+		    was written.
+		"""
+		config = _current_server_config()
+		config_path = self._litert_dir() / "config.json"
+		if not config:
+			try:
+				config_path.unlink(missing_ok=True)
+			except OSError:
+				log.debug("Could not remove stale LiteRT config.json", exc_info=True)
+			return None
+		config_path.parent.mkdir(parents=True, exist_ok=True)
+		config_path.write_text(
+			json.dumps(config, indent=2) + "\n",
+			encoding="utf-8",
+		)
+		return _config_signature(config)
+
+	def _read_config_signature(self) -> str:
+		"""Return the signature of the ``config.json`` on disk, or ``""`` when absent."""
+		config_path = self._litert_dir() / "config.json"
+		try:
+			data = json.loads(config_path.read_text(encoding="utf-8"))
+		except (OSError, ValueError):
+			return ""
+		if not isinstance(data, dict):
+			return ""
+		return _config_signature(data)
 
 	@staticmethod
 	def _build_download_url(config: RuntimeConfig) -> str:
