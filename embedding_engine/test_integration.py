@@ -20,6 +20,14 @@ import time
 import embedding_engine
 
 
+def _configure_console() -> None:
+    """Keep the standalone runner usable on Windows cp1252 consoles."""
+    stream = getattr(sys, "stdout", None)
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8", errors="replace")
+
+
 def cosine(a: list[float], b: list[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b))
     norm_a = math.sqrt(sum(x * x for x in a))
@@ -136,6 +144,7 @@ def test_model(model_id: str, expected: dict) -> bool:
 
 
 def main() -> None:
+    _configure_console()
     print("=" * 60)
     print("Embedding Engine Integration Test — All Models")
     print("=" * 60)

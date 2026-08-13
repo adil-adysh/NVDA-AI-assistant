@@ -107,7 +107,7 @@ struct DecoderLayer {
     post_attention_layernorm: RmsNorm,
     pre_feedforward_layernorm: RmsNorm,
     post_feedforward_layernorm: RmsNorm,
-    sliding_window: usize,
+    sliding_window: Option<usize>,
 }
 
 impl DecoderLayer {
@@ -121,7 +121,7 @@ impl DecoderLayer {
         norm_eps: f64,
         query_pre_attn_scalar: f64,
         rope: Arc<RotaryEmbedding>,
-        sliding_window: usize,
+        sliding_window: Option<usize>,
     ) -> Result<Self> {
         let self_attn = GroupedQueryAttention::load(
             vb.pp("self_attn"),
@@ -129,6 +129,7 @@ impl DecoderLayer {
             num_heads,
             num_kv_heads,
             head_dim,
+            norm_eps,
             query_pre_attn_scalar,
             rope,
         )?;
@@ -148,10 +149,14 @@ impl DecoderLayer {
         })
     }
 
-    fn forward(&self, xs: &Tensor, attn_mask: &Tensor, seqlen_offset: usize) -> candle_core::Result<Tensor> {
+    fn forward(&self, xs: &Tensor, full_attn_mask: &Tensor, seqlen_offset: usize) -> candle_core::Result<Tensor> {
         let residual = xs.clone();
         let xs_norm = xs.apply(&self.input_layernorm)?;
-        let attn_out = self.self_attn.forward(&xs_norm, attn_mask, seqlen_offset)?;
+        let attn_mask = match self.sliding_window {
+            Some(window) => causal_mask(xs_norm.dim(1)?, Some(window), xs_norm.device())?,
+            None => full_attn_mask.clone(),
+        };
+        let attn_out = self.self_attn.forward(&xs_norm, &attn_mask, seqlen_offset)?;
         // Gemma3: post_norm before residual addition
         let xs = (residual + attn_out.apply(&self.post_attention_layernorm)?)?;
 
@@ -190,6 +195,7 @@ impl GroupedQueryAttention {
         num_heads: usize,
         num_kv_heads: usize,
         head_dim: usize,
+        norm_eps: f64,
         query_pre_attn_scalar: f64,
         rope: Arc<RotaryEmbedding>,
     ) -> Result<Self> {
@@ -197,8 +203,8 @@ impl GroupedQueryAttention {
         let k_proj = linear(hidden_size, num_kv_heads * head_dim, vb.pp("k_proj"))?;
         let v_proj = linear(hidden_size, num_kv_heads * head_dim, vb.pp("v_proj"))?;
         let o_proj = linear(num_heads * head_dim, hidden_size, vb.pp("o_proj"))?;
-        let q_norm = RmsNorm::new(head_dim, 1e-6, vb.pp("q_norm"))?;
-        let k_norm = RmsNorm::new(head_dim, 1e-6, vb.pp("k_norm"))?;
+        let q_norm = RmsNorm::new(head_dim, norm_eps, vb.pp("q_norm"))?;
+        let k_norm = RmsNorm::new(head_dim, norm_eps, vb.pp("k_norm"))?;
         Ok(Self {
             q_proj,
             k_proj,
@@ -310,11 +316,13 @@ impl GatedMLP {
 
 // ── Causal Attention Mask ──────────────────────────────────────────────────
 
-fn causal_mask(seq_len: usize, _sliding_window: usize, device: &Device) -> candle_core::Result<Tensor> {
+fn causal_mask(seq_len: usize, sliding_window: Option<usize>, device: &Device) -> candle_core::Result<Tensor> {
     let mut mask_data = Vec::with_capacity(seq_len * seq_len);
     for i in 0..seq_len {
         for j in 0..seq_len {
-            let val = if j > i {
+            let outside_window = sliding_window
+                .is_some_and(|window| i.saturating_sub(j) >= window);
+            let val = if j > i || outside_window {
                 f32::NEG_INFINITY
             } else {
                 0.0
@@ -387,12 +395,25 @@ impl HarrierModel {
         let vocab_size = cfg["vocab_size"].as_u64().unwrap_or(256000) as usize;
         let norm_eps = cfg["rms_norm_eps"].as_f64().unwrap_or(1e-6);
         let rope_theta = cfg["rope_theta"].as_f64().unwrap_or(10_000.0);
-        let sliding_window = cfg["sliding_window"].as_u64().unwrap_or(4096) as usize;
-        let max_position_embeddings =
-            cfg["max_position_embeddings"].as_u64().unwrap_or(8192) as usize;
+        let sliding_window = cfg["sliding_window"]
+            .as_u64()
+            .context("Harrier config missing sliding_window")? as usize;
+        let max_position_embeddings = cfg["max_position_embeddings"]
+            .as_u64()
+            .context("Harrier config missing max_position_embeddings")? as usize;
         let query_pre_attn_scalar = cfg["query_pre_attn_scalar"]
             .as_f64()
-            .unwrap_or((head_dim as f64).sqrt());
+            .context("Harrier config missing query_pre_attn_scalar")?;
+        let layer_types = cfg["layer_types"]
+            .as_array()
+            .context("Harrier config missing layer_types")?;
+        if layer_types.len() != num_hidden_layers {
+            anyhow::bail!(
+                "Harrier layer_types length {} does not match num_hidden_layers {}",
+                layer_types.len(),
+                num_hidden_layers
+            );
+        }
 
         // ── Load weights ────────────────────────────────────────────
         let device = Device::Cpu;
@@ -413,6 +434,12 @@ impl HarrierModel {
         let mut layers = Vec::with_capacity(num_hidden_layers);
         let vb_l = vb_m.pp("layers");
         for i in 0..num_hidden_layers {
+            let layer_sliding_window = match layer_types[i].as_str() {
+                Some("full_attention") => None,
+                Some("sliding_attention") => Some(sliding_window),
+                Some(other) => anyhow::bail!("Unsupported Harrier attention layer type: {other}"),
+                None => anyhow::bail!("Harrier layer_types[{i}] is not a string"),
+            };
             let layer = DecoderLayer::load(
                 vb_l.pp(i),
                 hidden_size,
@@ -423,7 +450,7 @@ impl HarrierModel {
                 norm_eps,
                 query_pre_attn_scalar,
                 rope.clone(),
-                sliding_window,
+                layer_sliding_window,
             )?;
             layers.push(layer);
         }
@@ -454,7 +481,7 @@ impl HarrierModel {
 
     fn forward(&self, input_ids: &Tensor, seqlen_offset: usize) -> candle_core::Result<Tensor> {
         let (_b, seq_len) = input_ids.dims2()?;
-        let attn_mask = causal_mask(seq_len, self.sliding_window, &self.device)?;
+        let attn_mask = causal_mask(seq_len, None, &self.device)?;
 
         let mut xs = self.embed_tokens.forward(input_ids)?;
         // Scale embeddings by sqrt(hidden_size) — required to match

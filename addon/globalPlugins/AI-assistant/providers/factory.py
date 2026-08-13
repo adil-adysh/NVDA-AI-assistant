@@ -28,6 +28,10 @@ class ProviderFactory:
 		if provider_type is None:
 			raise ValueError(f"Unsupported provider config type: {type(provider_config).__name__}")
 		try:
+			if getattr(provider_config, "provider", "") == "llama-cpp-server":
+				from .adapters.llama_cpp import LlamaCppServerProvider
+
+				return LlamaCppServerProvider(provider_config)  # type: ignore[arg-type]
 			return provider_type(provider_config)
 		except LLMProviderError:
 			raise

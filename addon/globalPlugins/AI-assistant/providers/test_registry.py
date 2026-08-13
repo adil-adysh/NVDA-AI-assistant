@@ -367,7 +367,7 @@ class ProviderKindTests(unittest.TestCase):
 		infos = get_provider_infos()
 		self.assertEqual(
 			[info.id for info in infos],
-			["ollama", "gemini", "openai", "litert-lm"],
+			["ollama", "gemini", "openai", "litert-lm", "llama-cpp-server"],
 		)
 
 	def test_display_name(self) -> None:

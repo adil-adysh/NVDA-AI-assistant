@@ -34,6 +34,22 @@ class ModelImportTests(unittest.TestCase):
 		self.assertEqual(request.kind, _MODULE.ModelSourceKind.LOCAL_FILE)
 		self.assertEqual(request.model_id, "custom-model")
 
+	def test_parses_llama_quantization_as_variant(self) -> None:
+		request = _MODULE.parse_model_import_source(
+			"unsloth/Qwen3-8B-GGUF:UD-Q4_K_XL",
+			provider_id="llama-cpp-server",
+		)
+		self.assertEqual(request.source, "unsloth/Qwen3-8B-GGUF")
+		self.assertEqual(request.revision, "main")
+		self.assertEqual(request.variant, "UD-Q4_K_XL")
+
+	def test_parses_explicit_hugging_face_artifact(self) -> None:
+		request = _MODULE.parse_model_import_source(
+			"litert-community/gemma#file=gemma.litertlm",
+			provider_id="litert-lm",
+		)
+		self.assertEqual(request.artifact, "gemma.litertlm")
+
 	def test_rejects_unsupported_or_unsafe_sources(self) -> None:
 		with self.assertRaises(_MODULE.ModelImportError):
 			_MODULE.parse_model_import_source("org/model", "../unsafe")

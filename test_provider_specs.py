@@ -33,7 +33,7 @@ _MODULE = _load(f"{_PACKAGE}.provider_specs", _ROOT / "provider_specs.py")
 class ProviderConfigSpecTests(unittest.TestCase):
 	def test_every_registered_provider_has_isolated_persistence_keys(self) -> None:
 		specs = _MODULE.PROVIDER_CONFIG_SPECS
-		self.assertEqual(set(specs), {"ollama", "gemini", "openai", "litert-lm"})
+		self.assertEqual(set(specs), {"ollama", "gemini", "openai", "litert-lm", "llama-cpp-server"})
 		self.assertEqual(len({spec.model_key for spec in specs.values()}), len(specs))
 		self.assertEqual(len({spec.base_url_key for spec in specs.values()}), len(specs))
 

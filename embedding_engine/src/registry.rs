@@ -182,7 +182,17 @@ impl ModelRegistry {
                 .factories
                 .remove(model_id)
                 .with_context(|| format!("Unknown model: {model_id}"))?;
-            let initialized = factory()?;
+            let initialized = match factory() {
+                Ok(model) => model,
+                Err(error) => {
+                    // A transient network/cache/device failure must not make
+                    // the model permanently unavailable for this registry
+                    // instance.  Restore the constructor so a later retry can
+                    // recover after the cause is fixed.
+                    self.factories.insert(model_id.to_string(), factory);
+                    return Err(error);
+                }
+            };
             self.loaded.insert(model_id.to_string(), initialized);
         }
         Ok(self.loaded[model_id].as_ref())

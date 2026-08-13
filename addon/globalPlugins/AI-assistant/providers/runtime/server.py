@@ -113,6 +113,19 @@ def _build_import_args(model_path: str | Path, model_id: str) -> list[str]:
 	return ["import", str(model_path), model_id]
 
 
+def _build_huggingface_import_args(
+	repository: str,
+	artifact: str,
+	model_id: str,
+	token: str | None = None,
+) -> list[str]:
+	"""Build LiteRT-LM's native Hugging Face import command."""
+	args = ["import", "--from-huggingface-repo", repository, artifact, model_id]
+	if token:
+		args.extend(["--huggingface-token", token])
+	return args
+
+
 def _build_delete_args(model_id: str) -> list[str]:
 	"""Build the CLI argument list for ``litert-lm delete``."""
 	return ["delete", model_id]
@@ -639,6 +652,43 @@ class LiteRTServerSupervisor:
 			except OSError:
 				log.debug("Could not delete source model file %s", model_path, exc_info=True)
 
+		if on_progress:
+			on_progress(f"Model {model_id} registered.")
+
+	def import_huggingface_model(
+		self,
+		repository: str,
+		artifact: str,
+		model_id: str,
+		*,
+		on_progress: Callable[[str], None] | None = None,
+		huggingface_token: str | None = None,
+	) -> None:
+		"""Import a repository using LiteRT-LM's native resolver.
+
+		The artifact is mandatory because LiteRT repositories may contain more
+		than one runtime/build variant.  The provider never guesses which one
+		should be installed.
+		"""
+		python_exe = _resolve_litert_python(self._server_python())
+		if not repository or "/" not in repository or not artifact:
+			raise LiteRTServerError("A repository and explicit LiteRT-LM artifact are required")
+		self._report(on_progress, f"Importing {artifact} from Hugging Face...")
+		try:
+			result = _run_litert_cli(
+				python_exe,
+				_build_huggingface_import_args(repository, artifact, model_id, huggingface_token),
+				env=self._process_environment(),
+				timeout=600,
+				capture=True,
+			)
+		except subprocess.TimeoutExpired as exc:
+			raise LiteRTServerError(f"Hugging Face import timed out for {repository}") from exc
+		except Exception as exc:
+			raise LiteRTServerError(f"Failed to import {repository}: {exc}") from exc
+		if result.returncode != 0:
+			stderr = result.stderr.strip() or result.stdout.strip()
+			raise LiteRTServerError(f"Hugging Face import failed for {repository}: {stderr}")
 		if on_progress:
 			on_progress(f"Model {model_id} registered.")
 

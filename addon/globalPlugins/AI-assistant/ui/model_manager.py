@@ -498,7 +498,7 @@ class ModelManagerDialog(wx.Dialog):
 			return
 		source_dialog = wx.TextEntryDialog(
 			self,
-			_("Enter a local .gguf/.litert file or Hugging Face repo[:revision]:"),
+			_("Enter a local model file or Hugging Face reference (use repo:quantization for llama.cpp):"),
 			_("Import Model"),
 		)
 		try:
@@ -523,7 +523,7 @@ class ModelManagerDialog(wx.Dialog):
 			model_id_dialog.Destroy()
 
 		try:
-			request = parse_model_import_source(source, model_id)
+			request = parse_model_import_source(source, model_id, self._provider.provider_id)
 		except ValueError as exc:
 			wx.MessageBox(str(exc), _("Invalid model source"), wx.ICON_ERROR)
 			return

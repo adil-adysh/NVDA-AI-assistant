@@ -209,11 +209,31 @@ class LiteRTModelManager(ModelManagerProvider):
 		request contract can be implemented by that future provider.
 		"""
 		try:
-			parsed = parse_model_import_source(request.source, request.model_id)
+			parsed = parse_model_import_source(request.source, request.model_id, self.provider_id)
 		except ModelImportError as exc:
 			raise LLMProviderError(str(exc)) from exc
 		if parsed.file_suffix == ".gguf":
 			raise LLMProviderError("GGUF files require a llama.cpp-compatible provider")
+
+		# LiteRT-LM owns Hugging Face repository resolution and its registry.
+		# Do not duplicate that logic with a generic "first .litertlm" download.
+		if parsed.kind is ModelSourceKind.HUGGING_FACE:
+			if not parsed.artifact:
+				raise LLMProviderError(
+					"LiteRT Hugging Face imports require an explicit artifact: "
+					"repo#file=model.litertlm"
+				)
+			supervisor = get_litert_supervisor()
+			try:
+				supervisor.import_huggingface_model(
+					parsed.source,
+					parsed.artifact,
+					parsed.model_id,
+					on_progress=lambda message: on_progress(message, None, None),
+				)
+			except LiteRTServerError as exc:
+				raise LLMProviderError(str(exc)) from exc
+			return
 
 		svc = self._download_service or ModelDownloadService()
 		cache_name = f"{parsed.model_id}{parsed.file_suffix or '.litertlm'}"
@@ -224,21 +244,7 @@ class LiteRTModelManager(ModelManagerProvider):
 				raise LLMProviderError(f"Could not stage model file: {exc}") from exc
 			delete_source = False
 		else:
-			def _on_bytes(downloaded: int, total: int) -> None:
-				on_progress("Downloading Hugging Face model", downloaded, total)
-
-			try:
-				model_path = svc.download_huggingface(
-					parsed.source,
-					parsed.revision,
-					cache_name,
-					extensions=(".litertlm", ".litert"),
-					on_bytes_progress=_on_bytes,
-					cancel_event=cancel_event,
-				)
-			except Exception as exc:
-				raise LLMProviderError(f"Could not download model: {exc}") from exc
-			delete_source = True
+			raise LLMProviderError("Unsupported LiteRT import source")
 
 		supervisor = get_litert_supervisor()
 		try:

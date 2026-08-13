@@ -16,7 +16,7 @@
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Tensor, D};
 use candle_nn::{
-    embedding, layer_norm_no_bias, linear_no_bias, ops::softmax, Embedding, LayerNorm, Linear,
+    embedding, layer_norm_no_bias, linear_no_bias, ops::{silu, softmax}, Embedding, LayerNorm, Linear,
     Module, VarBuilder,
 };
 use candle_transformers::models::modernbert::Config;
@@ -121,7 +121,7 @@ impl GraniteAttention {
     }
 }
 
-// ── MLP (GeGLU) ────────────────────────────────────────────────────────────
+// ── MLP (SiLU GLU) ──────────────────────────────────────────────────────────
 
 struct GraniteMLP {
     wi: Linear,
@@ -144,7 +144,10 @@ impl Module for GraniteMLP {
     fn forward(&self, xs: &Tensor) -> candle_core::Result<Tensor> {
         let xs = xs.apply(&self.wi)?;
         let xs = xs.chunk(2, D::Minus1)?;
-        let xs = (xs[0].gelu_erf()? * &xs[1])?.apply(&self.wo)?;
+        // ModernBERT's configured activation is SiLU.  The model card/config
+        // explicitly uses a SiLU GLU; GELU produces plausible vectors but does
+        // not match the published weights' reference implementation.
+        let xs = (silu(&xs[0])? * &xs[1])?.apply(&self.wo)?;
         Ok(xs)
     }
 }
@@ -164,16 +167,23 @@ impl GraniteLayer {
         vb: VarBuilder,
         config: &Config,
         rotary_emb: Arc<RotaryEmbedding>,
+        layer_id: usize,
         uses_local_attention: bool,
     ) -> Result<Self> {
         let attn = GraniteAttention::load(vb.pp("attn"), config, rotary_emb)?;
         let mlp = GraniteMLP::load(vb.pp("mlp"), config)?;
-        let attn_norm = layer_norm_no_bias(
-            config.hidden_size,
-            config.layer_norm_eps,
-            vb.pp("attn_norm"),
-        )
-        .ok();
+        // ModernBERT intentionally omits attention norm on layer 0.  Do not
+        // swallow missing weights on later layers: that turns corrupt or
+        // incompatible checkpoints into silently wrong embeddings.
+        let attn_norm = if layer_id == 0 {
+            None
+        } else {
+            Some(layer_norm_no_bias(
+                config.hidden_size,
+                config.layer_norm_eps,
+                vb.pp("attn_norm"),
+            )?)
+        };
         let mlp_norm =
             layer_norm_no_bias(config.hidden_size, config.layer_norm_eps, vb.pp("mlp_norm"))?;
         Ok(Self {
@@ -345,6 +355,7 @@ impl GraniteModel {
                 vb.pp(format!("layers.{layer_id}")),
                 &config,
                 rope,
+                layer_id,
                 uses_local,
             )?);
         }

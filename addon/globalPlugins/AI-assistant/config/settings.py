@@ -329,6 +329,10 @@ def build_provider_config(provider: str) -> "OpenAICompatConfig":
 		litert_backend=get_litert_backend() if spec.litert_engine_settings else "",
 		litert_cache=get_litert_cache() if spec.litert_engine_settings else "",
 		litert_cpu_threads=get_litert_cpu_threads() if spec.litert_engine_settings else 0,
+		server_executable=(
+			_read_string(spec.executable_key, spec.executable_default)
+			if spec.executable_key else ""
+		),
 	)
 
 
@@ -620,6 +624,9 @@ def set_openai_compat_config(config: "OpenAICompatConfig", activate: bool = True
 		values["litertBackend"] = config.litert_backend
 		values["litertCache"] = config.litert_cache
 		values["litertCpuThreads"] = config.litert_cpu_threads
+
+	if spec.executable_key:
+		values[spec.executable_key] = config.server_executable
 
 	_set_values(values, notify=False)
 	if spec.litert_engine_settings:

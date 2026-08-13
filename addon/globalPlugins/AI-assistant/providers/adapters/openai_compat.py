@@ -1077,7 +1077,7 @@ class OpenAICompatProvider(LLMProvider):
 	def _is_local(self) -> bool:
 		"""True when the provider is a local backend that accepts
 		``num_ctx``, ``top_k``, and ``repeat_penalty`` on the wire."""
-		return self._provider_id in ("ollama", "litert-lm")
+		return self._provider_id in ("ollama", "litert-lm", "llama-cpp-server")
 
 	@staticmethod
 	def _ollama_options(sampling: ModelSamplingConfig) -> dict[str, Any]:

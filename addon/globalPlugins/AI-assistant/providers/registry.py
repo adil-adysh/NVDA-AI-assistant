@@ -54,7 +54,7 @@ _ = cast(Callable[[str], str], getattr(builtins, "_", _translate))
 
 
 #: Canonical provider IDs in display/cycle order.
-PROVIDER_IDS: tuple[str, ...] = ("ollama", "gemini", "openai", "litert-lm")
+PROVIDER_IDS: tuple[str, ...] = ("ollama", "gemini", "openai", "litert-lm", "llama-cpp-server")
 
 #: Human-readable provider names (translate at call time).
 _PROVIDER_NAMES: dict[str, str] = {
@@ -213,6 +213,10 @@ _CONFIGURE_FIELDS: dict[str, tuple[ConfigureFieldSpec, ...]] = {
 			kind="int",
 			required=False,
 		),
+	),
+	"llama-cpp-server": (
+		ConfigureFieldSpec("server_url", _("Server URL:")),
+		ConfigureFieldSpec("server_executable", _("llama-server executable:"), required=False),
 	),
 }
 
@@ -452,6 +456,10 @@ def build_model_manager(provider_id: str) -> ModelManagerProvider:
 	config = build_provider_config(normalized)
 	if normalized == "litert-lm":
 		return LiteRTModelManager(config=config)
+	if normalized == "llama-cpp-server":
+		from .llama_manager import LlamaCppModelManager
+
+		return LlamaCppModelManager(config=config)
 	# Lazy-import the cache to avoid circular deps at module level.
 	from ..service.model_cache import model_capability_cache, model_catalog_cache
 	return CloudModelManagerAdapter(

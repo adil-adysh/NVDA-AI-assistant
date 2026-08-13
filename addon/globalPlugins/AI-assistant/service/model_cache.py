@@ -351,10 +351,9 @@ class ModelCapabilityCache:
             self._entries.pop((provider, model_id.strip()), None)
 
     def invalidate_all(self) -> None:
+        """Drop all capability entries without touching catalog generations."""
         with self._lock:
             self._entries.clear()
-            for provider_id in tuple(self._generations):
-                self._generations[provider_id] += 1
 
 
 # Singleton instance for the add-on lifecycle.

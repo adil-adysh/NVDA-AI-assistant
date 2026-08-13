@@ -62,6 +62,11 @@ PROVIDER_POLICIES: dict[str, ProviderPolicy] = {
 		has_install_step=True,
 		requires_runtime=True,
 	),
+	"llama-cpp-server": ProviderPolicy(
+		provider_id="llama-cpp-server",
+		display_name="llama.cpp server",
+		kind="local",
+	),
 }
 
 
