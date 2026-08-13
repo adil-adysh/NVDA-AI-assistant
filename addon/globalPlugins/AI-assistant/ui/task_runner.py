@@ -9,7 +9,9 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 import threading
+import time
 from typing import Generic, TypeVar
+import uuid
 
 import wx
 from logHandler import log
@@ -68,8 +70,24 @@ class BackgroundTaskRunner:
 		on_error: Callable[[Exception], None] | None = None,
 		on_finally: Callable[[], None] | None = None,
 		is_alive: Callable[[], bool] | None = None,
+		task_name: str | None = None,
 	) -> TaskHandle[T]:
 		cancel_event = threading.Event()
+		operation_id = uuid.uuid4().hex
+		name = task_name or getattr(work, "__qualname__", "background_task")
+		submitted_at = time.perf_counter()
+		started_at: float | None = None
+
+		def report(event: str, **attributes: object) -> None:
+			try:
+				from ..observability.events import DiagnosticEvent
+				from ..observability.reporter import FileMetricsReporter
+
+				record = DiagnosticEvent(event, operation_id=operation_id, attributes=attributes)
+				FileMetricsReporter().report_event(record)
+				log.debug("AI task event: %s", record.to_record())
+			except Exception:
+				log.debug("Unable to report AI task event", exc_info=True)
 
 		def dispatch(callback: Callable[[], None]) -> None:
 			def guarded_callback() -> None:
@@ -79,18 +97,41 @@ class BackgroundTaskRunner:
 			UiDispatcher.post(guarded_callback)
 
 		def execute() -> T:
+			nonlocal started_at
+			started_at = time.perf_counter()
+			report(
+				"task_started",
+				task=name,
+				queue_delay_ms=round((started_at - submitted_at) * 1000, 3),
+			)
 			return work(cancel_event)
 
 		future = self._executor.submit(execute)
 
 		def completed(completed_future: Future[T]) -> None:
+			if completed_future.cancelled():
+				report("task_cancelled", task=name)
+				if on_finally is not None:
+					dispatch(on_finally)
+				return
 			try:
 				result = completed_future.result()
 			except Exception as error:
+				report(
+					"task_failed",
+					task=name,
+					duration_ms=round((time.perf_counter() - (started_at or submitted_at)) * 1000, 3),
+					error_type=type(error).__name__,
+				)
 				log.error("Background UI task failed: %s", error, exc_info=True)
 				if on_error is not None:
 					dispatch(lambda: on_error(error))
 			else:
+				report(
+					"task_completed",
+					task=name,
+					duration_ms=round((time.perf_counter() - (started_at or submitted_at)) * 1000, 3),
+				)
 				if on_success is not None:
 					dispatch(lambda: on_success(result))
 			if on_finally is not None:

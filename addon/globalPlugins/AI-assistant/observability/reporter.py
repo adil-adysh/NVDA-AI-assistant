@@ -7,6 +7,7 @@ from pathlib import Path
 from logHandler import log
 
 from .metrics import RequestMetrics
+from .events import DiagnosticEvent
 from ..config.settings import get_request_metrics_log_path, get_request_metrics_logging_enabled
 
 
@@ -14,9 +15,19 @@ class MetricsReporter:
 	def report(self, metrics: RequestMetrics) -> None:
 		raise NotImplementedError
 
+	def report_event(self, event: DiagnosticEvent) -> None:
+		"""Report a privacy-safe lifecycle event when supported."""
+		return None
+
 
 class FileMetricsReporter(MetricsReporter):
 	def report(self, metrics: RequestMetrics) -> None:
+		self._write_record(metrics.to_log_record())
+
+	def report_event(self, event: DiagnosticEvent) -> None:
+		self._write_record(event.to_record())
+
+	def _write_record(self, record: dict[str, object]) -> None:
 		if not get_request_metrics_logging_enabled():
 			return
 
@@ -28,7 +39,7 @@ class FileMetricsReporter(MetricsReporter):
 			return
 		try:
 			with log_path.open("a", encoding="utf-8") as handle:
-				handle.write(json.dumps(metrics.to_log_record(), ensure_ascii=False))
+				handle.write(json.dumps(record, ensure_ascii=False))
 				handle.write("\n")
 		except Exception:
 			log.exception("Unable to write request metrics log to %s", log_path)

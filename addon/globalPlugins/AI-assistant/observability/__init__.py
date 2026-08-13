@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from .context import ExecutionContext
+from .events import DiagnosticEvent
 from .metrics import ImageRequestMetrics, RequestMetrics, SummaryRequestMetrics, estimate_tokens
 from .reporter import FileMetricsReporter, MetricsReporter
 
 __all__ = [
-    "ExecutionContext",
+	"ExecutionContext",
+	"DiagnosticEvent",
     "FileMetricsReporter",
     "ImageRequestMetrics",
     "MetricsReporter",
