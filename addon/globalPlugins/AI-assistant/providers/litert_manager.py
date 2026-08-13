@@ -19,6 +19,7 @@ from ..config.settings import (
 )
 from .config import OpenAICompatConfig
 from .interfaces import LLMProviderError
+from .model_import import ModelImportRequest, ModelImportError, ModelSourceKind, parse_model_import_source
 from .litert_models import (
 	download_url,
 	effective_capabilities_for,
@@ -56,7 +57,7 @@ class LiteRTModelManager(ModelManagerProvider):
 
 	@property
 	def features(self) -> ProviderFeatures:
-		return ProviderFeatures(download=True, delete=True)
+		return ProviderFeatures(download=True, delete=True, import_model=True)
 
 	@property
 	def active_model_id(self) -> str | None:
@@ -194,6 +195,61 @@ class LiteRTModelManager(ModelManagerProvider):
 			log.info("Registered %s as %s", dl_filename, fn)
 		except LiteRTServerError as exc:
 			log.warning("Could not register %s: %s", dl_filename, exc)
+
+	def import_model(
+		self,
+		request: ModelImportRequest,
+		on_progress: DownloadProgressCallback,
+		cancel_event: threading.Event | None = None,
+	) -> None:
+		"""Import a local LiteRT artifact or HF repository artifact.
+
+		GGUF is intentionally rejected here: it belongs to a llama.cpp-style
+		provider, while this adapter only registers LiteRT artifacts. The same
+		request contract can be implemented by that future provider.
+		"""
+		try:
+			parsed = parse_model_import_source(request.source, request.model_id)
+		except ModelImportError as exc:
+			raise LLMProviderError(str(exc)) from exc
+		if parsed.file_suffix == ".gguf":
+			raise LLMProviderError("GGUF files require a llama.cpp-compatible provider")
+
+		svc = self._download_service or ModelDownloadService()
+		cache_name = f"{parsed.model_id}{parsed.file_suffix or '.litertlm'}"
+		if parsed.kind is ModelSourceKind.LOCAL_FILE:
+			try:
+				model_path = svc.stage_local_file(parsed.source, cache_name)
+			except Exception as exc:
+				raise LLMProviderError(f"Could not stage model file: {exc}") from exc
+			delete_source = False
+		else:
+			def _on_bytes(downloaded: int, total: int) -> None:
+				on_progress("Downloading Hugging Face model", downloaded, total)
+
+			try:
+				model_path = svc.download_huggingface(
+					parsed.source,
+					parsed.revision,
+					cache_name,
+					extensions=(".litertlm", ".litert"),
+					on_bytes_progress=_on_bytes,
+					cancel_event=cancel_event,
+				)
+			except Exception as exc:
+				raise LLMProviderError(f"Could not download model: {exc}") from exc
+			delete_source = True
+
+		supervisor = get_litert_supervisor()
+		try:
+			supervisor.import_model(
+				model_path,
+				parsed.model_id,
+				on_progress=lambda message: on_progress(message, None, None),
+				delete_source=delete_source,
+			)
+		except LiteRTServerError as exc:
+			raise LLMProviderError(str(exc)) from exc
 
 	# ------------------------------------------------------------------
 	# Delete

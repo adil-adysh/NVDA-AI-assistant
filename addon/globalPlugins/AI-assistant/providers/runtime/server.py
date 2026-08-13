@@ -577,6 +577,7 @@ class LiteRTServerSupervisor:
 		model_id: str,
 		*,
 		on_progress: Callable[[str], None] | None = None,
+		delete_source: bool = True,
 	) -> None:
 		"""Import a local ``.litertlm`` file into the server's model catalog.
 
@@ -627,11 +628,11 @@ class LiteRTServerSupervisor:
 
 		log.info("Model %s imported successfully", model_id)
 
-		# Delete the source file now that litert-lm has copied it into
-		# its own registry.  These files are 1-8 GB — keeping both is wasteful.
+		# Managed downloads can be removed after registration, but a local
+		# user-owned source must never be deleted by an import operation.
 		catalog_dir = self.catalog_model_dir(model_id)
 		catalog_file = catalog_dir / "model.litertlm" if catalog_dir is not None else None
-		if catalog_file is not None and catalog_file.is_file():
+		if delete_source and catalog_file is not None and catalog_file.is_file():
 			try:
 				model_path.unlink(missing_ok=True)
 				log.debug("Deleted source model file %s after import", model_path)

@@ -15,7 +15,11 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+	from ..service.model_cache import ModelCapabilityCache
 	from ..service.model_cache import ModelCatalogCache
+
+from .policy import get_provider_policy
+from .model_import import ModelImportRequest
 
 
 # ── Type aliases ────────────────────────────────────────────────────
@@ -69,6 +73,7 @@ class ProviderFeatures:
 
 	download: bool = False
 	delete: bool = False
+	import_model: bool = False
 
 
 @runtime_checkable
@@ -109,6 +114,15 @@ class ModelManagerProvider(Protocol):
 
 	def delete_model(self, model_id: str) -> None:
 		"""Remove the cached file for *model_id*."""
+		...
+
+	def import_model(
+		self,
+		request: ModelImportRequest,
+		on_progress: DownloadProgressCallback,
+		cancel_event: threading.Event | None = None,
+	) -> None:
+		"""Import a local file or remote model reference into the provider."""
 		...
 
 	def set_active_model(self, model_id: str) -> None:
@@ -155,6 +169,7 @@ class CloudModelManagerAdapter:
 		set_model_fn: Callable[[str], None],
 		get_config_fn: Callable[[], Any] | None = None,
 		model_cache: ModelCatalogCache | None = None,
+		capability_cache: ModelCapabilityCache | None = None,
 	) -> None:
 		self.provider_id = provider_id
 		self._config = config
@@ -162,6 +177,7 @@ class CloudModelManagerAdapter:
 		self._set_model_fn = set_model_fn
 		self._get_config_fn = get_config_fn
 		self._model_cache = model_cache
+		self._capability_cache = capability_cache
 		self._cached_models: list[ManagedModel] | None = None
 		self._cache_lock = threading.Lock()
 
@@ -204,7 +220,10 @@ class CloudModelManagerAdapter:
 		# 2. Fall back to direct provider call.
 		try:
 			provider = self._provider_class(config=self._config)
-			raw = provider.list_models()
+			try:
+				raw = provider.list_models()
+			finally:
+				provider.close()
 		except Exception:
 			return []
 		result = self._convert_to_managed(raw)
@@ -218,23 +237,22 @@ class CloudModelManagerAdapter:
 	) -> list[ManagedModel]:
 		"""Convert ``ProviderModelInfo`` items to ``ManagedModel``."""
 		result: list[ManagedModel] = []
+		policy = get_provider_policy(self.provider_id)
 		for m in raw:
 			model_id = m.id
-			# Filter out Gemini live-preview / deep-research models that
-			# cannot be used with the OpenAI-compat generateContent path.
-			if self.provider_id == "gemini":
-				from ..service.provider_readiness import (
-					is_gemini_generate_content_incompatible_model_name,
+			if policy is not None and not policy.supports_model(model_id):
+				continue
+			capabilities = m.capabilities
+			if not capabilities and self._capability_cache is not None:
+				capabilities = tuple(
+					self._capability_cache.get(self.provider_id, model_id).values,
 				)
-
-				if is_gemini_generate_content_incompatible_model_name(model_id):
-					continue
 			result.append(
 				ManagedModel(
 					id=model_id,
 					display_name=m.display_name or model_id,
 					state=ModelState.READY,
-					capabilities=m.capabilities if m.capabilities else (),
+					capabilities=capabilities,
 				)
 			)
 		return result
@@ -246,6 +264,14 @@ class CloudModelManagerAdapter:
 		cancel_event: threading.Event | None = None,
 	) -> None:
 		raise NotImplementedError("Cloud providers do not support model download")
+
+	def import_model(
+		self,
+		request: ModelImportRequest,
+		on_progress: DownloadProgressCallback,
+		cancel_event: threading.Event | None = None,
+	) -> None:
+		raise NotImplementedError("Cloud providers do not support model import")
 
 	def delete_model(self, model_id: str) -> None:
 		raise NotImplementedError("Cloud providers do not support model delete")

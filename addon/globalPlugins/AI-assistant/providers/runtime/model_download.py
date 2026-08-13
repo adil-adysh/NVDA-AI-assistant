@@ -9,10 +9,14 @@ and caches them under the user's model directory.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import threading
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import quote
 
 from logHandler import log
 
@@ -22,6 +26,10 @@ from .download import DownloadCancelledError, _download_url_resume
 
 class ModelDownloadError(RuntimeError):
 	"""Raised when a model download or verification fails."""
+
+
+class HuggingFaceFileNotFoundError(ModelDownloadError):
+	"""Raised when a repository has no compatible model artifact."""
 
 
 class ModelDownloadService:
@@ -142,6 +150,80 @@ class ModelDownloadService:
 			on_progress(f"{model_name} ready ({size_mb:.0f} MB)")
 
 		return dest
+
+	def download_huggingface(
+		self,
+		repository: str,
+		revision: str,
+		cache_name: str,
+		*,
+		extensions: tuple[str, ...],
+		on_progress: ProgressCallback | None = None,
+		on_bytes_progress: Callable[[int, int], None] | None = None,
+		cancel_event: threading.Event | None = None,
+	) -> Path:
+		"""Resolve and download one model artifact from a HF repository."""
+		filename = self.resolve_huggingface_file(repository, revision, extensions)
+		url = (
+			f"https://huggingface.co/{quote(repository, safe='/')}/resolve/"
+			f"{quote(revision, safe='')}/{quote(filename, safe='/')}"
+		)
+		return self.download(
+			model_name=cache_name,
+			url=url,
+			on_progress=on_progress,
+			on_bytes_progress=on_bytes_progress,
+			cancel_event=cancel_event,
+		)
+
+	@staticmethod
+	def resolve_huggingface_file(
+		repository: str,
+		revision: str,
+		extensions: tuple[str, ...],
+	) -> str:
+		"""Select a deterministic compatible artifact from a HF repository."""
+		api_url = (
+			f"https://huggingface.co/api/models/{quote(repository, safe='/')}/tree/"
+			f"{quote(revision, safe='')}?recursive=true&expand=false"
+		)
+		try:
+			with urllib.request.urlopen(api_url, timeout=30) as response:
+				payload = json.loads(response.read().decode("utf-8"))
+		except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+			raise ModelDownloadError(
+				f"Could not inspect Hugging Face repository {repository}:{revision}: {exc}"
+			) from exc
+
+		if not isinstance(payload, list):
+			raise ModelDownloadError(f"Unexpected Hugging Face file listing for {repository}:{revision}")
+		allowed = {suffix.lower() for suffix in extensions}
+		candidates = sorted(
+			str(item.get("path", ""))
+			for item in payload
+			if isinstance(item, dict)
+			and item.get("type") == "file"
+			and Path(str(item.get("path", ""))).suffix.lower() in allowed
+		)
+		if not candidates:
+			raise HuggingFaceFileNotFoundError(
+				f"No compatible model file ({', '.join(sorted(allowed))}) found in "
+				f"{repository}:{revision}"
+			)
+		return candidates[0]
+
+	def stage_local_file(self, source: str | Path, cache_name: str) -> Path:
+		"""Copy a user-owned model file into the managed cache atomically."""
+		import shutil
+
+		source_path = Path(source)
+		if not source_path.is_file():
+			raise ModelDownloadError(f"Model file does not exist: {source_path}")
+		destination = self._model_path(cache_name)
+		destination.parent.mkdir(parents=True, exist_ok=True)
+		if source_path.resolve() != destination.resolve():
+			shutil.copy2(source_path, destination)
+		return destination
 
 	# ── Internal helpers ────────────────────────────────────────────
 

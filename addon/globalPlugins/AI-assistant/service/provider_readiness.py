@@ -6,6 +6,7 @@ from enum import Enum
 
 from ..config.settings import get_active_provider_config
 from ..providers.config import ProviderConfig
+from ..providers.policy import get_provider_policy
 from ..providers.runtime.server import get_litert_supervisor
 
 
@@ -22,6 +23,7 @@ class ProviderReadinessReason(str, Enum):
 	MISSING_CHAT_PATH = "missing_chat_path"
 	MISSING_CREDENTIALS = "missing_credentials"
 	UNSUPPORTED_MODEL = "unsupported_model"
+	UNSUPPORTED_PROVIDER = "unsupported_provider"
 
 
 def get_provider_display_name(provider: str) -> str:
@@ -36,15 +38,9 @@ def get_provider_display_name(provider: str) -> str:
 
 
 def is_gemini_generate_content_incompatible_model_name(model_name: str) -> bool:
-	normalized = str(model_name or "").strip().lower()
-	return any(
-		marker in normalized
-		for marker in (
-			"live-preview",
-			"deep-research-preview",
-			"deep-research-max-preview",
-		)
-	)
+	"""Backward-compatible helper backed by the declarative Gemini policy."""
+	policy = get_provider_policy("gemini")
+	return policy is not None and not policy.supports_model(model_name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,22 +68,27 @@ class ProviderReadinessService:
 		provider = str(config.provider or "").strip().lower()
 		model_name = str(config.model_name or "").strip()
 		base_url = str(getattr(config, "base_url", "") or "").strip()
-		api_key = str(getattr(config, "api_key", "") or "").strip()
+		policy = get_provider_policy(provider)
+
+		if policy is None:
+			return ProviderReadiness(
+				provider=config.provider,
+				state=ProviderReadinessState.INVALID_CONFIG,
+				reason=ProviderReadinessReason.UNSUPPORTED_PROVIDER,
+				can_infer=False,
+				can_list_models=False,
+			)
 
 		if not model_name:
-			from ..providers.registry import PROVIDER_IDS
-
-			can_list = provider in PROVIDER_IDS
 			return ProviderReadiness(
 				provider=config.provider,
 				state=ProviderReadinessState.UNCONFIGURED,
 				reason=ProviderReadinessReason.MISSING_MODEL,
 				can_infer=False,
-				can_list_models=can_list or bool(base_url),
+				can_list_models=bool(base_url),
 			)
 
-		# LiteRT: local server must be healthy.
-		if provider == "litert-lm":
+		if policy.requires_runtime:
 			supervisor = get_litert_supervisor()
 			# Do not perform a socket request here. This method is called while
 			# building NVDA/WebView state on the main thread, and is_healthy()
@@ -111,66 +112,30 @@ class ProviderReadinessService:
 				can_list_models=True,
 			)
 
-		# Ollama: needs server URL, no credentials.
-		if provider == "ollama":
-			if not base_url:
-				return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_SERVER_URL)
+		if not base_url:
+			reason = (
+				ProviderReadinessReason.MISSING_SERVER_URL
+				if policy.kind == "local"
+				else ProviderReadinessReason.MISSING_BASE_URL
+			)
+			return self._unconfigured(config.provider, reason)
+		if not policy.has_credentials(config):
+			return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_CREDENTIALS)
+		if not policy.supports_model(model_name):
 			return ProviderReadiness(
 				provider=config.provider,
-				state=ProviderReadinessState.READY,
-				reason=None,
-				can_infer=True,
+				state=ProviderReadinessState.INVALID_CONFIG,
+				reason=ProviderReadinessReason.UNSUPPORTED_MODEL,
+				can_infer=False,
 				can_list_models=True,
 			)
-
-		# Gemini: needs base URL + credentials (API key or bearer token).
-		if provider == "gemini":
-			if not base_url:
-				return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_BASE_URL)
-			api_token = str(getattr(config, "api_token", "") or "").strip()
-			if not api_key and not api_token:
-				return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_CREDENTIALS)
-			if is_gemini_generate_content_incompatible_model_name(model_name):
-				return ProviderReadiness(
-					provider=config.provider,
-					state=ProviderReadinessState.INVALID_CONFIG,
-					reason=ProviderReadinessReason.UNSUPPORTED_MODEL,
-					can_infer=False,
-					can_list_models=True,
-				)
-			return ProviderReadiness(
-				provider=config.provider,
-				state=ProviderReadinessState.READY,
-				reason=None,
-				can_infer=True,
-				can_list_models=True,
-			)
-
-		# OpenAI / generic: needs base URL + API key.
-		if provider in {"openai", "openai_compat"} or not provider:
-			if not base_url:
-				return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_BASE_URL)
-			if not api_key and provider != "openai_compat":
-				return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_CREDENTIALS)
-			return ProviderReadiness(
-				provider=config.provider,
-				state=ProviderReadinessState.READY,
-				reason=None,
-				can_infer=True,
-				can_list_models=True,
-			)
-
-		# Unknown provider: assume ready if model + URL present.
-		if model_name and base_url:
-			return ProviderReadiness(
-				provider=config.provider,
-				state=ProviderReadinessState.READY,
-				reason=None,
-				can_infer=True,
-				can_list_models=True,
-			)
-
-		raise ValueError(f"Unsupported provider config type: {type(config).__name__}")
+		return ProviderReadiness(
+			provider=config.provider,
+			state=ProviderReadinessState.READY,
+			reason=None,
+			can_infer=True,
+			can_list_models=True,
+		)
 
 	def evaluate_active(self) -> ProviderReadiness:
 		return self.evaluate(get_active_provider_config())

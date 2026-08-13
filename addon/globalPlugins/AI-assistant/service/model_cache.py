@@ -34,6 +34,7 @@ from collections.abc import Callable
 from logHandler import log
 
 from ..providers.interfaces import ProviderModelInfo
+from ..providers.capabilities import ModelCapabilities
 
 
 class _FetchGate:
@@ -75,6 +76,7 @@ class ModelCatalogCache:
         #   _FetchGate      → fetch in progress (other threads wait)
         #   tuple[...]      → cached result
         self._entries: dict[str, tuple[ProviderModelInfo, ...] | _FetchGate] = {}
+        self._generations: dict[str, int] = {}
         self._catalog_factory = catalog_factory
 
     # ------------------------------------------------------------------
@@ -91,7 +93,8 @@ class ModelCatalogCache:
         waits for that fetch to complete instead of starting a duplicate
         request.
         """
-        entry = self._entries.get(provider_id)
+        with self._lock:
+            entry = self._entries.get(provider_id)
         if isinstance(entry, tuple):
             return entry
 
@@ -103,15 +106,22 @@ class ModelCatalogCache:
 
         Never blocks — safe to call from the NVDA main thread.
         """
-        entry = self._entries.get(provider_id)
+        with self._lock:
+            entry = self._entries.get(provider_id)
         if isinstance(entry, tuple):
             return entry
         return ()
 
     def has(self, provider_id: str) -> bool:
         """Return ``True`` if models are cached for *provider_id*."""
-        entry = self._entries.get(provider_id)
+        with self._lock:
+            entry = self._entries.get(provider_id)
         return isinstance(entry, tuple)
+
+    def version(self, provider_id: str) -> int:
+        """Return the invalidation version for *provider_id*."""
+        with self._lock:
+            return self._generations.get(provider_id, 0)
 
     def preload_all(self) -> None:
         """Warm the cache for all enabled providers in a background thread.
@@ -144,7 +154,7 @@ class ModelCatalogCache:
 
         thread = threading.Thread(
             target=self._fetch_background,
-            args=(provider_id,),
+            args=(provider_id, gate),
             name=f"ModelCatalogFetch-{provider_id}",
             daemon=True,
         )
@@ -157,12 +167,15 @@ class ModelCatalogCache:
         """
         with self._lock:
             self._entries.pop(provider_id, None)
+            self._generations[provider_id] = self._generations.get(provider_id, 0) + 1
         log.debug("ModelCatalogCache: invalidated cache for '%s'", provider_id)
 
     def invalidate_all(self) -> None:
         """Clear the entire cache."""
         with self._lock:
             self._entries.clear()
+            for provider_id in tuple(self._generations):
+                self._generations[provider_id] += 1
         log.debug("ModelCatalogCache: invalidated all caches")
 
     def refresh_async(self, provider_id: str) -> None:
@@ -183,6 +196,7 @@ class ModelCatalogCache:
         if self._catalog_factory is not None:
             return self._catalog_factory()
         from .provider_catalog import ProviderCatalogService
+
         return ProviderCatalogService()
 
     def _fetch_and_cache(self, provider_id: str) -> tuple[ProviderModelInfo, ...]:
@@ -210,7 +224,9 @@ class ModelCatalogCache:
             # Perform the actual fetch, then signal waiters.
             models = self._perform_fetch(provider_id)
             with self._lock:
-                self._entries[provider_id] = models
+                # Never let an invalidated in-flight request replace newer data.
+                if self._entries.get(provider_id) is gate:
+                    self._entries[provider_id] = models
             gate.result = models
             gate.event.set()
             return models
@@ -232,6 +248,7 @@ class ModelCatalogCache:
         try:
             catalog = self._get_catalog()
             from ..config.settings import build_provider_config
+
             config = build_provider_config(provider_id)
             models = catalog.list_models(config)
         except Exception:
@@ -257,6 +274,7 @@ class ModelCatalogCache:
         """
         try:
             from ..config.settings import get_enabled_providers
+
             providers = get_enabled_providers()
         except Exception:
             log.exception("ModelCatalogCache: failed to read enabled providers")
@@ -271,7 +289,7 @@ class ModelCatalogCache:
                     provider_id,
                 )
 
-    def _fetch_background(self, provider_id: str) -> None:
+    def _fetch_background(self, provider_id: str, gate: _FetchGate) -> None:
         """Fetch models in background, store result in cache.
 
         The ``_FetchGate`` was already registered by ``preload_async``
@@ -288,11 +306,57 @@ class ModelCatalogCache:
             # Store empty result so waiters are unblocked even on failure.
             with self._lock:
                 entry = self._entries.get(provider_id)
-                if isinstance(entry, _FetchGate):
+                if entry is gate:
                     entry.result = ()
                     entry.event.set()
                     self._entries[provider_id] = ()
 
 
+class ModelCapabilityCache:
+    """Cache normalized capabilities independently from model presentation."""
+
+    def __init__(self, catalog_cache: ModelCatalogCache) -> None:
+        self._catalog_cache = catalog_cache
+        self._lock = threading.RLock()
+        self._entries: dict[tuple[str, str], tuple[int, ModelCapabilities]] = {}
+
+    def get(self, provider_id: str, model_id: str) -> ModelCapabilities:
+        key = (provider_id.strip().lower(), model_id.strip())
+        catalog_version = self._catalog_cache.version(key[0])
+        with self._lock:
+            cached = self._entries.get(key)
+        if cached is not None and cached[0] == catalog_version:
+            return cached[1]
+
+        models = self._catalog_cache.get_models(key[0])
+        capabilities = ModelCapabilities()
+        for model in models:
+            if model.id == key[1]:
+                capabilities = ModelCapabilities.from_iterable(model.capabilities)
+                break
+        with self._lock:
+            current = self._entries.get(key)
+            if current is not None and current[0] == catalog_version:
+                return current[1]
+            self._entries[key] = (catalog_version, capabilities)
+            return capabilities
+
+    def invalidate(self, provider_id: str, model_id: str | None = None) -> None:
+        provider = provider_id.strip().lower()
+        with self._lock:
+            if model_id is None:
+                for key in [key for key in self._entries if key[0] == provider]:
+                    del self._entries[key]
+                return
+            self._entries.pop((provider, model_id.strip()), None)
+
+    def invalidate_all(self) -> None:
+        with self._lock:
+            self._entries.clear()
+            for provider_id in tuple(self._generations):
+                self._generations[provider_id] += 1
+
+
 # Singleton instance for the add-on lifecycle.
 model_catalog_cache = ModelCatalogCache()
+model_capability_cache = ModelCapabilityCache(model_catalog_cache)

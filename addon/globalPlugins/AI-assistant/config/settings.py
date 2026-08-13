@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 import languageHandler
-from logHandler import log
 from . import defaults
 from .state import (
 	ProviderState,
@@ -15,6 +14,7 @@ from .state import (
 	get_provider_state as _build_provider_state,
 )
 from .yaml_store import YamlConfigStore
+from .provider_specs import get_provider_config_spec, get_provider_ids
 
 if TYPE_CHECKING:
 	from ..providers.config import OpenAICompatConfig, ProviderConfig
@@ -111,7 +111,7 @@ def get_provider() -> str:
 
 def set_provider(provider: str) -> None:
 	provider_value = str(provider or "").strip().lower()
-	if provider_value not in {"ollama", "gemini", "openai", "litert-lm", "openai_compat"}:
+	if provider_value not in get_provider_ids() | {"openai_compat"}:
 		raise ValueError(f"Unsupported provider: {provider}")
 	_set_value("provider", provider_value, notify=True)
 
@@ -120,13 +120,15 @@ def get_enabled_providers() -> list[str]:
 	"""Return the list of enabled provider IDs."""
 	raw = _get_raw_setting("enabledProviders", None)
 	if isinstance(raw, list) and raw:
-		return [str(p).strip().lower() for p in raw if str(p).strip().lower() in {"ollama", "gemini", "openai", "litert-lm"}]
+		known = get_provider_ids()
+		return [str(p).strip().lower() for p in raw if str(p).strip().lower() in known]
 	return list(defaults.DEFAULT_ENABLED_PROVIDERS)
 
 
 def set_enabled_providers(providers: list[str]) -> None:
 	"""Persist the list of enabled provider IDs."""
-	valid = [str(p).strip().lower() for p in providers if str(p).strip().lower() in {"ollama", "gemini", "openai", "litert-lm"}]
+	known = get_provider_ids()
+	valid = [str(p).strip().lower() for p in providers if str(p).strip().lower() in known]
 	if not valid:
 		valid = ["ollama"]  # at least one must be enabled
 	_set_value("enabledProviders", valid, notify=True)
@@ -164,48 +166,32 @@ def set_language(language: str) -> None:
 
 def _get_model_name_for(provider: str) -> str:
 	"""Read the model name for a given provider from its legacy YAML key."""
-	key_map = {
-		"ollama": ("ollamaModelName", defaults.DEFAULT_OLLAMA_MODEL),
-		"gemini": ("geminiModelName", defaults.DEFAULT_GEMINI_MODEL),
-		"openai": ("openaiModelName", defaults.DEFAULT_OPENAI_MODEL),
-		"litert-lm": ("litertModelName", defaults.DEFAULT_LITERT_MODEL),
-	}
-	key, default = key_map.get(provider, ("modelName", ""))
-	return _read_string(key, default)
+	spec = get_provider_config_spec(provider)
+	if spec is None:
+		return ""
+	return _read_string(spec.model_key, spec.model_default)
 
 
 def _get_base_url_for(provider: str) -> str:
 	"""Read the base URL for a given provider from its legacy YAML key."""
-	key_map = {
-		"ollama": ("ollamaServerUrl", defaults.DEFAULT_OLLAMA_URL),
-		"gemini": ("geminiBaseUrl", defaults.DEFAULT_GEMINI_BASE_URL),
-		"openai": ("openaiBaseUrl", defaults.DEFAULT_OPENAI_BASE_URL),
-		"litert-lm": ("litertServerUrl", defaults.DEFAULT_LITERT_URL),
-	}
-	key, default = key_map.get(provider, ("baseUrl", ""))
-	return _read_string(key, default).rstrip("/")
+	spec = get_provider_config_spec(provider)
+	if spec is None:
+		return ""
+	return _read_string(spec.base_url_key, spec.base_url_default).rstrip("/")
 
 
 def _get_api_key_for(provider: str) -> str:
 	"""Read the API key for a given provider from its legacy YAML key."""
-	key_map = {
-		"gemini": "geminiApiKey",
-		"openai": "openaiApiKey",
-	}
-	key = key_map.get(provider)
-	return _read_string(key, "") if key else ""
+	spec = get_provider_config_spec(provider)
+	return _read_string(spec.api_key_key, "") if spec and spec.api_key_key else ""
 
 
 def _get_think_for(provider: str) -> bool:
 	"""Read the think/reasoning toggle for a given provider."""
-	key_map = {
-		"ollama": ("ollamaThink", defaults.DEFAULT_OLLAMA_THINK),
-		"litert-lm": ("litertThink", defaults.DEFAULT_LITERT_THINK),
-	}
-	key_default = key_map.get(provider)
-	if key_default is None:
+	spec = get_provider_config_spec(provider)
+	if spec is None or spec.think_key is None:
 		return False
-	return _read_bool(key_default[0], key_default[1])
+	return _read_bool(spec.think_key, spec.think_default)
 
 
 # ---------------------------------------------------------------------------
@@ -291,11 +277,15 @@ def get_litert_cpu_threads() -> int:
 
 def _get_openai_endpoint_paths(provider: str) -> tuple[str, str]:
 	"""Return the OpenAI-compatible endpoint paths for *provider*."""
-	if provider == "gemini":
-		return defaults.DEFAULT_GEMINI_CHAT_PATH, defaults.DEFAULT_GEMINI_MODELS_PATH
-	if provider == "openai":
-		return get_openai_chat_path(), defaults.DEFAULT_OPENAI_MODELS_PATH
-	return defaults.DEFAULT_OPENAI_CHAT_PATH, defaults.DEFAULT_OPENAI_MODELS_PATH
+	spec = get_provider_config_spec(provider)
+	if spec is None:
+		raise ValueError(f"Unsupported provider: {provider}")
+	chat_path = (
+		_read_string(spec.chat_path_key, spec.chat_path_default)
+		if spec.chat_path_key
+		else spec.chat_path_default
+	)
+	return chat_path, spec.models_path
 
 
 # ---------------------------------------------------------------------------
@@ -313,13 +303,16 @@ def build_provider_config(provider: str) -> "OpenAICompatConfig":
 	"""
 	from ..providers.config import OpenAICompatConfig
 
+	spec = get_provider_config_spec(provider)
+	if spec is None:
+		raise ValueError(f"Unsupported provider: {provider}")
 	chat_path, models_path = _get_openai_endpoint_paths(provider)
 	return OpenAICompatConfig(
-		provider=provider,
+		provider=str(provider).strip().lower(),
 		model_name=_get_model_name_for(provider),
 		base_url=_get_base_url_for(provider),
 		api_key=_get_api_key_for(provider),
-		api_token=get_gemini_api_token() if provider == "gemini" else None,
+		api_token=_read_string(spec.api_token_key, "") if spec.api_token_key else None,
 		chat_path=chat_path,
 		models_path=models_path,
 		timeout_seconds=get_timeout_seconds(),
@@ -333,9 +326,9 @@ def build_provider_config(provider: str) -> "OpenAICompatConfig":
 		generate_max_tokens=get_generate_max_tokens(),
 		generate_presence_penalty=get_generate_presence_penalty(),
 		think=_get_think_for(provider),
-		litert_backend=get_litert_backend() if provider == "litert-lm" else "",
-		litert_cache=get_litert_cache() if provider == "litert-lm" else "",
-		litert_cpu_threads=get_litert_cpu_threads() if provider == "litert-lm" else 0,
+		litert_backend=get_litert_backend() if spec.litert_engine_settings else "",
+		litert_cache=get_litert_cache() if spec.litert_engine_settings else "",
+		litert_cpu_threads=get_litert_cpu_threads() if spec.litert_engine_settings else 0,
 	)
 
 
@@ -589,21 +582,12 @@ def set_openai_compat_config(config: "OpenAICompatConfig", activate: bool = True
 	active selection is owned by the settings page / host UI.
 	"""
 	provider = str(config.provider or "").strip().lower()
-	key_prefixes: dict[str, str] = {
-		"ollama": "ollama",
-		"gemini": "gemini",
-		"openai": "openai",
-		"litert-lm": "litert",
-	}
-	if provider not in key_prefixes:
-		log.warning(
-			"set_openai_compat_config: unknown provider %r, defaulting to 'openai' key prefix",
-			provider,
-		)
-	prefix = key_prefixes.get(provider, "openai")
+	spec = get_provider_config_spec(provider)
+	if spec is None:
+		raise ValueError(f"Unsupported provider: {provider}")
 
 	values: dict[str, Any] = {
-		f"{prefix}ModelName": config.model_name,
+		spec.model_key: config.model_name,
 		"timeoutSeconds": config.timeout_seconds,
 		"numCtx": config.num_ctx,
 		"maxRetries": config.max_retries,
@@ -618,42 +602,27 @@ def set_openai_compat_config(config: "OpenAICompatConfig", activate: bool = True
 	if activate:
 		values["provider"] = provider
 
-	# Base URL — stored in the provider-specific key.
-	base_url_keys = {
-		"ollama": "ollamaServerUrl",
-		"gemini": "geminiBaseUrl",
-		"openai": "openaiBaseUrl",
-		"litert-lm": "litertServerUrl",
-	}
-	if base_url_key := base_url_keys.get(provider):
-		values[base_url_key] = config.base_url
+	values[spec.base_url_key] = config.base_url
 
-	# API key.
-	api_key_keys = {"gemini": "geminiApiKey", "openai": "openaiApiKey"}
-	if api_key_key := api_key_keys.get(provider):
-		values[api_key_key] = config.api_key
+	if spec.api_key_key:
+		values[spec.api_key_key] = config.api_key
 
-	# API token (Gemini only).
-	if provider == "gemini":
-		values["geminiApiToken"] = config.api_token or ""
+	if spec.api_token_key:
+		values[spec.api_token_key] = config.api_token or ""
 
-	# Chat path (OpenAI only).
-	if provider == "openai":
-		values["openaiChatPath"] = config.chat_path
+	if spec.chat_path_key:
+		values[spec.chat_path_key] = config.chat_path
 
-	# Think toggle.
-	think_keys = {"ollama": "ollamaThink", "litert-lm": "litertThink"}
-	if think_key := think_keys.get(provider):
-		values[think_key] = config.think
+	if spec.think_key:
+		values[spec.think_key] = config.think
 
-	# LiteRT-LM engine knobs (provider-specific).
-	if provider == "litert-lm":
+	if spec.litert_engine_settings:
 		values["litertBackend"] = config.litert_backend
 		values["litertCache"] = config.litert_cache
 		values["litertCpuThreads"] = config.litert_cpu_threads
 
 	_set_values(values, notify=False)
-	if provider == "litert-lm":
+	if spec.litert_engine_settings:
 		_notify_litert_server_config_changed()
 	_notify_provider_state_changed()
 
@@ -674,14 +643,10 @@ def set_litert_config(config: "OpenAICompatConfig") -> None:
 
 def set_model_name(modelName: str) -> None:
 	provider = get_provider()
-	if provider == "gemini":
-		set_gemini_model_name(modelName)
-	elif provider == "openai":
-		_set_value("openaiModelName", str(modelName).strip(), notify=True)
-	elif provider == "litert-lm":
-		set_litert_model_name(modelName)
-	else:
-		set_ollama_model_name(modelName)
+	spec = get_provider_config_spec(provider)
+	if spec is None:
+		raise ValueError(f"Unsupported provider: {provider}")
+	_set_value(spec.model_key, str(modelName).strip(), notify=True)
 
 
 def set_gemini_base_url(baseUrl: str) -> None:
@@ -689,10 +654,11 @@ def set_gemini_base_url(baseUrl: str) -> None:
 
 
 def set_server_url(serverUrl: str) -> None:
-	if get_provider() == "gemini":
-		set_gemini_base_url(serverUrl)
-	else:
-		set_ollama_server_url(serverUrl)
+	provider = get_provider()
+	spec = get_provider_config_spec(provider)
+	if spec is None:
+		raise ValueError(f"Unsupported provider: {provider}")
+	_set_value(spec.base_url_key, str(serverUrl).strip(), notify=True)
 
 
 def set_streaming_enabled(enabled: bool) -> None:

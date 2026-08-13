@@ -43,6 +43,7 @@ from ..config.settings import (
 from .adapters.openai_compat import OpenAICompatProvider
 from .litert_manager import LiteRTModelManager
 from .model_manager import CloudModelManagerAdapter, ModelManagerProvider
+from .policy import PROVIDER_POLICIES, ProviderPolicy, get_provider_policy
 
 
 def _translate(message: str) -> str:
@@ -57,23 +58,21 @@ PROVIDER_IDS: tuple[str, ...] = ("ollama", "gemini", "openai", "litert-lm")
 
 #: Human-readable provider names (translate at call time).
 _PROVIDER_NAMES: dict[str, str] = {
-	"ollama": "Ollama",
-	"gemini": "Gemini",
-	"openai": "OpenAI",
-	"litert-lm": "LiteRT-LM",
+	provider_id: policy.display_name
+	for provider_id, policy in PROVIDER_POLICIES.items()
 }
 
 #: Provider kind per provider ID.
 _PROVIDER_KINDS: dict[str, "ProviderKind"] = {
-	"ollama": "local",
-	"gemini": "cloud",
-	"openai": "cloud",
-	"litert-lm": "local",
+	provider_id: policy.kind
+	for provider_id, policy in PROVIDER_POLICIES.items()
 }
 
 #: Providers with an application-managed installation lifecycle.
 #: Only these expose an ``Install`` action in the provider UI.
-_INSTALLABLE: frozenset[str] = frozenset({"litert-lm"})
+_INSTALLABLE: frozenset[str] = frozenset(
+	provider_id for provider_id, policy in PROVIDER_POLICIES.items() if policy.has_install_step
+)
 
 
 class ProviderKind(str, Enum):
@@ -227,11 +226,13 @@ def _install_litert(
 ) -> None:
 	from .runtime.server import get_litert_supervisor
 
-	get_litert_supervisor().install(
-		on_progress=on_progress,
-		on_bytes_progress=on_bytes_progress,
-		cancel_event=cancel_event,
-	)
+	kwargs: dict[str, object] = {
+		"on_progress": on_progress,
+		"on_bytes_progress": on_bytes_progress,
+	}
+	if cancel_event is not None:
+		kwargs["cancel_event"] = cancel_event
+	get_litert_supervisor().install(**kwargs)
 
 
 _INSTALLERS: dict[str, Callable[..., None]] = {
@@ -244,30 +245,6 @@ _INSTALLERS: dict[str, Callable[..., None]] = {
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class ProviderCapabilities:
-	"""Data-driven provider differences — replaces scattered if/elif chains.
-
-	Each field answers one question that was previously answered by
-	branching on provider ID.  New providers add a row here instead of
-	touching ``_has_provider_config``, ``derive_provider_state``,
-	``set_think_mode``, or ``_resolve_think_enabled``.
-	"""
-
-	#: Credential field groups that must be present for CONFIGURED
-	#: state.  Each inner tuple is an "any of" group — at least one
-	#: field in the group must have a non-empty value.  Empty tuple
-	#: means no credentials are required.
-	credential_groups: tuple[tuple[str, ...], ...] = ()
-
-	#: Settings key for the think-mode toggle.  Empty string when the
-	#: provider does not support think mode.
-	think_config_key: str = ""
-
-	#: Whether this provider has an application-managed install step.
-	has_install_step: bool = False
-
-
 def _litert_install_check() -> bool:
 	"""Return ``True`` when the LiteRT-LM runtime is installed on disk."""
 	from .runtime.server import get_litert_supervisor
@@ -276,21 +253,8 @@ def _litert_install_check() -> bool:
 
 
 #: Provider capabilities keyed by canonical provider ID.
-_PROVIDER_CAPABILITIES: dict[str, ProviderCapabilities] = {
-	"ollama": ProviderCapabilities(
-		think_config_key="ollamaThink",
-	),
-	"gemini": ProviderCapabilities(
-		credential_groups=(("api_key", "api_token"),),
-	),
-	"openai": ProviderCapabilities(
-		credential_groups=(("api_key",),),
-	),
-	"litert-lm": ProviderCapabilities(
-		think_config_key="litertThink",
-		has_install_step=True,
-	),
-}
+ProviderCapabilities = ProviderPolicy
+_PROVIDER_CAPABILITIES = PROVIDER_POLICIES
 
 
 def get_provider_capabilities(provider_id: str) -> ProviderCapabilities:
@@ -298,8 +262,12 @@ def get_provider_capabilities(provider_id: str) -> ProviderCapabilities:
 
 	Unknown providers return a default (empty) capabilities instance.
 	"""
-	normalized = str(provider_id or "").strip().lower()
-	return _PROVIDER_CAPABILITIES.get(normalized, ProviderCapabilities())
+	policy = get_provider_policy(provider_id)
+	return policy if policy is not None else ProviderCapabilities(
+		provider_id=str(provider_id or "").strip().lower(),
+		display_name=str(provider_id or "").strip(),
+		kind="cloud",
+	)
 
 
 # ---------------------------------------------------------------------------
@@ -485,7 +453,7 @@ def build_model_manager(provider_id: str) -> ModelManagerProvider:
 	if normalized == "litert-lm":
 		return LiteRTModelManager(config=config)
 	# Lazy-import the cache to avoid circular deps at module level.
-	from ..service.model_cache import model_catalog_cache
+	from ..service.model_cache import model_capability_cache, model_catalog_cache
 	return CloudModelManagerAdapter(
 		provider_id=normalized,
 		config=config,
@@ -493,6 +461,7 @@ def build_model_manager(provider_id: str) -> ModelManagerProvider:
 		set_model_fn=_make_set_model(normalized),
 		get_config_fn=lambda: build_provider_config(normalized),
 		model_cache=model_catalog_cache,
+		capability_cache=model_capability_cache,
 	)
 
 

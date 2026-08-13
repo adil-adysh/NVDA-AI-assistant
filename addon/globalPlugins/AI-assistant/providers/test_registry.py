@@ -171,6 +171,8 @@ class _FakeCloudAdapter:
 		provider_class: object,
 		set_model_fn: object,
 		get_config_fn: object | None = None,
+		model_cache: object | None = None,
+		capability_cache: object | None = None,
 	) -> None:
 		self.provider_id = provider_id
 		self.config = config

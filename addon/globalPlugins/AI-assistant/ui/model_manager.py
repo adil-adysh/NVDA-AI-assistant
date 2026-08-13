@@ -21,6 +21,7 @@ from ..providers.model_manager import (
 	ModelManagerProvider,
 	ModelState,
 )
+from ..providers.model_import import parse_model_import_source
 from ..providers.registry import (
 	build_model_manager,
 	model_manager_title,
@@ -129,6 +130,11 @@ class ModelManagerDialog(wx.Dialog):
 		self._download_btn = wx.Button(self, label=_("Download"))
 		self._download_btn.Bind(wx.EVT_BUTTON, self._on_download)
 		button_sizer.Add(self._download_btn, flag=wx.RIGHT, border=5)
+
+		# TRANSLATORS: Button to import a local or Hugging Face model.
+		self._import_btn = wx.Button(self, label=_("Import..."))
+		self._import_btn.Bind(wx.EVT_BUTTON, self._on_import)
+		button_sizer.Add(self._import_btn, flag=wx.RIGHT, border=5)
 
 		# TRANSLATORS: Button to delete a downloaded model.
 		self._delete_btn = wx.Button(self, label=_("Delete"))
@@ -355,6 +361,7 @@ class ModelManagerDialog(wx.Dialog):
 		model = self._get_selected_model()
 		if model is None:
 			self._download_btn.Disable()
+			self._import_btn.Disable()
 			self._delete_btn.Disable()
 			self._set_active_btn.Disable()
 			self._configure_btn.Disable()
@@ -368,6 +375,7 @@ class ModelManagerDialog(wx.Dialog):
 		can_del = self._provider.features.delete and model.state == ModelState.DOWNLOADED
 
 		self._download_btn.Enable(can_dl)
+		self._import_btn.Enable(self._provider.features.import_model)
 		self._delete_btn.Enable(can_del)
 		self._set_active_btn.Enable(model.state.is_ready())
 		self._configure_btn.Enable(True)
@@ -484,6 +492,58 @@ class ModelManagerDialog(wx.Dialog):
 				wx.ICON_ERROR,
 			)
 		self._refresh_model_list()
+
+	def _on_import(self, _event: wx.CommandEvent) -> None:
+		if not self._provider.features.import_model:
+			return
+		source_dialog = wx.TextEntryDialog(
+			self,
+			_("Enter a local .gguf/.litert file or Hugging Face repo[:revision]:"),
+			_("Import Model"),
+		)
+		try:
+			if source_dialog.ShowModal() != wx.ID_OK:
+				return
+			source = source_dialog.GetValue().strip()
+		finally:
+			source_dialog.Destroy()
+		if not source:
+			return
+
+		model_id_dialog = wx.TextEntryDialog(
+			self,
+			_("Optional runtime model ID (leave blank for the default):"),
+			_("Import Model"),
+		)
+		try:
+			if model_id_dialog.ShowModal() != wx.ID_OK:
+				return
+			model_id = model_id_dialog.GetValue().strip() or None
+		finally:
+			model_id_dialog.Destroy()
+
+		try:
+			request = parse_model_import_source(source, model_id)
+		except ValueError as exc:
+			wx.MessageBox(str(exc), _("Invalid model source"), wx.ICON_ERROR)
+			return
+
+		def worker(dlg: DownloadProgressDialog) -> None:
+			def progress(msg: str, downloaded: int | None, total: int | None) -> None:
+				dlg.update_message(msg)
+				if downloaded is not None and total is not None:
+					dlg.update_progress(downloaded, total)
+
+			self._provider.import_model(request, progress, dlg.cancel_event)
+			dlg.signal_complete(True, _("Model imported successfully."))
+
+		DownloadProgressDialog.run(
+			self,
+			title=_("Importing Model"),
+			worker=worker,
+			on_complete=self._refresh_model_list,
+			initial_message=_("Importing model..."),
+		)
 
 	def _on_set_active(self, _event: wx.CommandEvent) -> None:
 		model = self._get_selected_model()
