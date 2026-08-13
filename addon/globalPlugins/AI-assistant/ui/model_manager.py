@@ -10,7 +10,6 @@ active, enable/disable) driven by the provider's model features.
 
 from __future__ import annotations
 
-import threading
 import wx
 
 from gui import guiHelper
@@ -29,6 +28,7 @@ from ..providers.registry import (
 )
 from .download_progress import DownloadProgressDialog
 from .enabled_models import EnabledModelsStore
+from .task_runner import TaskHandle, background_tasks
 
 _RECOMMENDED_PRIORITY = 50
 
@@ -53,7 +53,8 @@ class ModelManagerDialog(wx.Dialog):
 		self._models: list[ManagedModel] = []
 		self._displayed_models: list[ManagedModel] = []
 		self._pending_downloads: set[str] = set()
-		self._fetch_thread: threading.Thread | None = None
+		self._fetch_task: TaskHandle[list[ManagedModel]] | None = None
+		self._mutation_task: TaskHandle[None] | None = None
 		self._is_destroyed = False
 
 		self._build_ui()
@@ -180,26 +181,21 @@ class ModelManagerDialog(wx.Dialog):
 		self._list.DeleteAllItems()
 		self._show_loading_indicator()
 		self._update_buttons()
-		self._fetch_thread = threading.Thread(
-			target=self._fetch_models_background,
-			daemon=True,
-		)
-		self._fetch_thread.start()
+		self._request_model_refresh()
 
-	def _fetch_models_background(self) -> None:
-		"""Fetch models in a background thread, then post results to the UI."""
-		try:
-			models = self._provider.list_managed_models()
-		except Exception:
-			models = []
-		wx.CallAfter(self._on_models_fetched, models)
-
-	def _on_models_fetched(self, models: list[ManagedModel]) -> None:
+	def _on_models_fetched(self, models: list[ManagedModel], focus_model_id: str | None = None) -> None:
 		"""Populate the list with fetched models (called on the main thread)."""
 		if self._is_destroyed:
 			return
-		self._fetch_thread = None
-		self._populate_model_list(models)
+		self._fetch_task = None
+		self._populate_model_list(models, focus_model_id)
+
+	def _on_models_fetch_error(self, error: Exception) -> None:
+		if self._is_destroyed:
+			return
+		self._fetch_task = None
+		log.error("Unable to list models for %s: %s", self._provider.provider_id, error)
+		self._populate_model_list([])
 
 	def _show_loading_indicator(self) -> None:
 		"""Display a 'Loading models...' placeholder."""
@@ -214,7 +210,7 @@ class ModelManagerDialog(wx.Dialog):
 		If a background fetch is already in progress the call is a
 		no-op — the UI will be repopulated when the fetch completes.
 		"""
-		if self._fetch_thread is not None and self._fetch_thread.is_alive():
+		if self._fetch_task is not None and not self._fetch_task.done:
 			return
 
 		# Save currently focused model ID before rebuilding.
@@ -222,12 +218,21 @@ class ModelManagerDialog(wx.Dialog):
 			focused = self._get_selected_model()
 			focus_model_id = focused.id if focused else None
 
-		try:
-			models = self._provider.list_managed_models()
-		except Exception:
-			models = []
+		self._request_model_refresh(focus_model_id)
 
-		self._populate_model_list(models, focus_model_id)
+	def _request_model_refresh(self, focus_model_id: str | None = None) -> None:
+		"""Fetch provider models off the wx thread."""
+		if self._fetch_task is not None and not self._fetch_task.done:
+			return
+		self._list.DeleteAllItems()
+		self._show_loading_indicator()
+		self._update_buttons()
+		self._fetch_task = background_tasks.submit(
+			lambda _cancel: list(self._provider.list_managed_models()),
+			on_success=lambda models: self._on_models_fetched(models, focus_model_id),
+			on_error=self._on_models_fetch_error,
+			is_alive=lambda: not self._is_destroyed,
+		)
 
 	def _populate_model_list(
 		self,
@@ -358,6 +363,16 @@ class ModelManagerDialog(wx.Dialog):
 		return self._get_displayed_model_at(sel)
 
 	def _update_buttons(self) -> None:
+		if self._mutation_task is not None and not self._mutation_task.done:
+			for button in (
+				self._download_btn,
+				self._import_btn,
+				self._delete_btn,
+				self._set_active_btn,
+				self._configure_btn,
+			):
+				button.Disable()
+			return
 		model = self._get_selected_model()
 		if model is None:
 			self._download_btn.Disable()
@@ -481,17 +496,24 @@ class ModelManagerDialog(wx.Dialog):
 		model = self._get_selected_model()
 		if model is None:
 			return
-		try:
-			self._provider.delete_model(model.id)
-		except Exception as exc:
-			log.error("Model deletion failed: %s", exc)
-			# TRANSLATORS: Error message when model deletion fails.
-			wx.MessageBox(
-				_("Failed to delete model: {}").format(exc),
+		model_id = model.id
+		self._mutation_task = background_tasks.submit(
+			lambda _cancel: self._provider.delete_model(model_id),
+			on_error=lambda error: wx.MessageBox(
+				_("Failed to delete model: {}").format(error),
 				_("Error"),
 				wx.ICON_ERROR,
-			)
-		self._refresh_model_list()
+				parent=self,
+			),
+			on_finally=self._finish_mutation,
+			is_alive=lambda: not self._is_destroyed,
+		)
+		self._update_buttons()
+
+	def _finish_mutation(self) -> None:
+		self._mutation_task = None
+		if not self._is_destroyed:
+			self._refresh_model_list()
 
 	def _on_import(self, _event: wx.CommandEvent) -> None:
 		if not self._provider.features.import_model:
@@ -568,6 +590,10 @@ class ModelManagerDialog(wx.Dialog):
 
 	def _on_close(self, _event: wx.Event) -> None:
 		self._is_destroyed = True
+		if self._fetch_task is not None:
+			self._fetch_task.cancel()
+		if self._mutation_task is not None:
+			self._mutation_task.cancel()
 		self.EndModal(wx.ID_CANCEL)
 
 	# ------------------------------------------------------------------

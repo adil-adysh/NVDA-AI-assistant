@@ -57,13 +57,44 @@ class UseCase(ABC):
 		raise NotImplementedError
 
 	def collect_prompt_context(
-		self, context_pipeline: ContextPipeline | None, emit: ContextEmitter = None  # pylint: disable=unused-argument
+		self,
+		context_pipeline: ContextPipeline | None,
+		emit: ContextEmitter = None,  # pylint: disable=unused-argument
+		context_reducer: object | None = None,
+		query: str | None = None,
 	) -> PromptContext | None:
 		if context_pipeline is None or not self.spec.extraction_intent.requests:
 			return None
-		return context_pipeline.collect(
+		context = context_pipeline.collect(
 			use_case_id=self.spec.id, extraction_intent=self.spec.extraction_intent
 		)
+		if context_reducer is None or self.spec.context_policy == "none":
+			return context
+		# Feature switches are read at request time so settings changes apply
+		# without restarting NVDA.  The reducer itself remains provider-neutral.
+		try:
+			from ..config.settings import (
+				get_embedding_enabled,
+				get_embedding_page_chat_enabled,
+				get_embedding_page_summary_enabled,
+			)
+			if not get_embedding_enabled():
+				return context
+			if self.spec.context_policy == "page_summary" and not get_embedding_page_summary_enabled():
+				return context
+			if self.spec.context_policy == "query_retrieval" and not get_embedding_page_chat_enabled():
+				return context
+		except Exception:
+			# Configuration reads must never make context collection fail.
+			pass
+		from ..context.reduction import ContextReductionPolicy
+
+		policy = ContextReductionPolicy(
+			mode=self.spec.context_policy,
+			max_tokens=self.spec.context_token_budget,
+			allow_query_retrieval=self.spec.context_policy == "query_retrieval",
+		)
+		return context_reducer.reduce(context, policy, query=query)  # type: ignore[attr-defined]
 
 	def _get_extraction_result(self, prompt_context: PromptContext) -> ExtractionResult:
 		"""Return the extraction result carried by *prompt_context* or raise."""
@@ -93,10 +124,14 @@ class UseCase(ABC):
 		collecting_message: str = "Collecting context...",
 		building_prompt_message: str = "Building prompt...",
 		llm_request_message: str = "Generating response...",
+		context_reducer: object | None = None,
+		query: str | None = None,
 	) -> UseCaseResult:
 		if emit is not None:
 			emit("collecting_context", collecting_message)
-		prompt_context = self.collect_prompt_context(context_pipeline, emit=emit)
+		prompt_context = self.collect_prompt_context(
+			context_pipeline, emit=emit, context_reducer=context_reducer, query=query
+		)
 		if prompt_context is None:
 			raise ValueError("Unable to collect context")
 

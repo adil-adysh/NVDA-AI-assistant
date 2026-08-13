@@ -30,6 +30,8 @@ class SummaryUseCase(UseCase):
 			tools=(),
 			requires_input=False,
 			result_actions=True,
+			context_policy="page_summary",
+			context_token_budget=6000,
 		)
 
 	def execute(
@@ -54,6 +56,8 @@ class SummaryUseCase(UseCase):
 			collecting_message="Collecting page content...",
 			building_prompt_message="Building summary prompt...",
 			llm_request_message="Generating summary...",
+			context_reducer=kwargs.get("_context_reducer"),
+			query=kwargs.get("query") if isinstance(kwargs.get("query"), str) else None,
 		)
 
 	def _build_result(self, prompt_context: PromptContext, response: object, prompt: str) -> UseCaseResult:

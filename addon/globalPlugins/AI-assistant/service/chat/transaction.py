@@ -10,9 +10,10 @@ from ...core.canonical import Message
 class ChatTurnTransaction:
 	prior_messages: tuple[Message, ...]
 	staged_messages: tuple[Message, ...]
+	transient_context_messages: tuple[Message, ...] = ()
 
 	def request_messages(self) -> list[Message]:
-		return [*self.prior_messages, *self.staged_messages]
+		return [*self.prior_messages, *self.transient_context_messages, *self.staged_messages]
 
 	def committed_messages(self, generated_messages: tuple[Message, ...]) -> tuple[Message, ...]:
 		return (*self.staged_messages, *generated_messages)

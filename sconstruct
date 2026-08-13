@@ -130,12 +130,16 @@ rust_build_sources = [
 	Path("memory_engine/pyproject.toml"),
 	Path("llm_client/Cargo.toml"),
 	Path("llm_client/Cargo.lock"),
+	Path("embedding_engine/Cargo.toml"),
+	Path("embedding_engine/Cargo.lock"),
+	Path("embedding_engine/pyproject.toml"),
 ]
 rust_build_sources.extend(Path("nvda_ui_host/src").glob("**/*.rs"))
 rust_build_sources.extend(Path("nvda_ui_host/webui/src").glob("**/*"))
 rust_build_sources.extend(Path("nvda_ui_host/assets").glob("**/*"))
 rust_build_sources.extend(Path("memory_engine/src").glob("**/*.rs"))
 rust_build_sources.extend(Path("llm_client/src").glob("**/*.rs"))
+rust_build_sources.extend(Path("embedding_engine/src").glob("**/*.rs"))
 
 rust_bundle = env.Command(
 	str(rust_build_stamp),

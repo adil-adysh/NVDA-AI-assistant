@@ -16,7 +16,6 @@ for the runtimes that support it.
 from __future__ import annotations
 
 import builtins
-import threading
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -38,6 +37,7 @@ from ..providers.registry import (
 	is_runtime_installed,
 	provider_display_name,
 )
+from .task_runner import TaskHandle, background_tasks
 
 
 def _translate(message: str) -> str:
@@ -75,6 +75,8 @@ class ProviderConfigureDialog(wx.Dialog):
 			style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
 		)
 		self._provider_id = provider_id
+		self._destroyed = False
+		self._test_task: TaskHandle[tuple[bool, str]] | None = None
 		self._provider_name = provider_name
 		self._config = build_provider_config(provider_id)
 		self._fields = get_configure_fields(provider_id)
@@ -84,6 +86,7 @@ class ProviderConfigureDialog(wx.Dialog):
 
 		self._build_ui()
 		self._populate_fields()
+		self.Bind(wx.EVT_CLOSE, self._on_close)
 
 		# Keyboard routing: Enter triggers OK (save), Escape triggers Cancel.
 		self.SetAffirmativeId(wx.ID_OK)
@@ -298,36 +301,32 @@ class ProviderConfigureDialog(wx.Dialog):
 			# TRANSLATORS: Error shown when a connection test cannot start; {error} is the reason.
 			self._test_done(False, _("Connection test failed: {error}").format(error=exc))
 			return
-		thread = threading.Thread(target=self._run_test, args=(config,), daemon=True)
-		thread.start()
+		self._test_task = background_tasks.submit(
+			lambda _cancel: self._run_test(config),
+			on_success=lambda result: self._test_done(*result),
+			on_error=lambda error: self._test_done(
+				False,
+				_("{name} connection failed: {error}").format(name=self._provider_name, error=error),
+			),
+			is_alive=lambda: not self._destroyed,
+		)
 
-	def _run_test(self, config: Any) -> None:
-		"""Run the connection test off the main thread and report the result."""
+	def _run_test(self, config: Any) -> tuple[bool, str]:
+		"""Run the blocking connection test; never touch wx from this method."""
+		provider = OpenAICompatProvider(config)
 		try:
-			# Broad catch is deliberate: a connection test must always report
-			# an accessible result instead of crashing the background thread.
-			# pylint: disable=broad-exception-caught
-			provider = OpenAICompatProvider(config)
-			try:
-				models = provider.list_models()
-			finally:
-				provider.close()
-			count = len(models)
-			# TRANSLATORS: Successful provider connection test result; {name} is the provider name and {count} the number of models found.
-			message = _(
-				"{name} connection successful. Found {count} model(s)."
-			).format(name=self._provider_name, count=count)
-			wx.CallAfter(self._test_done, True, message)
-		except Exception as exc:
-			log.debug("Connection test failed for %s: %s", self._provider_id, exc)
-			# TRANSLATORS: Failed provider connection test result; {name} is the provider name and {error} the reason.
-			message = _("{name} connection failed: {error}").format(
-				name=self._provider_name,
-				error=exc,
-			)
-			wx.CallAfter(self._test_done, False, message)
+			models = provider.list_models()
+		finally:
+			provider.close()
+		count = len(models)
+		message = _("{name} connection successful. Found {count} model(s).").format(
+			name=self._provider_name,
+			count=count,
+		)
+		return True, message
 
 	def _test_done(self, _success: bool, message: str) -> None:
+		self._test_task = None
 		self._test_result.SetLabel(message)
 		self._test_btn.Enable()
 		self.Layout()
@@ -364,9 +363,21 @@ class ProviderConfigureDialog(wx.Dialog):
 				wx.ICON_ERROR,
 			)
 			return
+		self._destroyed = True
+		if self._test_task is not None:
+			self._test_task.cancel()
 		self.EndModal(wx.ID_OK)
 
 	def _on_cancel(self, _event: wx.CommandEvent) -> None:
+		self._destroyed = True
+		if self._test_task is not None:
+			self._test_task.cancel()
+		self.EndModal(wx.ID_CANCEL)
+
+	def _on_close(self, _event: wx.CloseEvent) -> None:
+		self._destroyed = True
+		if self._test_task is not None:
+			self._test_task.cancel()
 		self.EndModal(wx.ID_CANCEL)
 
 	# ------------------------------------------------------------------

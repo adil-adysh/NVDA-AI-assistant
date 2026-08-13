@@ -12,6 +12,9 @@ from ..context.extractors.browser import BrowserAwarePageExtractor
 from ..context.extractors.generic_extractor import GenericPageExtractor
 from ..context.extractors.manager import ExtractionManager
 from ..context.pipeline import ContextPipeline
+from ..context.reduction import ContextReducer, CurrentPageContext
+from ..config.settings import get_embedding_enabled
+from ..embeddings import CandleEmbeddingAdapter
 from ..image.services import ImageEncoder, ImagePreprocessor
 from ..observability.reporter import FileMetricsReporter
 from ..ui import nvda_ui
@@ -47,6 +50,12 @@ def build_plugin_services() -> PluginServices:
 		collectors=(page_text_collector, page_structure_collector, image_context_collector, language_collector),
 		main_thread_executor=nvda_ui.call,
 	)
+	# The native model remains lazy.  ContextReducer has a deterministic
+	# fallback when the optional extension is unavailable.
+	context_reducer = ContextReducer(
+		embedder=CandleEmbeddingAdapter() if get_embedding_enabled() else None
+	)
+	page_context_provider = CurrentPageContext(context_reducer)
 	tool_registry = ToolRegistry()
 	_register_default_tools(tool_registry)
 	tool_executor = ToolExecutor(tool_registry)
@@ -55,11 +64,13 @@ def build_plugin_services() -> PluginServices:
 		client=llm_service,
 		metrics_reporter=metrics_reporter,
 		repository=build_default_conversation_repository(),
+		page_context_provider=page_context_provider,
 	)
 	conversation_service = ConversationService(chat_coordinator)
 	use_case_engine = UseCaseEngine(
 		llm_service=llm_service,
 		context_pipeline=context_pipeline,
+		context_reducer=context_reducer,
 	)
 	return PluginServices(
 		provider=provider,

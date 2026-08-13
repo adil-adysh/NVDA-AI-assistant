@@ -109,6 +109,49 @@ def get_provider() -> str:
 	return _read_string("provider", defaults.DEFAULT_PROVIDER).strip().lower()
 
 
+def get_embedding_model() -> str:
+	return _read_string("embeddingModel", defaults.DEFAULT_EMBEDDING_MODEL).strip()
+
+
+def get_embedding_enabled() -> bool:
+	return bool(_get_raw_setting("embeddingEnabled", defaults.DEFAULT_EMBEDDING_ENABLED))
+
+
+def get_embedding_page_summary_enabled() -> bool:
+	return bool(_get_raw_setting("embeddingPageSummaryEnabled", defaults.DEFAULT_EMBEDDING_PAGE_SUMMARY_ENABLED))
+
+
+def get_embedding_page_chat_enabled() -> bool:
+	return bool(_get_raw_setting("embeddingPageChatEnabled", defaults.DEFAULT_EMBEDDING_PAGE_CHAT_ENABLED))
+
+
+def get_embedding_conversation_memory_enabled() -> bool:
+	return bool(_get_raw_setting("embeddingConversationMemoryEnabled", defaults.DEFAULT_EMBEDDING_CONVERSATION_MEMORY_ENABLED))
+
+
+def set_embedding_model(model_id: str) -> None:
+	model_id = str(model_id).strip()
+	if not model_id:
+		raise ValueError("Embedding model cannot be empty")
+	_set_value("embeddingModel", model_id)
+
+
+def set_embedding_enabled(enabled: bool) -> None:
+	_set_value("embeddingEnabled", bool(enabled))
+
+
+def set_embedding_page_summary_enabled(enabled: bool) -> None:
+	_set_value("embeddingPageSummaryEnabled", bool(enabled))
+
+
+def set_embedding_page_chat_enabled(enabled: bool) -> None:
+	_set_value("embeddingPageChatEnabled", bool(enabled))
+
+
+def set_embedding_conversation_memory_enabled(enabled: bool) -> None:
+	_set_value("embeddingConversationMemoryEnabled", bool(enabled))
+
+
 def set_provider(provider: str) -> None:
 	provider_value = str(provider or "").strip().lower()
 	if provider_value not in get_provider_ids() | {"openai_compat"}:

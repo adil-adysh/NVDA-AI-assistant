@@ -58,12 +58,19 @@ pub struct ModelRegistry {
 
 impl Default for ModelRegistry {
     fn default() -> Self {
-        let cache_dir = dirs::data_local_dir()
+        Self::with_cache_dir(
+            dirs::data_local_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("nvda")
             .join("AIAssistant")
             .join("models")
-            .join("embeddings");
+            .join("embeddings"),
+        )
+    }
+}
+
+impl ModelRegistry {
+    pub fn with_cache_dir(cache_dir: PathBuf) -> Self {
 
         let mut descriptors = HashMap::new();
         let mut factories: HashMap<String, ModelFactory> = HashMap::new();
@@ -201,5 +208,37 @@ impl ModelRegistry {
     /// Directory where model files are cached.
     pub fn cache_dir(&self) -> &PathBuf {
         &self.cache_dir
+    }
+
+    pub fn model_repository(&self, model_id: &str) -> Option<&str> {
+        self.descriptors.get(model_id).map(|d| d.repository.as_str())
+    }
+
+    pub fn is_cached(&self, model_id: &str) -> bool {
+        let Some(repository) = self.model_repository(model_id) else {
+            return false;
+        };
+        let cache_name = format!("models--{}", repository.replace('/', "--"));
+        let model_cache = self.cache_dir.join(cache_name);
+        model_cache.join("snapshots").read_dir().map(|entries| {
+            entries.flatten().any(|entry| {
+                ["config.json", "tokenizer.json", "model.safetensors"]
+                    .iter()
+                    .all(|filename| entry.path().join(filename).is_file())
+            })
+        }).unwrap_or(false)
+    }
+
+    pub fn delete_cached(&self, model_id: &str) -> Result<()> {
+        let repository = self
+            .model_repository(model_id)
+            .with_context(|| format!("Unknown model: {model_id}"))?;
+        let cache_name = format!("models--{}", repository.replace('/', "--"));
+        let model_cache = self.cache_dir.join(cache_name);
+        if model_cache.exists() {
+            std::fs::remove_dir_all(&model_cache)
+                .with_context(|| format!("Failed to delete cache for {model_id}"))?;
+        }
+        Ok(())
     }
 }

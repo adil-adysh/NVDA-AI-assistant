@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use candle_core::{Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config};
-use hf_hub::HFClientSync;
+use hf_hub::{HFClient, HFClientSync};
 use tokenizers::Tokenizer;
 
 use crate::pooling::pool_and_normalize;
@@ -33,8 +33,10 @@ impl MiniLMModel {
     /// * `cache_dir` — currently unused; ``hf_hub`` manages its own cache.
     /// * `model_id` — HuggingFace model ID (e.g. ``"all-MiniLM-L6-v2"``).
     pub fn load(_cache_dir: &std::path::Path, model_id: &str) -> Result<Self> {
-        let client =
-            HFClientSync::new().context("Failed to create HF Hub client")?;
+        let client = HFClientSync::from_inner(HFClient::builder()
+            .cache_dir(_cache_dir)
+            .build()?)
+            .context("Failed to create HF Hub client")?;
         let model = client.model("sentence-transformers", model_id);
 
         // ── Download artifacts ──────────────────────────────────────

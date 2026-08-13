@@ -18,7 +18,7 @@
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Module, Tensor, D};
 use candle_nn::{linear_no_bias as linear, Linear, VarBuilder};
-use hf_hub::HFClientSync;
+use hf_hub::{HFClient, HFClientSync};
 use std::sync::Arc;
 use tokenizers::Tokenizer;
 
@@ -355,7 +355,10 @@ pub struct HarrierModel {
 
 impl HarrierModel {
     pub fn load(_cache_dir: &std::path::Path, model_id: &str) -> Result<Self> {
-        let client = HFClientSync::new().context("Failed to create HF Hub client")?;
+        let client = HFClientSync::from_inner(HFClient::builder()
+            .cache_dir(_cache_dir)
+            .build()?)
+            .context("Failed to create HF Hub client")?;
         let model = client.model("microsoft", "harrier-oss-v1-270m");
 
         // ── Download artifacts ──────────────────────────────────────

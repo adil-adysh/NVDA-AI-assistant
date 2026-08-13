@@ -20,9 +20,11 @@ class UseCaseEngine:
 		llm_service: LLMService,
 		context_pipeline: ContextPipeline | None = None,
 		use_cases: Sequence[UseCase] | None = None,
+		context_reducer: object | None = None,
 	) -> None:
 		self._llm_service = llm_service
 		self._context_pipeline = context_pipeline
+		self._context_reducer = context_reducer
 		self._use_cases = tuple(use_cases or build_default_use_cases())
 		self._use_case_map = {use_case.spec.id: use_case for use_case in self._use_cases}
 		self._specs = {use_case.spec.id: use_case.spec for use_case in self._use_cases}
@@ -47,6 +49,7 @@ class UseCaseEngine:
 				context_pipeline=self._context_pipeline,
 				llm_service=self._llm_service,
 				emit=emit,
+				_context_reducer=self._context_reducer,
 				**kwargs,
 			)
 		except Exception as error:

@@ -70,6 +70,8 @@ class OpenChatWithPageContentUseCase(UseCase):
 			prompt_key="chat_with_page_context",
 			tools=(),
 			requires_input=True,
+			context_policy="query_retrieval",
+			context_token_budget=4500,
 		)
 
 	def execute(
@@ -83,7 +85,12 @@ class OpenChatWithPageContentUseCase(UseCase):
 			emit("collecting_context", "Collecting page content...")
 		prompt_context = None
 		try:
-			prompt_context = self.collect_prompt_context(context_pipeline, emit=emit)
+			prompt_context = self.collect_prompt_context(
+				context_pipeline,
+				emit=emit,
+				context_reducer=kwargs.get("_context_reducer"),
+				query=kwargs.get("query") if isinstance(kwargs.get("query"), str) else None,
+			)
 		# Opening the chat must never fail because context collection did
 		# (e.g. the focused window is not a document with extractable text).
 		except Exception as error:  # pylint: disable=broad-exception-caught

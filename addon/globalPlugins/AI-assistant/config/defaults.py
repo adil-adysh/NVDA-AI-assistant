@@ -53,6 +53,14 @@ DEFAULT_LLAMA_CPP_EXECUTABLE = "llama-server"
 
 DEFAULT_ENABLED_PROVIDERS = ["ollama", "gemini", "openai", "litert-lm"]
 
+# Local embedding/retrieval defaults.  Embedding models are independent from
+# the active generation provider and model.
+DEFAULT_EMBEDDING_MODEL = "harrier-oss-v1-270m"
+DEFAULT_EMBEDDING_ENABLED = True
+DEFAULT_EMBEDDING_PAGE_SUMMARY_ENABLED = True
+DEFAULT_EMBEDDING_PAGE_CHAT_ENABLED = True
+DEFAULT_EMBEDDING_CONVERSATION_MEMORY_ENABLED = False
+
 DEFAULT_IMAGE_MAX_SIDE = 1024
 DEFAULT_IMAGE_FORMAT = "PNG"
 DEFAULT_IMAGE_QUALITY = 80

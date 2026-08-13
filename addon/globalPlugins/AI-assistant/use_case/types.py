@@ -72,6 +72,10 @@ class UseCaseSpec:
 	# If True, the UseCaseResult will carry "result_actions" in metadata,
 	# signalling the presenter to build context/output result actions.
 	result_actions: bool = False
+	# Context reduction is declared by the use case so orchestration does not
+	# need use-case-ID conditionals.
+	context_policy: str = "none"
+	context_token_budget: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

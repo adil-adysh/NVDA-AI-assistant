@@ -15,6 +15,7 @@ from logHandler import log
 
 from ..config import defaults
 from ..providers.interfaces import DownloadCancelledError
+from .task_runner import UiDispatcher
 
 _ = cast(Callable[[str], str], getattr(builtins, "_", lambda s: s))
 
@@ -77,7 +78,9 @@ class DownloadProgressDialog(wx.Dialog):
 			style=wx.DEFAULT_DIALOG_STYLE,
 		)
 		self._completed = False
+		self._closed = False
 		self._cancel_event = threading.Event()
+		self._completion_lock = threading.Lock()
 
 		sizer = wx.BoxSizer(wx.VERTICAL)
 
@@ -131,7 +134,7 @@ class DownloadProgressDialog(wx.Dialog):
 		self._cancel_event.set()
 		self._cancel_btn.Disable()
 		# TRANSLATORS: Label shown when user has requested download cancellation.
-		wx.CallAfter(self._label.SetLabel, _("Cancelling..."))
+		self._post_ui(lambda: self._label.SetLabel(_("Cancelling...")))
 
 	def _on_close(self, event: wx.CloseEvent) -> None:
 		"""Route title-bar close / Alt+F4 to cancel; allow close when done."""
@@ -146,11 +149,15 @@ class DownloadProgressDialog(wx.Dialog):
 
 	def update_message(self, message: str) -> None:
 		"""Update the label. Safe from any thread."""
-		wx.CallAfter(self._label.SetLabel, message)
+		self._post_ui(lambda: self._label.SetLabel(message))
 
 	def update_progress(self, downloaded: int, total: int) -> None:
 		"""Update the gauge. Safe from any thread."""
-		wx.CallAfter(self._do_update_progress, downloaded, total)
+		self._post_ui(lambda: self._do_update_progress(downloaded, total))
+
+	def _post_ui(self, callback: Callable[[], None]) -> None:
+		"""Post only while the dialog is alive; workers may finish late."""
+		UiDispatcher.post(lambda: callback() if not self._closed else None)
 
 	def _do_update_progress(self, downloaded: int, total: int) -> None:
 		if total and total > 0:
@@ -172,20 +179,21 @@ class DownloadProgressDialog(wx.Dialog):
 		On failure, shows an error message box before closing.
 		Cancelled downloads close silently (the partial file is kept).
 		"""
-		if self._cancel_event.is_set():
-			# User cancelled — close without error message.
-			wx.CallAfter(self._do_close)
-		elif message:
-			wx.CallAfter(self._do_show_final_message, success, message)
-		wx.CallAfter(self._do_close)
+		with self._completion_lock:
+			if self._completed:
+				return
+			self._completed = True
+		self._post_ui(lambda: self._finish(success, message))
+
+	def _finish(self, success: bool, message: str | None) -> None:
+		if not self._cancel_event.is_set() and message:
+			self._do_show_final_message(success, message)
+		self._closed = True
+		self.EndModal(wx.ID_OK)
 
 	def _do_show_final_message(self, success: bool, message: str) -> None:
 		icon = wx.ICON_INFORMATION if success else wx.ICON_ERROR
 		wx.MessageBox(message, self.GetTitle(), icon, parent=self)
-
-	def _do_close(self) -> None:
-		self._completed = True
-		self.EndModal(wx.ID_OK)
 
 	# ------------------------------------------------------------------
 	# Convenience launcher

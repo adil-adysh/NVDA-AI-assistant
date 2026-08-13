@@ -37,6 +37,7 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 		history_transport_projector: Callable[
 			[list[Message]], list[dict[str, Any]]
 		] = project_chat_history_transport,
+		page_context_provider: object | None = None,
 	) -> None:
 		super().__init__(metrics_reporter)
 		self._llm_service = client
@@ -50,6 +51,17 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 		self._last_turn_committed: bool = False
 		self._history_projector = history_projector
 		self._history_transport_projector = history_transport_projector
+		self._page_context_provider = page_context_provider
+
+	def set_page_context(self, context: Any, conversation_id: str) -> None:
+		provider = self._page_context_provider
+		if provider is not None:
+			provider.set(context, conversation_id)
+
+	def clear_page_context(self) -> None:
+		provider = self._page_context_provider
+		if provider is not None:
+			provider.clear()
 
 	def send(
 		self,
@@ -78,7 +90,17 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 	) -> LLMResponse:
 		user_message = self._build_user_message(text=text, image_base64=image_base64)
 		canonical_tools = self._convert_tool_definitions(tools)
-		transaction, generation = self._begin_transaction((user_message,))
+		transient_context: tuple[Message, ...] = ()
+		provider = self._page_context_provider
+		if provider is not None and isinstance(text, str) and text.strip():
+			retrieve = getattr(provider, "retrieve", None)
+			if callable(retrieve):
+				context_text = retrieve(text, self.get_active_conversation_id())
+				if isinstance(context_text, str) and context_text.strip():
+					transient_context = (build_user_message(text=context_text),)
+		transaction, generation = self._begin_transaction(
+			(user_message,), transient_context_messages=transient_context
+		)
 		log.debug(
 			"ChatCoordinator.send_message starting: text=%r image_attached=%s tools=%s",
 			text,
@@ -116,6 +138,7 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 		conversation_id: str | None = None,
 		seed_messages: Sequence[Message] = (),
 	) -> str:
+		self.clear_page_context()
 		with self._session_lock:
 			resolved_conversation_id = (
 				conversation_id.strip()
@@ -157,6 +180,7 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 			return deleted
 
 	def reset(self) -> None:
+		self.clear_page_context()
 		with self._session_lock:
 			self._session.reset()
 			self._session_generation += 1
@@ -175,12 +199,18 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 	def get_model_info(self, model_name: str | None = None) -> ProviderModelInfo | None:
 		return self._llm_service.get_model_info(model_name=model_name)
 
-	def _begin_transaction(self, staged_messages: tuple[Message, ...]) -> tuple[ChatTurnTransaction, int]:
+	def _begin_transaction(
+		self,
+		staged_messages: tuple[Message, ...],
+		transient_context_messages: tuple[Message, ...] = (),
+	) -> tuple[ChatTurnTransaction, int]:
 		with self._session_lock:
 			generation = self._session_generation
 			prior_messages = tuple(self._session.snapshot())
 			return ChatTurnTransaction(
-				prior_messages=prior_messages, staged_messages=staged_messages
+				prior_messages=prior_messages,
+				staged_messages=staged_messages,
+				transient_context_messages=transient_context_messages,
 			), generation
 
 	def _send_transaction(

@@ -20,7 +20,7 @@ use candle_nn::{
     Module, VarBuilder,
 };
 use candle_transformers::models::modernbert::Config;
-use hf_hub::HFClientSync;
+use hf_hub::{HFClient, HFClientSync};
 use std::sync::Arc;
 use tokenizers::Tokenizer;
 
@@ -281,7 +281,10 @@ pub struct GraniteModel {
 impl GraniteModel {
     /// Download (if needed) and load the Granite model.
     pub fn load(_cache_dir: &std::path::Path, model_id: &str) -> Result<Self> {
-        let client = HFClientSync::new().context("Failed to create HF Hub client")?;
+        let client = HFClientSync::from_inner(HFClient::builder()
+            .cache_dir(_cache_dir)
+            .build()?)
+            .context("Failed to create HF Hub client")?;
 
         // Granite 97M multilingual R2
         let model = client.model("ibm-granite", "granite-embedding-97m-multilingual-r2");

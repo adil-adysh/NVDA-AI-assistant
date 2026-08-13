@@ -22,6 +22,7 @@ mod registry;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use std::path::PathBuf;
 
 use registry::ModelRegistry;
 
@@ -80,8 +81,11 @@ impl EmbeddingEngine {
     /// Args:
     ///     model_id: HuggingFace model identifier, e.g. ``"all-MiniLM-L6-v2"``.
     #[new]
-    fn new(model_id: String) -> PyResult<Self> {
-        let registry = ModelRegistry::default();
+    #[pyo3(signature = (model_id, cache_dir=None))]
+    fn new(model_id: String, cache_dir: Option<String>) -> PyResult<Self> {
+        let registry = cache_dir
+            .map(|path| ModelRegistry::with_cache_dir(PathBuf::from(path)))
+            .unwrap_or_default();
         Ok(Self {
             registry,
             loaded_model_id: Some(model_id),
@@ -108,6 +112,35 @@ impl EmbeddingEngine {
         let registry = ModelRegistry::default();
         let meta = registry.model_metadata(model_id);
         Ok(meta.map(|v| Python::with_gil(|py| value_to_py(py, &v))))
+    }
+
+    /// Return whether all required model artifacts exist in this engine's cache.
+    fn is_cached(&self) -> PyResult<bool> {
+        let model_id = self
+            .loaded_model_id
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("No model selected"))?;
+        Ok(self.registry.is_cached(model_id))
+    }
+
+    /// Download and validate the selected model.
+    fn prepare(&mut self) -> PyResult<()> {
+        self.embed("embedding model readiness check").map(|_| ())
+    }
+
+    /// Return the explicit cache directory used by this engine.
+    fn cache_dir(&self) -> String {
+        self.registry.cache_dir().to_string_lossy().into_owned()
+    }
+
+    /// Delete one known model's cached artifacts from an explicit cache root.
+    #[staticmethod]
+    #[pyo3(signature = (model_id, cache_dir=None))]
+    fn delete_cached(model_id: &str, cache_dir: Option<String>) -> PyResult<()> {
+        let registry = cache_dir
+            .map(|path| ModelRegistry::with_cache_dir(PathBuf::from(path)))
+            .unwrap_or_default();
+        registry.delete_cached(model_id).map_err(to_py_err)
     }
 
     /// Produce an embedding vector for a single text.

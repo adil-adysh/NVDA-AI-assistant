@@ -123,6 +123,7 @@ class UseCasePresenter:
 		conversation_id: str | None = None,
 		force_new_conversation: bool = False,
 		seed_messages: tuple[Message, ...] | None = None,
+		page_context: Any | None = None,
 	) -> None:
 		# When carrying both an image and its description into the conversation,
 		# inject the image as a user message seed so it appears in the transcript.
@@ -138,6 +139,10 @@ class UseCasePresenter:
 			force_new=force_new_conversation,
 			seed_messages=seed_messages,
 		)
+		if page_context is not None:
+			self._chat_coordinator.set_page_context(page_context, active_conversation_id)
+		else:
+			self._chat_coordinator.clear_page_context()
 		provider_state = get_provider_state()
 		session_state = build_session_state(
 			_,

@@ -213,10 +213,12 @@ class AIAssistantApplication:
 		self,
 		initial_text: str | None = None,
 		initial_image_base64: str | None = None,
+		page_context: object | None = None,
 	) -> None:
 		self.presenter.open_chat_window(
 			initial_text=initial_text,
 			initial_image_base64=initial_image_base64,
+			page_context=page_context,
 		)
 
 	def open_chat(self) -> None:
@@ -235,7 +237,10 @@ class AIAssistantApplication:
 			OPEN_CHAT_WITH_PAGE_CONTENT,
 			# TRANSLATORS: Title shown for the AI chat window.
 			title=_("AI Chat"),
-			render_result=lambda result: self.open_chat_window(initial_text=result.initial_text),
+			render_result=lambda result: self.open_chat_window(
+				initial_text=result.initial_text,
+				page_context=result.prompt_context,
+			),
 		)
 
 	def open_chat_with_screenshot(self) -> None:

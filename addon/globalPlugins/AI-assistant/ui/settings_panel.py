@@ -12,6 +12,10 @@ from ..config import defaults
 from ..config.settings import (
 	build_provider_config,
 	get_enabled_providers,
+	get_embedding_enabled,
+	get_embedding_model,
+	get_embedding_page_chat_enabled,
+	get_embedding_page_summary_enabled,
 	get_generate_max_tokens,
 	get_generate_temperature,
 	get_generate_top_p,
@@ -29,6 +33,10 @@ from ..config.settings import (
 	get_timeout_seconds,
 	set_generate_max_tokens,
 	set_generate_temperature,
+	set_embedding_enabled,
+	set_embedding_model,
+	set_embedding_page_chat_enabled,
+	set_embedding_page_summary_enabled,
 	set_generate_top_p,
 	set_image_format,
 	set_image_max_side,
@@ -54,6 +62,9 @@ from ..providers.registry import (
 )
 from .enabled_models import EnabledModelsStore
 from .provider_dialog import open_provider_dialog
+from .embedding_model_dialog import open_embedding_model_dialog
+from ..embeddings.manager import embedding_model_service
+from .task_runner import TaskHandle, background_tasks
 
 addonHandler.initTranslation()
 
@@ -131,6 +142,28 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		self._build_advanced_group(sHelper)
 
 		self._update_active_ai_state()
+		self._build_embedding_group(sHelper)
+
+	def _build_embedding_group(self, parent_helper) -> None:
+		group_sizer = wx.StaticBoxSizer(wx.VERTICAL, self, label=_("Context and memory"))
+		group_helper = parent_helper.addItem(guiHelper.BoxSizerHelper(self, sizer=group_sizer))
+		group_helper.addItem(wx.StaticText(self, label=_("Local embedding models select relevant content before it is sent to the AI.")))
+		self.embeddingEnabledCheckbox = group_helper.addItem(wx.CheckBox(self, label=_("Enable local context reduction")))
+		self.embeddingEnabledCheckbox.Value = get_embedding_enabled()
+		self.embeddingSummaryCheckbox = group_helper.addItem(wx.CheckBox(self, label=_("Use embeddings for page summaries")))
+		self.embeddingSummaryCheckbox.Value = get_embedding_page_summary_enabled()
+		self.embeddingPageChatCheckbox = group_helper.addItem(wx.CheckBox(self, label=_("Use embeddings for page chat")))
+		self.embeddingPageChatCheckbox.Value = get_embedding_page_chat_enabled()
+		group_helper.addItem(wx.StaticText(self, label=_("Active embedding model:")))
+		self.embeddingModelCombo = wx.ComboBox(
+			self,
+			choices=[model.id for model in embedding_model_service.list_models()],
+			style=wx.CB_READONLY,
+		)
+		self.embeddingModelCombo.SetValue(get_embedding_model())
+		group_helper.addItem(self.embeddingModelCombo)
+		manage = group_helper.addItem(wx.Button(self, label=_("Manage Embedding Models...")))
+		manage.Bind(wx.EVT_BUTTON, self._on_manage_embedding_models)
 
 	def _build_model_defaults(self, parent_helper) -> None:
 		# TRANSLATORS: Section label for the global per-model generation defaults.
@@ -390,11 +423,27 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		return choices
 
 	def _refresh_active_model_choices(self, provider_id: str) -> None:
-		choices = self._model_choices_for(provider_id)
+		"""Refresh model choices without allowing provider I/O to block wx."""
+		previous = getattr(self, "_model_choice_task", None)
+		if previous is not None and not previous.done:
+			previous.cancel()
+		self.modelCombo.Clear()
+		self.modelCombo.SetValue(self._current_model_name(provider_id))
+		self.modelCombo.Disable()
+		self._model_choice_task: TaskHandle[list[str]] = background_tasks.submit(
+			lambda _cancel: self._model_choices_for(provider_id),
+			on_success=lambda choices: self._apply_active_model_choices(provider_id, choices),
+			is_alive=lambda: not bool(getattr(self, "IsBeingDeleted", lambda: False)()),
+		)
+
+	def _apply_active_model_choices(self, provider_id: str, choices: list[str]) -> None:
+		if provider_id != self._selected_provider():
+			return
 		current = self._current_model_name(provider_id)
 		self.modelCombo.Clear()
 		self.modelCombo.AppendItems(choices)
 		self.modelCombo.SetValue(current)
+		self.modelCombo.Enable()
 
 	def _refresh_provider_status(self, provider_id: str) -> None:
 		info = get_provider_info(provider_id)
@@ -564,6 +613,10 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 			except Exception:
 				pass
 		set_model_name(model_name)
+		set_embedding_enabled(self.embeddingEnabledCheckbox.Value)
+		set_embedding_page_summary_enabled(self.embeddingSummaryCheckbox.Value)
+		set_embedding_page_chat_enabled(self.embeddingPageChatCheckbox.Value)
+		set_embedding_model(self.embeddingModelCombo.GetValue().strip() or defaults.DEFAULT_EMBEDDING_MODEL)
 		set_num_ctx(numCtx)
 		set_generate_temperature(temperature)
 		set_generate_top_p(topP)
@@ -585,6 +638,11 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 
 	def _on_provider_choice(self, _event: Any) -> None:
 		self._update_active_ai_state()
+
+	def _on_manage_embedding_models(self, _event: wx.CommandEvent) -> None:
+		open_embedding_model_dialog(self)
+		if hasattr(self, "embeddingModelCombo"):
+			self.embeddingModelCombo.SetValue(get_embedding_model())
 
 	def _on_manage_providers(self, _event: wx.CommandEvent) -> None:
 		"""Open the provider management dialog, then refresh the active AI state."""
