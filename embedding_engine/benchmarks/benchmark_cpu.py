@@ -32,6 +32,14 @@ UNICODE_TEXT = "नमस्ते दुनिया — embedding multilingual
 LONG_TEXT = "word " * 200  # ~200 tokens
 
 
+def _configure_console() -> None:
+    """Keep benchmark output readable on Windows cp1252 consoles."""
+    stream = getattr(sys, "stdout", None)
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8", errors="replace")
+
+
 def _cosine(a: list[float], b: list[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b))
     return dot / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(x * x for x in b)))
@@ -54,6 +62,7 @@ def report(name: str, times: list[float]) -> None:
 
 
 def main() -> None:
+    _configure_console()
     print("=" * 60)
     print("Embedding Engine CPU Benchmark")
     print("=" * 60)

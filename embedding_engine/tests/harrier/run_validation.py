@@ -25,8 +25,17 @@ from .reporter import generate_json_report, generate_markdown_report
 from .suites import RESULT_FAIL
 
 
+def _configure_console() -> None:
+    """Keep validation reporting usable on Windows cp1252 consoles."""
+    stream = getattr(sys, "stdout", None)
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8", errors="replace")
+
+
 def main() -> int:
     """Run all validation suites and generate reports. Returns exit code."""
+    _configure_console()
     print("=" * 72)
     print("  Harrier Embedding Model — Validation Suite")
     print(f"  Started: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
