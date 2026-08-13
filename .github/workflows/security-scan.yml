@@ -13,39 +13,26 @@ on:
 jobs:
   package_addon:
     runs-on: windows-latest
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+      CARGO_INCREMENTAL: "0"
     outputs:
       addonFileName: ${{ steps.findAddon.outputs.addonFileName }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version-file: .python-version
-          cache: pip
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version-file: .node-version
-          cache: npm
-          cache-dependency-path: nvda_ui_host/package-lock.json
-
-      - name: Setup Rust
-        uses: moonrepo/setup-rust@v1
-        with:
-          inherit-toolchain: true
-          profile: minimal
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip wheel
-          pip install pre-commit scons markdown
+      - name: Setup build toolchain
+        uses: ./.github/actions/setup-addon-build
 
       - name: Build add-on package
         run: |
           scons
+
+      - name: Show compiler cache statistics
+        if: always()
+        run: sccache --show-stats
 
       - name: Find packaged add-on
         id: findAddon

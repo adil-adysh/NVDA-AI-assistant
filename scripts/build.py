@@ -19,6 +19,19 @@ ADDON_LIB_DIR = ROOT_DIR / "addon" / "globalPlugins" / "AI-assistant" / "lib"
 NPM_EXECUTABLE = "npm.cmd" if os.name == "nt" else "npm"
 
 
+def _cargo_build_args(*, manifest_path: Path | None = None, release: bool) -> list[str]:
+	"""Return reproducible Cargo build arguments for every native component."""
+	args = ["cargo", "build"]
+	if manifest_path is not None:
+		args.extend(["--manifest-path", str(manifest_path)])
+	if release:
+		args.append("--release")
+	# Native binaries are shipped in the addon; never silently resolve a
+	# different dependency graph in CI or on a release builder.
+	args.append("--locked")
+	return args
+
+
 def build_webui() -> None:
 	package_json = HOST_DIR / "package.json"
 	if not package_json.exists():
@@ -59,7 +72,6 @@ def _filter_host_rustflags(environment: dict[str, str]) -> dict[str, str]:
 			filtered_tokens.append(token)
 			i += 1
 		filtered_environment["RUSTFLAGS"] = " ".join(filtered_tokens)
-	filtered_environment["CARGO_PROFILE_RELEASE_LTO"] = "false"
 	return filtered_environment
 
 
@@ -68,9 +80,7 @@ def _filtered_rust_environment() -> dict[str, str]:
 
 
 def build_host(*, release: bool = True) -> None:
-	args = ["cargo", "build"]
-	if release:
-		args.append("--release")
+	args = _cargo_build_args(release=release)
 
 	print("Building NVDA UI host:", " ".join(args))
 	env = _filtered_rust_environment()
@@ -114,9 +124,7 @@ def install_host_assets() -> None:
 
 
 def build_memory_engine(*, release: bool = True) -> None:
-	args = ["cargo", "build", "--manifest-path", str(MEMORY_ENGINE_DIR / "Cargo.toml")]
-	if release:
-		args.append("--release")
+	args = _cargo_build_args(manifest_path=MEMORY_ENGINE_DIR / "Cargo.toml", release=release)
 
 	print("Building memory_engine:", " ".join(args))
 	env = _filtered_rust_environment()
@@ -180,9 +188,7 @@ def install_memory_engine_extension(*, release: bool, allow_existing_install: bo
 
 
 def build_embedding_engine(*, release: bool = True) -> None:
-	args = ["cargo", "build", "--manifest-path", str(EMBEDDING_ENGINE_DIR / "Cargo.toml")]
-	if release:
-		args.append("--release")
+	args = _cargo_build_args(manifest_path=EMBEDDING_ENGINE_DIR / "Cargo.toml", release=release)
 
 	print("Building embedding_engine:", " ".join(args))
 	env = _filtered_rust_environment()
@@ -247,9 +253,7 @@ def install_embedding_engine_extension(*, release: bool, allow_existing_install:
 
 
 def build_llm_client(*, release: bool = True) -> None:
-	args = ["cargo", "build", "--manifest-path", str(LLM_CLIENT_DIR / "Cargo.toml")]
-	if release:
-		args.append("--release")
+	args = _cargo_build_args(manifest_path=LLM_CLIENT_DIR / "Cargo.toml", release=release)
 
 	print("Building llm_client:", " ".join(args))
 	env = _filtered_rust_environment()

@@ -122,7 +122,7 @@ def _install_litert(python_exe: Path, version: str) -> None:
 	"""``pip install litert-lm==<version>`` into the embeddable Python."""
 	pip = python_exe.parent / "Scripts" / "pip.exe"
 	subprocess.run(
-		[str(pip), "install", f"{LITERT_PACKAGE}=={version}"],
+		[str(pip), "install", "--no-cache-dir", f"{LITERT_PACKAGE}=={version}"],
 		check=True,
 		capture_output=True,
 		text=True,

@@ -1,0 +1,42 @@
+name: Setup NVDA AI Assistant build
+description: Install the pinned Python, Node.js, Rust, gettext, and sccache toolchain used by addon builds.
+runs:
+  using: composite
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: .python-version
+        cache: pip
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version-file: .node-version
+        cache: npm
+        cache-dependency-path: nvda_ui_host/package-lock.json
+
+    - name: Setup Rust
+      uses: moonrepo/setup-rust@v1
+      with:
+        inherit-toolchain: true
+        profile: minimal
+
+    - name: Setup sccache
+      uses: mozilla-actions/sccache-action@v0.0.9
+
+    - name: Install Python build dependencies
+      shell: powershell
+      run: |
+        python -m pip install --upgrade pip wheel
+        python -m pip install pre-commit scons markdown
+
+    - name: Install gettext tools
+      shell: powershell
+      run: |
+        choco install gettext -y --no-progress
+        $gettextBin = 'C:\Program Files\gettext-iconv\bin'
+        if (-not (Test-Path -LiteralPath $gettextBin)) {
+          throw "gettext was not installed at $gettextBin"
+        }
+        $gettextBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append

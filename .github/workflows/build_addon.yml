@@ -13,40 +13,17 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+      CARGO_INCREMENTAL: "0"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version-file: .python-version
-          cache: "pip"
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version-file: .node-version
-          cache: "npm"
-          cache-dependency-path: nvda_ui_host/package-lock.json
-
-      - name: Setup Rust
-        uses: moonrepo/setup-rust@v1
-        with:
-          inherit-toolchain: true
-          profile: minimal
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip wheel
-          pip install pre-commit scons markdown
-
-      - name: Install gettext tools
-        run: |
-          choco install gettext -y
-          $gettextBin = 'C:\Program Files\gettext-iconv\bin'
-          "${gettextBin}" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Setup build toolchain
+        uses: ./.github/actions/setup-addon-build
 
       - name: Run code checks
         env:
@@ -58,6 +35,10 @@ jobs:
         run: |
           scons
           scons pot
+
+      - name: Show compiler cache statistics
+        if: always()
+        run: sccache --show-stats
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
