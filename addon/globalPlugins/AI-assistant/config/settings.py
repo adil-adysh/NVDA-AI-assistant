@@ -9,6 +9,7 @@ import languageHandler
 from . import defaults
 from .state import (
 	ProviderState,
+	_notify_llama_server_config_changed as _notify_llama_server_config_changed_impl,
 	_notify_litert_server_config_changed as _notify_litert_server_config_changed_impl,
 	_notify_provider_state_changed as _notify_provider_state_changed_impl,
 	get_provider_state as _build_provider_state,
@@ -102,6 +103,10 @@ def _notify_provider_state_changed() -> None:
 
 def _notify_litert_server_config_changed() -> None:
 	_notify_litert_server_config_changed_impl()
+
+
+def _notify_llama_server_config_changed() -> None:
+	_notify_llama_server_config_changed_impl()
 
 
 def get_provider() -> str:
@@ -674,6 +679,8 @@ def set_openai_compat_config(config: "OpenAICompatConfig", activate: bool = True
 	_set_values(values, notify=False)
 	if spec.litert_engine_settings:
 		_notify_litert_server_config_changed()
+	if provider == "llama-cpp-server":
+		_notify_llama_server_config_changed()
 	_notify_provider_state_changed()
 
 

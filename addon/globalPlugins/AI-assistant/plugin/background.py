@@ -11,11 +11,15 @@ from logHandler import log
 
 from ..providers.interfaces import LLMProviderError, ProviderConfigurationError
 from ..providers.runtime.server import LiteRTServerError, get_litert_supervisor
+from ..providers.runtime.llama_server import shutdown_llama_servers
 from ..service.error_presentation import present_error
 from ..service.llm import LLMService
 from ..service.provider_readiness import ProviderReadinessService, get_provider_display_name
 from ..config.settings import get_provider, get_model_name
-from ..config.state import subscribe_litert_server_config_change
+from ..config.state import (
+	subscribe_litert_server_config_change,
+	subscribe_llama_server_config_change,
+)
 from ..ui import nvda_ui
 from ..ui.session_state import build_provider_status_message
 from ..use_case.engine import UseCaseEngine
@@ -107,6 +111,18 @@ def _restart_litert_server_locked() -> None:
 
 
 subscribe_litert_server_config_change(_on_litert_server_config_changed)
+
+
+def _on_llama_server_config_changed() -> None:
+	"""Stop stale llama-server instances after endpoint/config changes."""
+	threading.Thread(
+		target=shutdown_llama_servers,
+		name="llama-shutdown-on-config-change",
+		daemon=True,
+	).start()
+
+
+subscribe_llama_server_config_change(_on_llama_server_config_changed)
 
 
 def ensure_litert_server_ready(on_progress: Callable[[str], None] | None = None) -> None:

@@ -48,6 +48,8 @@ def _notify_provider_state_changed(get_current_state: Callable[[], ProviderState
 
 _litert_server_config_listeners: list[Callable[[], None]] = []
 
+_llama_server_config_listeners: list[Callable[[], None]] = []
+
 
 def subscribe_litert_server_config_change(listener: Callable[[], None]) -> None:
 	"""Register *listener* to fire when LiteRT server engine settings change.
@@ -72,3 +74,21 @@ def _notify_litert_server_config_changed() -> None:
 			listener()
 		except Exception:
 			log.exception("Error notifying LiteRT server config listener")
+
+
+def subscribe_llama_server_config_change(listener: Callable[[], None]) -> None:
+	if listener not in _llama_server_config_listeners:
+		_llama_server_config_listeners.append(listener)
+
+
+def unsubscribe_llama_server_config_change(listener: Callable[[], None]) -> None:
+	if listener in _llama_server_config_listeners:
+		_llama_server_config_listeners.remove(listener)
+
+
+def _notify_llama_server_config_changed() -> None:
+	for listener in list(_llama_server_config_listeners):
+		try:
+			listener()
+		except Exception:
+			log.exception("Error notifying llama-server config listener")

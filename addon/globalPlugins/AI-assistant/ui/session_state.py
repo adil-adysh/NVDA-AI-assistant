@@ -340,6 +340,8 @@ def build_provider_status_message(translate: Translator, readiness: ProviderRead
 	if readiness.reason in {ProviderReadinessReason.MISSING_SERVER_URL, ProviderReadinessReason.MISSING_BASE_URL}:
 		# TRANSLATORS: Guidance shown when the selected provider is missing a server or base URL.
 		return translate("{provider} is selected but its server address is not configured.").format(provider=provider_label)
+	if readiness.reason is ProviderReadinessReason.SERVER_NOT_READY:
+		return translate("{provider} is configured but its server is not ready yet.").format(provider=provider_label)
 	if readiness.reason is ProviderReadinessReason.MISSING_CHAT_PATH:
 		# TRANSLATORS: Guidance shown when OpenAI is selected without a chat endpoint path.
 		return translate("OpenAI is selected but the chat endpoint path is not configured.")

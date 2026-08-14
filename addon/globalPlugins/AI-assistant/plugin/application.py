@@ -18,6 +18,7 @@ from ..service import get_provider_display_name, provider_control_service
 from ..service.model_cache import model_catalog_cache
 from ..ui.host_process import stop_host
 from ..ui.adapter import ui_adapter
+from ..providers.runtime.llama_server import shutdown_llama_servers
 from ..ui.settings_panel import AIAssistantSettingsPanel
 from ..ui import nvda_ui
 from ..ui.session_state import build_provider_status_message
@@ -161,6 +162,14 @@ class AIAssistantApplication:
 			).start()
 		except Exception:
 			log.exception("Error stopping LiteRT server during terminate")
+		try:
+			threading.Thread(
+				target=shutdown_llama_servers,
+				name="LlamaServerShutdown",
+				daemon=True,
+			).start()
+		except Exception:
+			log.exception("Error stopping llama-server instances during terminate")
 		self._unregister_settings_panel()
 
 	def _on_provider_state_change(self, provider_state: ProviderState) -> None:

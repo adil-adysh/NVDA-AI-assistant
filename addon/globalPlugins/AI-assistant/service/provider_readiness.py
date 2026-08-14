@@ -21,6 +21,7 @@ class ProviderReadinessReason(str, Enum):
 	MISSING_SERVER_URL = "missing_server_url"
 	MISSING_BASE_URL = "missing_base_url"
 	MISSING_CHAT_PATH = "missing_chat_path"
+	SERVER_NOT_READY = "server_not_ready"
 	MISSING_CREDENTIALS = "missing_credentials"
 	UNSUPPORTED_MODEL = "unsupported_model"
 	UNSUPPORTED_PROVIDER = "unsupported_provider"
@@ -112,6 +113,22 @@ class ProviderReadinessService:
 				can_list_models=True,
 			)
 
+		if provider == "llama-cpp-server":
+			if not base_url:
+				return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_SERVER_URL)
+			from ..providers.llama_manager import LlamaCppModelManager
+
+			if LlamaCppModelManager(config=config).find_record(model_name) is None:
+				return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_MODEL)
+			if not self._llama_server_is_ready(config):
+				return ProviderReadiness(
+					provider=config.provider,
+					state=ProviderReadinessState.UNCONFIGURED,
+					reason=ProviderReadinessReason.SERVER_NOT_READY,
+					can_infer=False,
+					can_list_models=True,
+				)
+
 		if not base_url:
 			reason = (
 				ProviderReadinessReason.MISSING_SERVER_URL
@@ -148,3 +165,21 @@ class ProviderReadinessService:
 			can_infer=False,
 			can_list_models=False,
 		)
+
+	@staticmethod
+	def _llama_server_is_ready(config: ProviderConfig) -> bool:
+		from urllib.parse import urlparse
+
+		from ..providers.runtime.llama_server import (
+			DEFAULT_LLAMA_HOST,
+			DEFAULT_LLAMA_PORT,
+			default_llama_server_executable,
+			get_llama_supervisor,
+		)
+
+		parsed = urlparse(str(getattr(config, "base_url", "") or ""))
+		host = parsed.hostname or DEFAULT_LLAMA_HOST
+		port = parsed.port or DEFAULT_LLAMA_PORT
+		executable = str(getattr(config, "server_executable", "") or "").strip() or default_llama_server_executable()
+		supervisor = get_llama_supervisor(executable, host, port)
+		return supervisor.is_running or supervisor.is_adopted
