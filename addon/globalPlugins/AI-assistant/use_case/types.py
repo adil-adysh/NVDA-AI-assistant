@@ -82,6 +82,9 @@ class UseCaseSpec:
 	# need use-case-ID conditionals.
 	context_policy: str = "none"
 	context_token_budget: int | None = None
+	context_window_tokens: int | None = None
+	reserved_output_tokens: int = 1024
+	budget_safety_margin_tokens: int = 256
 
 
 @dataclass(frozen=True, slots=True)

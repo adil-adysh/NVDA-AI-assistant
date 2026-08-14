@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ..context.formatting import format_page_context, format_page_structure
+from ..context.budget import ContextWindowBudget, validate_prompt_budget
 from ..context.pipeline import ContextPipeline
 from ..context.types import ExtractionResult, PromptContext
 from ..providers.interfaces import PartialCallback
@@ -69,6 +70,8 @@ class UseCase(ABC):
 		emit: ContextEmitter = None,  # pylint: disable=unused-argument
 		context_reducer: object | None = None,
 		query: str | None = None,
+		prompt_builder: Callable[[PromptContext], str] | None = None,
+		prompt_budget: ContextWindowBudget | None = None,
 	) -> PromptContext | None:
 		if context_pipeline is None or not self.spec.extraction_intent.requests:
 			return None
@@ -85,11 +88,19 @@ class UseCase(ABC):
 				get_embedding_page_chat_enabled,
 				get_embedding_page_summary_enabled,
 			)
-			if not get_embedding_enabled():
+			if not get_embedding_enabled() and (prompt_builder is None or prompt_budget is None):
 				return context
-			if self.spec.context_policy == "page_summary" and not get_embedding_page_summary_enabled():
+			if (
+				self.spec.context_policy == "page_summary"
+				and not get_embedding_page_summary_enabled()
+				and (prompt_builder is None or prompt_budget is None)
+			):
 				return context
-			if self.spec.context_policy == "query_retrieval" and not get_embedding_page_chat_enabled():
+			if (
+				self.spec.context_policy == "query_retrieval"
+				and not get_embedding_page_chat_enabled()
+				and (prompt_builder is None or prompt_budget is None)
+			):
 				return context
 		except Exception:
 			# Configuration reads must never make context collection fail.
@@ -101,7 +112,13 @@ class UseCase(ABC):
 			max_tokens=self.spec.context_token_budget,
 			allow_query_retrieval=self.spec.context_policy == "query_retrieval",
 		)
-		return context_reducer.reduce(context, policy, query=query)  # type: ignore[attr-defined]
+		return context_reducer.reduce(  # type: ignore[attr-defined]
+			context,
+			policy,
+			query=query,
+			prompt_builder=prompt_builder,
+			prompt_budget=prompt_budget,
+		)
 
 	def _get_extraction_result(self, prompt_context: PromptContext) -> ExtractionResult:
 		"""Return the extraction result carried by *prompt_context* or raise."""
@@ -136,8 +153,14 @@ class UseCase(ABC):
 	) -> UseCaseResult:
 		if emit is not None:
 			emit("collecting_context", collecting_message)
+		prompt_budget = self._build_prompt_budget(llm_service)
 		prompt_context = self.collect_prompt_context(
-			context_pipeline, emit=emit, context_reducer=context_reducer, query=query
+			context_pipeline,
+			emit=emit,
+			context_reducer=context_reducer,
+			query=query,
+			prompt_builder=build_prompt,
+			prompt_budget=prompt_budget,
 		)
 		if prompt_context is None:
 			raise ValueError("Unable to collect context")
@@ -145,6 +168,7 @@ class UseCase(ABC):
 		if emit is not None:
 			emit("building_prompt", building_prompt_message)
 		prompt = build_prompt(prompt_context)
+		validate_prompt_budget(prompt, prompt_budget, self._token_counter())
 
 		if emit is not None:
 			emit("llm_request", llm_request_message)
@@ -173,3 +197,26 @@ class UseCase(ABC):
 	def markdown_to_html(self, text: str) -> str:
 		"""Convert markdown-style LLM output to HTML for browseable rendering."""
 		return render_markdown_to_html(text)
+
+	def _build_prompt_budget(self, llm_service: LLMService) -> ContextWindowBudget:
+		model_info = None
+		try:
+			model_info = llm_service.get_model_info()
+		except Exception:
+			logger.debug("Unable to resolve model context metadata", exc_info=True)
+		context_window = self.spec.context_window_tokens or getattr(model_info, "context_window", None) or 8192
+		output_limit = getattr(model_info, "output_token_limit", None)
+		reserved_output = self.spec.reserved_output_tokens
+		if isinstance(output_limit, int) and output_limit > 0:
+			reserved_output = min(reserved_output, output_limit)
+		return ContextWindowBudget(
+			context_window_tokens=max(1, context_window),
+			reserved_output_tokens=max(0, reserved_output),
+			safety_margin_tokens=max(0, self.spec.budget_safety_margin_tokens),
+		)
+
+	@staticmethod
+	def _token_counter():
+		from ..context.budget import ApproximateTokenCounter
+
+		return ApproximateTokenCounter()

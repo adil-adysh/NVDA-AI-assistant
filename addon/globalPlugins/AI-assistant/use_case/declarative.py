@@ -27,6 +27,9 @@ class DeclarativeUseCaseDefinition:
 	llm_operation: str = "summarize"
 	context_policy: str = "none"
 	context_token_budget: int | None = None
+	context_window_tokens: int | None = None
+	reserved_output_tokens: int = 1024
+	budget_safety_margin_tokens: int = 256
 	result_actions: bool = False
 	output_item_id: str | None = None
 
@@ -49,6 +52,9 @@ class DeclarativeUseCase(UseCase):
 			result_actions=self.definition.result_actions,
 			context_policy=self.definition.context_policy,
 			context_token_budget=self.definition.context_token_budget,
+			context_window_tokens=self.definition.context_window_tokens,
+			reserved_output_tokens=self.definition.reserved_output_tokens,
+			budget_safety_margin_tokens=self.definition.budget_safety_margin_tokens,
 		)
 
 	def execute(

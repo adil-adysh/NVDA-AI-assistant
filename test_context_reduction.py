@@ -76,6 +76,33 @@ class ContextReductionTests(unittest.TestCase):
 		)
 		self.assertIn("target information", result.text)
 
+	def test_prompt_aware_reduction_accounts_for_prompt_envelope(self) -> None:
+		context = self._context("first " + ("word " * 30) + "\n\nsecond " + ("word " * 30))
+		reducer = reduction.ContextReducer()
+		result = reducer.reduce(
+			context,
+			reduction.ContextReductionPolicy(mode="page_summary", max_chunks=4),
+			prompt_builder=lambda candidate: f"System instructions\n\n{candidate.text}\n\nReturn an answer.",
+			prompt_budget=reduction.ContextWindowBudget(
+				context_window_tokens=40,
+				reserved_output_tokens=5,
+				safety_margin_tokens=2,
+			),
+		)
+
+		prompt = f"System instructions\n\n{result.text}\n\nReturn an answer."
+		self.assertLessEqual(reduction.ApproximateTokenEstimator().count(prompt), 33)
+		self.assertLess(result.metadata["context_selected_tokens"], result.metadata["context_original_tokens"])
+
+	def test_budget_reserves_tokens_for_fixed_conversation_input(self) -> None:
+		budget = reduction.ContextWindowBudget(
+			context_window_tokens=100,
+			reserved_output_tokens=10,
+			safety_margin_tokens=5,
+			reserved_input_tokens=20,
+		)
+		self.assertEqual(budget.input_token_limit, 65)
+
 	def test_current_page_context_is_conversation_scoped(self) -> None:
 		context = self._context("target information")
 		page = reduction.CurrentPageContext(reduction.ContextReducer(embedder=_FakeEmbedder()))

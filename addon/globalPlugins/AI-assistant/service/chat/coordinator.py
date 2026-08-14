@@ -11,6 +11,11 @@ from logHandler import log
 from ..base import BaseCoordinator
 from ...core.canonical import Message, Tool
 from ...core.message_transforms import build_user_message
+from ...context.budget import (
+	ApproximateTokenCounter,
+	ContextBudgetError,
+	ContextWindowBudget,
+)
 from ...core.messages import ChatMessage, LLMResponse
 from ...core.events import ProgressHandler
 from ..llm import ProviderLLMService
@@ -95,7 +100,17 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 		if provider is not None and isinstance(text, str) and text.strip():
 			retrieve = getattr(provider, "retrieve", None)
 			if callable(retrieve):
-				context_text = retrieve(text, self.get_active_conversation_id())
+				with self._session_lock:
+					prior_messages = tuple(self._session.snapshot())
+				context_text = retrieve(
+					text,
+					self.get_active_conversation_id(),
+					prompt_budget=self._build_context_budget(
+						reserved_input_tokens=self._estimate_messages_tokens(
+							(*prior_messages, user_message)
+						)
+					),
+				)
 				if isinstance(context_text, str) and context_text.strip():
 					transient_context = (build_user_message(text=context_text),)
 		transaction, generation = self._begin_transaction(
@@ -199,6 +214,34 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 	def get_model_info(self, model_name: str | None = None) -> ProviderModelInfo | None:
 		return self._llm_service.get_model_info(model_name=model_name)
 
+	def _build_context_budget(self, reserved_input_tokens: int = 0) -> ContextWindowBudget:
+		model_info = None
+		try:
+			model_info = self._llm_service.get_model_info()
+		except Exception:
+			log.debug("Unable to resolve chat model context metadata", exc_info=True)
+		context_window = getattr(model_info, "context_window", None) or 8192
+		output_limit = getattr(model_info, "output_token_limit", None)
+		reserved_output = 1024
+		if isinstance(output_limit, int) and output_limit > 0:
+			reserved_output = min(reserved_output, output_limit)
+		return ContextWindowBudget(
+			context_window_tokens=max(1, context_window),
+			reserved_output_tokens=reserved_output,
+			safety_margin_tokens=256,
+			reserved_input_tokens=max(0, reserved_input_tokens),
+		)
+
+	@staticmethod
+	def _estimate_messages_tokens(messages: Sequence[Message]) -> int:
+		counter = ApproximateTokenCounter()
+		# Provider serializers add different framing overhead; the shared safety
+		# margin remains authoritative for the remaining provider-specific cost.
+		return sum(
+			4 + sum(counter.count(part.text or "") for part in message.parts)
+			for message in messages
+		)
+
 	def _begin_transaction(
 		self,
 		staged_messages: tuple[Message, ...],
@@ -226,6 +269,8 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 				"ChatCoordinator.send called on main thread; should be invoked from a background worker"
 			)
 
+		self._validate_transaction_budget(transaction)
+
 		turn_result = self._llm_service.generate_with_transcript(
 			messages=transaction.request_messages(),
 			tools=tools,
@@ -241,6 +286,15 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 				log.debug("Discarding stale chat turn after session reset")
 				self._last_turn_committed = False
 		return turn_result.response
+
+	def _validate_transaction_budget(self, transaction: ChatTurnTransaction) -> None:
+		budget = self._build_context_budget()
+		tokens = self._estimate_messages_tokens(transaction.request_messages())
+		if tokens > budget.input_token_limit:
+			raise ContextBudgetError(
+				"Chat transcript exceeds the available input budget: "
+				f"{tokens} > {budget.input_token_limit} tokens"
+			)
 
 	def last_turn_committed(self) -> bool:
 		"""Whether the most recently completed chat turn was committed to the session.

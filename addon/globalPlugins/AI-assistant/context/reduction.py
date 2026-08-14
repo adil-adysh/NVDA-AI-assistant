@@ -10,11 +10,12 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Protocol
 
 from .formatting import format_page_structure
+from .budget import ApproximateTokenCounter, ContextWindowBudget
 from .types import ExtractionResult, PromptContext
 
 
@@ -53,18 +54,11 @@ class ReducedContext:
 	selected_token_count: int
 	truncated: bool
 	mode: str
+	prompt_token_count: int = 0
 
 
-class ApproximateTokenEstimator:
-	"""Conservative tokenizer-independent estimate for prompt budgeting.
-
-	The provider-specific tokenizer is not available at this architecture
-	boundary.  Four characters per token is intentionally conservative for
-	English prose and still prevents accidental unbounded prompts.
-	"""
-
-	def count(self, text: str) -> int:
-		return max(0, math.ceil(len(text.strip()) / 4))
+class ApproximateTokenEstimator(ApproximateTokenCounter):
+	"""Backward-compatible name for the default token counter."""
 
 
 class ContentSegmenter:
@@ -115,12 +109,25 @@ class ContextReducer:
 		policy: ContextReductionPolicy,
 		*,
 		query: str | None = None,
+		prompt_builder: Callable[[PromptContext], str] | None = None,
+		prompt_budget: ContextWindowBudget | None = None,
 	) -> PromptContext:
 		result = context.extraction_result
-		if result is None or not result.text or policy.mode == "none":
+		if result is None or not result.text:
+			return context
+		if policy.mode == "none" and (prompt_builder is None or prompt_budget is None):
 			return context
 
-		reduced = self.reduce_result(result, policy=policy, query=query)
+		if prompt_builder is not None and prompt_budget is not None:
+			reduced = self._reduce_for_prompt(
+				context,
+				policy=policy,
+				query=query,
+				prompt_builder=prompt_builder,
+				prompt_budget=prompt_budget,
+			)
+		else:
+			reduced = self.reduce_result(result, policy=policy, query=query)
 		metadata = dict(context.metadata)
 		metadata.update(
 			{
@@ -128,15 +135,107 @@ class ContextReducer:
 				"context_original_tokens": reduced.original_token_count,
 				"context_selected_tokens": reduced.selected_token_count,
 				"context_selected_chunks": len(reduced.selected_chunks),
-			}
-		)
+				"context_selected_prompt_tokens": reduced.prompt_token_count,
+				}
+			)
 		return replace(
 			context,
 			text=reduced.text,
 			metadata=metadata,
-			extraction_result=replace(result, text=reduced.text, truncated=result.truncated or reduced.truncated),
+			extraction_result=replace(
+				result,
+				text=reduced.text,
+				truncated=result.truncated or reduced.truncated,
+			),
 		)
 
+	def _reduce_for_prompt(
+		self,
+		context: PromptContext,
+		*,
+		policy: ContextReductionPolicy,
+		query: str | None,
+		prompt_builder: Callable[[PromptContext], str],
+		prompt_budget: ContextWindowBudget,
+	) -> ReducedContext:
+		result = context.extraction_result
+		assert result is not None
+		text = self._clean(result.text)
+		chunks = self._segmenter.segment(text)
+		original_tokens = self._estimator.count(text)
+		content_limit = policy.max_tokens or prompt_budget.input_token_limit
+
+		def prompt_tokens(candidate_text: str) -> int:
+			candidate_context = replace(
+				context,
+				text=candidate_text,
+				extraction_result=replace(result, text=candidate_text),
+			)
+			return self._estimator.count(prompt_builder(candidate_context))
+
+		full_prompt_tokens = prompt_tokens(text)
+		if original_tokens <= content_limit and full_prompt_tokens <= prompt_budget.input_token_limit:
+			return ReducedContext(
+				text, chunks, original_tokens, original_tokens, False, policy.mode, full_prompt_tokens
+			)
+
+		ordered = self._rank_chunks(chunks, policy=policy, query=query)
+		selected: list[ContentChunk] = []
+		used = 0
+		for chunk in ordered:
+			if len(selected) >= policy.max_chunks or used + chunk.token_count > content_limit:
+				continue
+			candidate = selected + [chunk]
+			candidate_text = "\n\n".join(item.text for item in sorted(candidate, key=lambda item: item.position))
+			if prompt_tokens(candidate_text) > prompt_budget.input_token_limit:
+				continue
+			selected = candidate
+			used += chunk.token_count
+
+		selected = sorted(selected, key=lambda chunk: chunk.position)
+		selected_text = "\n\n".join(chunk.text for chunk in selected)
+		return ReducedContext(
+			selected_text,
+			tuple(selected),
+			original_tokens,
+			self._estimator.count(selected_text),
+			len(selected) < len(chunks),
+			policy.mode,
+			prompt_tokens(selected_text),
+		)
+
+	def _rank_chunks(
+		self,
+		chunks: Sequence[ContentChunk],
+		*,
+		policy: ContextReductionPolicy,
+		query: str | None,
+	) -> list[ContentChunk]:
+		if policy.allow_query_retrieval and query and self._embedder is not None:
+			return list(self._rank_by_query(chunks, query, policy.query_instruction))
+		first = chunks[:1]
+		last = chunks[-1:] if len(chunks) > 1 else ()
+		return [*first, *last, *(chunk for chunk in chunks if chunk not in (*first, *last))]
+
+	def _rank_by_query(
+		self, chunks: Sequence[ContentChunk], query: str, instruction: str | None
+	) -> tuple[ContentChunk, ...]:
+		assert self._embedder is not None
+		query_embedder = getattr(self._embedder, "embed_query", None)
+		if instruction and callable(query_embedder):
+			query_vector = tuple(float(value) for value in query_embedder(query, instruction))
+			vectors = self._embed_cached([chunk.text for chunk in chunks])
+		else:
+			vectors = self._embed_cached([query, *(chunk.text for chunk in chunks)])
+			query_vector, vectors = vectors[0], vectors[1:]
+		return tuple(
+			chunk
+			for chunk, _vector in sorted(
+				zip(chunks, vectors),
+				key=lambda pair: self._cosine(query_vector, pair[1]),
+				reverse=True,
+			)
+		)
 	def reduce_result(
 		self,
 		result: ExtractionResult,
@@ -326,7 +425,12 @@ class CurrentPageContext:
 		self._context = None
 		self._conversation_id = None
 
-	def retrieve(self, query: str, conversation_id: str | None = None) -> str | None:
+	def retrieve(
+		self,
+		query: str,
+		conversation_id: str | None = None,
+		prompt_budget: ContextWindowBudget | None = None,
+	) -> str | None:
 		if self._context is None or self._conversation_id != conversation_id or not query.strip():
 			return None
 		policy = ContextReductionPolicy(
@@ -337,13 +441,26 @@ class CurrentPageContext:
 				"Given a user's question about a webpage, retrieve passages that answer the question"
 			),
 		)
-		selected = self._reducer.reduce(self._context, policy, query=query)
+		selected = self._reducer.reduce(
+			self._context,
+			policy,
+			query=query,
+			prompt_builder=self._render_retrieval_context if prompt_budget is not None else None,
+			prompt_budget=prompt_budget,
+		)
 		result = selected.extraction_result
 		if result is None or not result.text.strip():
 			return None
+		return self._render_retrieval_context(selected)
+
+	@staticmethod
+	def _render_retrieval_context(context: PromptContext) -> str:
+		result = context.extraction_result
+		if result is None:
+			return ""
 		structure = format_page_structure(
 			result.structure,
-			item_limits=self._STRUCTURE_ITEM_LIMITS,
+			item_limits=CurrentPageContext._STRUCTURE_ITEM_LIMITS,
 		)
 		structure_context = f"\n\n{structure}" if structure else ""
 		return (
