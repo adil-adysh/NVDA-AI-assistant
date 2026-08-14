@@ -118,9 +118,11 @@ class ProviderReadinessService:
 				return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_SERVER_URL)
 			from ..providers.llama_manager import LlamaCppModelManager
 
-			if LlamaCppModelManager(config=config).find_record(model_name) is None:
+			manager = LlamaCppModelManager(config=config)
+			record = manager.find_record(model_name)
+			if record is None:
 				return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_MODEL)
-			if not self._llama_server_is_ready(config):
+			if not self._llama_server_is_ready(config, record):
 				return ProviderReadiness(
 					provider=config.provider,
 					state=ProviderReadinessState.UNCONFIGURED,
@@ -167,7 +169,7 @@ class ProviderReadinessService:
 		)
 
 	@staticmethod
-	def _llama_server_is_ready(config: ProviderConfig) -> bool:
+	def _llama_server_is_ready(config: ProviderConfig, record: object) -> bool:
 		from urllib.parse import urlparse
 
 		from ..providers.runtime.llama_server import (
@@ -182,4 +184,22 @@ class ProviderReadinessService:
 		port = parsed.port or DEFAULT_LLAMA_PORT
 		executable = str(getattr(config, "server_executable", "") or "").strip() or default_llama_server_executable()
 		supervisor = get_llama_supervisor(executable, host, port)
-		return supervisor.is_running or supervisor.is_adopted
+		if supervisor.is_running or supervisor.is_adopted:
+			return True
+		if not supervisor.is_healthy():
+			return False
+		server_ids = {
+			str(item.get("id", "")).strip()
+			for item in supervisor.list_models()
+			if str(item.get("id", "")).strip()
+		}
+		identities = {
+			str(getattr(record, "model_id", "")),
+			str(getattr(record, "source", "")),
+			str(getattr(record, "server_model", "")),
+			str(getattr(record, "server_model", "")).removeprefix("hf://"),
+		}
+		variant = str(getattr(record, "variant", "") or "").strip()
+		if variant:
+			identities.add(f"{getattr(record, 'source', '')}:{variant}")
+		return bool(server_ids.intersection(identities))

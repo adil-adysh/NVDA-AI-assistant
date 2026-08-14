@@ -159,7 +159,15 @@ class LlamaCppModelManager(ModelManagerProvider):
 				str(item.get("id", "")).strip()
 				for item in self._supervisor.list_models()
 			}
-			if requested_model not in server_models:
+			server_aliases = {
+				requested_model,
+				record.source,
+				record.server_model,
+				record.server_model.removeprefix("hf://"),
+			}
+			if record.variant:
+				server_aliases.add(f"{record.source}:{record.variant}")
+			if not server_models.intersection(server_aliases):
 				raise LLMProviderError(
 					"A llama-server is already running with a different model preset. "
 					"Stop it before switching models."

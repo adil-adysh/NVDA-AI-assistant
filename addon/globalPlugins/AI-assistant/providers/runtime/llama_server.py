@@ -190,16 +190,17 @@ class LlamaServerSupervisor:
 			raise LlamaServerError(str(exc)) from exc
 
 	def list_models(self, timeout: float = 5.0) -> tuple[dict[str, object], ...]:
-		try:
-			request = urllib.request.Request(f"{self.base_url}/v1/models", method="GET")
-			with urllib.request.urlopen(request, timeout=timeout) as response:
-				payload = json.loads(response.read().decode("utf-8"))
-		except (OSError, urllib.error.URLError, json.JSONDecodeError):
-			return ()
-		items = payload.get("data") if isinstance(payload, dict) else None
-		if not isinstance(items, list):
-			return ()
-		return tuple(item for item in items if isinstance(item, dict))
+		for path in ("/models", "/v1/models"):
+			try:
+				request = urllib.request.Request(f"{self.base_url}{path}", method="GET")
+				with urllib.request.urlopen(request, timeout=timeout) as response:
+					payload = json.loads(response.read().decode("utf-8"))
+			except (OSError, urllib.error.URLError, json.JSONDecodeError):
+				continue
+			items = payload.get("data") if isinstance(payload, dict) else None
+			if isinstance(items, list):
+				return tuple(item for item in items if isinstance(item, dict))
+		return ()
 
 	def stop(self) -> None:
 		with self._lock:
