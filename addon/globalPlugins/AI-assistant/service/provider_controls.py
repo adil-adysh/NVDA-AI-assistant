@@ -19,7 +19,7 @@ from ..providers.registry import PROVIDER_IDS
 from .provider_readiness import ProviderReadiness, ProviderReadinessService
 
 if TYPE_CHECKING:
-	from ..ui.enabled_models import EnabledModelsStore
+	from ..config.enabled_models import EnabledModelsStore
 	from .model_cache import ModelCatalogCache
 
 
@@ -68,7 +68,7 @@ class ProviderControlService:
 
 	def _get_enabled_store(self) -> EnabledModelsStore:
 		if self._enabled_store is None:
-			from ..ui.enabled_models import EnabledModelsStore
+			from ..config.enabled_models import EnabledModelsStore
 			self._enabled_store = EnabledModelsStore()
 		return self._enabled_store
 

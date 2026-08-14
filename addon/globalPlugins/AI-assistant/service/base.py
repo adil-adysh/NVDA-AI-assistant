@@ -16,7 +16,19 @@ from ..observability.metrics import RequestMetrics
 from ..observability.reporter import FileMetricsReporter, MetricsReporter
 from ..providers.interfaces import LLMProviderError
 from ..service.error_presentation import present_error
-from ..ui import nvda_ui
+
+
+class _NullUiPort:
+	"""Safe default for non-NVDA callers such as unit tests."""
+
+	def message(self, _text: str) -> None:
+		return None
+
+	def play_streaming_tone(self) -> None:
+		return None
+
+	def queue(self, callback: Callable[..., None], *args: Any) -> None:
+		callback(*args)
 
 
 class BaseCoordinator:
@@ -26,7 +38,11 @@ class BaseCoordinator:
 	DELTA_THRESHOLD: int = 180
 	PREVIEW_LENGTH: int = 120
 
-	def __init__(self, metrics_reporter: MetricsReporter | None = None) -> None:
+	def __init__(
+		self,
+		metrics_reporter: MetricsReporter | None = None,
+		ui_port: Any | None = None,
+	) -> None:
 		"""Initialize shared coordinator state."""
 		super().__init__()
 		self._lock = threading.Lock()
@@ -35,6 +51,7 @@ class BaseCoordinator:
 		self._request_metrics: RequestMetrics | None = None
 		self.execution_context: ExecutionContext | None = None
 		self.metrics_reporter = metrics_reporter or FileMetricsReporter()
+		self._ui_port = ui_port or _NullUiPort()
 
 	def start_task(self, *args: Any, **kwargs: Any) -> None:
 		"""Public entrypoint to start a background task.
@@ -43,7 +60,7 @@ class BaseCoordinator:
 		"""
 		with self._lock:
 			if self._active_worker is not None and self._active_worker.is_alive():
-				self._queue_to_nvda(nvda_ui.message, self._get_busy_message())
+				self._queue_to_nvda(self._ui_port.message, self._get_busy_message())
 				return
 
 		worker = threading.Thread(
@@ -89,7 +106,7 @@ class BaseCoordinator:
 	def _handle_progress(self, partial_text: str, generated_chars: int) -> None:
 		"""Shared progress handler with throttling and preview generation."""
 		if generated_chars > 0:
-			nvda_ui.play_streaming_tone()
+			self._ui_port.play_streaming_tone()
 
 		if not is_progress_enabled():
 			return
@@ -104,12 +121,12 @@ class BaseCoordinator:
 		preview = " ".join(partial_text.strip().split())[-self.PREVIEW_LENGTH :]
 		message_text = self._format_progress_message(generated_chars, preview)
 		if message_text:
-			self._queue_to_nvda(nvda_ui.message, message_text)
+			self._queue_to_nvda(self._ui_port.message, message_text)
 
 	def _handle_error(self, error: Exception) -> None:
 		"""Handle and dispatch errors to NVDA UI."""
 		message_text = self._format_error_message(error)
-		self._queue_to_nvda(nvda_ui.message, message_text)
+		self._queue_to_nvda(self._ui_port.message, message_text)
 
 	def _queue_to_nvda(
 		self,
@@ -117,7 +134,7 @@ class BaseCoordinator:
 		*args: Any,
 	) -> None:
 		"""Queue execution on the NVDA event queue."""
-		nvda_ui.queue(callback, *args)
+		self._ui_port.queue(callback, *args)
 
 	def _build_request_metrics(self, *_args: Any, **_kwargs: Any) -> RequestMetrics | None:
 		"""Return a metrics object for the current request, if supported."""

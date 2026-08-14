@@ -8,6 +8,7 @@ from logHandler import log
 
 from ..config.state import ProviderState
 from ..service.provider_catalog import ProviderCatalogService
+from ..service.model_cache import model_capability_cache, model_catalog_cache
 
 
 class ModelCache:
@@ -53,7 +54,11 @@ class ModelCache:
 			return
 
 		try:
-			mgr = build_model_manager(provider_state.provider)
+			mgr = build_model_manager(
+				provider_state.provider,
+				model_cache=model_catalog_cache,
+				capability_cache=model_capability_cache,
+			)
 			models = tuple(mgr.get_available_model_ids())
 		except Exception:
 			log.exception("Error refreshing provider models for %s", provider_state.provider)

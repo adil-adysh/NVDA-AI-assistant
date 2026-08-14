@@ -60,7 +60,8 @@ from ..providers.registry import (
 	provider_display_name,
 	provider_state_label,
 )
-from .enabled_models import EnabledModelsStore
+from ..config.enabled_models import EnabledModelsStore
+from ..service.model_cache import model_capability_cache, model_catalog_cache
 from .provider_dialog import open_provider_dialog
 from .embedding_model_dialog import open_embedding_model_dialog
 from ..embeddings.manager import embedding_model_service
@@ -403,7 +404,11 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		caps = get_provider_capabilities(provider_id)
 		if caps.has_install_step:
 			try:
-				mgr = build_model_manager(provider_id)
+				mgr = build_model_manager(
+					provider_id,
+					model_cache=model_catalog_cache,
+					capability_cache=model_capability_cache,
+				)
 				choices.extend(m.id for m in mgr.list_managed_models())
 			except Exception:
 				pass
@@ -608,7 +613,11 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		caps = get_provider_capabilities(provider)
 		if caps.has_install_step:
 			try:
-				mgr = build_model_manager(provider)
+				mgr = build_model_manager(
+					provider,
+					model_cache=model_catalog_cache,
+					capability_cache=model_capability_cache,
+				)
 				model_name = mgr.resolve_model_identity(model_name)
 			except Exception:
 				pass

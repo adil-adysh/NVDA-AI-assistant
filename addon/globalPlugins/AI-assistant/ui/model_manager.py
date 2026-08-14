@@ -27,7 +27,8 @@ from ..providers.registry import (
 	provider_display_name,
 )
 from .download_progress import DownloadProgressDialog
-from .enabled_models import EnabledModelsStore
+from ..config.enabled_models import EnabledModelsStore
+from ..service.model_cache import model_capability_cache, model_catalog_cache
 from .task_runner import TaskHandle, background_tasks
 
 _RECOMMENDED_PRIORITY = 50
@@ -676,7 +677,11 @@ def open_model_manager(parent: wx.Window, provider_id: str) -> None:
 	provider's models and never asks the user to choose a provider
 	again.  Modal: returns when the dialog is closed.
 	"""
-	provider = build_model_manager(provider_id)
+	provider = build_model_manager(
+		provider_id,
+		model_cache=model_catalog_cache,
+		capability_cache=model_capability_cache,
+	)
 	dlg = ModelManagerDialog(
 		parent,
 		provider,

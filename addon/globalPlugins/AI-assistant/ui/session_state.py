@@ -369,7 +369,7 @@ def _filter_available_models(
 	appear in the WebView dropdown immediately without requiring
 	the user to visit the model manager first.
 	"""
-	from .enabled_models import EnabledModelsStore
+	from ..config.enabled_models import EnabledModelsStore
 
 	store = EnabledModelsStore()
 	enabled_ids = store.get_enabled(provider)

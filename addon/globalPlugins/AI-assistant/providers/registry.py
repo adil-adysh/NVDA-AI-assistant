@@ -29,7 +29,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import cast
+from typing import Any, cast
 
 from ..config.settings import (
 	build_provider_config,
@@ -443,7 +443,11 @@ def _make_set_model(provider_id: str) -> Callable[[str], None]:
 	return _set
 
 
-def build_model_manager(provider_id: str) -> ModelManagerProvider:
+def build_model_manager(
+	provider_id: str,
+	model_cache: Any | None = None,
+	capability_cache: Any | None = None,
+) -> ModelManagerProvider:
 	"""Construct the model manager for *provider_id*.
 
 	The returned object is bound to that provider — the model manager
@@ -460,16 +464,14 @@ def build_model_manager(provider_id: str) -> ModelManagerProvider:
 		from .llama_manager import LlamaCppModelManager
 
 		return LlamaCppModelManager(config=config)
-	# Lazy-import the cache to avoid circular deps at module level.
-	from ..service.model_cache import model_capability_cache, model_catalog_cache
 	return CloudModelManagerAdapter(
 		provider_id=normalized,
 		config=config,
 		provider_class=OpenAICompatProvider,
 		set_model_fn=_make_set_model(normalized),
 		get_config_fn=lambda: build_provider_config(normalized),
-		model_cache=model_catalog_cache,
-		capability_cache=model_capability_cache,
+		model_cache=model_cache,
+		capability_cache=capability_cache,
 	)
 
 

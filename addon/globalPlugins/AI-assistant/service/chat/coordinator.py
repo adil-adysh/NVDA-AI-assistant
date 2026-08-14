@@ -43,8 +43,9 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 			[list[Message]], list[dict[str, Any]]
 		] = project_chat_history_transport,
 		page_context_provider: object | None = None,
+		ui_port: Any | None = None,
 	) -> None:
-		super().__init__(metrics_reporter)
+		super().__init__(metrics_reporter, ui_port=ui_port)
 		self._llm_service = client
 		self._session = session_factory()
 		self._session_factory = session_factory

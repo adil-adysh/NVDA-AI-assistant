@@ -12,11 +12,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-
-if TYPE_CHECKING:
-	from ..service.model_cache import ModelCapabilityCache
-	from ..service.model_cache import ModelCatalogCache
+from typing import Any, Protocol, runtime_checkable
 
 from .policy import get_provider_policy
 from .model_import import ModelImportRequest
@@ -168,8 +164,8 @@ class CloudModelManagerAdapter:
 		provider_class: Any,
 		set_model_fn: Callable[[str], None],
 		get_config_fn: Callable[[], Any] | None = None,
-		model_cache: ModelCatalogCache | None = None,
-		capability_cache: ModelCapabilityCache | None = None,
+		model_cache: Any | None = None,
+		capability_cache: Any | None = None,
 	) -> None:
 		self.provider_id = provider_id
 		self._config = config
