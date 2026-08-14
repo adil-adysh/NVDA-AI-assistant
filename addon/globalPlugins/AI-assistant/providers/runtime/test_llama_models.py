@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from .llama_models import LlamaModelCatalog, LlamaModelRecord, build_models_preset
+from .llama_models import LlamaModelCatalog, LlamaModelRecord, build_models_preset, merge_models_preset, parse_models_preset
 from .llama_server import build_llama_server_args
 from ..model_import import ModelSourceKind
 
@@ -79,6 +79,20 @@ class LlamaModelsPresetTests(unittest.TestCase):
 
 			catalog.remove("model-a")
 			self.assertIsNone(catalog.find("model-a"))
+
+	def test_existing_preset_options_are_preserved(self) -> None:
+		original = """version = 1\n\n[*]\nctx-size = 36864\nflash-attn = true\n\n[gemma4-26b]\nhf-repo = old/repo:OLD\ntemperature = 0.6\n"""
+		record = LlamaModelRecord(
+			model_id="gemma4-26b",
+			source="WhiskyAKM/Gemma-4-26B-A4B-NVFP4-GGUF",
+			kind=ModelSourceKind.HUGGING_FACE.value,
+			variant="NVFP4",
+		)
+		merged = merge_models_preset(original, [record])
+		self.assertIn("ctx-size = 36864", merged)
+		self.assertIn("temperature = 0.6", merged)
+		self.assertIn("hf-repo = WhiskyAKM/Gemma-4-26B-A4B-NVFP4-GGUF:NVFP4", merged)
+		self.assertEqual(parse_models_preset(merged)[0].model_id, "gemma4-26b")
 
 
 if __name__ == "__main__":

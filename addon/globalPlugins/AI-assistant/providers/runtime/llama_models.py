@@ -9,6 +9,7 @@ import tempfile
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
+import re
 
 from ..model_import import ModelSourceKind
 
@@ -33,6 +34,16 @@ class LlamaModelRecord:
 		return self.local_path or self.source
 
 
+def _record_source_lines(record: LlamaModelRecord) -> list[str]:
+	if record.kind == ModelSourceKind.HUGGING_FACE.value:
+		repository = record.source.strip()
+		if record.variant:
+			repository = f"{repository}:{record.variant}"
+		return [f"hf-repo = {repository}"]
+	path = str(Path(record.local_path or record.source).resolve())
+	return [f"model = {path}"]
+
+
 def build_models_preset(records: list[LlamaModelRecord]) -> str:
 	"""Build a llama-server router preset without server-level settings."""
 	lines = ["version = 1", ""]
@@ -41,25 +52,98 @@ def build_models_preset(records: list[LlamaModelRecord]) -> str:
 		if not model_id or any(char in model_id for char in "[]\r\n"):
 			continue
 		lines.append(f"[{model_id}]")
-		if record.kind == ModelSourceKind.HUGGING_FACE.value:
-			repository = record.source.strip()
-			if record.variant:
-				repository = f"{repository}:{record.variant}"
-			lines.append(f"hf-repo = {repository}")
-		else:
-			path = str(Path(record.local_path or record.source).resolve())
-			lines.append(f"model = {path}")
+		lines.extend(_record_source_lines(record))
 		lines.append("")
 	return "\n".join(lines)
+
+
+_SECTION_RE = re.compile(r"^\[([^\]\r\n]+)\]\s*$")
+
+
+def parse_models_preset(text: str) -> tuple[LlamaModelRecord, ...]:
+	"""Read model identities from a llama-server preset without losing options."""
+	sections: dict[str, dict[str, str]] = {}
+	current: str | None = None
+	for raw_line in text.splitlines():
+		match = _SECTION_RE.match(raw_line.strip())
+		if match:
+			current = match.group(1).strip()
+			sections.setdefault(current, {})
+			continue
+		if current is None or current == "*" or not raw_line.strip() or raw_line.lstrip().startswith("#"):
+			continue
+		if "=" in raw_line:
+			key, value = raw_line.split("=", 1)
+			sections[current][key.strip().lower()] = value.strip()
+	records: list[LlamaModelRecord] = []
+	for model_id, values in sections.items():
+		hf_repo = values.get("hf-repo")
+		model_path = values.get("model")
+		if hf_repo:
+			repository, _, variant = hf_repo.rpartition(":")
+			if not repository:
+				repository, variant = hf_repo, None
+			records.append(LlamaModelRecord(model_id, repository, ModelSourceKind.HUGGING_FACE.value, variant=variant))
+		elif model_path:
+			records.append(LlamaModelRecord(model_id, model_path, ModelSourceKind.LOCAL_FILE.value, local_path=model_path))
+	return tuple(records)
+
+
+def merge_models_preset(text: str, records: list[LlamaModelRecord]) -> str:
+	"""Reconcile model sources while preserving preset comments and options."""
+	if not text.strip():
+		return build_models_preset(records)
+	lines = text.splitlines()
+	sections: list[tuple[str, int, int]] = []
+	for index, line in enumerate(lines):
+		match = _SECTION_RE.match(line.strip())
+		if match:
+			if sections:
+				sections[-1] = (sections[-1][0], sections[-1][1], index)
+			sections.append((match.group(1).strip(), index, len(lines)))
+	managed = {record.model_id: record for record in records}
+	output = list(lines)
+	for section, start, end in reversed(sections):
+		record = managed.get(section)
+		if record is None or section == "*":
+			continue
+		body = output[start + 1:end]
+		body = [line for line in body if not re.match(r"^\s*(?:model|hf-repo)\s*=", line, re.I)]
+		body = _record_source_lines(record) + body
+		output[start + 1:end] = body
+	existing = {section for section, _, _ in sections}
+	for record in records:
+		if record.model_id in existing:
+			continue
+		while output and not output[-1].strip():
+			output.pop()
+		output.extend(["", f"[{record.model_id}]", *_record_source_lines(record)])
+	return "\n".join(output).rstrip() + "\n"
+
+
+def remove_model_from_preset(text: str, model_id: str) -> str:
+	"""Remove one model section while retaining the global preset settings."""
+	lines = text.splitlines()
+	sections: list[tuple[str, int, int]] = []
+	for index, line in enumerate(lines):
+		match = _SECTION_RE.match(line.strip())
+		if match:
+			if sections:
+				sections[-1] = (sections[-1][0], sections[-1][1], index)
+			sections.append((match.group(1).strip(), index, len(lines)))
+	for section, start, end in reversed(sections):
+		if section == model_id:
+			del lines[start:end]
+	return "\n".join(lines).rstrip() + "\n"
 
 
 class LlamaModelCatalog:
 	"""Thread-safe JSON catalog with atomic persistence and preset export."""
 
-	def __init__(self, directory: str | Path | None = None) -> None:
+	def __init__(self, directory: str | Path | None = None, preset_path: str | Path | None = None) -> None:
 		self._directory = Path(directory) if directory else self._default_directory()
 		self._manifest_path = self._directory / "models.json"
-		self._preset_path = self._directory / "models.ini"
+		self._preset_path = Path(preset_path) if preset_path else self._directory / "models.ini"
 		self._lock = threading.RLock()
 
 	@property
@@ -71,14 +155,16 @@ class LlamaModelCatalog:
 			try:
 				payload = json.loads(self._manifest_path.read_text(encoding="utf-8"))
 			except (OSError, json.JSONDecodeError):
-				return ()
-			if not isinstance(payload, list):
-				return ()
-			return tuple(
+				payload = []
+			records = tuple(
 				LlamaModelRecord(**item)
 				for item in payload
 				if isinstance(item, dict) and item.get("model_id")
 			)
+			if self._preset_path.is_file():
+				known = {record.model_id for record in records}
+				records += tuple(record for record in parse_models_preset(self._preset_path.read_text(encoding="utf-8")) if record.model_id not in known)
+			return records
 
 	def upsert(self, record: LlamaModelRecord) -> None:
 		with self._lock:
@@ -89,15 +175,22 @@ class LlamaModelCatalog:
 	def remove(self, model_id: str) -> None:
 		with self._lock:
 			self._write_records([item for item in self.list_records() if item.model_id != model_id])
+			if self._preset_path.is_file():
+				content = self._preset_path.read_text(encoding="utf-8")
+				self._preset_path.write_text(remove_model_from_preset(content, model_id), encoding="utf-8", newline="\n")
 
 	def find(self, model_id: str) -> LlamaModelRecord | None:
 		return next((item for item in self.list_records() if item.model_id == model_id), None)
 
 	def write_preset(self) -> Path:
 		with self._lock:
-			self._directory.mkdir(parents=True, exist_ok=True)
-			content = build_models_preset(list(self.list_records()))
-			fd, temporary_name = tempfile.mkstemp(prefix="models-", suffix=".ini", dir=self._directory)
+			self._preset_path.parent.mkdir(parents=True, exist_ok=True)
+			try:
+				content = self._preset_path.read_text(encoding="utf-8")
+			except OSError:
+				content = ""
+			content = merge_models_preset(content, list(self.list_records()))
+			fd, temporary_name = tempfile.mkstemp(prefix="models-", suffix=".ini", dir=self._preset_path.parent)
 			try:
 				with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
 					handle.write(content)
