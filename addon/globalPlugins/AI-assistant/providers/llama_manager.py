@@ -3,10 +3,8 @@
 
 from __future__ import annotations
 
-import json
 import threading
 import urllib.parse
-from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from logHandler import log
@@ -27,27 +25,9 @@ from .model_manager import (
 from .runtime.llama_server import (
 	LlamaServerSupervisor,
 	default_llama_server_executable,
+	get_llama_supervisor,
 )
-
-
-@dataclass(frozen=True)
-class LlamaModelRecord:
-	model_id: str
-	source: str
-	kind: str
-	revision: str = "main"
-	artifact: str | None = None
-	variant: str | None = None
-	local_path: str | None = None
-
-	@property
-	def server_model(self) -> str:
-		if self.kind == ModelSourceKind.HUGGING_FACE.value:
-			value = self.source
-			if self.variant:
-				value = f"{value}:{self.variant}"
-			return f"hf://{value}"
-		return self.local_path or self.source
+from .runtime.llama_models import LlamaModelCatalog, LlamaModelRecord
 
 
 class LlamaCppModelManager(ModelManagerProvider):
@@ -63,13 +43,12 @@ class LlamaCppModelManager(ModelManagerProvider):
 		cache_dir: str | Path | None = None,
 	) -> None:
 		self._config = config
-		self._cache_dir = Path(cache_dir) if cache_dir else self._default_cache_dir()
-		self._manifest_path = self._cache_dir / "models.json"
+		self._catalog = LlamaModelCatalog(cache_dir)
 		if supervisor is not None:
 			self._supervisor = supervisor
 		else:
 			host, port = self._server_address(config)
-			self._supervisor = LlamaServerSupervisor(
+			self._supervisor = get_llama_supervisor(
 				executable=(
 					str(getattr(config, "server_executable", "") or "").strip()
 					or default_llama_server_executable()
@@ -90,7 +69,7 @@ class LlamaCppModelManager(ModelManagerProvider):
 
 	def list_managed_models(self) -> list[ManagedModel]:
 		models: dict[str, ManagedModel] = {}
-		for record in self._load_records():
+		for record in self._catalog.list_records():
 			ready = record.kind == ModelSourceKind.HUGGING_FACE.value or (
 				record.local_path is not None and Path(record.local_path).is_file()
 			)
@@ -144,7 +123,7 @@ class LlamaCppModelManager(ModelManagerProvider):
 			variant=parsed.variant,
 			local_path=local_path,
 		)
-		self._upsert_record(record)
+		self._catalog.upsert(record)
 		on_progress(f"Model {record.model_id} is ready to start", None, None)
 
 	def download_model(
@@ -167,7 +146,44 @@ class LlamaCppModelManager(ModelManagerProvider):
 	) -> None:
 		if cancel_event is not None and cancel_event.is_set():
 			return
-		self._supervisor.start(record.server_model, model_id=record.model_id, on_progress=on_progress)
+		requested_model = record.model_id
+		preset_path = self._catalog.write_preset()
+		# Recover a server left behind by a previous NVDA process.  Only adopt
+		# it when the requested model is already exposed by that server; a
+		# handleless process cannot be safely terminated or reconfigured here.
+		if not self._supervisor.is_running and not self._supervisor.is_adopted and self._supervisor.is_healthy():
+			server_models = {
+				str(item.get("id", "")).strip()
+				for item in self._supervisor.list_models()
+			}
+			if requested_model not in server_models:
+				raise LLMProviderError(
+					"A llama-server is already running with a different model preset. "
+					"Stop it before switching models."
+				)
+			self._supervisor.adopt(requested_model)
+			return
+		if self._supervisor.is_running or self._supervisor.is_adopted:
+			if self._supervisor.running_model not in (None, requested_model):
+				if self._supervisor.is_adopted and not self._supervisor.is_running:
+					raise LLMProviderError(
+						"Cannot switch an adopted llama-server to a different model "
+						"without restarting the owning process."
+					)
+				self._supervisor.stop()
+			elif self._supervisor.is_healthy():
+				if not self._supervisor.is_running:
+					self._supervisor.adopt(requested_model)
+				return
+			else:
+				self._supervisor.stop()
+		self._supervisor.start(
+			record.server_model,
+			model_id=record.model_id,
+			models_preset=preset_path,
+			context=int(getattr(self._config, "num_ctx", 0) or 0),
+			on_progress=on_progress,
+		)
 		if not self._supervisor.wait_until_ready(on_progress=on_progress):
 			raise LLMProviderError("llama-server did not become ready")
 
@@ -201,47 +217,22 @@ class LlamaCppModelManager(ModelManagerProvider):
 		return str(model_id).strip()
 
 	def close(self) -> None:
-		self._supervisor.close()
+		# Provider instances are short-lived; application shutdown owns the
+		# shared server process.
+		return None
 
 	def find_record(self, model_id: str) -> LlamaModelRecord | None:
 		"""Return the persisted source identity for an imported model."""
 		return self._find_record(model_id)
 
 	def _load_records(self) -> list[LlamaModelRecord]:
-		with self._lock:
-			try:
-				payload = json.loads(self._manifest_path.read_text(encoding="utf-8"))
-			except (OSError, json.JSONDecodeError):
-				return []
-			if not isinstance(payload, list):
-				return []
-			return [LlamaModelRecord(**item) for item in payload if isinstance(item, dict) and item.get("model_id")]
-
-	def _write_records(self, records: list[LlamaModelRecord]) -> None:
-		self._cache_dir.mkdir(parents=True, exist_ok=True)
-		tmp = self._manifest_path.with_suffix(".tmp")
-		tmp.write_text(json.dumps([asdict(item) for item in records], indent=2) + "\n", encoding="utf-8")
-		tmp.replace(self._manifest_path)
-
-	def _upsert_record(self, record: LlamaModelRecord) -> None:
-		with self._lock:
-			records = [item for item in self._load_records() if item.model_id != record.model_id]
-			records.append(record)
-			self._write_records(records)
+		return list(self._catalog.list_records())
 
 	def _remove_record(self, model_id: str) -> None:
-		with self._lock:
-			self._write_records([item for item in self._load_records() if item.model_id != model_id])
+		self._catalog.remove(model_id)
 
 	def _find_record(self, model_id: str) -> LlamaModelRecord | None:
-		return next((item for item in self._load_records() if item.model_id == model_id), None)
-
-	@staticmethod
-	def _default_cache_dir() -> Path:
-		import os
-		from pathlib import Path
-		base = Path(os.getenv("APPDATA") or (Path.home() / "AppData" / "Roaming"))
-		return base / "nvda" / "AIAssistant" / "models" / "llama-cpp"
+		return self._catalog.find(model_id)
 
 	@staticmethod
 	def _server_address(config: object | None) -> tuple[str, int]:
