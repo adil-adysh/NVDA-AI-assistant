@@ -5,7 +5,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from .llama_models import LlamaModelCatalog, LlamaModelRecord, build_models_preset, merge_models_preset, parse_models_preset
+from .llama_models import (
+	LlamaModelCatalog,
+	LlamaModelRecord,
+	build_models_preset,
+	llama_model_capabilities,
+	llama_model_context_window,
+	merge_models_preset,
+	parse_models_preset,
+)
 from .llama_server import build_llama_server_args
 from ..model_import import ModelSourceKind
 
@@ -106,6 +114,15 @@ class LlamaModelsPresetTests(unittest.TestCase):
 			catalog.upsert(record)
 			self.assertEqual(catalog.find("WhiskyAKM/Gemma-4-26B-A4B-NVFP4-GGUF:NVFP4"), record)
 			self.assertEqual(catalog.find("hf://WhiskyAKM/Gemma-4-26B-A4B-NVFP4-GGUF:NVFP4"), record)
+
+	def test_server_metadata_exposes_modalities_and_context(self) -> None:
+		item = {
+			"architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]},
+			"meta": {"n_ctx_train": 131072},
+		}
+		self.assertIn("image_input", llama_model_capabilities(item))
+		self.assertIn("text_output", llama_model_capabilities(item))
+		self.assertEqual(llama_model_context_window(item), 131072)
 
 
 if __name__ == "__main__":

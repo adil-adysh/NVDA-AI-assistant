@@ -49,6 +49,33 @@ class LlamaModelRecord:
 		return str(server_id or "").strip() in self.identities
 
 
+def llama_model_capabilities(item: dict[str, object]) -> tuple[str, ...]:
+	"""Normalize llama-server architecture metadata to provider capabilities."""
+	caps = {"chat", "completion", "streaming", "text_input", "text_output"}
+	architecture = item.get("architecture")
+	if isinstance(architecture, dict):
+		inputs = {str(value).lower() for value in architecture.get("input_modalities", [])}
+		outputs = {str(value).lower() for value in architecture.get("output_modalities", [])}
+		if "image" in inputs:
+			caps.add("image_input")
+		if "audio" in inputs:
+			caps.add("audio_input")
+		if "image" in outputs:
+			caps.add("image_output")
+	return tuple(sorted(caps))
+
+
+def llama_model_context_window(item: dict[str, object]) -> int | None:
+	meta = item.get("meta")
+	if not isinstance(meta, dict):
+		return None
+	try:
+		value = int(meta.get("n_ctx_train", 0) or 0)
+	except (TypeError, ValueError):
+		return None
+	return value or None
+
+
 def _record_source_lines(record: LlamaModelRecord) -> list[str]:
 	if record.kind == ModelSourceKind.HUGGING_FACE.value:
 		repository = record.source.strip()

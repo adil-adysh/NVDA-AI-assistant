@@ -27,7 +27,7 @@ from .runtime.llama_server import (
 	default_llama_server_executable,
 	get_llama_supervisor,
 )
-from .runtime.llama_models import LlamaModelCatalog, LlamaModelRecord
+from .runtime.llama_models import LlamaModelCatalog, LlamaModelRecord, llama_model_capabilities
 
 
 class LlamaCppModelManager(ModelManagerProvider):
@@ -72,26 +72,37 @@ class LlamaCppModelManager(ModelManagerProvider):
 
 	def list_managed_models(self) -> list[ManagedModel]:
 		models: dict[str, ManagedModel] = {}
+		server_items = self._supervisor.list_models()
 		for record in self._catalog.list_records():
 			ready = record.kind == ModelSourceKind.HUGGING_FACE.value or (
 				record.local_path is not None and Path(record.local_path).is_file()
+			)
+			server_item = next(
+				(item for item in server_items if record.matches_server_id(str(item.get("id", "")))),
+				None,
 			)
 			models[record.model_id] = ManagedModel(
 				id=record.model_id,
 				display_name=record.model_id,
 				state=ModelState.DOWNLOADED if ready else ModelState.NOT_DOWNLOADED,
-				capabilities=("chat", "completion", "streaming", "text_input", "text_output"),
+				capabilities=llama_model_capabilities(server_item) if server_item else (
+					"chat", "completion", "streaming", "text_input", "text_output"
+				),
 			)
-		for item in self._supervisor.list_models():
+		for item in server_items:
 			model_id = str(item.get("id", "")).strip()
 			if model_id and model_id not in models:
 				models[model_id] = ManagedModel(
 					id=model_id,
 					display_name=model_id,
 					state=ModelState.DOWNLOADED,
-					capabilities=("chat", "completion", "streaming", "text_input", "text_output"),
+					capabilities=llama_model_capabilities(item),
 				)
 		return sorted(models.values(), key=lambda model: model.display_name.lower())
+
+	def list_server_models(self, *, refresh: bool = False) -> tuple[dict[str, object], ...]:
+		"""Return the cached authoritative llama-server model catalog."""
+		return self._supervisor.list_models(refresh=refresh)
 
 	def import_model(
 		self,
