@@ -28,11 +28,13 @@
         }
     }
 
-    let chatDisabled = $derived(!appState.control.chatEnabled || Boolean(appState.control.pendingChange));
+    let chatDisabled = $derived(!appState.control.chatEnabled || Boolean(appState.control.pendingChange) || appState.chat.processing);
 </script>
 
 {#if appState.view.mode === 'chat'}
-    <section class="workspace-card chat-composer-panel">
+    <section class="workspace-card chat-composer-panel" aria-labelledby="composer-heading">
+
+        <h2 id="composer-heading" class="sr-only">{t('composer_heading', 'Compose message')}</h2>
 
         <div class="composer-stack">
             <input id="file-input" bind:this={fileInputElement} type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp,.svg" multiple hidden onchange={handleInputFiles} />
@@ -58,7 +60,7 @@
                 <button id="attach-files" type="button" aria-keyshortcuts="Alt+A" onclick={() => fileInputElement?.click()} disabled={chatDisabled}>{t('attach_button', 'Upload image')}</button>
             </div>
 
-            <button id="chat-send" type="button" aria-keyshortcuts="Enter,Alt+S" onclick={() => submitChatMessage(fileInputElement)} disabled={chatDisabled}>{t('send_button', 'Send')}</button>
+            <button id="chat-send" type="button" aria-keyshortcuts="Enter,Alt+S" aria-busy={appState.chat.processing} onclick={() => submitChatMessage(fileInputElement)} disabled={chatDisabled}>{appState.chat.processing ? t('processing_button', 'Processing…') : t('send_button', 'Send')}</button>
         </div>
     </section>
 {/if}

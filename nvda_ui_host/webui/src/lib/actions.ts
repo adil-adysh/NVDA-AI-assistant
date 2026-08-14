@@ -131,7 +131,7 @@ export function requestCloseHost(): void {
 }
 
 export function submitChatMessage(fileInputElement: HTMLInputElement | null = null): void {
-	if (!appState.control.chatEnabled || appState.control.pendingChange) return;
+	if (!appState.control.chatEnabled || appState.control.pendingChange || appState.chat.processing) return;
 
 	const message = appState.chat.composerText.trim();
 	const attachments = Array.isArray(appState.chat.attachments) ? appState.chat.attachments : [];
@@ -147,8 +147,9 @@ export function submitChatMessage(fileInputElement: HTMLInputElement | null = nu
 	if (!sent) return;
 
 	appState.chat.composerText = '';
+	appState.chat.processing = true;
 	clearPendingAttachments(fileInputElement);
-	setStatus(t('submitted_status', 'Message submitted.'), true);
+	setStatus(t('submitted_status', 'Message sent. Processing.'), true);
 }
 
 export function submitProviderSelection(provider: string): void {

@@ -6,9 +6,11 @@ import type {
 import {
 	appState,
 	setStatus,
-	setViewMode,
-	setWindowTitle,
-	showDisplayText,
+	setDisplayBlocks,
+    setViewMode,
+    setWindowTitle,
+    showDisplayText,
+    t,
 } from '../state.svelte';
 import {
 	applyPresentationState,
@@ -22,11 +24,28 @@ import {
 // ---------------------------------------------------------------------------
 
 export function showError(commandId: string, payload: ShowErrorPayload): void {
-	const msg = payload.message || getHostStatusMessage(payload as Record<string, unknown>);
-	showDisplayText(msg, 'status');
+	const msg =
+		payload.error_message ||
+		payload.message ||
+		(payload.details as string | undefined) ||
+		getHostStatusMessage(payload as Record<string, unknown>);
+	setDisplayBlocks(
+		[
+			{
+				type: 'error',
+				text: msg,
+				summary: payload.title || t('error_prefix', 'Error'),
+			},
+		],
+		[],
+	);
+	setViewMode('display', 'content');
 	if (payload.title) setWindowTitle(payload.title);
 	setStatus(msg, true);
-	applyPresentationState(payload as Record<string, unknown>);
+	applyPresentationState(payload as Record<string, unknown>, {
+		controlsVisible: false,
+		interactionMode: 'display',
+	});
 	reportUiApplied(commandId);
 }
 

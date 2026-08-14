@@ -13,79 +13,100 @@ commands:
   - id: health_check
     rust: HealthCheck
     snake: health_check
-    legacy_action: health_check
     chat: false
+    required_payload_fields: []
+    required_payload_types: {}
 
   - id: render_display
     rust: RenderDisplay
     snake: render_display
-    legacy_action: display_result
     chat: false
+    required_payload_fields: [title]
+    required_payload_types: {title: string}
 
   - id: open_chat
     rust: OpenChat
     snake: open_chat
-    legacy_action: open_chat
     chat: true
+    required_payload_fields: [title]
+    required_payload_types: {title: string}
 
   - id: sync_session
     rust: SyncSession
     snake: sync_session
-    legacy_action: sync_session
     chat: false
+    required_payload_fields: []
+    required_payload_types: {}
 
   - id: chat_set_history
     rust: ChatSetHistory
     snake: chat_set_history
     chat: true
+    required_payload_fields: [conversation_id, messages]
+    required_payload_types: {conversation_id: string, messages: array}
 
   - id: chat_append
     rust: ChatAppend
     snake: chat_append
     chat: true
+    required_payload_fields: [conversation_id, message]
+    required_payload_types: {conversation_id: string, message: object}
 
   - id: chat_update
     rust: ChatUpdate
     snake: chat_update
     chat: true
+    required_payload_fields: [conversation_id, message_id, content]
+    required_payload_types: {conversation_id: string, message_id: string, content: json}
 
   - id: chat_stream_begin
     rust: ChatStreamBegin
     snake: chat_stream_begin
     chat: true
+    required_payload_fields: [message_id, stream_id]
+    required_payload_types: {message_id: string, stream_id: string}
 
   - id: chat_stream_delta
     rust: ChatStreamDelta
     snake: chat_stream_delta
     chat: true
+    required_payload_fields: [message_id, stream_id, delta, sequence]
+    required_payload_types: {message_id: string, stream_id: string, delta: string, sequence: integer}
 
   - id: chat_stream_end
     rust: ChatStreamEnd
     snake: chat_stream_end
     chat: true
+    required_payload_fields: [message_id, stream_id, final_sequence, content]
+    required_payload_types: {message_id: string, stream_id: string, final_sequence: integer, content: json}
 
   - id: chat_stream_abort
     rust: ChatStreamAbort
     snake: chat_stream_abort
     chat: true
+    required_payload_fields: [message_id, stream_id, last_sequence]
+    required_payload_types: {message_id: string, stream_id: string, last_sequence: integer}
 
   - id: show_error
     rust: ShowError
     snake: show_error
-    legacy_action: show_error
     chat: false
+    required_payload_fields: [error_message]
+    required_payload_types: {error_message: string}
 
   - id: update_progress
     rust: UpdateProgress
     snake: update_progress
-    legacy_action: progress_update
     chat: false
+    required_payload_fields: [stage, message]
+    required_payload_types: {stage: string, message: string}
 
   - id: close_window
     rust: CloseWindow
     snake: close_window
-    legacy_action: close_window
     chat: false
+    required_payload_fields: []
+    required_payload_types: {}
 
 events:
   - id: web_ui_ready

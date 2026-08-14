@@ -16,7 +16,7 @@ from ..service.provider_controls import provider_control_service
 from .host_lifecycle import HostLifecycleService, HostLifecycleState
 from .intent import ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND, merge_presentation_intent
 from . import nvda_ui
-from .accessibility import queue_response_announcement, strip_html_for_announcement
+from .accessibility import coerce_announcement_text, queue_response_announcement, strip_html_for_announcement
 from .host_renderer import HostRenderer, HostUnavailableError
 from .attachment_context import extract_attachment_context
 from .view_models import ChatWindowViewModel, DisplayResultViewModel
@@ -112,13 +112,6 @@ class UIAdapter:
 		metadata = view_model.transport_metadata()
 		self._remember_session_metadata(metadata)
 		self._host_renderer.register_ui_action_handler(self._handle_host_ui_action)
-		if view_model.success:
-			queue_response_announcement(
-				nvda_ui.queue,
-				nvda_ui.message,
-				view_model.output_text,
-				strip_html_for_announcement(view_model.output_html),
-			)
 		self._dispatch_primary_host_command(
 			lambda: self._host_renderer.render_display_result(
 				use_case_id=view_model.use_case_id,
@@ -533,22 +526,49 @@ class UIAdapter:
 		return f"{prefix}-{uuid4().hex}"
 
 	def show_error(self, error_message: str, details: str | None = None) -> None:
-		if self._host_lifecycle.should_dispatch_background_command():
-			self._dispatch_host_command(
-				lambda: self._host_renderer.show_error(error_message, details=details),
-				lambda: nvda_ui.message(error_message),
-			)
+		# Errors are deliberately rendered by NVDA itself. Error presentation
+		# must remain available even when the WebView host is unavailable, and
+		# errors do not need the interactive result actions provided by the host.
+		body = details or error_message
+		nvda_ui.queue(
+			nvda_ui.browseable_message,
+			body,
+			title=error_message or _("Error"),
+			close_button=True,
+			copy_button=True,
+		)
+
+	def render_display_after_speech(self, view_model: DisplayResultViewModel) -> None:
+		"""Speak a one-shot result before moving NVDA focus into its UI.
+
+		NVDA's browse-mode focus handling cancels active speech when a new
+		document receives focus.  The result therefore must not be rendered
+		with its normal focus intent until the response speech has completed.
+		"""
+		if not view_model.success:
+			self.render_display(view_model)
 			return
 
-		nvda_ui.message(error_message)
+		announcement_text = (
+			strip_html_for_announcement(view_model.output_html)
+			if view_model.is_html
+			else coerce_announcement_text(view_model.output_text, view_model.message)
+		)
+		if announcement_text is None:
+			self.render_display(view_model)
+			return
+
+		nvda_ui.queue(
+			nvda_ui.queue_speech_then,
+			announcement_text,
+			lambda: self.render_display(view_model),
+		)
 
 	def show_progress(self, message: str) -> None:
+		# One-shot progress must never start, foreground, or queue a WebView
+		# command that could appear after the terminal result. Keep feedback in
+		# NVDA speech; the result/error command owns the UI lifecycle.
 		nvda_ui.queue(nvda_ui.message, message)
-		if self._host_lifecycle.should_dispatch_background_command():
-			self._dispatch_host_command(
-				lambda: self._host_renderer.show_progress(message),
-				lambda: None,
-			)
 
 	def close_window(self, reason: str | None = None) -> None:
 		if self._host_lifecycle.should_dispatch_background_command():

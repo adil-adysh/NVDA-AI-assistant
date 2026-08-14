@@ -64,6 +64,7 @@ class AIAssistantApplication:
 			llm_service=self._services.llm_service,
 			use_case_engine=self._services.use_case_engine,
 			progress_handler=self.presenter.progress_handler,
+			error_handler=self.presenter.present_use_case_error,
 		)
 		self.layer_mode = AssistantLayerController(
 			bindings=(

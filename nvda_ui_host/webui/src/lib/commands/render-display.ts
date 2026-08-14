@@ -1,4 +1,4 @@
-import type { RenderDisplayPayload } from '../protocol-types';
+import type { ContentBlock, RenderDisplayPayload } from '../protocol-types';
 import {
 	setCopyBuffers,
 	setDisplayBlocks,
@@ -79,8 +79,8 @@ function resolveDisplayPresentation(
 
 export function renderDisplay(commandId: string, payload: RenderDisplayPayload): void {
 	const actions = readPresentationValue(payload, 'actions', []);
-	const thinkingTrace = readPresentationValue<string>(payload, 'thinking_trace', null);
-	const thinkingSummary = readPresentationValue<string>(payload, 'thinking_summary', null);
+	const thinkingTrace = readPresentationValue<string>(payload, 'thinking_trace');
+	const thinkingSummary = readPresentationValue<string>(payload, 'thinking_summary');
 	const thinkingCollapsed =
 		readPresentationValue<boolean>(payload, 'thinking_visible_by_default', true) === false;
 
@@ -90,7 +90,7 @@ export function renderDisplay(commandId: string, payload: RenderDisplayPayload):
 		{ hasActions: normalizedActions.length > 0 },
 	);
 
-	const blocks: { type: string; html?: string; text?: string; summary?: string; collapsed?: boolean }[] = [];
+	const blocks: ContentBlock[] = [];
 
 	if (payload.output_html) {
 		blocks.push({ type: 'html', html: payload.output_html });
@@ -112,7 +112,7 @@ export function renderDisplay(commandId: string, payload: RenderDisplayPayload):
 
 	setDisplayBlocks(blocks, normalizedActions, displayPresentation);
 	applyPresentationState(payload as Record<string, unknown>, {
-		controlsVisible: true,
+		controlsVisible: false,
 		interactionMode: 'display',
 	});
 	setViewMode('display');
@@ -122,6 +122,5 @@ export function renderDisplay(commandId: string, payload: RenderDisplayPayload):
 		payload.copy_text || payload.output_text || '',
 		payload.copy_markdown || '',
 	);
-
 	reportUiApplied(commandId);
 }

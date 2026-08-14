@@ -66,6 +66,14 @@ export function extractMarkdownFromBlocks(content: unknown): string {
 		.trim();
 }
 
+/** Keep announcements useful without making NVDA read an entire answer twice. */
+export function summarizeForAnnouncement(content: unknown, maxLength = 280): string {
+	const text = extractTextFromBlocks(content).replace(/\s+/g, ' ').trim();
+	if (!text) return '';
+	if (text.length <= maxLength) return text;
+	return `${text.slice(0, maxLength).trimEnd()}…`;
+}
+
 export function hasRenderedTables(content: unknown): boolean {
 	return normalizeContentBlocks(content).some(
 		(b) => b.type === 'html' && /<table[\s>]/i.test(b.html || ''),

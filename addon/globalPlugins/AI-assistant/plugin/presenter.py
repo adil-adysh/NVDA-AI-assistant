@@ -259,7 +259,7 @@ class UseCasePresenter:
 			else FOCUS_TARGET_PRIMARY_ACTION,
 			toolbar_actions=self._build_display_toolbar_actions(include_clear=not is_result_action_screen),
 		)
-		ui_adapter.render_display(
+		ui_adapter.render_display_after_speech(
 			DisplayResultViewModel(
 				use_case_id=use_case_id,
 				title=browseable_title,
@@ -276,7 +276,8 @@ class UseCasePresenter:
 				actions=tuple(actions),
 				display_presentation=display_presentation,
 				interaction_mode=INTERACTION_MODE_DISPLAY,
-				controls_visible=not is_result_action_screen,
+				# One-shot result screens never expose chat session controls.
+				controls_visible=False,
 				attention_policy=ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND,
 			)
 		)
@@ -309,10 +310,9 @@ class UseCasePresenter:
 
 	def progress_handler(self, event: ProgressEvent) -> None:
 		if event.stage == "error":
-			# The error is spoken exactly once by the background worker's
-			# exception handler (present_error); here we only surface the host
-			# error dialog so users are not announced the same failure twice.
-			ui_adapter.show_error(_("Error"), details=event.message)
+			# The background runner owns terminal error delivery. The engine emits
+			# this event immediately before re-raising, so rendering here would
+			# open the result UI twice for the same failure.
 			return
 
 		if event.stage == "streaming":
@@ -328,6 +328,10 @@ class UseCasePresenter:
 			"complete",
 		}:
 			ui_adapter.show_progress(event.message)
+
+	def present_use_case_error(self, title: str, message: str) -> None:
+		"""Present a terminal one-shot failure in the result UI."""
+		ui_adapter.show_error(title or _("Error"), details=message)
 
 	def _build_chat_metadata(self) -> dict[str, Any]:
 		provider_state = get_provider_state()

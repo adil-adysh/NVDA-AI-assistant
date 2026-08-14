@@ -359,11 +359,13 @@ class BackgroundTaskRunner:
 		llm_service: LLMService,
 		use_case_engine: UseCaseEngine,
 		progress_handler: Callable[[Any], None],
+		error_handler: Callable[[str, str], None] | None = None,
 		readiness_service: ProviderReadinessService | None = None,
 	) -> None:
 		self._llm_service = llm_service
 		self._use_case_engine = use_case_engine
 		self._progress_handler = progress_handler
+		self._error_handler = error_handler
 		self._readiness_service = readiness_service or ProviderReadinessService()
 
 	def start_model_preload(self) -> None:
@@ -422,14 +424,22 @@ class BackgroundTaskRunner:
 					"The selected provider is not fully configured."
 				)
 				nvda_ui.queue(nvda_ui.message, message)
+				if self._error_handler is not None:
+					self._error_handler(title, message)
 				return
 			except LiteRTServerError as error:
 				log.exception(f"BackgroundTaskRunner LiteRT server error for use case {use_case_id}")
-				nvda_ui.queue(nvda_ui.message, present_error(error, _).message)
+				message = present_error(error, _).message
+				nvda_ui.queue(nvda_ui.message, message)
+				if self._error_handler is not None:
+					self._error_handler(title, message)
 				return
 			except Exception as error:
 				log.exception(f"BackgroundTaskRunner failed executing use case {use_case_id}")
-				nvda_ui.queue(nvda_ui.message, present_error(error, _).message)
+				message = present_error(error, _).message
+				nvda_ui.queue(nvda_ui.message, message)
+				if self._error_handler is not None:
+					self._error_handler(title, message)
 				return
 
 			nvda_ui.queue(render_result, result)

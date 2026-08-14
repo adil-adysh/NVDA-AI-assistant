@@ -1,0 +1,18 @@
+{
+  "schema": "nvda.ui_host",
+  "version": 2,
+  "id": "fixture-stream-delta",
+  "correlation_id": "conversation-1",
+  "source": "nvda_addon",
+  "type": "command",
+  "command": {
+    "name": "chat_stream_delta",
+    "payload": {
+      "conversation_id": "conversation-1",
+      "message_id": "assistant-1",
+      "stream_id": "stream-1",
+      "delta": "Hello",
+      "sequence": 1
+    }
+  }
+}

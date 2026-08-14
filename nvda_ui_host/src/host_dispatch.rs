@@ -130,6 +130,7 @@ pub(crate) fn flush_pending_commands<E>(
 pub(crate) fn window_ready_for_delivery(
     policy: ActivationPolicy,
     is_window_visible: impl Fn() -> bool,
+    is_window_hidden: impl Fn() -> bool,
     should_activate_visible_window: impl Fn() -> bool,
     mut try_activate_window: impl FnMut(ActivationPolicy) -> bool,
 ) -> bool {
@@ -141,7 +142,7 @@ pub(crate) fn window_ready_for_delivery(
         // JavaScript continues to receive and render streaming responses.
         // The host_ready() guard in post_host_command ensures the WebView
         // has been initialized — the HWND visibility is irrelevant.
-        ActivationPolicy::NoActivate => visible_before || crate::window::is_window_hidden(),
+        ActivationPolicy::NoActivate => visible_before || is_window_hidden(),
         ActivationPolicy::ActivateIfBackground => {
             if visible_before {
                 if should_activate_visible_window() {
@@ -170,6 +171,7 @@ mod tests {
         let ready = window_ready_for_delivery(
             ActivationPolicy::NoActivate,
             || false,
+            || true,
             || panic!("should not inspect activation when no_activate"),
             |_| panic!("should not try to activate when no_activate"),
         );
@@ -183,6 +185,7 @@ mod tests {
         let ready = window_ready_for_delivery(
             ActivationPolicy::ActivateIfBackground,
             || false,
+            || true,
             || panic!("hidden window should not check foreground state"),
             |policy| {
                 activated = true;
@@ -200,6 +203,7 @@ mod tests {
             ActivationPolicy::ActivateIfBackground,
             || true,
             || false,
+            || false,
             |_| panic!("foreground window should not activate again"),
         );
 
@@ -210,6 +214,7 @@ mod tests {
     fn activate_and_focus_uses_activation_result() {
         let ready = window_ready_for_delivery(
             ActivationPolicy::ActivateAndFocus,
+            || false,
             || false,
             || panic!("activate_and_focus does not consult foreground state"),
             |_| false,

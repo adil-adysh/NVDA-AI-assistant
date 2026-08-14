@@ -16,6 +16,7 @@
 
 {#if appState.view.mode === 'chat'}
     <section id="chat-panel" class="workspace-card chat-panel" aria-label={t('chat_heading', 'Chat')}>
+        <h2 class="sr-only">{t('chat_heading', 'Chat')}</h2>
         <div class="chat-navigation-stack">
             {#if activeConversation}
                 <div class="chat-session-banner" aria-live="polite">

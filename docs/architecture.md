@@ -389,7 +389,7 @@ The recommended migration path is:
 1. keep the existing command path for `command`, `ack`, and `error`
 2. introduce a dedicated event path for `event`, or explicit event polling
 3. move chat submission and UI-originated callbacks onto that event path
-4. keep legacy compatibility inside the protocol layer only
+4. keep compatibility decisions outside the transport contract; the active protocol remains one strict v2 envelope
 
 ## Packaging
 

@@ -406,7 +406,7 @@ Rust should treat this as the point where the browser UI is ready for queued hos
 - The host must ignore unknown fields.
 - The add-on may include opaque `metadata` values.
 - Addon-specific internal fields should not be required by the host.
-- The Rust host normalizes legacy v1 pipe commands into the v2 WebView envelope during migration.
+- The command pipe accepts only the v2 envelope; malformed or unsupported messages receive a v2 `error` envelope.
 - New commands and events should be added by extending typed payloads, not by changing transport assumptions.
 - Python remains the owner of use-case orchestration and conversation state.
 - Rust remains the owner of host UI lifecycle and browser event capture.

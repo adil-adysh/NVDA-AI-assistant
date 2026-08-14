@@ -65,6 +65,9 @@ class _FakeUIAdapter:
 	def render_display(self, *args, **kwargs) -> None:
 		self.render_display_calls.append({"args": args, "kwargs": kwargs})
 
+	def render_display_after_speech(self, *args, **kwargs) -> None:
+		self.render_display(*args, **kwargs)
+
 	def close(self) -> None:
 		pass
 

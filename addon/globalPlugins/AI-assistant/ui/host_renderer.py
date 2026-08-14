@@ -30,7 +30,11 @@ class HostRenderer(UIHostRenderer):
 	COMMAND_PIPE_NAME = r"\\.\pipe\nvda_ai_assistant_ui_cmd"
 	EVENT_PIPE_NAME = r"\\.\pipe\nvda_ai_assistant_ui_evt"
 
-	def __init__(self, lifecycle: HostLifecycleService | None = None) -> None:
+	def __init__(
+		self,
+		lifecycle: HostLifecycleService | None = None,
+		event_dispatcher: Callable[[Callable[[HostEvent], None], HostEvent], None] | None = None,
+	) -> None:
 		self._current_conversation_id: str | None = None
 		self._current_use_case_id: str | None = None
 		self._chat_submission_handler: Callable[[str, str | None, dict[str, Any] | None], None] | None = None
@@ -45,6 +49,9 @@ class HostRenderer(UIHostRenderer):
 			event_callback=self._on_host_event,
 		)
 		self._lifecycle = lifecycle or HostLifecycleService()
+		self._event_dispatcher: Callable[[Callable[[HostEvent], None], HostEvent], None] = (
+			event_dispatcher or self._dispatch_event_to_nvda
+		)
 		self._event_handlers: dict[str, Callable[[HostEvent], None]] = {
 			EVENT_CHAT_SUBMITTED: self._handle_chat_submitted_event,
 			EVENT_UI_ACTION_INVOKED: self._handle_ui_action_invoked_event,
@@ -149,7 +156,18 @@ class HostRenderer(UIHostRenderer):
 		if handler is None:
 			logger.debug("HostRenderer received unsupported host event: %s", event.event)
 			return
-		handler(event)
+		self._event_dispatcher(handler, event)
+
+	@staticmethod
+	def _dispatch_event_to_nvda(handler: Callable[[HostEvent], None], event: HostEvent) -> None:
+		"""Marshal pipe-thread events onto NVDA's event queue."""
+		try:
+			import queueHandler
+		except ImportError:
+			# Keep protocol tests and non-NVDA tooling importable.
+			handler(event)
+			return
+		queueHandler.queueFunction(queueHandler.eventQueue, handler, event)
 
 	def chat_set_history(
 		self,
@@ -324,7 +342,7 @@ class HostRenderer(UIHostRenderer):
 		self._ensure_host_running()
 		try:
 			response_bytes = self._transport.send(message)
-			self._process_response(response_bytes)
+			self._process_response(response_bytes, expected_request_id=command.id)
 			self._lifecycle.mark_command_succeeded(command_name)
 		except HostUnavailableError:
 			self._lifecycle.mark_failed()
@@ -462,7 +480,7 @@ class HostRenderer(UIHostRenderer):
 		command = HostCommand(name="health_check", payload={})
 		logger.debug("HostRenderer probing host with health_check message_id=%s", command.id)
 		response_bytes = self._transport.send(command.to_bytes())
-		self._process_response(response_bytes)
+		self._process_response(response_bytes, expected_request_id=command.id)
 		logger.debug("HostRenderer host health_check succeeded message_id=%s", command.id)
 
 	def _ensure_host_running(self) -> None:
@@ -479,7 +497,7 @@ class HostRenderer(UIHostRenderer):
 				raise HostUnavailableError(str(error)) from error
 			self._lifecycle.mark_ready()
 
-	def _process_response(self, response_bytes: bytes) -> None:
+	def _process_response(self, response_bytes: bytes, expected_request_id: str | None = None) -> None:
 		response_text = (
 			response_bytes.decode("utf-8", errors="replace")
 			.replace("\r", "")
@@ -493,7 +511,7 @@ class HostRenderer(UIHostRenderer):
 		try:
 			logger.debug("HostRenderer response raw bytes: %r", response_bytes)
 			logger.debug("HostRenderer response text: %s", response_text)
-			response = HostResponse.from_json(response_text)
+			response = HostResponse.from_json(response_text, expected_request_id=expected_request_id)
 			if response.status == "nack":
 				raise HostUnavailableError(response.message or "Host returned nack")
 			logger.debug(
@@ -503,8 +521,9 @@ class HostRenderer(UIHostRenderer):
 			self._lifecycle.mark_failed()
 			raise
 		except ValueError as error:
+			self._lifecycle.mark_failed()
 			logger.warning("HostRenderer invalid response payload: %s; %s", response_text, error)
-			return
+			raise HostUnavailableError(str(error)) from error
 		except Exception as error:
 			self._lifecycle.mark_failed()
 			logger.warning("HostRenderer response handling failed: %s", error)

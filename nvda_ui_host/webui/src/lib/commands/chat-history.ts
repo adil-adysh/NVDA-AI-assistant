@@ -1,4 +1,4 @@
-import type { ChatSetHistoryPayload, ChatAppendPayload } from '../protocol-types';
+import type { ChatSetHistoryPayload, ChatAppendPayload, ChatUpdatePayload } from '../protocol-types';
 import {
 	setActiveConversationId,
 	setConversationSummaries,
@@ -45,6 +45,9 @@ export function appendChatMessage(commandId: string, payload: ChatAppendPayload)
 	for (const msg of messages) {
 		appState.chat.transcript.upsert(msg as any);
 	}
+	if (messages.some((message) => message.role === 'assistant' && !message.streaming)) {
+		appState.chat.processing = false;
+	}
 
 	console.log(`[chat-history] transcript after upsert: ${appState.chat.transcript.count}`);
 
@@ -61,4 +64,20 @@ export function appendChatMessage(commandId: string, payload: ChatAppendPayload)
 
 	setViewMode('chat', resolvePresentationFocusTarget(payload as Record<string, unknown>));
 	reportUiApplied(commandId);
+}
+
+// ---------------------------------------------------------------------------
+// chat_update
+// ---------------------------------------------------------------------------
+
+export function updateChatMessage(commandId: string, payload: ChatUpdatePayload): void {
+	updateChatEnvelope(payload);
+	const updated = appState.chat.transcript.updateMessage(payload.message_id, (message) => ({
+		...message,
+		...(payload.message ?? {}),
+		...(payload.content !== undefined
+			? { content: typeof payload.content === 'string' ? [{ type: 'text', text: payload.content }] : payload.content }
+			: {}),
+	}));
+	if (updated) reportUiApplied(commandId);
 }

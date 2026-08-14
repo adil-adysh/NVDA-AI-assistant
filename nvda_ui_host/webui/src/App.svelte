@@ -2,9 +2,9 @@
     import { onMount, tick } from 'svelte';
     import AccessibilityAnnouncer from './components/AccessibilityAnnouncer.svelte';
     import ChatComposer from './components/ChatComposer.svelte';
-    import ChatPanel from './components/ChatPanel.svelte';
     import ControlPanel from './components/ControlPanel.svelte';
-    import DisplayCard from './components/DisplayCard.svelte';
+    import OneShotResultScreen from './components/OneShotResultScreen.svelte';
+    import ChatScreen from './components/ChatScreen.svelte';
     import GlobalToolbar from './components/GlobalToolbar.svelte';
     import StatusCard from './components/StatusCard.svelte';
     import {
@@ -109,13 +109,13 @@
     <main class="workspace">
         <StatusCard registerStatus={(element) => statusElement = element} />
         {#if appState.view.mode === 'chat'}
-            <ChatPanel />
+            <ChatScreen registerContent={(element) => contentElement = element} />
+        {:else}
+            <OneShotResultScreen
+                registerContent={(element) => contentElement = element}
+                registerFirstAction={(element) => firstResultActionElement = element}
+            />
         {/if}
-
-        <DisplayCard
-            registerContent={(element) => contentElement = element}
-            registerFirstAction={(element) => firstResultActionElement = element}
-        />
 
         {#if appState.view.mode === 'chat'}
             <ChatComposer

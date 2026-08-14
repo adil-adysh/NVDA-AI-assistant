@@ -47,6 +47,7 @@ fn send_pending_command(controller: &ICoreWebView2Controller, command: HostComma
     if !host_dispatch::window_ready_for_delivery(
         command.activation_policy,
         crate::window::is_window_visible,
+        crate::window::is_window_hidden,
         crate::window::should_activate_visible_window,
         crate::window::try_activate_window,
     ) {

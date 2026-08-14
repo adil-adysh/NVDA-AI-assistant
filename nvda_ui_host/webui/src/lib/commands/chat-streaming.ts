@@ -4,7 +4,8 @@ import type {
 	ChatStreamEndPayload,
 	ChatStreamAbortPayload,
 } from '../protocol-types';
-import { appState, setViewMode } from '../state.svelte';
+import { announceResponse, appState, setViewMode, setStatus, t } from '../state.svelte';
+import { summarizeForAnnouncement } from '../content';
 import { reportUiApplied, updateChatEnvelope } from './_shared';
 
 // ---------------------------------------------------------------------------
@@ -95,7 +96,18 @@ export function endChatStream(commandId: string, payload: ChatStreamEndPayload):
 				? payload.answer_section
 				: undefined;
 
-	appState.chat.transcript.endStream(messageId, streamId, finalContent);
+	const ended = appState.chat.transcript.endStream(messageId, streamId, finalContent);
+	if (ended) {
+		appState.chat.processing = false;
+		const message = appState.chat.transcript.findById(messageId);
+		const summary = summarizeForAnnouncement(message?.content);
+		announceResponse(
+			summary
+				? `${t('response_complete', 'Response complete')}: ${summary}`
+				: t('response_complete', 'Response complete.'),
+		);
+		setStatus(t('response_ready_status', 'Response ready.'), false);
+	}
 	reportUiApplied(commandId);
 }
 
@@ -110,5 +122,6 @@ export function abortChatStream(commandId: string, payload: ChatStreamAbortPaylo
 
 	updateChatEnvelope(payload as Record<string, unknown>);
 	appState.chat.transcript.abortStream(messageId, streamId);
+	appState.chat.processing = false;
 	reportUiApplied(commandId);
 }

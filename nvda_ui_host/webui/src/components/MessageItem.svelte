@@ -13,7 +13,13 @@
     let isStreaming = $derived(message?.streaming === true);
 </script>
 
-<article class={`chat-message ${role}`} aria-label={roleLabel} aria-busy={isStreaming}>
+<article
+    id={`message-${message?.id || role}`}
+    class={`chat-message ${role}`}
+    aria-label={`${roleLabel}${isStreaming ? `, ${t('response_streaming_subtitle', 'Response in progress')}` : ''}`}
+    aria-busy={isStreaming}
+    tabindex="-1"
+>
     <div class="chat-message-header">
         <div class="chat-message-title-group">
             <svelte:element this={headingTag} class="role">{roleLabel}</svelte:element>

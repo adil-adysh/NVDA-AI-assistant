@@ -3,7 +3,7 @@ use std::io::Write;
 use windows::core::Result;
 
 use crate::logger;
-use crate::protocol::{self, AckStage, ParsedCommand, ProtocolError, ResponseMode};
+use crate::protocol::{self, AckStage, ParsedCommand, ProtocolError};
 use crate::window;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,7 +87,6 @@ fn test_command(payload: protocol::UiCommand) -> ParsedCommand {
     ParsedCommand {
         message_id: "test-message".to_string(),
         correlation_id: None,
-        response_mode: ResponseMode::V2,
         payload,
     }
 }
@@ -98,14 +97,13 @@ pub fn handle_raw_message(raw: &str, writer: &mut impl Write) -> Result<()> {
         Ok(command) => handle_command(command, writer),
         Err(error) => {
             logger::warn(&format!("app parse failed: {:?}", error));
-            let response_mode = infer_response_mode(raw);
-            write_json_value(&protocol::build_error(response_mode, error.request_id.clone(), &error), writer)
+			write_json_value(&protocol::build_error(error.request_id.clone(), &error), writer)
         }
     }
 }
 
 pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result<()> {
-    let cmd_name = command.payload.as_legacy_action();
+	let cmd_name = format!("{:?}", command.payload.command_name());
     let msg_id = &command.message_id;
 
     if matches!(command.payload, protocol::UiCommand::HealthCheck) {
@@ -127,7 +125,7 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
                 window::DispatchError::NotInitialized => (protocol::ProtocolErrorKind::UiDispatchFailed, "Host window dispatch is not initialized"),
             };
             let error = ProtocolError::new(kind, Some(command.message_id.clone()), message);
-            return write_json_value(&protocol::build_error(command.response_mode, Some(command.message_id.clone()), &error), writer);
+			return write_json_value(&protocol::build_error(Some(command.message_id.clone()), &error), writer);
         }
         return write_json_value(&protocol::build_ack(&command, AckStage::Enqueued, None), writer);
     }
@@ -147,7 +145,7 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
             window::DispatchError::NotInitialized => (protocol::ProtocolErrorKind::UiDispatchFailed, "Host window dispatch is not initialized"),
         };
         let error = ProtocolError::new(kind, Some(command.message_id.clone()), message);
-        return write_json_value(&protocol::build_error(command.response_mode, Some(command.message_id.clone()), &error), writer);
+		return write_json_value(&protocol::build_error(Some(command.message_id.clone()), &error), writer);
     }
     write_json_value(&protocol::build_ack(&command, AckStage::Enqueued, None), writer)
 }
@@ -163,13 +161,6 @@ fn write_json_value(value: &serde_json::Value, writer: &mut impl Write) -> Resul
         .map_err(|error| windows::core::Error::new(windows::core::HRESULT(0), error.to_string()))
 }
 
-fn infer_response_mode(raw: &str) -> ResponseMode {
-    match serde_json::from_str::<serde_json::Value>(raw) {
-        Ok(serde_json::Value::Object(map)) if map.get("schema").is_some() => ResponseMode::V2,
-        _ => ResponseMode::Legacy,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,48 +172,45 @@ mod tests {
     fn handle_health_check_returns_ack() {
         let mut buffer = Cursor::new(Vec::new());
         handle_raw_message(
-            r#"{"type":"command","action":"health_check","request_id":"test-health","protocol_version":1,"payload":{}}"#,
+			r#"{"schema":"nvda.ui_host","version":2,"id":"test-health","correlation_id":null,"source":"nvda_addon","type":"command","command":{"name":"health_check","payload":{}}}"#,
             &mut buffer,
         )
         .expect("health_check should succeed");
 
         let output = String::from_utf8(buffer.into_inner()).expect("utf8 response");
-        let response: protocol::HostResponse = from_str(output.trim()).expect("parse response");
-        assert_eq!(response.status, "ack");
-        assert_eq!(response.request_id, "test-health");
-        assert_eq!(response.message, None);
+		let response: Value = from_str(output.trim()).expect("parse response");
+		assert_eq!(response["type"], "ack");
+		assert_eq!(response["acked_id"], "test-health");
     }
 
     #[test]
     fn handle_unknown_action_returns_nack() {
         let mut buffer = Cursor::new(Vec::new());
         handle_raw_message(
-            r#"{"type":"command","action":"bogus_action","request_id":"test-bogus","protocol_version":1,"payload":{}}"#,
+			r#"{"schema":"nvda.ui_host","version":2,"id":"test-bogus","correlation_id":null,"source":"nvda_addon","type":"command","command":{"name":"bogus_action","payload":{}}}"#,
             &mut buffer,
         )
         .expect("unknown action should still return a response");
 
         let output = String::from_utf8(buffer.into_inner()).expect("utf8 response");
-        let response: protocol::HostResponse = from_str(output.trim()).expect("parse response");
-        assert_eq!(response.status, "nack");
-        assert_eq!(response.request_id, "test-bogus");
-        assert_eq!(response.message.as_deref(), Some("Unsupported action: bogus_action"));
+		let response: Value = from_str(output.trim()).expect("parse response");
+		assert_eq!(response["type"], "error");
+		assert_eq!(response["code"], "invalid_json");
     }
 
     #[test]
-    fn handle_unsupported_protocol_version_returns_nack() {
+	fn handle_unsupported_protocol_version_returns_error() {
         let mut buffer = Cursor::new(Vec::new());
         handle_raw_message(
-            r#"{"type":"command","action":"health_check","request_id":"test-version","protocol_version":999,"payload":{}}"#,
+			r#"{"schema":"nvda.ui_host","version":999,"id":"test-version","correlation_id":null,"source":"nvda_addon","type":"command","command":{"name":"health_check","payload":{}}}"#,
             &mut buffer,
         )
         .expect("unsupported version should still return a response");
 
         let output = String::from_utf8(buffer.into_inner()).expect("utf8 response");
-        let response: protocol::HostResponse = from_str(output.trim()).expect("parse response");
-        assert_eq!(response.status, "nack");
-        assert_eq!(response.request_id, "test-version");
-        assert_eq!(response.message.as_deref(), Some("Unsupported protocol version: 999"));
+		let response: Value = from_str(output.trim()).expect("parse response");
+		assert_eq!(response["type"], "error");
+		assert_eq!(response["code"], "unsupported_version");
     }
 
     #[test]

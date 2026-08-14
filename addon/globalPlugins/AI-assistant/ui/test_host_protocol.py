@@ -25,7 +25,7 @@ HostResponse = host_protocol.HostResponse
 
 class HostProtocolTests(unittest.TestCase):
 	def test_host_command_roundtrip(self) -> None:
-		command = HostCommand(name="render_display", payload={"output_text": "Hello"})
+		command = HostCommand(name="render_display", payload={"title": "Result", "output_text": "Hello"})
 		payload = command.to_json()
 		parsed = HostCommand.from_json(payload)
 
@@ -85,6 +85,45 @@ class HostProtocolTests(unittest.TestCase):
 		with self.assertRaises(ValueError):
 			HostCommand.from_json(payload)
 
+	def test_host_command_rejects_unknown_command_name(self) -> None:
+		with self.assertRaisesRegex(ValueError, "Unsupported host command"):
+			HostCommand(name="typo_command", payload={})
+
+	def test_host_command_rejects_missing_required_payload_field(self) -> None:
+		with self.assertRaisesRegex(ValueError, "missing required fields: title"):
+			HostCommand(name="render_display", payload={"output_text": "Hello"})
+
+	def test_host_command_rejects_invalid_required_payload_type(self) -> None:
+		with self.assertRaisesRegex(ValueError, "sequence.*expected integer"):
+			HostCommand(
+				name="chat_stream_delta",
+				payload={
+					"message_id": "assistant_1",
+					"stream_id": "stream_1",
+					"delta": "Hello",
+					"sequence": "3",
+				},
+			)
+
+	def test_host_command_rejects_boolean_as_integer(self) -> None:
+		with self.assertRaisesRegex(ValueError, "sequence.*expected integer"):
+			HostCommand(
+				name="chat_stream_delta",
+				payload={
+					"message_id": "assistant_1",
+					"stream_id": "stream_1",
+					"delta": "Hello",
+					"sequence": True,
+				},
+			)
+
+	def test_shared_v2_fixture_roundtrips(self) -> None:
+		fixture = Path(__file__).resolve().parents[4] / "protocol_fixtures" / "chat_stream_delta_v2.json"
+		parsed = HostCommand.from_json(fixture.read_text(encoding="utf-8"))
+
+		self.assertEqual(parsed.name, "chat_stream_delta")
+		self.assertEqual(parsed.payload["stream_id"], "stream-1")
+
 	def test_host_response_roundtrip(self) -> None:
 		response = HostResponse(request_id="test-id", status="ack", message="ok", stage="enqueued")
 		payload = response.to_json()
@@ -105,6 +144,28 @@ class HostProtocolTests(unittest.TestCase):
 				"correlation_id": "test-id",
 				"source": "ui_host",
 				"type": "mystery",
+			}
+		)
+
+		with self.assertRaises(ValueError):
+			HostResponse.from_json(payload)
+
+	def test_host_response_rejects_wrong_correlation_id(self) -> None:
+		response = HostResponse(request_id="other-id", status="ack")
+
+		with self.assertRaisesRegex(ValueError, "correlation mismatch"):
+			HostResponse.from_json(response.to_json(), expected_request_id="test-id")
+
+	def test_host_response_rejects_invalid_v2_version(self) -> None:
+		payload = json.dumps(
+			{
+				"schema": SCHEMA,
+				"version": 999,
+				"id": "resp-1",
+				"correlation_id": "test-id",
+				"source": "ui_host",
+				"type": "ack",
+				"acked_id": "test-id",
 			}
 		)
 

@@ -18,13 +18,31 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC_PATH = ROOT / "scripts" / "protocol.yaml"
+PAYLOAD_TYPES = {"string", "integer", "boolean", "array", "object", "json"}
 
 
 def _load_spec() -> dict[str, Any]:
 	import yaml
 
 	with open(SPEC_PATH, encoding="utf-8") as fh:
-		return yaml.safe_load(fh)
+		spec = yaml.safe_load(fh)
+	_validate_spec(spec)
+	return spec
+
+
+def _validate_spec(spec: dict[str, Any]) -> None:
+	"""Fail generation when the declarative contract is internally inconsistent."""
+	for command in spec.get("commands", []):
+		command_id = command["id"]
+		fields = set(command.get("required_payload_fields", ()))
+		types = command.get("required_payload_types", {})
+		if set(types) != fields:
+			raise ValueError(
+				f"Command {command_id} must declare exactly one type for each required payload field"
+			)
+		unknown_types = set(types.values()) - PAYLOAD_TYPES
+		if unknown_types:
+			raise ValueError(f"Command {command_id} uses unsupported payload types: {sorted(unknown_types)}")
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +68,26 @@ def _generate_python(spec: dict[str, Any]) -> str:
 	for evt in spec["events"]:
 		lines.append(f'EVENT_{evt["snake"].upper()} = "{evt["id"]}"')
 	lines.append("")
+	lines.append("COMMAND_NAMES = (")
+	for cmd in spec["commands"]:
+		lines.append(f'\t"{cmd["id"]}",')
+	lines.append(")")
+	lines.append("")
+	lines.append("EVENT_NAMES = (")
+	for evt in spec["events"]:
+		lines.append(f'\t"{evt["id"]}",')
+	lines.append(")")
+	lines.append("")
+	lines.append("COMMAND_REQUIRED_FIELDS = {")
+	for cmd in spec["commands"]:
+		lines.append(f'\t"{cmd["id"]}": {tuple(cmd.get("required_payload_fields", ()))!r},')
+	lines.append("}")
+	lines.append("")
+	lines.append("COMMAND_REQUIRED_FIELD_TYPES = {")
+	for cmd in spec["commands"]:
+		types = cmd.get("required_payload_types", {})
+		lines.append(f'\t"{cmd["id"]}": {types!r},')
+	lines.append("}")
 	return "\n".join(lines)
 
 
@@ -111,20 +149,6 @@ def _generate_rust(spec: dict[str, Any]) -> str:
 	lines.append("        }")
 	lines.append("    }")
 
-	# UiCommand::as_legacy_action()
-	lines.append("")
-	lines.append('    pub fn as_legacy_action(&self) -> &\'static str {')
-	lines.append("        match self {")
-	for cmd in spec["commands"]:
-		variant = cmd["rust"]
-		action = cmd.get("legacy_action", cmd["id"])
-		if cmd["id"] == "health_check":
-			lines.append(f'            UiCommand::{variant} => "{action}",')
-		else:
-			lines.append(f'            UiCommand::{variant}(_) => "{action}",')
-	lines.append("        }")
-	lines.append("    }")
-
 	# UiCommand::payload()
 	lines.append("")
 	lines.append("    pub fn payload(&self) -> Value {")
@@ -140,28 +164,6 @@ def _generate_rust(spec: dict[str, Any]) -> str:
 	lines.append("        }")
 	lines.append("    }")
 
-	# UiCommand::from_legacy_action()
-	lines.append("")
-	lines.append(
-		"    pub(crate) fn from_legacy_action(action: &str, payload: Value) -> Result<Self, crate::protocol::ProtocolError> {"
-	)
-	lines.append("        match action {")
-	legacy_cmds = [c for c in spec["commands"] if "legacy_action" in c]
-	for cmd in legacy_cmds:
-		action = cmd["legacy_action"]
-		variant = cmd["rust"]
-		if cmd["id"] == "health_check":
-			lines.append(f'            "{action}" => Ok(UiCommand::{variant}),')
-		else:
-			lines.append(f'            "{action}" => Ok(UiCommand::{variant}(payload)),')
-	lines.append("            _ => Err(crate::protocol::ProtocolError::new(")
-	lines.append("                crate::protocol::ProtocolErrorKind::UnsupportedCommand,")
-	lines.append("                None,")
-	lines.append('                format!("Unsupported action: {action}"),')
-	lines.append("            )),")
-	lines.append("        }")
-	lines.append("    }")
-
 	# UiCommand::from_command_name()
 	lines.append("")
 	lines.append("    pub(crate) fn from_command_name(name: CommandName, payload: Value) -> Self {")
@@ -173,6 +175,26 @@ def _generate_rust(spec: dict[str, Any]) -> str:
 		else:
 			lines.append(f"            CommandName::{variant} => UiCommand::{variant}(payload),")
 	lines.append("        }")
+	lines.append("    }")
+	lines.append("}")
+
+	lines.append("")
+	lines.append("pub fn required_payload_fields(command: &CommandName) -> &'static [&'static str] {")
+	lines.append("    match command {")
+	for cmd in spec["commands"]:
+		fields = cmd.get("required_payload_fields", ())
+		field_values = ", ".join(f'"{field}"' for field in fields)
+		lines.append(f"        CommandName::{cmd['rust']} => &[{field_values}],")
+	lines.append("    }")
+	lines.append("}")
+
+	lines.append("")
+	lines.append("pub fn required_payload_types(command: &CommandName) -> &'static [(&'static str, &'static str)] {")
+	lines.append("    match command {")
+	for cmd in spec["commands"]:
+		types = cmd.get("required_payload_types", {})
+		pairs = ", ".join(f'("{field}", "{type_name}")' for field, type_name in types.items())
+		lines.append(f"        CommandName::{cmd['rust']} => &[{pairs}],")
 	lines.append("    }")
 	lines.append("}")
 
@@ -205,6 +227,22 @@ def _generate_typescript(spec: dict[str, Any]) -> str:
 	chat_cmds = [c for c in spec["commands"] if c.get("chat")]
 	chat_names = [f'"{c["id"]}"' for c in chat_cmds]
 	lines.append(f"export const CHAT_COMMANDS = new Set<CommandName>([{', '.join(chat_names)}]);")
+	lines.append("")
+	lines.append("export const COMMAND_REQUIRED_FIELDS: Record<CommandName, readonly string[]> = {")
+	for cmd in spec["commands"]:
+		fields = cmd.get("required_payload_fields", ())
+		field_values = ", ".join(f'"{field}"' for field in fields)
+		lines.append(f'\t"{cmd["id"]}": [{field_values}],')
+	lines.append("};")
+	lines.append("")
+	lines.append("export type PayloadFieldType = 'string' | 'integer' | 'boolean' | 'array' | 'object' | 'json';")
+	lines.append("")
+	lines.append("export const COMMAND_REQUIRED_FIELD_TYPES: Record<CommandName, Readonly<Record<string, PayloadFieldType>>> = {")
+	for cmd in spec["commands"]:
+		types = cmd.get("required_payload_types", {})
+		entries = ", ".join(f'"{field}": "{type_name}"' for field, type_name in types.items())
+		lines.append(f'\t"{cmd["id"]}": {{{entries}}},')
+	lines.append("};")
 	lines.append("")
 
 	return "\n".join(lines)

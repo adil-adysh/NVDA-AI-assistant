@@ -6,11 +6,15 @@
 
 // Re-export canonical command/event names from the generated spec.
 export type { CommandName, EventName } from './protocol-commands';
-export { CHAT_COMMANDS } from './protocol-commands';
+export { CHAT_COMMANDS, COMMAND_REQUIRED_FIELDS } from './protocol-commands';
 
 // ---------------------------------------------------------------------------
 // Common / shared
 // ---------------------------------------------------------------------------
+
+export interface PayloadObject {
+	[key: string]: unknown;
+}
 
 export interface ProtocolEnvelope {
 	schema: string;
@@ -160,7 +164,7 @@ export interface Attachment {
 // Command payloads
 // ---------------------------------------------------------------------------
 
-export interface RenderDisplayPayload {
+export interface RenderDisplayPayload extends PayloadObject {
 	use_case_id?: string | null;
 	title?: string;
 	success?: boolean;
@@ -180,7 +184,7 @@ export interface RenderDisplayPayload {
 	metadata?: PresentationMetadata;
 }
 
-export interface OpenChatPayload {
+export interface OpenChatPayload extends PayloadObject {
 	conversation_id?: string | null;
 	initial_text?: string;
 	initial_image_base64?: string;
@@ -188,19 +192,19 @@ export interface OpenChatPayload {
 	metadata?: PresentationMetadata;
 }
 
-export interface SyncSessionPayload {
+export interface SyncSessionPayload extends PayloadObject {
 	conversation_id?: string | null;
 	metadata?: PresentationMetadata;
 }
 
-export interface ChatSetHistoryPayload {
+export interface ChatSetHistoryPayload extends PayloadObject {
 	conversation_id?: string;
 	command_id?: string;
 	messages: ChatMessage[];
 	metadata?: PresentationMetadata;
 }
 
-export interface ChatAppendPayload {
+export interface ChatAppendPayload extends PayloadObject {
 	conversation_id?: string;
 	command_id?: string;
 	message?: ChatMessage;
@@ -208,15 +212,16 @@ export interface ChatAppendPayload {
 	metadata?: PresentationMetadata;
 }
 
-export interface ChatUpdatePayload {
+export interface ChatUpdatePayload extends PayloadObject {
 	conversation_id?: string;
 	command_id?: string;
 	message_id: string;
+	content?: ContentBlock[] | string;
 	message?: Partial<ChatMessage>;
 	metadata?: PresentationMetadata;
 }
 
-export interface ChatStreamBeginPayload {
+export interface ChatStreamBeginPayload extends PayloadObject {
 	message_id: string;
 	id?: string;
 	stream_id: string;
@@ -227,7 +232,7 @@ export interface ChatStreamBeginPayload {
 	metadata?: PresentationMetadata;
 }
 
-export interface ChatStreamDeltaPayload {
+export interface ChatStreamDeltaPayload extends PayloadObject {
 	message_id: string;
 	id?: string;
 	stream_id: string;
@@ -238,7 +243,7 @@ export interface ChatStreamDeltaPayload {
 	metadata?: PresentationMetadata;
 }
 
-export interface ChatStreamEndPayload {
+export interface ChatStreamEndPayload extends PayloadObject {
 	message_id: string;
 	id?: string;
 	stream_id: string;
@@ -249,7 +254,7 @@ export interface ChatStreamEndPayload {
 	metadata?: PresentationMetadata;
 }
 
-export interface ChatStreamAbortPayload {
+export interface ChatStreamAbortPayload extends PayloadObject {
 	message_id: string;
 	id?: string;
 	stream_id: string;
@@ -259,19 +264,21 @@ export interface ChatStreamAbortPayload {
 	metadata?: PresentationMetadata;
 }
 
-export interface ShowErrorPayload {
+export interface ShowErrorPayload extends PayloadObject {
 	title?: string;
-	message: string;
+	error_message: string;
+	details?: string;
+	message?: string;
 	metadata?: PresentationMetadata;
 }
 
-export interface UpdateProgressPayload {
+export interface UpdateProgressPayload extends PayloadObject {
 	title?: string;
 	message: string;
 	progress?: number;
 	metadata?: PresentationMetadata;
 }
 
-export interface CloseWindowPayload {
+export interface CloseWindowPayload extends PayloadObject {
 	metadata?: PresentationMetadata;
 }

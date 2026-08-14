@@ -11,6 +11,8 @@ from typing import Any
 from .host_protocol import HostEvent
 
 logger = logging.getLogger(__name__)
+MAX_FRAME_BYTES = 4 * 1024 * 1024
+READ_CHUNK_BYTES = 4096
 
 
 class HostPipeTransport:
@@ -47,7 +49,7 @@ class HostPipeTransport:
 	def send_and_receive(self, message: bytes) -> bytes:
 		request_id = self._extract_request_id(message)
 		if not request_id:
-			raise ValueError("Message must include an id or request_id for correlation")
+			raise ValueError("Message must include a non-empty id for correlation")
 
 		import win32file
 		import win32pipe
@@ -57,7 +59,7 @@ class HostPipeTransport:
 			logger.debug("HostPipeTransport sending request_id=%s payload_len=%s", request_id, len(message))
 			win32file.WriteFile(handle, message)
 			logger.debug("HostPipeTransport wrote %d bytes for request_id=%s", len(message), request_id)
-			response = self._read_response(handle, win32file)
+			response = self._read_response(handle, win32file, win32pipe)
 			logger.debug("HostPipeTransport received %d response bytes for request_id=%s", len(response), request_id)
 			return response
 		finally:
@@ -114,7 +116,7 @@ class HostPipeTransport:
 
 			try:
 				while not self._stop_event.is_set():
-					payload = self._read_line(handle, win32file, timeout_seconds=None)
+					payload = self._read_line(handle, win32file, win32pipe, timeout_seconds=None)
 					if not payload:
 						break
 					self._dispatch_event(payload)
@@ -141,15 +143,26 @@ class HostPipeTransport:
 		except Exception:
 			logger.exception("HostPipeTransport event callback failed")
 
-	def _read_response(self, handle: Any, win32file_module: Any) -> bytes:
-		return self._read_line(handle, win32file_module, timeout_seconds=5.0)
+	def _read_response(self, handle: Any, win32file_module: Any, win32pipe_module: Any) -> bytes:
+		return self._read_line(handle, win32file_module, win32pipe_module, timeout_seconds=5.0)
 
-	def _read_line(self, handle: Any, win32file_module: Any, timeout_seconds: float | None) -> bytes:
+	def _read_line(
+		self,
+		handle: Any,
+		win32file_module: Any,
+		win32pipe_module: Any | None,
+		timeout_seconds: float | None,
+	) -> bytes:
 		deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
 		buffer = b""
 		while deadline is None or time.monotonic() < deadline:
+			available = self._peek_available_bytes(handle, win32pipe_module)
+			if available == 0:
+				time.sleep(0.01)
+				continue
 			try:
-				_, chunk = win32file_module.ReadFile(handle, 4096)
+				read_size = min(READ_CHUNK_BYTES, available) if available else READ_CHUNK_BYTES
+				_, chunk = win32file_module.ReadFile(handle, read_size)
 			except Exception as error:
 				if self._is_pipe_closed_error(error):
 					raise RuntimeError("Host pipe closed before a response was received") from error
@@ -159,6 +172,10 @@ class HostPipeTransport:
 				raise RuntimeError("Host pipe returned an empty response")
 
 			buffer += chunk
+			if len(buffer) > MAX_FRAME_BYTES:
+				raise RuntimeError(
+					f"Host pipe frame exceeds the maximum size of {MAX_FRAME_BYTES} bytes"
+				)
 			if b"\n" in buffer:
 				line, _ = buffer.split(b"\n", 1)
 				return line
@@ -166,11 +183,21 @@ class HostPipeTransport:
 		timeout_label = "without timeout" if timeout_seconds is None else f"after {timeout_seconds} seconds"
 		raise TimeoutError(f"Timed out waiting for host response on pipe {self._pipe_name} {timeout_label}")
 
+	def _peek_available_bytes(self, handle: Any, win32pipe_module: Any | None) -> int | None:
+		if win32pipe_module is None or not hasattr(win32pipe_module, "PeekNamedPipe"):
+			return None
+		try:
+			_, bytes_available, _ = win32pipe_module.PeekNamedPipe(handle, 0)
+			return int(bytes_available)
+		except Exception as error:
+			logger.debug("HostPipeTransport could not inspect pipe availability: %s", error)
+			return None
+
 	def _extract_request_id(self, message: bytes) -> str | None:
 		try:
 			payload = json.loads(message.decode("utf-8", errors="replace"))
 			if isinstance(payload, dict):
-				return payload.get("id") or payload.get("request_id")
+				return payload.get("id")
 		except Exception:
 			return None
 		return None

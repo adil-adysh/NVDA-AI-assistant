@@ -2,13 +2,25 @@ import { addInitialImageAttachment } from './attachments';
 import { renderDisplay } from './commands/render-display';
 import { openChat } from './commands/open-chat';
 import { syncSession } from './commands/sync-session';
-import { setChatHistory, appendChatMessage } from './commands/chat-history';
+import { setChatHistory, appendChatMessage, updateChatMessage } from './commands/chat-history';
 import { beginChatStream, applyChatStreamDelta, endChatStream, abortChatStream } from './commands/chat-streaming';
 import { showError, updateProgress, closeWindow } from './commands/error-progress-close';
 import { reportUiFailure } from './commands/_shared';
 import { updateControlState } from './operations/control-ops';
 import { emitUiEvent } from './commands/_events';
-import type { CommandName, EventName } from './protocol-commands';
+import { COMMAND_REQUIRED_FIELDS, COMMAND_REQUIRED_FIELD_TYPES } from './protocol-commands';
+import type {
+	ChatSetHistoryPayload,
+	ChatAppendPayload,
+	ChatUpdatePayload,
+	ChatStreamBeginPayload,
+	ChatStreamDeltaPayload,
+	ChatStreamEndPayload,
+	ChatStreamAbortPayload,
+	ShowErrorPayload,
+	UpdateProgressPayload,
+} from './protocol-types';
+import type { CommandName, EventName, PayloadFieldType } from './protocol-commands';
 import {
 	appState,
 	mergeLocalizedStrings,
@@ -20,21 +32,27 @@ import {
 // Command dispatch table — add new commands here
 // ---------------------------------------------------------------------------
 
-type CommandHandler = (commandId: string, payload: Record<string, unknown>) => void;
+type CommandHandler = (commandId: string, payload: unknown) => void;
+
+function adaptHandler<T>(handler: (commandId: string, payload: T) => void): CommandHandler {
+	return (commandId, payload) => handler(commandId, payload as T);
+}
 
 const COMMANDS: Record<CommandName, CommandHandler> = {
-	render_display: renderDisplay as CommandHandler,
-	open_chat: openChat as CommandHandler,
-	sync_session: syncSession as CommandHandler,
-	chat_set_history: setChatHistory as CommandHandler,
-	chat_append: appendChatMessage as CommandHandler,
-	chat_stream_begin: beginChatStream as CommandHandler,
-	chat_stream_delta: applyChatStreamDelta as CommandHandler,
-	chat_stream_end: endChatStream as CommandHandler,
-	chat_stream_abort: abortChatStream as CommandHandler,
-	show_error: showError as CommandHandler,
-	update_progress: updateProgress as CommandHandler,
-	close_window: closeWindow as CommandHandler,
+	health_check: () => {},
+	render_display: adaptHandler(renderDisplay),
+	open_chat: adaptHandler(openChat),
+	sync_session: adaptHandler(syncSession),
+	chat_set_history: adaptHandler<ChatSetHistoryPayload>(setChatHistory),
+	chat_append: adaptHandler<ChatAppendPayload>(appendChatMessage),
+	chat_update: adaptHandler<ChatUpdatePayload>(updateChatMessage),
+	chat_stream_begin: adaptHandler<ChatStreamBeginPayload>(beginChatStream),
+	chat_stream_delta: adaptHandler<ChatStreamDeltaPayload>(applyChatStreamDelta),
+	chat_stream_end: adaptHandler<ChatStreamEndPayload>(endChatStream),
+	chat_stream_abort: adaptHandler<ChatStreamAbortPayload>(abortChatStream),
+	show_error: adaptHandler<ShowErrorPayload>(showError),
+	update_progress: adaptHandler<UpdateProgressPayload>(updateProgress),
+	close_window: () => {},
 };
 
 // Commands that should clear the status before executing
@@ -67,6 +85,23 @@ function ensureSendHostEvent(): boolean {
 	return typeof (window as any).__sendHostEvent === 'function';
 }
 
+function matchesPayloadFieldType(value: unknown, expectedType: PayloadFieldType): boolean {
+	switch (expectedType) {
+		case 'string':
+			return typeof value === 'string';
+		case 'integer':
+			return typeof value === 'number' && Number.isInteger(value);
+		case 'boolean':
+			return typeof value === 'boolean';
+		case 'array':
+			return Array.isArray(value);
+		case 'object':
+			return value !== null && typeof value === 'object' && !Array.isArray(value);
+		case 'json':
+			return true;
+	}
+}
+
 function handleInboundCommand(envelope: Record<string, unknown>): void {
 	const schema = envelope.schema;
 	const version = envelope.version;
@@ -93,7 +128,39 @@ function handleInboundCommand(envelope: Record<string, unknown>): void {
 
 	const commandId = (envelope.id as string) || '';
 	const commandName = command.name as string;
-	const payload = (command.payload || {}) as Record<string, unknown>;
+	const rawPayload = command.payload;
+	const payload = (
+		rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload) ? rawPayload : {}
+	) as Record<string, unknown>;
+	const requiredFields = COMMAND_REQUIRED_FIELDS[commandName as CommandName];
+	if (!requiredFields) {
+		const reason = `Unknown command: ${commandName}`;
+		console.warn(reason);
+		setStatus(t('unknown_command_status', reason), true);
+		reportUiFailure(commandId, reason);
+		return;
+	}
+	const missingFields = requiredFields.filter((field) => !(field in payload));
+	if (missingFields.length > 0) {
+		const reason = `Command ${commandName} is missing required fields: ${missingFields.join(', ')}`;
+		console.warn(reason);
+		setStatus(reason, true);
+		reportUiFailure(commandId, reason);
+		return;
+	}
+	const requiredTypes = COMMAND_REQUIRED_FIELD_TYPES[commandName as CommandName];
+	const invalidTypes = Object.entries(requiredTypes).filter(
+		([field, expectedType]) => !matchesPayloadFieldType(payload[field], expectedType),
+	);
+	if (invalidTypes.length > 0) {
+		const reason = `Command ${commandName} has invalid field types: ${invalidTypes
+			.map(([field, expectedType]) => `${field} (expected ${expectedType})`)
+			.join(', ')}`;
+		console.warn(reason);
+		setStatus(reason, true);
+		reportUiFailure(commandId, reason);
+		return;
+	}
 
 	// Merge localized strings
 	const localizedStrings = payload?.localized_strings || (payload?.metadata as Record<string, unknown>)?.localized_strings;
@@ -105,19 +172,19 @@ function handleInboundCommand(envelope: Record<string, unknown>): void {
 	appState.currentCommandId = commandId;
 
 	// Clear status for certain commands
-	if (CLEAR_STATUS_COMMANDS.has(commandName)) {
+	if (CLEAR_STATUS_COMMANDS.has(commandName as CommandName)) {
 		setStatus('');
 	}
 
 	// Apply control state (providers, models, think mode, etc.) from payload.
 	// Only control-carrying commands trigger extraction — avoids wasted work
 	// and noisy logs on content-only commands like chat_stream_delta.
-	if (CONTROL_COMMANDS.has(commandName)) {
+	if (CONTROL_COMMANDS.has(commandName as CommandName)) {
 		updateControlState(payload);
 	}
 	console.log(`[bridge] ${commandName} applied control: providers=${appState.control.availableProviders.length} models=${appState.control.availableModels.length} sel=${appState.control.selectedProvider}/${appState.control.selectedModel}`);
 
-	const handler = COMMANDS[commandName];
+	const handler = COMMANDS[commandName as CommandName];
 	if (handler) {
 		try {
 			handler(commandId, payload);

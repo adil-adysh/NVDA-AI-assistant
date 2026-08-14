@@ -80,46 +80,10 @@ impl UiCommand {
         }
     }
 
-    pub fn as_legacy_action(&self) -> &'static str {
-        match self {
-            UiCommand::HealthCheck => "health_check",
-            UiCommand::RenderDisplay(_) => "display_result",
-            UiCommand::OpenChat(_) => "open_chat",
-            UiCommand::SyncSession(_) => "sync_session",
-            UiCommand::ChatSetHistory(_) => "chat_set_history",
-            UiCommand::ChatAppend(_) => "chat_append",
-            UiCommand::ChatUpdate(_) => "chat_update",
-            UiCommand::ChatStreamBegin(_) => "chat_stream_begin",
-            UiCommand::ChatStreamDelta(_) => "chat_stream_delta",
-            UiCommand::ChatStreamEnd(_) => "chat_stream_end",
-            UiCommand::ChatStreamAbort(_) => "chat_stream_abort",
-            UiCommand::ShowError(_) => "show_error",
-            UiCommand::UpdateProgress(_) => "progress_update",
-            UiCommand::CloseWindow(_) => "close_window",
-        }
-    }
-
     pub fn payload(&self) -> Value {
         match self {
             UiCommand::HealthCheck => Value::Object(Default::default()),
             UiCommand::RenderDisplay(payload) | UiCommand::OpenChat(payload) | UiCommand::SyncSession(payload) | UiCommand::ChatSetHistory(payload) | UiCommand::ChatAppend(payload) | UiCommand::ChatUpdate(payload) | UiCommand::ChatStreamBegin(payload) | UiCommand::ChatStreamDelta(payload) | UiCommand::ChatStreamEnd(payload) | UiCommand::ChatStreamAbort(payload) | UiCommand::ShowError(payload) | UiCommand::UpdateProgress(payload) | UiCommand::CloseWindow(payload) => payload.clone(),
-        }
-    }
-
-    pub(crate) fn from_legacy_action(action: &str, payload: Value) -> Result<Self, crate::protocol::ProtocolError> {
-        match action {
-            "health_check" => Ok(UiCommand::HealthCheck),
-            "display_result" => Ok(UiCommand::RenderDisplay(payload)),
-            "open_chat" => Ok(UiCommand::OpenChat(payload)),
-            "sync_session" => Ok(UiCommand::SyncSession(payload)),
-            "show_error" => Ok(UiCommand::ShowError(payload)),
-            "progress_update" => Ok(UiCommand::UpdateProgress(payload)),
-            "close_window" => Ok(UiCommand::CloseWindow(payload)),
-            _ => Err(crate::protocol::ProtocolError::new(
-                crate::protocol::ProtocolErrorKind::UnsupportedCommand,
-                None,
-                format!("Unsupported action: {action}"),
-            )),
         }
     }
 
@@ -140,5 +104,43 @@ impl UiCommand {
             CommandName::UpdateProgress => UiCommand::UpdateProgress(payload),
             CommandName::CloseWindow => UiCommand::CloseWindow(payload),
         }
+    }
+}
+
+pub fn required_payload_fields(command: &CommandName) -> &'static [&'static str] {
+    match command {
+        CommandName::HealthCheck => &[],
+        CommandName::RenderDisplay => &["title"],
+        CommandName::OpenChat => &["title"],
+        CommandName::SyncSession => &[],
+        CommandName::ChatSetHistory => &["conversation_id", "messages"],
+        CommandName::ChatAppend => &["conversation_id", "message"],
+        CommandName::ChatUpdate => &["conversation_id", "message_id", "content"],
+        CommandName::ChatStreamBegin => &["message_id", "stream_id"],
+        CommandName::ChatStreamDelta => &["message_id", "stream_id", "delta", "sequence"],
+        CommandName::ChatStreamEnd => &["message_id", "stream_id", "final_sequence", "content"],
+        CommandName::ChatStreamAbort => &["message_id", "stream_id", "last_sequence"],
+        CommandName::ShowError => &["error_message"],
+        CommandName::UpdateProgress => &["stage", "message"],
+        CommandName::CloseWindow => &[],
+    }
+}
+
+pub fn required_payload_types(command: &CommandName) -> &'static [(&'static str, &'static str)] {
+    match command {
+        CommandName::HealthCheck => &[],
+        CommandName::RenderDisplay => &[("title", "string")],
+        CommandName::OpenChat => &[("title", "string")],
+        CommandName::SyncSession => &[],
+        CommandName::ChatSetHistory => &[("conversation_id", "string"), ("messages", "array")],
+        CommandName::ChatAppend => &[("conversation_id", "string"), ("message", "object")],
+        CommandName::ChatUpdate => &[("conversation_id", "string"), ("message_id", "string"), ("content", "json")],
+        CommandName::ChatStreamBegin => &[("message_id", "string"), ("stream_id", "string")],
+        CommandName::ChatStreamDelta => &[("message_id", "string"), ("stream_id", "string"), ("delta", "string"), ("sequence", "integer")],
+        CommandName::ChatStreamEnd => &[("message_id", "string"), ("stream_id", "string"), ("final_sequence", "integer"), ("content", "json")],
+        CommandName::ChatStreamAbort => &[("message_id", "string"), ("stream_id", "string"), ("last_sequence", "integer")],
+        CommandName::ShowError => &[("error_message", "string")],
+        CommandName::UpdateProgress => &[("stage", "string"), ("message", "string")],
+        CommandName::CloseWindow => &[],
     }
 }

@@ -64,6 +64,7 @@ export const appState = $state({
 		transcript: new Transcript(),
 		attachments: [] as { id: string; name?: string; kind?: string; image_base64?: string; mime_type?: string }[],
 		composerText: '',
+		processing: false,
 	},
 
 	display: {

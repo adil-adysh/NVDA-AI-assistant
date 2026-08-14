@@ -56,6 +56,59 @@ def message(text: str) -> None:
 	ui.message(text)
 
 
+def queue_speech_then(
+	text: str,
+	on_complete: Callable[[], None],
+) -> None:
+	"""Speak *text* and invoke ``on_complete`` after NVDA finishes it.
+
+	The callback is deliberately attached to the speech sequence rather than
+	queued as a separate event.  NVDA cancels speech when focus moves into a
+	new browse-mode document, so a UI operation that must take focus belongs
+	after the response's final speech callback.
+
+	When speech is disabled, beeps-only, or on-demand, there is no guaranteed
+	speech completion callback.  In those modes the caller must still be able
+	to present its result, so complete immediately.
+	"""
+	try:
+		import speech
+		from speech.commands import CallbackCommand
+		from speech.extensions import pre_speechCanceled
+
+		state = speech.getState()
+		if state is None or state.speechMode != speech.SpeechMode.talk:
+			on_complete()
+			return
+
+		completed = False
+
+		def complete_once() -> None:
+			nonlocal completed
+			if completed:
+				return
+			completed = True
+			pre_speechCanceled.unregister(complete_once)
+			on_complete()
+
+		# If the user cancels speech, NVDA removes CallbackCommand instances
+		# from the pending sequence. Complete the UI transition anyway; the
+		# result must not disappear merely because speech was stopped.
+		pre_speechCanceled.register(complete_once)
+
+		speech.speak(
+			[
+				text,
+				CallbackCommand(complete_once, name="AI Assistant: render one-shot result"),
+			]
+		)
+	except Exception:
+		from logHandler import log
+
+		log.exception("Unable to attach one-shot result completion to NVDA speech")
+		on_complete()
+
+
 def format_browseable_title(title: str, provider_state: ProviderState | None = None) -> str:
 	"""Return a title string that includes the current provider and model name."""
 	if provider_state is None:
