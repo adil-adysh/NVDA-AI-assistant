@@ -292,6 +292,24 @@ class LiteRTEngineDefaultTests(unittest.TestCase):
 		self.assertEqual(settings_module.get_litert_backend(), "")
 		self.assertEqual(settings_module.get_litert_cache(), "")
 
+	def test_start_on_startup_defaults_to_enabled(self) -> None:
+		self.assertTrue(settings_module.get_litert_start_on_startup())
+
+	def test_start_on_startup_round_trips(self) -> None:
+		settings_module.set_litert_start_on_startup(False)
+		self.assertFalse(settings_module.get_litert_start_on_startup())
+		settings_module.set_litert_start_on_startup(True)
+		self.assertTrue(settings_module.get_litert_start_on_startup())
+
+	def test_llama_start_on_startup_defaults_to_enabled(self) -> None:
+		self.assertTrue(settings_module.get_llama_start_on_startup())
+
+	def test_llama_start_on_startup_round_trips(self) -> None:
+		settings_module.set_llama_start_on_startup(False)
+		self.assertFalse(settings_module.get_llama_start_on_startup())
+		settings_module.set_llama_start_on_startup(True)
+		self.assertTrue(settings_module.get_llama_start_on_startup())
+
 	def test_getters_accept_full_value_domains(self) -> None:
 		store = settings_module._config_store  # pylint: disable=protected-access
 		store.data["litertBackend"] = "npu"

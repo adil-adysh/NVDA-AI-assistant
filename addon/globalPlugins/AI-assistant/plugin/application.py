@@ -12,7 +12,13 @@ import gui
 from logHandler import log
 
 from ..config.state import ProviderState, subscribe_provider_state_change, unsubscribe_provider_state_change
-from ..config.settings import get_enabled_providers, get_provider, get_provider_state
+from ..config.settings import (
+	get_enabled_providers,
+	get_llama_start_on_startup,
+	get_litert_start_on_startup,
+	get_provider,
+	get_provider_state,
+)
 from ..context.extractors.selection import safe_extract_selection
 from ..service import get_provider_display_name, provider_control_service
 from ..service.model_cache import model_catalog_cache
@@ -113,6 +119,12 @@ class AIAssistantApplication:
 		try:
 			provider = get_provider()
 			if provider not in {"litert-lm", "llama-cpp-server"}:
+				return
+			if provider == "litert-lm" and not get_litert_start_on_startup():
+				log.debug("LiteRT-LM startup is disabled in settings")
+				return
+			if provider == "llama-cpp-server" and not get_llama_start_on_startup():
+				log.debug("llama-server startup is disabled in settings")
 				return
 			if provider == "litert-lm":
 				from ..providers.runtime.server import get_litert_supervisor

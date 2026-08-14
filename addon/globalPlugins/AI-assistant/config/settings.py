@@ -323,6 +323,20 @@ def get_litert_cpu_threads() -> int:
 	)
 
 
+def get_litert_start_on_startup() -> bool:
+	"""Return whether the active LiteRT-LM server starts with the add-on."""
+	return _read_bool(
+		"litertStartOnStartup", defaults.DEFAULT_LITERT_START_ON_STARTUP
+	)
+
+
+def get_llama_start_on_startup() -> bool:
+	"""Return whether the active llama-server starts with the add-on."""
+	return _read_bool(
+		"llamaStartOnStartup", defaults.DEFAULT_LLAMA_START_ON_STARTUP
+	)
+
+
 def _get_openai_endpoint_paths(provider: str) -> tuple[str, str]:
 	"""Return the OpenAI-compatible endpoint paths for *provider*."""
 	spec = get_provider_config_spec(provider)
@@ -598,6 +612,16 @@ def set_litert_cache(cache: str) -> None:
 def set_litert_cpu_threads(threads: int) -> None:
 	_set_value("litertCpuThreads", int(threads), notify=True)
 	_notify_litert_server_config_changed()
+
+
+def set_litert_start_on_startup(enabled: bool) -> None:
+	"""Persist whether the active LiteRT-LM server starts with the add-on."""
+	_set_value("litertStartOnStartup", bool(enabled))
+
+
+def set_llama_start_on_startup(enabled: bool) -> None:
+	"""Persist whether the active llama-server starts with the add-on."""
+	_set_value("llamaStartOnStartup", bool(enabled))
 
 
 def get_think(provider_id: str) -> bool:

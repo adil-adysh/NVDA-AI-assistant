@@ -46,10 +46,14 @@ DEFAULT_LITERT_THINK = False
 DEFAULT_LITERT_BACKEND = ""
 DEFAULT_LITERT_CACHE = ""
 DEFAULT_LITERT_CPU_THREADS = 0
+# Start the active LiteRT-LM server in the background during add-on startup.
+DEFAULT_LITERT_START_ON_STARTUP = True
 
 DEFAULT_LLAMA_CPP_MODEL = ""
 DEFAULT_LLAMA_CPP_URL = "http://127.0.0.1:8080"
 DEFAULT_LLAMA_CPP_EXECUTABLE = "llama-server"
+# Start the active llama-server in the background during add-on startup.
+DEFAULT_LLAMA_START_ON_STARTUP = True
 
 DEFAULT_ENABLED_PROVIDERS = ["ollama", "gemini", "openai", "litert-lm"]
 

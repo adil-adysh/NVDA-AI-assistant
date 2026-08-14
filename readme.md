@@ -135,7 +135,7 @@ LiteRT-LM is a self-contained local inference runtime. The add-on downloads it o
 * choose CPU, GPU, or Intel NPU-accelerated variants
 * download or delete models from the model manager
 * supports vision, thinking, and multi-token-prediction models
-* the local server starts automatically and applies engine settings on restart
+* the local server starts automatically by default and applies engine settings on restart; LiteRT-LM startup can be disabled in the Advanced settings
 
 Recommended LiteRT-LM models include Gemma 4 E2B/E4B and Qwen3 1.7B/4B/8B.
 
@@ -143,7 +143,7 @@ Recommended LiteRT-LM models include Gemma 4 E2B/E4B and Qwen3 1.7B/4B/8B.
 
 ## llama.cpp server (local inference)
 
-The addon integrates with `llama-server` in router mode. It starts the server with a models preset and keeps one server process alive while model selection is sent in each OpenAI-compatible request.
+The addon integrates with `llama-server` in router mode. It starts the server with a models preset and keeps one server process alive while model selection is sent in each OpenAI-compatible request. Startup can be disabled in the Advanced settings.
 
 Install llama.cpp and ensure `llama-server` is available on `PATH`, or set **llama-server executable** in the provider configuration. Configure the server endpoint, for example:
 
@@ -349,8 +349,8 @@ Download these from the model manager (Hugging Face). CPU and GPU/NPU variants a
 
 * Verify provider configuration if requests fail.
 * Ensure Ollama is running for local inference.
-* For LiteRT-LM, install the runtime and download a model from **Manage AI Providers** before use; the local server starts automatically.
-* For llama.cpp, verify `llama-server` is on `PATH` or configure its full executable path, verify the endpoint and preset path, and inspect `GET /models` for the canonical model IDs.
+* For LiteRT-LM, install the runtime and download a model from **Manage AI Providers** before use; the local server starts automatically by default and can be disabled in Advanced settings.
+* For llama.cpp, verify `llama-server` is on `PATH` or configure its full executable path, verify the endpoint and preset path, and inspect `GET /models` for the canonical model IDs. Its startup option is also available in Advanced settings.
 * Download required models before use.
 
 ---

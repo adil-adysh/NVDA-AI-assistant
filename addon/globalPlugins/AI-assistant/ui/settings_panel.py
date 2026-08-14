@@ -23,6 +23,8 @@ from ..config.settings import (
 	get_image_max_side,
 	get_image_quality,
 	get_language,
+	get_llama_start_on_startup,
+	get_litert_start_on_startup,
 	get_num_ctx,
 	get_progress_enabled,
 	get_provider,
@@ -42,6 +44,8 @@ from ..config.settings import (
 	set_image_max_side,
 	set_image_quality,
 	set_language,
+	set_llama_start_on_startup,
+	set_litert_start_on_startup,
 	set_model_name,
 	set_num_ctx,
 	set_progress_enabled,
@@ -303,6 +307,16 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 				else defaults.DEFAULT_TIMEOUT_SECONDS
 			),
 		)
+		# TRANSLATORS: Checkbox controlling LiteRT-LM startup behavior.
+		self.litertStartOnStartupCheckbox = group_helper.addItem(
+			wx.CheckBox(self, label=_("Start the LiteRT-LM server when NVDA starts"))
+		)
+		self.litertStartOnStartupCheckbox.Value = get_litert_start_on_startup()
+		# TRANSLATORS: Checkbox controlling llama-server startup behavior.
+		self.llamaStartOnStartupCheckbox = group_helper.addItem(
+			wx.CheckBox(self, label=_("Start the llama-server when NVDA starts"))
+		)
+		self.llamaStartOnStartupCheckbox.Value = get_llama_start_on_startup()
 
 	def _add_labeled_text_ctrl(self, helper, label, initialValue):
 		labelControl = wx.StaticText(self, label=label)
@@ -644,6 +658,8 @@ class AIAssistantSettingsPanel(SettingsPanel):  # pylint: disable=too-many-insta
 		set_streaming_enabled(self.streamingCheckbox.Value)
 		set_streaming_tone_enabled(self.streamingToneCheckbox.Value)
 		set_progress_enabled(self.progressCheckbox.Value)
+		set_litert_start_on_startup(self.litertStartOnStartupCheckbox.Value)
+		set_llama_start_on_startup(self.llamaStartOnStartupCheckbox.Value)
 
 	def _on_provider_choice(self, _event: Any) -> None:
 		self._update_active_ai_state()
