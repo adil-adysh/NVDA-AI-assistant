@@ -10,7 +10,6 @@ from uuid import uuid4
 from logHandler import log
 
 from ..config.settings import get_image_mime_type
-from ..plugin.background import ensure_litert_server_ready
 from ..service.error_presentation import ErrorPresentation, present_error
 from ..service.provider_controls import provider_control_service
 from .host_lifecycle import HostLifecycleService, HostLifecycleState
@@ -31,6 +30,7 @@ class UIAdapter:
 		self._host_renderer.register_host_closed_handler(self._handle_host_closed)
 		self._result_action_handler: Callable[[str, dict[str, Any] | None], None] | None = None
 		self._session_metadata_provider: Callable[[], dict[str, Any]] | None = None
+		self._litert_ready_handler: Callable[[Callable[[str], None] | None], None] | None = None
 		self._pending_session_metadata: dict[str, Any] | None = None
 		self._command_queue: queue.Queue[tuple[Callable[[], None], Callable[[], None]]] = queue.Queue()
 		self._running = True
@@ -42,6 +42,13 @@ class UIAdapter:
 
 	def register_session_metadata_provider(self, provider: Callable[[], dict[str, Any]]) -> None:
 		self._session_metadata_provider = provider
+
+	def register_litert_ready_handler(
+		self,
+		handler: Callable[[Callable[[str], None] | None], None],
+	) -> None:
+		"""Register the application-owned LiteRT readiness use case."""
+		self._litert_ready_handler = handler
 
 	def close(self) -> None:
 		try:
@@ -313,8 +320,10 @@ class UIAdapter:
 		)
 
 		try:
-			ensure_litert_server_ready(
-				on_progress=lambda msg: nvda_ui.queue(nvda_ui.message, msg),
+			if self._litert_ready_handler is None:
+				raise RuntimeError("LiteRT readiness handler is not configured")
+			self._litert_ready_handler(
+				lambda msg: nvda_ui.queue(nvda_ui.message, msg),
 			)
 			response = coordinator.send_message(
 				text=message_text or None,

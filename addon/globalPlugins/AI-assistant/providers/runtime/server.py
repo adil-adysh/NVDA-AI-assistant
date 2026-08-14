@@ -38,8 +38,6 @@ from ..interfaces import LLMProviderError
 if TYPE_CHECKING:
 	from collections.abc import Callable, Mapping
 
-	from ...config.model_config import ModelSamplingConfig
-
 log = logging.getLogger(__name__)
 
 DEFAULT_LITERT_PORT = 9379
@@ -138,7 +136,7 @@ def _build_rename_args(old_id: str, new_id: str) -> list[str]:
 
 def build_server_config(
 	default_num_ctx: int,
-	pinned_models: Mapping[str, "ModelSamplingConfig"],
+	pinned_models: Mapping[str, Any],
 	*,
 	backend: str = "",
 	cache: str = "",
@@ -220,32 +218,13 @@ def build_server_config(
 
 
 def _current_server_config() -> dict[str, Any]:
-	"""Return the server ``config.json`` payload from the add-on settings.
+	"""Return an empty low-level fallback when no app port is configured.
 
-	Every pinned model's sampling config is emitted into the ``models``
-	section (litert-lm resolves per-model config at request time for
-	whichever model a chat request targets), and the global ``num_ctx``
-	becomes ``default.max_num_tokens``.  Server engine knobs (backend,
-	cache, cpu thread count) are read from the LiteRT-specific settings.
-	The config modules are imported lazily so this module stays
-	importable in isolated test environments that do not have NVDA's
-	config stack available.
+	Production code injects the application-owned provider at the
+	composition root.  Keeping this fallback empty prevents a standalone
+	provider-runtime import from reaching into config storage.
 	"""
-	from ...config.model_config import get_all_model_sampling
-	from ...config.settings import (
-		get_litert_backend,
-		get_litert_cache,
-		get_litert_cpu_threads,
-		get_num_ctx,
-	)
-
-	return build_server_config(
-		get_num_ctx(),
-		get_all_model_sampling("litert-lm"),
-		backend=get_litert_backend(),
-		cache=get_litert_cache(),
-		cpu_thread_count=get_litert_cpu_threads(),
-	)
+	return {}
 
 
 def _run_litert_cli(
@@ -312,10 +291,16 @@ class LiteRTServerSupervisor:
 		port: int = DEFAULT_LITERT_PORT,
 		host: str = DEFAULT_LITERT_HOST,
 		version: str = DEFAULT_LITERT_VERSION,
+		config_provider: Callable[[], Mapping[str, Any]] | None = None,
+		endpoint_provider: Callable[[], str] | None = None,
 	) -> None:
 		self._port = port
 		self._host = host
 		self._version = version
+		# Runtime code depends on these ports rather than importing the
+		# application settings module. The composition root wires them in.
+		self._config_provider = config_provider
+		self._endpoint_provider = endpoint_provider
 		self._process: subprocess.Popen[str] | None = None
 		self._adopted = False
 		self._lifecycle_lock = threading.RLock()
@@ -326,6 +311,21 @@ class LiteRTServerSupervisor:
 	# ------------------------------------------------------------------
 	# public API
 	# ------------------------------------------------------------------
+
+	def configure(
+		self,
+		*,
+		config_provider: Callable[[], Mapping[str, Any]] | None = None,
+		endpoint_provider: Callable[[], str] | None = None,
+	) -> None:
+		"""Inject application-owned configuration ports before startup."""
+		with self._lifecycle_lock:
+			if self.is_running or self.is_adopted:
+				raise LiteRTServerError("Cannot reconfigure a running LiteRT server")
+			if config_provider is not None:
+				self._config_provider = config_provider
+			if endpoint_provider is not None:
+				self._endpoint_provider = endpoint_provider
 
 	@property
 	def base_url(self) -> str:
@@ -809,6 +809,10 @@ class LiteRTServerSupervisor:
 			time.sleep(SERVER_READY_POLL_INTERVAL)
 
 		log.warning("LiteRT server did not become ready within %.0fs", timeout)
+		# Do not leave an owned but unhealthy process behind after a failed
+		# readiness contract. The next request can then start cleanly.
+		if self.is_running and not self.is_adopted:
+			self.stop()
 		return False
 
 	def shutdown(self) -> None:
@@ -830,9 +834,7 @@ class LiteRTServerSupervisor:
 		constructor-provided host/port are kept.
 		"""
 		try:
-			from ...config.settings import get_litert_server_url  # pylint: disable=import-outside-toplevel
-
-			url = get_litert_server_url()
+			url = self._endpoint_provider() if self._endpoint_provider is not None else ""
 			parsed = urllib.parse.urlparse(str(url or "").strip())
 			if parsed.hostname and parsed.port:
 				return parsed.hostname, parsed.port
@@ -878,7 +880,11 @@ class LiteRTServerSupervisor:
 		server-relevant settings change (see the config-change event in
 		plugin/background.py).
 		"""
-		config = _current_server_config()
+		config = (
+			dict(self._config_provider())
+			if self._config_provider is not None
+			else _current_server_config()
+		)
 		config_path = self._litert_dir() / "config.json"
 		if not config:
 			try:

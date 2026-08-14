@@ -17,6 +17,7 @@ from ..context.extractors.selection import safe_extract_selection
 from ..service import get_provider_display_name, provider_control_service
 from ..service.model_cache import model_catalog_cache
 from ..ui.host_process import stop_host
+from ..ui.adapter import ui_adapter
 from ..ui.settings_panel import AIAssistantSettingsPanel
 from ..ui import nvda_ui
 from ..ui.session_state import build_provider_status_message
@@ -32,7 +33,7 @@ from ..use_case.types import (
 	SUMMARY,
 	PROOFREAD,
 )
-from .background import BackgroundTaskRunner
+from .background import BackgroundTaskRunner, ensure_litert_server_ready
 from .factory import build_plugin_services
 from .layer_mode import AssistantLayerController
 from .presenter import UseCasePresenter
@@ -60,6 +61,7 @@ class AIAssistantApplication:
 			conversation_service=self._services.conversation_service,
 			tool_registry=self._services.tool_registry,
 		)
+		ui_adapter.register_litert_ready_handler(ensure_litert_server_ready)
 		self.background = BackgroundTaskRunner(
 			llm_service=self._services.llm_service,
 			use_case_engine=self._services.use_case_engine,

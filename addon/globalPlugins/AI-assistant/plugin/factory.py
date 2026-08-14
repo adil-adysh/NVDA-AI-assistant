@@ -15,12 +15,21 @@ from ..context.extractors.manager import ExtractionManager
 from ..context.extractors.focused_text import extract_focused_text
 from ..context.pipeline import ContextPipeline
 from ..context.reduction import ContextReducer, CurrentPageContext
-from ..config.settings import get_embedding_enabled
+from ..config.settings import (
+	get_embedding_enabled,
+	get_litert_backend,
+	get_litert_cache,
+	get_litert_cpu_threads,
+	get_litert_server_url,
+	get_num_ctx,
+)
+from ..config.model_config import get_all_model_sampling
 from ..embeddings import CandleEmbeddingAdapter
 from ..image.services import ImageEncoder, ImagePreprocessor
 from ..observability.reporter import FileMetricsReporter
 from ..ui import nvda_ui
 from ..providers.provider_proxy import ProviderProxy
+from ..providers.runtime.server import build_server_config, get_litert_supervisor
 from ..service.chat import ChatCoordinator, ConversationService, build_default_conversation_repository
 from ..service.llm import ProviderLLMService
 from ..tools import ToolDefinition, ToolExecutor, ToolRegistry
@@ -36,6 +45,18 @@ _ = cast(Callable[[str], str], getattr(builtins, "_", _translate))
 
 
 def build_plugin_services() -> PluginServices:
+	# Wire application configuration into the provider runtime at the
+	# composition root; the supervisor remains independent of config storage.
+	get_litert_supervisor().configure(
+		config_provider=lambda: build_server_config(
+			get_num_ctx(),
+			get_all_model_sampling("litert-lm"),
+			backend=get_litert_backend(),
+			cache=get_litert_cache(),
+			cpu_thread_count=get_litert_cpu_threads(),
+		),
+		endpoint_provider=get_litert_server_url,
+	)
 	provider = ProviderProxy()
 	metrics_reporter = FileMetricsReporter()
 	browser_extractor = BrowserAwarePageExtractor()
@@ -73,6 +94,7 @@ def build_plugin_services() -> PluginServices:
 	llm_service = ProviderLLMService(provider, tool_executor=tool_executor)
 	chat_coordinator = ChatCoordinator(
 		client=llm_service,
+		ui_port=nvda_ui,
 		metrics_reporter=metrics_reporter,
 		repository=build_default_conversation_repository(),
 		page_context_provider=page_context_provider,
