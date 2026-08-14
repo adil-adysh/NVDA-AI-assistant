@@ -32,20 +32,21 @@ Features include:
 * persistent chat conversations
 * page content and screenshot attachment
 * runtime provider and model switching
-* support for Ollama, OpenAI-compatible APIs, Gemini, and LiteRT-LM local inference
+* support for Ollama, OpenAI-compatible APIs, Gemini, LiteRT-LM, and llama.cpp local inference
 * provider enable/disable and per-model sampling settings
 
 The add-on includes a WebView-based chat interface with streaming responses, conversation history, and contextual workflows designed for NVDA users.
 	"""
 	),
 	# version
-	addon_version="0.13.1",
+	addon_version="0.14.0",
 	# Brief changelog for this version
 	# Translators: what's new content for this add-on version to be shown in the add-on store
 	addon_changelog=_(
 		"""
 New Features
 • LiteRT-LM local inference provider with on-demand runtime install and one-click model download
+• llama.cpp server integration with router presets, automatic startup, and API-backed model discovery
 • Manage AI Providers dialog with provider enable/disable, install, and active-provider selection
 • Per-model sampling settings (context window, temperature, top-k, top-p, max tokens, repetition penalty)
 • Digit-based provider and model selection in the assistant layer (press T or M, then a number)
@@ -53,6 +54,7 @@ New Features
 • Soft-dismiss chat window — Escape hides the window while streaming continues in the background
 Improved
 • Faster model listing with background preloading and caching
+• Healthy llama-server routers switch models without restarting
 Fixed
 • WebView focus handling, preventing NVDA from reading the pane role on programmatic activation
 		"""
