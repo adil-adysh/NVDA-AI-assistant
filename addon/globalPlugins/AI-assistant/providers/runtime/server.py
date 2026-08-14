@@ -24,7 +24,6 @@ import os
 import subprocess
 import sys
 import threading
-import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -32,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from .config import RuntimeConfig
 from .download import DownloadCancelledError, RuntimeDownloadService
+from .lifecycle import wait_for_server_ready
 from .paths import get_runtime_path
 from ..interfaces import LLMProviderError
 
@@ -795,25 +795,26 @@ class LiteRTServerSupervisor:
 		Returns:
 		    ``True`` if the server became ready, ``False`` on timeout.
 		"""
-		deadline = time.monotonic() + timeout
-		while time.monotonic() < deadline:
-			if not self.is_running and not self.is_adopted:
-				raise LiteRTServerError(
-					"LiteRT server process exited unexpectedly. Check the server logs for details."
-				)
-			if self.is_healthy(timeout=2.0):
+		try:
+			ready = wait_for_server_ready(
+				is_running=lambda: self.is_running,
+				is_adopted=lambda: self.is_adopted,
+				is_healthy=self.is_healthy,
+				stop=self.stop,
+				timeout=timeout,
+				interval=SERVER_READY_POLL_INTERVAL,
+				on_progress=lambda message: self._report(on_progress, message),
+				progress_message="Waiting for LiteRT-LM server to be ready...",
+				exit_message="LiteRT server process exited unexpectedly. Check the server logs for details.",
+				log_timeout=lambda value: log.warning(
+					"LiteRT server did not become ready within %.0fs", value
+				),
+			)
+			if ready:
 				log.info("LiteRT server is ready at %s", self.base_url)
-				return True
-
-			self._report(on_progress, "Waiting for LiteRT-LM server to be ready...")
-			time.sleep(SERVER_READY_POLL_INTERVAL)
-
-		log.warning("LiteRT server did not become ready within %.0fs", timeout)
-		# Do not leave an owned but unhealthy process behind after a failed
-		# readiness contract. The next request can then start cleanly.
-		if self.is_running and not self.is_adopted:
-			self.stop()
-		return False
+			return ready
+		except RuntimeError as exc:
+			raise LiteRTServerError(str(exc)) from exc
 
 	def shutdown(self) -> None:
 		"""Stop the server and clean up. Safe to call multiple times."""

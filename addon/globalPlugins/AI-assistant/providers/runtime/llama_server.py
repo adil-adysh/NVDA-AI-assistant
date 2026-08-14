@@ -14,13 +14,13 @@ import os
 import shutil
 import subprocess
 import threading
-import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Callable
 
 from ..interfaces import LLMProviderError
+from .lifecycle import wait_for_server_ready
 
 log = logging.getLogger(__name__)
 
@@ -39,10 +39,11 @@ def _creation_flags() -> int:
 
 
 def build_llama_server_args(
-	model: str,
+	model: str | None = None,
 	*,
 	host: str = DEFAULT_LLAMA_HOST,
 	port: int = DEFAULT_LLAMA_PORT,
+	models_preset: str | Path | None = None,
 	alias: str | None = None,
 	threads: int = 0,
 	context: int = 0,
@@ -53,13 +54,16 @@ def build_llama_server_args(
 	argument.  A local path uses ``-m``.  No shell is involved.
 	"""
 	model = str(model or "").strip()
-	if not model:
+	if not model and models_preset is None:
 		raise LlamaServerError("A GGUF model or Hugging Face model reference is required")
 	args = ["--host", host, "--port", str(port)]
-	if model.startswith("hf://"):
-		args.extend(["-hf", model[5:]])
-	else:
-		args.extend(["-m", model])
+	if models_preset is not None:
+		args.extend(["--models-preset", str(models_preset)])
+	if models_preset is None:
+		if model.startswith("hf://"):
+			args.extend(["-hf", model[5:]])
+		else:
+			args.extend(["-m", model])
 	if alias:
 		args.extend(["--alias", alias])
 	if threads >= 1:
@@ -85,6 +89,8 @@ class LlamaServerSupervisor:
 		self.port = port
 		self._process_factory = process_factory or subprocess.Popen
 		self._process: subprocess.Popen[str] | None = None
+		self._running_model: str | None = None
+		self._adopted = False
 		self._lock = threading.RLock()
 
 	@property
@@ -95,25 +101,37 @@ class LlamaServerSupervisor:
 	def is_running(self) -> bool:
 		return self._process is not None and self._process.poll() is None
 
+	@property
+	def is_adopted(self) -> bool:
+		return self._adopted
+
+	@property
+	def running_model(self) -> str | None:
+		return self._running_model
+
 	def start(
 		self,
 		model: str,
 		*,
 		model_id: str | None = None,
+		models_preset: str | Path | None = None,
 		threads: int = 0,
 		context: int = 0,
 		on_progress: Callable[[str], None] | None = None,
 	) -> None:
 		with self._lock:
 			if self.is_running:
-				return
+				if self._running_model == (model_id or model):
+					return
+				self.stop()
 			command = [
 				self.executable,
 				*build_llama_server_args(
 					model,
 					host=self.host,
 					port=self.port,
-					alias=model_id,
+					models_preset=models_preset,
+					alias=model_id if models_preset is None else None,
 					threads=threads,
 					context=context,
 				),
@@ -133,6 +151,15 @@ class LlamaServerSupervisor:
 					f"Could not start llama-server ({self.executable!r}). "
 					"Install llama.cpp and ensure llama-server is on PATH."
 				) from exc
+			self._running_model = model_id or model
+			self._adopted = False
+
+	def adopt(self, model_id: str | None = None) -> None:
+		with self._lock:
+			if self.is_running:
+				return
+			self._adopted = True
+			self._running_model = model_id
 
 	def is_healthy(self, timeout: float = 2.0) -> bool:
 		try:
@@ -147,16 +174,20 @@ class LlamaServerSupervisor:
 		timeout: float = 60.0,
 		on_progress: Callable[[str], None] | None = None,
 	) -> bool:
-		deadline = time.monotonic() + timeout
-		while time.monotonic() < deadline:
-			if self._process is not None and self._process.poll() is not None:
-				raise LlamaServerError("llama-server exited before becoming ready")
-			if self.is_healthy():
-				return True
-			if on_progress:
-				on_progress("Waiting for llama-server to become ready...")
-			time.sleep(POLL_INTERVAL)
-		return False
+		try:
+			return wait_for_server_ready(
+				is_running=lambda: self.is_running,
+				is_adopted=lambda: self.is_adopted,
+				is_healthy=self.is_healthy,
+				stop=self.stop,
+				timeout=timeout,
+				interval=POLL_INTERVAL,
+				on_progress=on_progress,
+				progress_message="Waiting for llama-server to become ready...",
+				exit_message="llama-server exited before becoming ready",
+			)
+		except RuntimeError as exc:
+			raise LlamaServerError(str(exc)) from exc
 
 	def list_models(self, timeout: float = 5.0) -> tuple[dict[str, object], ...]:
 		try:
@@ -181,11 +212,43 @@ class LlamaServerSupervisor:
 					process.kill()
 					process.wait(timeout=5)
 			self._process = None
+			self._running_model = None
+			self._adopted = False
 
 	def close(self) -> None:
+		self.stop()
+
+	def shutdown(self) -> None:
 		self.stop()
 
 
 def default_llama_server_executable() -> str:
 	"""Resolve the executable without baking a machine-specific path in config."""
 	return shutil.which(DEFAULT_LLAMA_SERVER) or DEFAULT_LLAMA_SERVER
+
+
+_supervisors: dict[tuple[str, str, int], LlamaServerSupervisor] = {}
+_supervisors_lock = threading.RLock()
+
+
+def get_llama_supervisor(
+	executable: str | Path = DEFAULT_LLAMA_SERVER,
+	host: str = DEFAULT_LLAMA_HOST,
+	port: int = DEFAULT_LLAMA_PORT,
+) -> LlamaServerSupervisor:
+	"""Return the application-owned supervisor for an endpoint."""
+	key = (str(executable), host, port)
+	with _supervisors_lock:
+		if key not in _supervisors:
+			_supervisors[key] = LlamaServerSupervisor(
+				executable=executable,
+				host=host,
+				port=port,
+			)
+		return _supervisors[key]
+
+
+def shutdown_llama_servers() -> None:
+	with _supervisors_lock:
+		for supervisor in _supervisors.values():
+			supervisor.shutdown()
