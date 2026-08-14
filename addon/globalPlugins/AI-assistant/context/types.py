@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Final, Literal, TypeAlias
+from typing import Any, ClassVar, Final, Literal, TypeAlias
 
 
 ContextFacts: TypeAlias = dict[str, object]
 PromptMetadata: TypeAlias = dict[str, object]
+RequestKind = Literal[
+	"page_text", "page_structure", "focused_text",
+	"foreground_image", "focused_element_image", "navigator_image",
+]
 
 PromptSource = Literal["browser", "terminal", "generic", "image"]
 BROWSER: Final[PromptSource] = "browser"
@@ -160,27 +164,33 @@ ImageCaptureSource = Literal["foreground", "focus", "navigator", "desktop"]
 @dataclass(frozen=True, slots=True)
 class PageTextRequest:
 	"""Full text content of the current page/document."""
+	kind: ClassVar[RequestKind] = "page_text"
 
 @dataclass(frozen=True, slots=True)
 class PageStructureRequest:
 	"""Structured semantic elements (headings, links, buttons, etc.)."""
+	kind: ClassVar[RequestKind] = "page_structure"
 	fields: tuple[StructuredField, ...] = ()  # () = all fields
 
 @dataclass(frozen=True, slots=True)
 class FocusedElementTextRequest:
 	"""Text content of only the focused NVDA object."""
+	kind: ClassVar[RequestKind] = "focused_text"
 
 @dataclass(frozen=True, slots=True)
 class ForegroundImageRequest:
 	"""Screenshot of the foreground window."""
+	kind: ClassVar[RequestKind] = "foreground_image"
 
 @dataclass(frozen=True, slots=True)
 class FocusedElementImageRequest:
 	"""Screenshot of the focused NVDA element."""
+	kind: ClassVar[RequestKind] = "focused_element_image"
 
 @dataclass(frozen=True, slots=True)
 class NavigatorImageRequest:
 	"""Screenshot of the NVDA navigator object."""
+	kind: ClassVar[RequestKind] = "navigator_image"
 
 
 ContentRequest = (
@@ -188,6 +198,16 @@ ContentRequest = (
 	FocusedElementTextRequest |
 	ForegroundImageRequest | FocusedElementImageRequest | NavigatorImageRequest
 )
+
+
+def request_kind(request: ContentRequest) -> RequestKind:
+	"""Return the stable registry key for a context request."""
+	kind = getattr(request, "kind", None)
+	if not isinstance(kind, str):
+		raise ContextCollectionError(
+			f"Context request {type(request).__name__} has no registered kind"
+		)
+	return kind  # type: ignore[return-value]
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,6 +233,16 @@ class ImageCaptureSnapshot:
 	"""
 	raw_bytes: bytes
 	source: ImageCaptureSource
+	app_title: str | None = None
+	window_title: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FocusedTextSnapshot:
+	"""Text captured from the focused editable control on NVDA's main thread."""
+
+	text: str
+	control_name: str | None = None
 	app_title: str | None = None
 	window_title: str | None = None
 

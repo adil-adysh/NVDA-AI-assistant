@@ -7,7 +7,11 @@ from typing import Any, Final, Literal
 from ..context.types import ExtractionIntent, PromptContext
 
 
-UseCaseId = Literal[
+UseCaseId = str
+"""Stable identifier for a use case, including third-party extensions."""
+
+
+_BUILTIN_USE_CASE_IDS = Literal[
 	"summary",
 	"structure_summary",
 	"describe_image",
@@ -16,6 +20,7 @@ UseCaseId = Literal[
 	"open_chat_with_page_content",
 	"open_chat_with_screenshot",
 	"attach_focused_image_to_chat",
+	"proofread",
 ]
 
 SUMMARY: Final[UseCaseId] = "summary"
@@ -26,6 +31,7 @@ OPEN_CHAT: Final[UseCaseId] = "open_chat"
 OPEN_CHAT_WITH_PAGE_CONTENT: Final[UseCaseId] = "open_chat_with_page_content"
 OPEN_CHAT_WITH_SCREENSHOT: Final[UseCaseId] = "open_chat_with_screenshot"
 ATTACH_FOCUSED_IMAGE_TO_CHAT: Final[UseCaseId] = "attach_focused_image_to_chat"
+PROOFREAD: Final[UseCaseId] = "proofread"
 
 
 @dataclass(frozen=True, slots=True)

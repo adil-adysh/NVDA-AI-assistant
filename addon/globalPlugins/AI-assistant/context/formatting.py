@@ -8,7 +8,7 @@ data into text.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 from .types import ExtractionStructure
 
@@ -46,27 +46,40 @@ def has_page_structure_data(structure: ExtractionStructure | None) -> bool:
 	)
 
 
-def format_page_structure(structure: ExtractionStructure | None) -> str | None:
+def format_page_structure(
+	structure: ExtractionStructure | None,
+	*,
+	item_limits: Mapping[str, int] | None = None,
+) -> str | None:
 	"""Render page structure as a readable context block, or None when empty."""
 	if structure is None or not has_page_structure_data(structure):
 		return None
 
+	item_limits = item_limits or {}
+
+	def _bounded(items: tuple, field: str) -> tuple:
+		limit = item_limits.get(field)
+		if limit is None or len(items) <= limit:
+			return items
+		return (*items[:limit], f"[additional {field} omitted: {len(items) - limit}]")
+
 	lines = ["Page structure:"]
-	headings = structure.headings
+	headings = _bounded(structure.headings, "headings")
 	if headings:
 		lines.append("Headings:")
 		for level, heading in headings:
 			label = f"H{level}" if level is not None else ""
 			lines.append(f"- {label + ': ' if label else ''}{heading}")
-	for name, items in (
-		("Landmarks", structure.landmarks),
-		("Links", structure.links),
-		("Buttons", structure.buttons),
-		("Inputs", structure.inputs),
-		("Combo boxes", structure.comboboxes),
-		("Checkboxes", structure.checkboxes),
-		("Radio buttons", structure.radios),
+	for field, name, items in (
+		("landmarks", "Landmarks", structure.landmarks),
+		("links", "Links", structure.links),
+		("buttons", "Buttons", structure.buttons),
+		("inputs", "Inputs", structure.inputs),
+		("comboboxes", "Combo boxes", structure.comboboxes),
+		("checkboxes", "Checkboxes", structure.checkboxes),
+		("radios", "Radio buttons", structure.radios),
 	):
+		items = _bounded(items, field)
 		if items:
 			lines.append(f"{name}:")
 			lines.extend(f"- {item}" for item in items)

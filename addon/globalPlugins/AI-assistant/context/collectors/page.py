@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..extractors.base import TreeExtractor
 from ...context.protocols import CollectorInput, PageContextFragment
 from ...context.types import (
 	ALL_STRUCTURED_FIELDS,
@@ -23,15 +22,12 @@ def _field_value(snapshot: object, field: StructuredField) -> tuple[str, ...] | 
 
 @dataclass(frozen=True, slots=True)
 class ExtractionTextCollector:
-	extractor: TreeExtractor | None = None
+	always_collect = False
 
 	def handles_request(self, request: ContentRequest) -> bool:
 		return isinstance(request, PageTextRequest)
 
 	def collect_for_request(self, _request: PageTextRequest, input_: CollectorInput) -> PageContextFragment:
-		if self.extractor is None and input_.extraction_snapshot is None:
-			raise ContextCollectionError("ExtractionTextCollector requires an extraction snapshot or extractor")
-
 		snapshot = input_.extraction_snapshot
 		if not isinstance(snapshot, ExtractionSnapshot):
 			raise ContextCollectionError("ExtractionTextCollector requires an extraction snapshot")
@@ -53,7 +49,7 @@ class ExtractionTextCollector:
 
 @dataclass(frozen=True, slots=True)
 class ExtractionStructureCollector:
-	extractor: TreeExtractor | None = None
+	always_collect = False
 
 	_STRUCTURED_ATTRS: tuple[StructuredField, ...] = ALL_STRUCTURED_FIELDS
 
@@ -86,10 +82,6 @@ class ExtractionStructureCollector:
 		)
 
 	def _require_snapshot(self, input_: CollectorInput) -> ExtractionSnapshot:
-		if self.extractor is None and input_.extraction_snapshot is None:
-			raise ContextCollectionError(
-				"ExtractionStructureCollector requires an extraction snapshot or extractor"
-			)
 		snapshot = input_.extraction_snapshot
 		if not isinstance(snapshot, ExtractionSnapshot):
 			raise ContextCollectionError(

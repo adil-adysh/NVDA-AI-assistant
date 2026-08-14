@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .browser import BrowserAwarePageExtractor, PageExtractionError
 from .selection import safe_extract_selection
+from .focused_text import extract_focused_text
 from .candidates import (
 	BrowserCandidateProvider,
 	CandidateProvider,
@@ -35,4 +36,5 @@ __all__ = [
 	"Extractor",
 	"TreeExtractor",
 	"safe_extract_selection",
+	"extract_focused_text",
 ]

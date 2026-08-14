@@ -20,23 +20,30 @@ logger = logging.getLogger(__name__)
 ContextEmitter = Callable[[str, str], None] | None
 
 
-def build_page_context_items(extraction_result: ExtractionResult) -> tuple[ResultContextItem, ...]:
+def build_page_context_items(
+	extraction_result: ExtractionResult,
+	*,
+	include_text: bool = True,
+	include_structure: bool = True,
+) -> tuple[ResultContextItem, ...]:
 	"""Build the context items a page-based use case exposes to the conversation.
 
 	Only includes items that actually have usable data, so the presenter never
 	offers actions for context that does not exist.
 	"""
 	items: list[ResultContextItem] = []
-	page_content = format_page_context(
-		extraction_result.title,
-		extraction_result.app_title,
-		extraction_result.text or "",
-	)
-	if page_content:
-		items.append(ResultContextItem(id="page_content", content=page_content))
-	structure_text = format_page_structure(extraction_result.structure)
-	if structure_text:
-		items.append(ResultContextItem(id="page_structure", content=structure_text))
+	if include_text:
+		page_content = format_page_context(
+			extraction_result.title,
+			extraction_result.app_title,
+			extraction_result.text or "",
+		)
+		if page_content:
+			items.append(ResultContextItem(id="page_content", content=page_content))
+	if include_structure:
+		structure_text = format_page_structure(extraction_result.structure)
+		if structure_text:
+			items.append(ResultContextItem(id="page_structure", content=structure_text))
 	return tuple(items)
 
 

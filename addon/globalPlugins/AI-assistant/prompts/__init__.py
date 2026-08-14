@@ -15,6 +15,7 @@ from .summary import (
     build_summary_prompt,
     build_terminal_summary_prompt,
 )
+from .proofreading import build_proofreading_prompt
 
 __all__ = [
     "build_chat_messages",
@@ -23,7 +24,8 @@ __all__ = [
     "build_summary_prompt",
     "build_extraction_summary_prompt",
     "build_extraction_structure_summary_prompt",
-    "build_structure_summary_prompt",
+	"build_structure_summary_prompt",
+	"build_proofreading_prompt",
     "build_browser_summary_prompt",
     "build_terminal_summary_prompt",
     "build_generic_summary_prompt",

@@ -6,11 +6,13 @@ import builtins
 from typing import Callable, cast
 
 from ..context.collectors.image import ImageContextCollector
+from ..context.collectors.focused_text import FocusedTextCollector
 from ..context.collectors.language import LanguageContextCollector
 from ..context.collectors.page import ExtractionStructureCollector, ExtractionTextCollector
 from ..context.extractors.browser import BrowserAwarePageExtractor
 from ..context.extractors.generic_extractor import GenericPageExtractor
 from ..context.extractors.manager import ExtractionManager
+from ..context.extractors.focused_text import extract_focused_text
 from ..context.pipeline import ContextPipeline
 from ..context.reduction import ContextReducer, CurrentPageContext
 from ..config.settings import get_embedding_enabled
@@ -39,16 +41,25 @@ def build_plugin_services() -> PluginServices:
 	browser_extractor = BrowserAwarePageExtractor()
 	generic_extractor = GenericPageExtractor()
 	page_extractor = ExtractionManager((browser_extractor, generic_extractor))
-	page_text_collector = ExtractionTextCollector(extractor=page_extractor)
-	page_structure_collector = ExtractionStructureCollector(extractor=page_extractor)
+	page_text_collector = ExtractionTextCollector()
+	page_structure_collector = ExtractionStructureCollector()
+	focused_text_collector = FocusedTextCollector()
 	image_context_collector = ImageContextCollector(
 		preprocessor=ImagePreprocessor(),
 		encoder=ImageEncoder(),
 	)
 	language_collector = LanguageContextCollector()
 	context_pipeline = ContextPipeline(
-		collectors=(page_text_collector, page_structure_collector, image_context_collector, language_collector),
+		collectors=(
+			page_text_collector,
+			page_structure_collector,
+			focused_text_collector,
+			image_context_collector,
+			language_collector,
+		),
 		main_thread_executor=nvda_ui.call,
+		page_extractor=page_extractor.extract,
+		focused_text_extractor=extract_focused_text,
 	)
 	# The native model remains lazy.  ContextReducer has a deterministic
 	# fallback when the optional extension is unavailable.

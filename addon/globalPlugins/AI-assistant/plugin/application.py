@@ -30,6 +30,7 @@ from ..use_case.types import (
 	OPEN_CHAT_WITH_SCREENSHOT,
 	STRUCTURE_SUMMARY,
 	SUMMARY,
+	PROOFREAD,
 )
 from .background import BackgroundTaskRunner
 from .factory import build_plugin_services
@@ -68,6 +69,7 @@ class AIAssistantApplication:
 			bindings=(
 				("s", host.script_summarizeCurrentPage),
 				("o", host.script_summarizePageStructure),
+				("g", host.script_proofreadFocusedText),
 				("i", host.script_describeCurrentWindow),
 				("f", host.script_describeFocusedObject),
 				("c", host.script_openChatWindow),
@@ -197,7 +199,18 @@ class AIAssistantApplication:
 			# TRANSLATORS: Title shown for the structure summary result.
 		title=_("Structure summary"),
 			# TRANSLATORS: Title shown for the structure summary result.
-			render_result=lambda result: self.presenter.present_use_case_result(result, title=_("Structure summary")),
+			 render_result=lambda result: self.presenter.present_use_case_result(result, title=_("Structure summary")),
+		)
+
+	def run_proofread(self) -> None:
+		log.debug("AIAssistantApplication.run_proofread called")
+		self.background.run_use_case_in_background(
+			PROOFREAD,
+			# TRANSLATORS: Title shown for the spelling and grammar result.
+			title=_("Spelling and grammar correction"),
+			render_result=lambda result: self.presenter.present_use_case_result(
+				result, title=_("Spelling and grammar correction")
+			),
 		)
 
 	def describe_current_window(self) -> None:

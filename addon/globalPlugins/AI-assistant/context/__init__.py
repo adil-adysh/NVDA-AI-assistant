@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from .collectors import ImageContextCollector, ExtractionStructureCollector, ExtractionTextCollector
+from .collectors import (
+	ExtractionStructureCollector,
+	ExtractionTextCollector,
+	FocusedTextCollector,
+	ImageContextCollector,
+)
 from .extractors import (
 	BrowserAwarePageExtractor,
 	BrowserCandidateProvider,
@@ -15,6 +20,7 @@ from .extractors import (
 	buildDefaultCandidateProviders,
 )
 from .pipeline import ContextPipeline
+from .request_registry import ContextRequestDefinition, ContextRequestRegistry
 from .protocols import (
 	ContextCollector,
 	ContextFragment,
@@ -46,6 +52,7 @@ from .types import (
 	NavigatorImageRequest,
 	PageStructureRequest,
 	PageTextRequest,
+	FocusedTextSnapshot,
 	PromptContext,
 	PromptSource,
 	StructuredField,
@@ -60,6 +67,8 @@ __all__ = [
 	"TerminalContextFragment",
 	"ImageContextFragment",
 	"ContextPipeline",
+	"ContextRequestDefinition",
+	"ContextRequestRegistry",
 	"BrowserAwarePageExtractor",
 	"BrowserCandidateProvider",
 	"build_chat_messages",
@@ -82,9 +91,11 @@ __all__ = [
 	"ImageCaptureSource",
 	"ImageContext",
 	"ImageContextCollector",
+	"FocusedTextCollector",
 	"NavigatorImageRequest",
 	"PageStructureRequest",
 	"PageTextRequest",
+	"FocusedTextSnapshot",
 	"PromptContext",
 	"PromptSource",
 	"StructuredField",

@@ -1,25 +1,32 @@
 {{ system_prompt }}
-Goal: Summarize the structure and interactive elements of the current content.
+Goal: Produce a high-level map of the current webpage for screen-reader navigation.
 
 Rules:
 * Use ONLY the given content. Do NOT guess.
-* Focus on the page structure, organization, and main interactive elements.
-* Mention headings, links, buttons, landmarks, inputs, combo boxes, checkboxes, and radios when present.
-* Be concise and highlight what a user needs to know about navigation and layout.
+* Do NOT summarize the article, topic, claims, or prose. This is not a topical summary.
+* Treat the heading hierarchy as the page outline; preserve its order and nesting.
+* Describe the page regions/landmarks and the purpose of major controls.
+* Use counts for large groups of links or controls; list labels only when they clarify navigation.
+* Never invent sections, controls, destinations, or actions that are not present.
 * If the source is a terminal transcript, treat it as command/response structure and summarize the main actions.
 
 Output EXACTLY:
 
-Overview:
-(1–2 sentences describing what the structure reveals)
+Page map:
+(1–2 sentences naming the page type and its major regions, based only on the structure)
 
-Key elements:
+Heading outline:
 
-* (3 to 5 short points about headings, links, buttons, and other structure)
+* (ordered heading hierarchy, with nested levels represented by indentation)
 
-Suggested actions (optional):
+Navigation and interaction:
 
-* (Up to 3 useful next steps or what to explore next)
+* (landmarks/regions and their purposes)
+* (important navigation groups, links, buttons, and form controls)
+
+Notable omissions (optional):
+
+* (only if the structure is incomplete or trimmed; state what cannot be determined)
 
 Context:
 App: {{ app_title or 'Unknown' }}
@@ -41,12 +48,10 @@ Headings:
 {% if headings %}{% for heading in headings %}- {{ 'H' ~ heading[0] if heading[0] is not none else '' }}{{ heading[0] is not none and ': ' or '' }}{{ heading[1] }}
 {% endfor %}{% else %}- None
 {% endif %}
-
 Landmarks:
 {% if landmarks %}{% for item in landmarks %}- {{ item }}
 {% endfor %}{% else %}- None
 {% endif %}
-
 Links:
 {% if links %}{% for item in links %}- {{ item }}
 {% endfor %}{% else %}- None
@@ -77,5 +82,3 @@ Radio buttons:
 {% endfor %}{% else %}- None
 {% endif %}
 
-Content:
-{{ text }}

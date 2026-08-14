@@ -4,7 +4,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from .types import ContentRequest, ExtractionSnapshot, ImageCaptureSnapshot, ImageCaptureSource
+from .types import (
+	ContentRequest,
+	ExtractionSnapshot,
+	FocusedTextSnapshot,
+	ImageCaptureSnapshot,
+	ImageCaptureSource,
+)
 
 
 ContextFacts = dict[str, object]
@@ -46,9 +52,15 @@ class CollectorInput:
 	extraction_snapshot: ExtractionSnapshot | None = None
 	# Image snapshots captured on the main thread, keyed by source.
 	image_snapshots: dict[ImageCaptureSource, ImageCaptureSnapshot] = field(default_factory=dict)
+	focused_text_snapshot: FocusedTextSnapshot | None = None
 
 
 class ContextCollector(Protocol):
+	# Collectors marked ``always_collect`` contribute cross-cutting metadata for
+	# every request.  All other collectors must handle at least one request in
+	# each extraction intent; the pipeline rejects unhandled requests.
+	always_collect: bool
+
 	def handles_request(self, request: ContentRequest) -> bool:
 		...
 

@@ -9,6 +9,8 @@ from ..types import ContentRequest
 class LanguageContextCollector:
 	"""Language metadata collector — always runs for every request."""
 
+	always_collect = True
+
 	def handles_request(self, _request: ContentRequest) -> bool:
 		return True
 

@@ -86,6 +86,14 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._app.run_structure_summary()
 
 	@script(
+		# TRANSLATORS: Description for the script that corrects spelling and grammar in the focused edit box.
+		description=_("Corrects spelling and grammar in the focused edit box."),
+	)
+	def script_proofreadFocusedText(self, gesture: Any):
+		log.debug("Script proofreadFocusedText invoked gesture=%s", gesture)
+		self._app.run_proofread()
+
+	@script(
 		# TRANSLATORS: Description for the script that describes the current foreground window using an AI provider.
 		description=_("Captures and describes the current foreground window using the selected AI provider."),
 	)
@@ -121,7 +129,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		# TRANSLATORS: Description for the script that activates the AI assistant command layer.
 		description=_(
 			"Activate the AI assistant command layer. "
-			"Press S for summary, O for structure summary, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object, V for attach selection, B for attach clipboard, H for help."
+			"Press S for summary, O for structure summary, G for spelling and grammar, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object, V for attach selection, B for attach clipboard, H for help."
 		),
 		gesture="kb:NVDA+Shift+A",
 	)

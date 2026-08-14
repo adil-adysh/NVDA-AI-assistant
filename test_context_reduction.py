@@ -26,6 +26,7 @@ def _load(name: str, path: Path) -> types.ModuleType:
 
 
 types_module = _load(f"{_PACKAGE}.types", _ROOT / "types.py")
+_load(f"{_PACKAGE}.formatting", _ROOT / "formatting.py")
 reduction = _load(f"{_PACKAGE}.reduction", _ROOT / "reduction.py")
 
 
@@ -81,6 +82,29 @@ class ContextReductionTests(unittest.TestCase):
 		page.set(context, "conversation-1")
 		self.assertIn("target information", page.retrieve("target", "conversation-1"))
 		self.assertIsNone(page.retrieve("target", "conversation-2"))
+
+	def test_current_page_context_preserves_structure_with_retrieved_content(self) -> None:
+		structure = types_module.ExtractionStructure(
+			headings=((2, "Software Solutions"), (3, "Software Releases")),
+			landmarks=("main: Product information",),
+			links=("JAWS 2026", "Downloads"),
+		)
+		result = types_module.ExtractionResult(
+			"Title", "Browser", "target information", False, structure=structure
+		)
+		context = types_module.PromptContext(
+			use_case_id="summary", extraction_result=result, text=result.text
+		)
+		page = reduction.CurrentPageContext(reduction.ContextReducer(embedder=_FakeEmbedder()))
+		page.set(context, "conversation-1")
+
+		retrieved = page.retrieve("target", "conversation-1")
+
+		self.assertIn("Page structure:", retrieved)
+		self.assertIn("H2: Software Solutions", retrieved)
+		self.assertIn("H3: Software Releases", retrieved)
+		self.assertIn("main: Product information", retrieved)
+		self.assertIn("Relevant page content:\ntarget information", retrieved)
 
 
 if __name__ == "__main__":

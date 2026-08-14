@@ -4,19 +4,18 @@ from __future__ import annotations
 from typing import Callable, Sequence, TypeVar
 
 from .protocols import CollectorInput, ContextCollector
+from .request_registry import ContextRequestRegistry
 from .types import (
 	ContextCollectionError,
 	ContextFacts,
 	ExtractionIntent,
 	ExtractionSnapshot,
-	FocusedElementImageRequest,
-	ForegroundImageRequest,
+	FocusedTextSnapshot,
 	ImageCaptureSnapshot,
 	ImageCaptureSource,
-	NavigatorImageRequest,
-	PageTextRequest,
 	PromptContext,
 	PromptMetadata,
+	request_kind,
 	build_extraction_result_from_facts,
 	build_extraction_facts_from_facts,
 )
@@ -24,27 +23,29 @@ from .types import (
 T = TypeVar("T")
 MainThreadExecutor = Callable[[Callable[..., T]], T]
 
-# Map image request types to capture sources.
-_IMAGE_SOURCES: dict[type, ImageCaptureSource] = {
-	ForegroundImageRequest: "foreground",
-	FocusedElementImageRequest: "focus",
-	NavigatorImageRequest: "navigator",
-}
-
-
 class ContextPipeline:
 	def __init__(
-		self, collectors: Sequence[ContextCollector], main_thread_executor: MainThreadExecutor
+		self,
+		collectors: Sequence[ContextCollector],
+		main_thread_executor: MainThreadExecutor,
+		page_extractor: Callable[..., ExtractionSnapshot | None] | None = None,
+		focused_text_extractor: Callable[..., FocusedTextSnapshot | None] | None = None,
+		request_registry: ContextRequestRegistry | None = None,
 	) -> None:
 		self._collectors = tuple(collectors)
 		self._main_thread_executor = main_thread_executor
+		self._page_extractor = page_extractor
+		self._focused_text_extractor = focused_text_extractor
+		self._request_registry = request_registry or ContextRequestRegistry()
 
 	def collect(self, use_case_id: str, extraction_intent: ExtractionIntent) -> PromptContext:
 		if not extraction_intent.requests:
 			return PromptContext(use_case_id=use_case_id, metadata={})
+		self._request_registry.validate(tuple(request_kind(request) for request in extraction_intent.requests))
 
 		# ── Phase 1: resolve shared snapshots on the NVDA main thread ──
-		text_snapshot = self._resolve_text_snapshot(extraction_intent)
+		text_snapshot = self._resolve_page_snapshot(extraction_intent)
+		focused_text_snapshot = self._resolve_focused_text_snapshot(extraction_intent)
 		image_snapshots = self._resolve_image_snapshots(extraction_intent)
 
 		# ── Phase 2: dispatch requests to collectors (thread-safe) ──
@@ -52,6 +53,7 @@ class ContextPipeline:
 			use_case_id=use_case_id,
 			extraction_snapshot=text_snapshot,
 			image_snapshots=image_snapshots,
+			focused_text_snapshot=focused_text_snapshot,
 		)
 		merged_facts: ContextFacts = {}
 		merged_metadata: PromptMetadata = {}
@@ -59,10 +61,20 @@ class ContextPipeline:
 		image_base64: str | None = None
 
 		for request in extraction_intent.requests:
+			matching_collectors: list[ContextCollector] = []
+			has_request_collector = False
 			for collector in self._collectors:
 				handler = getattr(collector, "handles_request", None)
 				if handler is None or not handler(request):
 					continue
+				matching_collectors.append(collector)
+				if not getattr(collector, "always_collect", False):
+					has_request_collector = True
+			if not has_request_collector:
+				raise ContextCollectionError(
+					f"No context collector registered for request {type(request).__name__}"
+				)
+			for collector in matching_collectors:
 				fragment = collector.collect_for_request(request, collector_input)
 				merged_facts.update(fragment.facts)
 				merged_metadata.update(fragment.metadata)
@@ -100,37 +112,62 @@ class ContextPipeline:
 
 	# ── Snapshot resolution (NVDA main thread) ─────────────────────
 
-	def _needs_text_snapshot(self, intent: ExtractionIntent) -> bool:
+	def _needs_page_snapshot(self, intent: ExtractionIntent) -> bool:
 		for request in intent.requests:
-			if isinstance(request, PageTextRequest):
+			if self._request_registry.get(request_kind(request)).resolver == "page":
 				return True
 		return False
 
-	def _image_requests(self, intent: ExtractionIntent) -> list[type]:
+	def _needs_focused_text_snapshot(self, intent: ExtractionIntent) -> bool:
+		return any(
+			self._request_registry.get(request_kind(request)).resolver == "focused_text"
+			for request in intent.requests
+		)
+
+	def _image_requests(self, intent: ExtractionIntent) -> list[ImageCaptureSource]:
 		"""Return distinct image request types present in the intent."""
-		seen: set[type] = set()
-		result: list[type] = []
+		seen: set[ImageCaptureSource] = set()
+		result: list[ImageCaptureSource] = []
 		for request in intent.requests:
-			t = type(request)
-			if t in _IMAGE_SOURCES and t not in seen:
-				seen.add(t)
-				result.append(t)
+			definition = self._request_registry.get(request_kind(request))
+			if definition.image_source and definition.image_source not in seen:
+				seen.add(definition.image_source)
+				result.append(definition.image_source)
 		return result
 
-	def _resolve_text_snapshot(self, intent: ExtractionIntent) -> ExtractionSnapshot | None:
-		if not self._needs_text_snapshot(intent):
+	def _resolve_page_snapshot(self, intent: ExtractionIntent) -> ExtractionSnapshot | None:
+		if not self._needs_page_snapshot(intent):
 			return None
-		for collector in self._collectors:
-			extractor = getattr(collector, "extractor", None)
-			if extractor is None:
-				continue
-			try:
-				snapshot = self._main_thread_executor(extractor.extract)
-			except Exception:
-				continue
-			if isinstance(snapshot, ExtractionSnapshot):
-				return snapshot
-		raise ContextCollectionError("Unable to obtain page snapshot for requested text extraction")
+		if self._page_extractor is None:
+			raise ContextCollectionError(
+				"A page extractor is required for page text or structure requests"
+			)
+		try:
+			snapshot = self._main_thread_executor(self._page_extractor)
+		except Exception as error:
+			raise ContextCollectionError("Unable to obtain page snapshot") from error
+		if not isinstance(snapshot, ExtractionSnapshot):
+			raise ContextCollectionError("Page extractor returned no usable snapshot")
+		return snapshot
+
+	def _resolve_focused_text_snapshot(
+		self, intent: ExtractionIntent
+	) -> FocusedTextSnapshot | None:
+		if not self._needs_focused_text_snapshot(intent):
+			return None
+		if self._focused_text_extractor is None:
+			raise ContextCollectionError(
+				"A focused text extractor is required for focused text requests"
+			)
+		try:
+			snapshot = self._main_thread_executor(self._focused_text_extractor)
+		except Exception as error:
+			raise ContextCollectionError("Unable to obtain focused edit-box text") from error
+		if not isinstance(snapshot, FocusedTextSnapshot):
+			raise ContextCollectionError("Focused control is not an editable text field")
+		if not snapshot.text.strip():
+			raise ContextCollectionError("The focused edit box contains no text")
+		return snapshot
 
 	def _resolve_image_snapshots(
 		self, intent: ExtractionIntent
@@ -150,7 +187,7 @@ class ContextPipeline:
 			capture_service = ImageCaptureService()
 			snapshots: list[ImageCaptureSnapshot] = []
 			for req_type in request_types:
-				source = _IMAGE_SOURCES[req_type]
+				source = req_type
 				try:
 					raw_bytes = capture_service.capture(source=source)
 				except ScreenCurtainError:

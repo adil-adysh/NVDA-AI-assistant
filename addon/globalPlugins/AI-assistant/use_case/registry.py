@@ -12,6 +12,7 @@ from .focus_image import (
 	DescribeFocusedImageUseCase,
 )
 from .image import ImageDescriptionUseCase
+from .proofread import build_proofread_use_case
 from .summary import SummaryUseCase
 from .structure_summary import StructureSummaryUseCase
 from .types import UseCaseSpec
@@ -27,6 +28,7 @@ def build_default_use_cases() -> tuple[UseCase, ...]:
 		OpenChatWithPageContentUseCase(),
 		OpenChatWithScreenshotUseCase(),
 		AttachFocusedImageToChatUseCase(),
+		build_proofread_use_case(),
 	)
 
 

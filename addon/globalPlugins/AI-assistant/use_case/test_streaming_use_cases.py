@@ -292,7 +292,7 @@ class StreamingUseCaseTests(unittest.TestCase):
 		)
 		self.assertEqual(
 			[item.id for item in result.context_items],
-			["page_content"],
+			[],
 		)
 
 	def test_image_description_use_case_passes_stream_handler_and_emits_streaming(self) -> None:

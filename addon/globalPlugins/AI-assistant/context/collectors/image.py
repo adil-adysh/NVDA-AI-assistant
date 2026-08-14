@@ -42,6 +42,7 @@ class ImageContextCollector:
 
 	preprocessor: ImagePreprocessor | None = None
 	encoder: ImageEncoder | None = None
+	always_collect = False
 
 	def handles_request(self, request: ContentRequest) -> bool:
 		return isinstance(request, tuple(_REQUEST_SOURCES))

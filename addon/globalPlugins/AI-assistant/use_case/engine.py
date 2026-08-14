@@ -12,6 +12,7 @@ from ..service.error_presentation import present_error
 from .base import UseCase
 from .registry import build_default_use_cases
 from .types import UseCaseId, UseCaseResult, UseCaseSpec
+from .declarative import DeclarativeUseCase, DeclarativeUseCaseDefinition, PromptBuilder
 
 
 class UseCaseEngine:
@@ -28,6 +29,36 @@ class UseCaseEngine:
 		self._use_cases = tuple(use_cases or build_default_use_cases())
 		self._use_case_map = {use_case.spec.id: use_case for use_case in self._use_cases}
 		self._specs = {use_case.spec.id: use_case.spec for use_case in self._use_cases}
+		self._validate_registry()
+
+	def _validate_registry(self) -> None:
+		if len(self._use_case_map) != len(self._use_cases):
+			raise ValueError("Duplicate use-case identifiers are not allowed")
+
+	def register_use_case(self, use_case: UseCase, *, replace: bool = False) -> None:
+		"""Register a built-in or extension use case before execution."""
+		use_case_id = use_case.spec.id
+		if use_case_id in self._use_case_map and not replace:
+			raise ValueError(f"Use case already registered: {use_case_id}")
+		self._use_case_map[use_case_id] = use_case
+		self._specs[use_case_id] = use_case.spec
+		self._use_cases = tuple(
+			use_case if item.spec.id == use_case_id else item
+			for item in self._use_cases
+		)
+		if all(item.spec.id != use_case_id for item in self._use_cases):
+			self._use_cases += (use_case,)
+
+	def register_declarative(
+		self,
+		definition: DeclarativeUseCaseDefinition,
+		prompt_builder: PromptBuilder,
+		*,
+		replace: bool = False,
+	) -> None:
+		self.register_use_case(
+			DeclarativeUseCase(definition, prompt_builder), replace=replace
+		)
 
 	def get_spec(self, use_case_id: UseCaseId) -> UseCaseSpec:
 		try:
