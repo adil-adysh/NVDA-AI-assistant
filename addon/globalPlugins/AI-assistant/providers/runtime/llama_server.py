@@ -91,6 +91,7 @@ class LlamaServerSupervisor:
 		self._process: subprocess.Popen[str] | None = None
 		self._running_model: str | None = None
 		self._adopted = False
+		self._models_cache: tuple[dict[str, object], ...] | None = None
 		self._lock = threading.RLock()
 
 	@property
@@ -153,6 +154,7 @@ class LlamaServerSupervisor:
 				) from exc
 			self._running_model = model_id or model
 			self._adopted = False
+			self._models_cache = None
 
 	def adopt(self, model_id: str | None = None) -> None:
 		with self._lock:
@@ -160,6 +162,7 @@ class LlamaServerSupervisor:
 				return
 			self._adopted = True
 			self._running_model = model_id
+			self._models_cache = None
 
 	def is_healthy(self, timeout: float = 2.0) -> bool:
 		try:
@@ -189,7 +192,15 @@ class LlamaServerSupervisor:
 		except RuntimeError as exc:
 			raise LlamaServerError(str(exc)) from exc
 
-	def list_models(self, timeout: float = 5.0) -> tuple[dict[str, object], ...]:
+	def list_models(
+		self,
+		timeout: float = 5.0,
+		*,
+		refresh: bool = False,
+	) -> tuple[dict[str, object], ...]:
+		with self._lock:
+			if self._models_cache is not None and not refresh:
+				return self._models_cache
 		for path in ("/models", "/v1/models"):
 			try:
 				request = urllib.request.Request(f"{self.base_url}{path}", method="GET")
@@ -199,7 +210,10 @@ class LlamaServerSupervisor:
 				continue
 			items = payload.get("data") if isinstance(payload, dict) else None
 			if isinstance(items, list):
-				return tuple(item for item in items if isinstance(item, dict))
+				models = tuple(item for item in items if isinstance(item, dict))
+				with self._lock:
+					self._models_cache = models
+				return models
 		return ()
 
 	def stop(self) -> None:
@@ -215,6 +229,7 @@ class LlamaServerSupervisor:
 			self._process = None
 			self._running_model = None
 			self._adopted = False
+			self._models_cache = None
 
 	def close(self) -> None:
 		self.stop()
