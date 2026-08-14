@@ -43,7 +43,10 @@ class LlamaCppModelManager(ModelManagerProvider):
 		cache_dir: str | Path | None = None,
 	) -> None:
 		self._config = config
-		self._catalog = LlamaModelCatalog(cache_dir)
+		self._catalog = LlamaModelCatalog(
+			cache_dir,
+			preset_path=str(getattr(config, "models_preset", "") or "").strip() or None,
+		)
 		if supervisor is not None:
 			self._supervisor = supervisor
 		else:

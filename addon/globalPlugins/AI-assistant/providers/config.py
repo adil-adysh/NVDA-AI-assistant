@@ -40,6 +40,7 @@ class OpenAICompatConfig(ProviderConfig):
 	litert_cache: str = ""
 	litert_cpu_threads: int = 0
 	server_executable: str = ""
+	models_preset: str = ""
 
 
 # ---------------------------------------------------------------------------

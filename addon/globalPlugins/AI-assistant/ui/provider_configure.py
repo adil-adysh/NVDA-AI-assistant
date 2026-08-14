@@ -205,6 +205,7 @@ class ProviderConfigureDialog(wx.Dialog):
 			"backend": str(getattr(self._config, "litert_backend", "") or ""),
 			"cache": str(getattr(self._config, "litert_cache", "") or ""),
 			"cpu_thread_count": int(getattr(self._config, "litert_cpu_threads", 0) or 0),
+			"models_preset": str(getattr(self._config, "models_preset", "") or ""),
 		}
 		for spec in self._fields:
 			lch = self._lch.get(spec.id)
@@ -251,6 +252,7 @@ class ProviderConfigureDialog(wx.Dialog):
 			"backend": "litert_backend",
 			"cache": "litert_cache",
 			"cpu_thread_count": "litert_cpu_threads",
+			"models_preset": "models_preset",
 		}
 		for spec in self._fields:
 			lch = self._lch.get(spec.id)

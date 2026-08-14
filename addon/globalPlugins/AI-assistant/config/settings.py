@@ -381,6 +381,10 @@ def build_provider_config(provider: str) -> "OpenAICompatConfig":
 			_read_string(spec.executable_key, spec.executable_default)
 			if spec.executable_key else ""
 		),
+		models_preset=(
+			_read_string(spec.models_preset_key, spec.models_preset_default)
+			if spec.models_preset_key else ""
+		),
 	)
 
 
@@ -675,6 +679,8 @@ def set_openai_compat_config(config: "OpenAICompatConfig", activate: bool = True
 
 	if spec.executable_key:
 		values[spec.executable_key] = config.server_executable
+	if spec.models_preset_key:
+		values[spec.models_preset_key] = config.models_preset
 
 	_set_values(values, notify=False)
 	if spec.litert_engine_settings:

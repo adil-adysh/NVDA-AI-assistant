@@ -217,6 +217,7 @@ _CONFIGURE_FIELDS: dict[str, tuple[ConfigureFieldSpec, ...]] = {
 	"llama-cpp-server": (
 		ConfigureFieldSpec("server_url", _("Server URL:")),
 		ConfigureFieldSpec("server_executable", _("llama-server executable:"), required=False),
+		ConfigureFieldSpec("models_preset", _("Models preset path:"), required=False),
 	),
 }
 
