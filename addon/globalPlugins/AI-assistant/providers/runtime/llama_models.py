@@ -33,6 +33,21 @@ class LlamaModelRecord:
 			return f"hf://{value}"
 		return self.local_path or self.source
 
+	@property
+	def identities(self) -> frozenset[str]:
+		values = {
+			self.model_id,
+			self.source,
+			self.server_model,
+			self.server_model.removeprefix("hf://"),
+		}
+		if self.variant:
+			values.add(f"{self.source}:{self.variant}")
+		return frozenset(value for value in values if value)
+
+	def matches_server_id(self, server_id: str) -> bool:
+		return str(server_id or "").strip() in self.identities
+
 
 def _record_source_lines(record: LlamaModelRecord) -> list[str]:
 	if record.kind == ModelSourceKind.HUGGING_FACE.value:
@@ -182,15 +197,7 @@ class LlamaModelCatalog:
 	def find(self, model_id: str) -> LlamaModelRecord | None:
 		requested = str(model_id or "").strip()
 		for item in self.list_records():
-			identities = {
-				item.model_id,
-				item.source,
-				item.server_model,
-				item.server_model.removeprefix("hf://"),
-			}
-			if item.variant:
-				identities.add(f"{item.source}:{item.variant}")
-			if requested in identities:
+			if item.matches_server_id(requested):
 				return item
 		return None
 

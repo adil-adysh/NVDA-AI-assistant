@@ -155,19 +155,10 @@ class LlamaCppModelManager(ModelManagerProvider):
 		# it when the requested model is already exposed by that server; a
 		# handleless process cannot be safely terminated or reconfigured here.
 		if not self._supervisor.is_running and not self._supervisor.is_adopted and self._supervisor.is_healthy():
-			server_models = {
-				str(item.get("id", "")).strip()
+			if not any(
+				record.matches_server_id(str(item.get("id", "")))
 				for item in self._supervisor.list_models()
-			}
-			server_aliases = {
-				requested_model,
-				record.source,
-				record.server_model,
-				record.server_model.removeprefix("hf://"),
-			}
-			if record.variant:
-				server_aliases.add(f"{record.source}:{record.variant}")
-			if not server_models.intersection(server_aliases):
+			):
 				raise LLMProviderError(
 					"A llama-server is already running with a different model preset. "
 					"Stop it before switching models."
@@ -175,17 +166,19 @@ class LlamaCppModelManager(ModelManagerProvider):
 			self._supervisor.adopt(requested_model)
 			return
 		if self._supervisor.is_running or self._supervisor.is_adopted:
-			if self._supervisor.running_model not in (None, requested_model):
-				if self._supervisor.is_adopted and not self._supervisor.is_running:
-					raise LLMProviderError(
-						"Cannot switch an adopted llama-server to a different model "
-						"without restarting the owning process."
-					)
-				self._supervisor.stop()
-			elif self._supervisor.is_healthy():
-				if not self._supervisor.is_running:
-					self._supervisor.adopt(requested_model)
-				return
+			if self._supervisor.is_healthy():
+				if any(
+					record.matches_server_id(str(item.get("id", "")))
+					for item in self._supervisor.list_models()
+				):
+					# llama-server is a router: model selection is carried by the
+					# OpenAI-compatible request, so switching does not restart it.
+					if not self._supervisor.is_running:
+						self._supervisor.adopt(requested_model)
+					return
+				raise LLMProviderError(
+					f"llama-server does not expose model {requested_model!r} in its API"
+				)
 			else:
 				self._supervisor.stop()
 		self._supervisor.start(

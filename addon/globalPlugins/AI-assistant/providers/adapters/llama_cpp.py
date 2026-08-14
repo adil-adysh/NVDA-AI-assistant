@@ -21,9 +21,15 @@ class LlamaCppServerProvider(OpenAICompatProvider):
 		if not model_id:
 			raise LLMProviderError("No llama.cpp model is configured")
 		record = self._llama_manager.find_record(model_id)
-		if record is not None:
-			self._llama_manager.ensure_running(record, on_progress=on_progress)
-		return model_id
+		if record is None:
+			raise LLMProviderError(f"Unknown llama.cpp model: {model_id}")
+		self._llama_manager.ensure_running(record, on_progress=on_progress)
+		return record.model_id
+
+	def _resolve_model(self) -> str:
+		configured = super()._resolve_model()
+		record = self._llama_manager.find_record(configured)
+		return record.model_id if record is not None else configured
 
 	def close(self) -> None:
 		self._llama_manager.close()

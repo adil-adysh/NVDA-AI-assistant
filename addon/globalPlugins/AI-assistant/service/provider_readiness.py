@@ -188,18 +188,4 @@ class ProviderReadinessService:
 			return True
 		if not supervisor.is_healthy():
 			return False
-		server_ids = {
-			str(item.get("id", "")).strip()
-			for item in supervisor.list_models()
-			if str(item.get("id", "")).strip()
-		}
-		identities = {
-			str(getattr(record, "model_id", "")),
-			str(getattr(record, "source", "")),
-			str(getattr(record, "server_model", "")),
-			str(getattr(record, "server_model", "")).removeprefix("hf://"),
-		}
-		variant = str(getattr(record, "variant", "") or "").strip()
-		if variant:
-			identities.add(f"{getattr(record, 'source', '')}:{variant}")
-		return bool(server_ids.intersection(identities))
+		return any(record.matches_server_id(str(item.get("id", ""))) for item in supervisor.list_models())
