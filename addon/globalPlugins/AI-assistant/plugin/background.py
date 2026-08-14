@@ -12,6 +12,7 @@ from logHandler import log
 from ..providers.interfaces import LLMProviderError, ProviderConfigurationError
 from ..providers.runtime.server import LiteRTServerError, get_litert_supervisor
 from ..providers.runtime.llama_server import shutdown_llama_servers
+from ..providers.llama_manager import LlamaCppModelManager
 from ..service.error_presentation import present_error
 from ..service.llm import LLMService
 from ..service.provider_readiness import ProviderReadinessService, get_provider_display_name
@@ -44,6 +45,7 @@ _NON_LLM_USE_CASES = frozenset(
 
 
 _litert_readiness_lock = threading.Lock()
+_llama_readiness_lock = threading.Lock()
 _litert_restart_lock = threading.Lock()
 _litert_restart_pending = False
 
@@ -151,6 +153,25 @@ def ensure_litert_server_ready(on_progress: Callable[[str], None] | None = None)
 	# health/start/import sequence, but only on worker threads.
 	with _litert_readiness_lock:
 		_ensure_litert_server_ready_locked(on_progress=on_progress)
+
+
+def ensure_provider_server_ready(on_progress: Callable[[str], None] | None = None) -> None:
+	"""Ensure the active managed local provider server is ready."""
+	provider = get_provider()
+	if provider == "litert-lm":
+		ensure_litert_server_ready(on_progress=on_progress)
+		return
+	if provider != "llama-cpp-server":
+		return
+	from ..config.settings import get_active_provider_config
+
+	with _llama_readiness_lock:
+		config = get_active_provider_config()
+		manager = LlamaCppModelManager(config=config)
+		record = manager.find_record(str(config.model_name or "").strip())
+		if record is None:
+			raise LLMProviderError(f"Unknown llama.cpp model: {config.model_name}")
+		manager.ensure_running(record, on_progress=on_progress)
 
 
 def _ensure_litert_server_ready_locked(
@@ -426,7 +447,7 @@ class BackgroundTaskRunner:
 			log.debug("BackgroundTaskRunner worker starting use_case_id=%s title=%s", use_case_id, title)
 			try:
 				if use_case_id not in _NON_LLM_USE_CASES:
-					ensure_litert_server_ready(
+					ensure_provider_server_ready(
 						on_progress=lambda msg: nvda_ui.queue(nvda_ui.message, msg),
 					)
 				result = self._use_case_engine.execute(use_case_id, progress=self._progress_handler)

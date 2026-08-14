@@ -50,6 +50,13 @@ class UIAdapter:
 		"""Register the application-owned LiteRT readiness use case."""
 		self._litert_ready_handler = handler
 
+	def register_provider_ready_handler(
+		self,
+		handler: Callable[[Callable[[str], None] | None], None],
+	) -> None:
+		"""Register readiness handling for all managed local providers."""
+		self._litert_ready_handler = handler
+
 	def close(self) -> None:
 		try:
 			close_host = getattr(self._host_renderer, "close", None)

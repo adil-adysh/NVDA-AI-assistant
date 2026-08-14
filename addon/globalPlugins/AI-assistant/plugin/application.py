@@ -34,7 +34,7 @@ from ..use_case.types import (
 	SUMMARY,
 	PROOFREAD,
 )
-from .background import BackgroundTaskRunner, ensure_litert_server_ready
+from .background import BackgroundTaskRunner, ensure_provider_server_ready
 from .factory import build_plugin_services
 from .layer_mode import AssistantLayerController
 from .presenter import UseCasePresenter
@@ -62,7 +62,7 @@ class AIAssistantApplication:
 			conversation_service=self._services.conversation_service,
 			tool_registry=self._services.tool_registry,
 		)
-		ui_adapter.register_litert_ready_handler(ensure_litert_server_ready)
+		ui_adapter.register_provider_ready_handler(ensure_provider_server_ready)
 		self.background = BackgroundTaskRunner(
 			llm_service=self._services.llm_service,
 			use_case_engine=self._services.use_case_engine,
@@ -103,7 +103,7 @@ class AIAssistantApplication:
 		return self._services
 
 	def _auto_start_litert_if_active(self) -> None:
-		"""Start the LiteRT-LM server in a background thread when it is the active provider.
+		"""Start the active managed local server in a background thread.
 
 		The check is cheap — only reads config and checks disk paths.
 		Actual server startup (including the health/adopt probe for a
@@ -111,23 +111,22 @@ class AIAssistantApplication:
 		NVDA startup is never delayed or blocked on socket I/O.
 		"""
 		try:
-			if get_provider() != "litert-lm":
+			provider = get_provider()
+			if provider not in {"litert-lm", "llama-cpp-server"}:
 				return
-			from ..providers.runtime.server import get_litert_supervisor
-			supervisor = get_litert_supervisor()
-			if not supervisor.is_installed:
-				return
-			# A live process handle means the server is already running.
-			if supervisor.is_running:
-				return
+			if provider == "litert-lm":
+				from ..providers.runtime.server import get_litert_supervisor
+				supervisor = get_litert_supervisor()
+				if not supervisor.is_installed or supervisor.is_running:
+					return
 
 			# Delegate health/adopt/start to a daemon thread. The readiness
 			# path adopts a healthy server whose handle was lost after an
 			# NVDA restart, and starts one otherwise — without blocking here.
-			from .background import ensure_litert_server_ready
+			from .background import ensure_provider_server_ready
 			threading.Thread(
-				target=ensure_litert_server_ready,
-				name="LiteRTServerAutoStart",
+				target=ensure_provider_server_ready,
+				name=f"{provider}ServerAutoStart",
 				daemon=True,
 			).start()
 			log.debug("LiteRT server auto-start scheduled in background")
@@ -360,6 +359,12 @@ class AIAssistantApplication:
 			from ..service.error_presentation import present_error
 			nvda_ui.message(present_error(error, _).message)
 			return
+		if provider_id in {"litert-lm", "llama-cpp-server"}:
+			threading.Thread(
+				target=ensure_provider_server_ready,
+				name=f"{provider_id}ServerSwitchStart",
+				daemon=True,
+			).start()
 		provider_label = get_provider_display_name(result.provider_state.provider)
 		# TRANSLATORS: Message spoken when the AI provider is switched.
 		message = _("AI provider switched to {provider}.").format(provider=provider_label)
