@@ -180,7 +180,19 @@ class LlamaModelCatalog:
 				self._preset_path.write_text(remove_model_from_preset(content, model_id), encoding="utf-8", newline="\n")
 
 	def find(self, model_id: str) -> LlamaModelRecord | None:
-		return next((item for item in self.list_records() if item.model_id == model_id), None)
+		requested = str(model_id or "").strip()
+		for item in self.list_records():
+			identities = {
+				item.model_id,
+				item.source,
+				item.server_model,
+				item.server_model.removeprefix("hf://"),
+			}
+			if item.variant:
+				identities.add(f"{item.source}:{item.variant}")
+			if requested in identities:
+				return item
+		return None
 
 	def write_preset(self) -> Path:
 		with self._lock:

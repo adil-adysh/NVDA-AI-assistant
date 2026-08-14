@@ -94,6 +94,19 @@ class LlamaModelsPresetTests(unittest.TestCase):
 		self.assertIn("hf-repo = WhiskyAKM/Gemma-4-26B-A4B-NVFP4-GGUF:NVFP4", merged)
 		self.assertEqual(parse_models_preset(merged)[0].model_id, "gemma4-26b")
 
+	def test_catalog_resolves_hugging_face_source_to_preset_model_id(self) -> None:
+		with tempfile.TemporaryDirectory() as directory:
+			catalog = LlamaModelCatalog(directory)
+			record = LlamaModelRecord(
+				model_id="gemma4-26b",
+				source="WhiskyAKM/Gemma-4-26B-A4B-NVFP4-GGUF",
+				kind=ModelSourceKind.HUGGING_FACE.value,
+				variant="NVFP4",
+			)
+			catalog.upsert(record)
+			self.assertEqual(catalog.find("WhiskyAKM/Gemma-4-26B-A4B-NVFP4-GGUF:NVFP4"), record)
+			self.assertEqual(catalog.find("hf://WhiskyAKM/Gemma-4-26B-A4B-NVFP4-GGUF:NVFP4"), record)
+
 
 if __name__ == "__main__":
 	unittest.main()
