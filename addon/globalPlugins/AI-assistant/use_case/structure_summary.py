@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from ..context.pipeline import ContextPipeline
+from ..context.navigation import build_navigation_targets
 from ..prompts import build_extraction_structure_summary_prompt
 from ..context.types import ExtractionIntent, PageStructureRequest, PromptContext
 from ..service.llm import LLMService
@@ -62,6 +63,13 @@ class StructureSummaryUseCase(UseCase):
 	def _build_result(self, prompt_context: PromptContext, response: object, prompt: str) -> UseCaseResult:
 		extraction_result = self._get_extraction_result(prompt_context)
 		html_output = self.markdown_to_html(response.text)
+		result_metadata = self._build_result_metadata(response, self.spec.prompt_key)
+		result_metadata["navigation_targets"] = [
+			target.to_dict()
+			for target in build_navigation_targets(
+				extraction_result.structure, graph=extraction_result.graph
+			)
+		]
 		return UseCaseResult(
 			success=True,
 			message="Structure summary ready",
@@ -76,10 +84,11 @@ class StructureSummaryUseCase(UseCase):
 				text=extraction_result.text,
 				metadata=self._build_prompt_metadata(self.spec.prompt_key, prompt),
 			),
-			metadata=self._build_result_metadata(response, self.spec.prompt_key),
+			metadata=result_metadata,
 			# A structure result must not offer the full page as if it were part of
 			# the result.  That reintroduces the exact context bloat this use case
 			# exists to avoid when the result is added to chat.
 			context_items=build_page_context_items(extraction_result, include_text=False),
 			output_items=(ResultOutputItem(id="structure_summary", content=response.text),),
+			navigation_context=extraction_result.navigation_context,
 		)

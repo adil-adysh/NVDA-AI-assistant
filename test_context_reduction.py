@@ -133,6 +133,23 @@ class ContextReductionTests(unittest.TestCase):
 		self.assertIn("main: Product information", retrieved)
 		self.assertIn("Relevant page content:\ntarget information", retrieved)
 
+	def test_current_page_context_retrieves_graph_sections_with_embeddings(self) -> None:
+		graph = types_module.AccessibilityGraph(
+			sections=(
+				types_module.SemanticSection("section-a", "Overview", "general introduction", 0),
+				types_module.SemanticSection("section-b", "Downloads", "target download information", 1),
+			)
+		)
+		result = types_module.ExtractionResult(
+			"Title", "Browser", "general introduction\n\ntarget download information", False, graph=graph
+		)
+		page = reduction.CurrentPageContext(reduction.ContextReducer(embedder=_FakeEmbedder()))
+		page.set(types_module.PromptContext(use_case_id="summary", extraction_result=result), "conversation-1")
+
+		retrieved = page.retrieve("where is the target download", "conversation-1")
+
+		self.assertIn("target download information", retrieved)
+
 
 if __name__ == "__main__":
 	unittest.main()

@@ -44,11 +44,11 @@ _EXPORTS = {
 }
 
 _TYPE_EXPORTS = (
-	"ALL_STRUCTURED_FIELDS", "ContentRequest", "ExtractionFacts", "ExtractionIntent",
+	"AccessibilityGraph", "AccessibilityNode", "ALL_STRUCTURED_FIELDS", "ContentRequest", "ExtractionFacts", "ExtractionIntent",
 	"ExtractionResult", "ExtractionSnapshot", "ExtractionStructure", "FocusedElementImageRequest",
 	"FocusedElementTextRequest", "FocusedTextSnapshot", "ForegroundImageRequest",
 	"ImageCaptureSource", "ImageCaptureSnapshot", "ImageContext", "NavigatorImageRequest",
-	"PageStructureRequest", "PageTextRequest", "PromptContext", "PromptSource", "StructuredField",
+	"PageStructureRequest", "PageTextRequest", "PromptContext", "PromptSource", "SemanticSection", "StructuredField",
 )
 for _name in _TYPE_EXPORTS:
 	_EXPORTS[_name] = ("types", _name)

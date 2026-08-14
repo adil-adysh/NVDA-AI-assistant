@@ -82,7 +82,12 @@ class BrowserAwarePageExtractor(TreeExtractor):
 		if browserInterceptor is not None:
 			log.debug("BrowserAwarePageExtractor.extract: evaluating browser treeInterceptor first")
 			browserRoot = self._browserRootFromInterceptor(browserInterceptor)
-			snapshot = self._buildSnapshot(browserRoot, context, sourceName="browserTreeInterceptor")
+			snapshot = self._buildSnapshot(
+				browserRoot,
+				context,
+				sourceName="browserTreeInterceptor",
+				browser_interceptor=browserInterceptor,
+			)
 			if snapshot is not None:
 				score = self._candidateScore(browserRoot, context, snapshot, "browserTreeInterceptor", browserInterceptor)
 				bestSnapshot = snapshot
@@ -286,6 +291,7 @@ class BrowserAwarePageExtractor(TreeExtractor):
 		sourceName: str,
 		trimmedText: str | None = None,
 		truncated: bool | None = None,
+		browser_interceptor: object | None = None,
 	):
 		if trimmedText is None or truncated is None:
 			text = self._extractText(obj)
@@ -304,7 +310,8 @@ class BrowserAwarePageExtractor(TreeExtractor):
 				return None
 			self._seenTextSignatures.add(textSignature)
 
-		headings, links, buttons, landmarks, inputs, comboboxes, checkboxes, radios = self._extractStructuredInfo(obj)
+		graph = self._extractGraph(obj, trimmedText)
+		headings, links, buttons, landmarks, inputs, comboboxes, checkboxes, radios = self._field_parser.structured_info_from_graph(graph)
 
 		log.debug(
 			f"Browser Assistant: selected source={sourceName} candidate={type(obj).__module__}.{type(obj).__name__}"
@@ -330,6 +337,8 @@ class BrowserAwarePageExtractor(TreeExtractor):
 			comboboxes=comboboxes,
 			checkboxes=checkboxes,
 			radios=radios,
+			navigation_context=self._navigation_context(obj) or browser_interceptor,
+			graph=graph,
 		)
 
 	def _snapshotScore(self, snapshot: BrowserExtractionSnapshot | None) -> int:
@@ -367,7 +376,8 @@ class BrowserAwarePageExtractor(TreeExtractor):
 		if textSignature in self._seenTextSignatures:
 			return currentBest, currentScore
 
-		headings, links, buttons, landmarks, inputs, comboboxes, checkboxes, radios = self._extractStructuredInfo(obj)
+		graph = self._extractGraph(obj, trimmedText)
+		headings, links, buttons, landmarks, inputs, comboboxes, checkboxes, radios = self._field_parser.structured_info_from_graph(graph)
 		snapshot = BrowserExtractionSnapshot(
 			source="browser",
 			title=self._extractTitle(obj, context),
@@ -382,6 +392,8 @@ class BrowserAwarePageExtractor(TreeExtractor):
 			comboboxes=comboboxes,
 			checkboxes=checkboxes,
 			radios=radios,
+			navigation_context=self._navigation_context(obj),
+			graph=graph,
 		)
 		score = self._candidateScore(obj, context, snapshot, sourceName, browserInterceptor)
 		score += min(len(trimmedText), 500) // 25
@@ -513,6 +525,18 @@ class BrowserAwarePageExtractor(TreeExtractor):
 	def _extractStructuredInfo(self, obj: object):
 		headings, links, buttons, landmarks, inputs, comboboxes, checkboxes, radios = self._field_parser.extract_structured_info(obj)
 		return headings, links, buttons, landmarks, inputs, comboboxes, checkboxes, radios
+
+	def _extractGraph(self, obj: object, page_text: str):
+		return self._field_parser.extract_graph(obj, page_text)
+
+	def _navigation_context(self, obj: object) -> object | None:
+		"""Return the live document object used by later navigation actions."""
+		interceptor = getattr(obj, "treeInterceptor", None)
+		if callable(getattr(interceptor, "_iterNodesByType", None)):
+			return interceptor
+		if callable(getattr(obj, "_iterNodesByType", None)):
+			return obj
+		return None
 
 	def _dedupe_headings(self, headings: list[tuple[int | None, str]]) -> tuple[tuple[int | None, str], ...]:
 		seen: set[tuple[int | None, str]] = set()

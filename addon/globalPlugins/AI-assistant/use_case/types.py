@@ -104,3 +104,6 @@ class UseCaseResult:
 	# "Add X to Chat" / "Open in New Chat" actions from these.
 	context_items: tuple[ResultContextItem, ...] = ()
 	output_items: tuple[ResultOutputItem, ...] = ()
+	# Main-thread-only browser context for resolving navigation actions. It is
+	# never serialized into the UI or provider payload.
+	navigation_context: object | None = None

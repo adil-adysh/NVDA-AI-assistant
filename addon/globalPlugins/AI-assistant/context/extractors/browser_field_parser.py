@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import replace
+import hashlib
 
 import controlTypes
 from textInfos import POSITION_ALL
+
+from ..types import AccessibilityGraph, AccessibilityNode, SemanticSection
 
 
 class BrowserFieldParser:
@@ -32,6 +36,37 @@ class BrowserFieldParser:
 		if not fields:
 			return self._empty_result()
 		return self._parse_text_fields(fields)
+
+	def extract_graph(self, obj: object, page_text: str = "") -> AccessibilityGraph:
+		"""Build a compact semantic graph from NVDA's accessibility field stream."""
+		text_info = self._make_text_info(obj)
+		if text_info is None:
+			return AccessibilityGraph()
+		fields = self._make_text_with_fields(text_info)
+		if not fields:
+			return AccessibilityGraph()
+		nodes = self._parse_graph(fields)
+		return AccessibilityGraph(nodes=nodes, sections=self._derive_sections(nodes, page_text))
+
+	def structured_info_from_graph(self, graph: AccessibilityGraph) -> tuple[
+		tuple[tuple[int | None, str], ...], tuple[str, ...], tuple[str, ...], tuple[str, ...],
+		tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...],
+	]:
+		"""Return legacy structure views derived from the authoritative graph."""
+		nodes = graph.nodes
+		return (
+			tuple((node.heading_level, node.name) for node in nodes if node.role == "heading"),
+			self._dedupe_strings([node.name for node in nodes if node.role == "link"]),
+			self._dedupe_strings([node.name for node in nodes if node.role == "button"]),
+			self._dedupe_strings([
+				f"{node.landmark}: {node.name}" if node.landmark else node.name
+				for node in nodes if node.role == "landmark"
+			]),
+			self._dedupe_strings([node.name for node in nodes if node.control_type == "input"]),
+			self._dedupe_strings([node.name for node in nodes if node.control_type == "combobox"]),
+			self._dedupe_strings([node.name for node in nodes if node.control_type == "checkbox"]),
+			self._dedupe_strings([node.name for node in nodes if node.control_type == "radio"]),
+		)
 
 	@staticmethod
 	def _empty_result() -> tuple[tuple[tuple[int | None, str], ...], ...]:
@@ -99,6 +134,132 @@ class BrowserFieldParser:
 			self._dedupe_strings(checkboxes),
 			self._dedupe_strings(radios),
 		)
+
+	def _parse_graph(self, fields: Iterable[object]) -> tuple[AccessibilityNode, ...]:
+		frames: list[dict[str, object]] = []
+		nodes: list[AccessibilityNode] = []
+		order = 0
+		for item in fields:
+			if isinstance(item, str):
+				if frames and self._stack_is_visible(frames):
+					text = frames[-1]["text"]
+					if isinstance(text, list):
+						text.append(item)
+				continue
+			command = self._command_name(getattr(item, "command", None))
+			field = getattr(item, "field", None)
+			if command == "controlstart" and field is not None:
+				parent_id = str(frames[-1]["id"]) if frames else None
+				frames.append({
+					"id": f"node-{order}",
+					"field": field,
+					"parent_id": parent_id,
+					"order": order,
+					"text": [],
+					"hidden": self._is_hidden_field(field),
+				})
+				order += 1
+			elif command == "controlend" and frames:
+				node = self._graph_node_from_frame(frames.pop(), frames)
+				if node is not None:
+					nodes.append(node)
+		while frames:
+			node = self._graph_node_from_frame(frames.pop(), frames)
+			if node is not None:
+				nodes.append(node)
+		nodes = sorted(nodes, key=lambda node: node.order)
+		known_ids = {node.id for node in nodes}
+		return tuple(
+			replace(node, parent_id=None) if node.parent_id not in known_ids else node
+			for node in nodes
+		)
+
+	def _graph_node_from_frame(
+		self, frame: dict[str, object], parents: list[dict[str, object]]
+	) -> AccessibilityNode | None:
+		if bool(frame.get("hidden")) or any(bool(parent.get("hidden")) for parent in parents):
+			return None
+		field = frame.get("field")
+		if field is None:
+			return None
+		text_parts = frame.get("text")
+		text = self._normalize_candidate_text(" ".join(text_parts) if isinstance(text_parts, list) else "")
+		name = text or self._explicit_field_name(field)
+		role = self._graph_role(field)
+		if not name and role == "container":
+			return None
+		node = AccessibilityNode(
+			id=str(frame["id"]), role=role, name=name, order=int(frame["order"]),
+			parent_id=str(frame["parent_id"]) if frame.get("parent_id") else None,
+			text=text, heading_level=self._heading_level(field) if role == "heading" else None,
+			landmark=self._landmark_type(field) if role == "landmark" else None,
+			control_type=self._graph_control_type(field) if role == "formField" else None,
+		)
+		if parents and self._stack_is_visible(parents):
+			parent_text = parents[-1]["text"]
+			if isinstance(parent_text, list) and name:
+				parent_text.append(name)
+		return node
+
+	def _graph_role(self, field: object) -> str:
+		if self._is_heading_field(field):
+			return "heading"
+		if self._is_button_field(field):
+			return "button"
+		if self._is_combobox_field(field) or self._is_checkbox_field(field) or self._is_radio_field(field) or self._is_input_field(field):
+			return "formField"
+		if self._is_link_field(field):
+			return "link"
+		if self._is_landmark_field(field):
+			return "landmark"
+		return "container"
+
+	def _graph_control_type(self, field: object) -> str:
+		if self._is_combobox_field(field):
+			return "combobox"
+		if self._is_checkbox_field(field):
+			return "checkbox"
+		if self._is_radio_field(field):
+			return "radio"
+		return "input"
+
+	def _derive_sections(
+		self, nodes: tuple[AccessibilityNode, ...], page_text: str
+	) -> tuple[SemanticSection, ...]:
+		headings = [node for node in nodes if node.role == "heading" and node.name]
+		if not headings:
+			text = self._normalize_candidate_text(page_text)
+			return (SemanticSection("section-page", "Page", text, 0),) if text else ()
+		sections: list[SemanticSection] = []
+		for index, heading in enumerate(headings):
+			next_order = headings[index + 1].order if index + 1 < len(headings) else float("inf")
+			member_nodes = tuple(
+				node for node in nodes if heading.order <= node.order < next_order and node.id != heading.id
+			)
+			parts = [f"Section: {heading.name}"]
+			parts.extend(node.name for node in member_nodes if node.name and node.role != "container")
+			next_heading = headings[index + 1].name if index + 1 < len(headings) else None
+			section_text = self._section_page_text(heading.name, next_heading, page_text) or "\n".join(parts)
+			key = hashlib.sha256(f"{heading.order}:{heading.name}".encode("utf-8")).hexdigest()[:12]
+			sections.append(SemanticSection(
+				id=f"section-{key}", title=heading.name, text=section_text, order=heading.order,
+				heading_node_id=heading.id, node_ids=tuple(node.id for node in member_nodes),
+			))
+		return tuple(sections)
+
+	def _section_page_text(self, title: str, next_title: str | None, page_text: str) -> str:
+		paragraphs = [self._normalize_candidate_text(part) for part in page_text.splitlines()]
+		paragraphs = [part for part in paragraphs if part]
+		for index, paragraph in enumerate(paragraphs):
+			if paragraph.casefold() != title.casefold():
+				continue
+			parts = [f"Section: {title}"]
+			for following in paragraphs[index + 1 : index + 5]:
+				if next_title and following.casefold() == next_title.casefold():
+					break
+				parts.append(following)
+			return "\n".join(parts)
+		return ""
 
 	def _close_frame(
 		self,

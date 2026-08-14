@@ -131,7 +131,7 @@ class UseCase(ABC):
 		"""Metadata describing the prompt built for this use case."""
 		return {"prompt_key": prompt_key, "prompt_chars": len(prompt)}
 
-	def _build_result_metadata(self, response: object, prompt_key: str) -> dict[str, str]:
+	def _build_result_metadata(self, response: object, prompt_key: str) -> dict[str, Any]:
 		"""Metadata describing the LLM response (provider/model provenance)."""
 		provider = getattr(response, "provider", None) or "unknown"
 		model = getattr(response, "model", None) or "unknown"

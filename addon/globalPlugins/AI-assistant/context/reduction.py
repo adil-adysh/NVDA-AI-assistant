@@ -16,7 +16,7 @@ from typing import Protocol
 
 from .formatting import format_page_structure
 from .budget import ApproximateTokenCounter, ContextWindowBudget
-from .types import ExtractionResult, PromptContext
+from .types import AccessibilityGraph, ExtractionResult, PromptContext, SemanticSection
 
 
 class TextEmbedder(Protocol):
@@ -273,6 +273,41 @@ class ContextReducer:
 			policy.mode,
 		)
 
+	def select_graph_sections(
+		self, graph: AccessibilityGraph, query: str, max_sections: int = 4
+	) -> tuple[SemanticSection, ...]:
+		"""Return semantically relevant sections while keeping graph ordering."""
+		sections = tuple(section for section in graph.sections if section.text.strip())
+		if not sections or not query.strip():
+			return ()
+		chunks = tuple(
+			ContentChunk(section.id, section.text, section.order, self._estimator.count(section.text))
+			for section in sections
+		)
+		try:
+			if self._embedder is not None:
+				ranked = self._rank_by_query(chunks, query, "Retrieve relevant webpage sections")
+			else:
+				ranked = self._rank_sections_lexically(chunks, query)
+		except Exception:
+			ranked = self._rank_sections_lexically(chunks, query)
+		by_id = {section.id: section for section in sections}
+		selected = [by_id[chunk.id] for chunk in ranked[:max_sections] if chunk.id in by_id]
+		return tuple(sorted(selected, key=lambda section: section.order))
+
+	@staticmethod
+	def _rank_sections_lexically(
+		chunks: Sequence[ContentChunk], query: str
+	) -> tuple[ContentChunk, ...]:
+		terms = {term for term in re.findall(r"\w+", query.casefold()) if len(term) > 2}
+		return tuple(sorted(
+			chunks,
+			key=lambda chunk: (
+				-sum(term in chunk.text.casefold() for term in terms),
+				chunk.position,
+			),
+		))
+
 	@staticmethod
 	def _clean(text: str) -> str:
 		paragraphs: list[str] = []
@@ -433,6 +468,17 @@ class CurrentPageContext:
 	) -> str | None:
 		if self._context is None or self._conversation_id != conversation_id or not query.strip():
 			return None
+		initial_result = self._context.extraction_result
+		if initial_result is not None and initial_result.graph is not None:
+			sections = self._reducer.select_graph_sections(initial_result.graph, query)
+			if sections:
+				section_text = "\n\n".join(section.text for section in sections)
+				selected = replace(
+					self._context,
+					text=section_text,
+					extraction_result=replace(initial_result, text=section_text),
+				)
+				return self._render_retrieval_context(selected)
 		policy = ContextReductionPolicy(
 			mode="query_retrieval",
 			max_tokens=self._max_tokens,

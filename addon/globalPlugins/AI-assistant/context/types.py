@@ -20,6 +20,41 @@ IMAGE_SOURCE: Final[PromptSource] = "image"
 
 
 @dataclass(frozen=True, slots=True)
+class AccessibilityNode:
+	"""A semantic node from an NVDA browser accessibility field stream."""
+
+	id: str
+	role: str
+	name: str
+	order: int
+	parent_id: str | None = None
+	text: str = ""
+	heading_level: int | None = None
+	landmark: str | None = None
+	control_type: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticSection:
+	"""A searchable page region derived from a heading and its graph context."""
+
+	id: str
+	title: str
+	text: str
+	order: int
+	heading_node_id: str | None = None
+	node_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class AccessibilityGraph:
+	"""In-memory accessibility graph; never a raw DOM or persisted object graph."""
+
+	nodes: tuple[AccessibilityNode, ...] = ()
+	sections: tuple[SemanticSection, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ExtractionSnapshot:
 	title: str
 	appTitle: str
@@ -38,6 +73,10 @@ class BrowserExtractionSnapshot(ExtractionSnapshot):
 	comboboxes: tuple[str, ...] = ()
 	checkboxes: tuple[str, ...] = ()
 	radios: tuple[str, ...] = ()
+	# Live NVDA object used only on the main thread to re-resolve navigation
+	# actions. It is never sent through the UI or provider protocol.
+	navigation_context: object | None = None
+	graph: AccessibilityGraph | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +103,8 @@ class ExtractionResult:
 	truncated: bool
 	source: PromptSource = GENERIC
 	structure: ExtractionStructure | None = None
+	graph: AccessibilityGraph | None = None
+	navigation_context: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +181,16 @@ def build_extraction_result_from_facts(extraction_facts: ExtractionFacts | None)
 		truncated=extraction_facts.truncated if extraction_facts.truncated is not None else False,
 		source=source,
 		structure=extraction_facts.structure,
+		graph=(
+			getattr(extraction_facts.snapshot, "graph", None)
+			if extraction_facts.snapshot is not None
+			else None
+		),
+		navigation_context=(
+			getattr(extraction_facts.snapshot, "navigation_context", None)
+			if extraction_facts.snapshot is not None
+			else None
+		),
 	)
 
 

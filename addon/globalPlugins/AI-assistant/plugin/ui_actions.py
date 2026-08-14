@@ -42,12 +42,21 @@ class OpenInNewChatAction:
 	token: str
 
 
+@dataclass(frozen=True, slots=True)
+class NavigateToTargetAction:
+	"""Move NVDA to a page target stored with a one-shot result."""
+
+	token: str
+	target_id: str
+
+
 UIAction = (
 	ConversationNewAction
 	| ConversationOpenAction
 	| ConversationDeleteAction
 	| AddItemToChatAction
 	| OpenInNewChatAction
+	| NavigateToTargetAction
 )
 
 
@@ -60,6 +69,8 @@ def serialize_ui_action(action: UIAction) -> tuple[str, dict[str, object]]:
 		return "conversation_delete", {"conversation_id": action.conversation_id}
 	if isinstance(action, AddItemToChatAction):
 		return f"add_{action.item_id}_to_chat", _compact_payload(token=action.token)
+	if isinstance(action, NavigateToTargetAction):
+		return "navigate_to_target", _compact_payload(token=action.token, target_id=action.target_id)
 	return "open_in_new_chat", _compact_payload(token=action.token)
 
 
@@ -88,6 +99,12 @@ def parse_ui_action(action_id: str, payload: dict[str, Any] | None) -> UIAction 
 		if token is None:
 			return None
 		return OpenInNewChatAction(token=token)
+	if action_id == "navigate_to_target" or action_id.startswith("navigate_to_target_"):
+		token = _read_non_empty_string(resolved_payload, "token")
+		target_id = _read_non_empty_string(resolved_payload, "target_id")
+		if token is None or target_id is None:
+			return None
+		return NavigateToTargetAction(token=token, target_id=target_id)
 	return None
 
 

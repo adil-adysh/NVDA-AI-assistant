@@ -18,6 +18,7 @@ ConversationDeleteAction = ui_actions.ConversationDeleteAction
 ConversationNewAction = ui_actions.ConversationNewAction
 ConversationOpenAction = ui_actions.ConversationOpenAction
 OpenInNewChatAction = ui_actions.OpenInNewChatAction
+NavigateToTargetAction = ui_actions.NavigateToTargetAction
 parse_ui_action = ui_actions.parse_ui_action
 serialize_ui_action = ui_actions.serialize_ui_action
 
@@ -84,6 +85,18 @@ class UIActionTests(unittest.TestCase):
 		action = parse_ui_action("open_in_new_chat", {})
 
 		self.assertIsNone(action)
+
+	def test_navigation_target_roundtrip_preserves_token_and_target(self) -> None:
+		serialized_id, serialized_payload = serialize_ui_action(
+			NavigateToTargetAction(token="token-3", target_id="nav-abc")
+		)
+
+		self.assertEqual(serialized_id, "navigate_to_target")
+		self.assertEqual(serialized_payload, {"token": "token-3", "target_id": "nav-abc"})
+		self.assertEqual(
+			parse_ui_action(serialized_id, serialized_payload),
+			NavigateToTargetAction(token="token-3", target_id="nav-abc"),
+		)
 
 	def test_serialize_conversation_open_action(self) -> None:
 		action_id, payload = serialize_ui_action(ConversationOpenAction(conversation_id="conv-789"))

@@ -17,6 +17,7 @@ from ..service.provider_catalog import ProviderCatalogService
 from ..service.provider_readiness import ProviderReadinessService
 from ..tools import ToolRegistry
 from ..config.settings import get_provider_state
+from ..context.navigation import resolve_and_move_target
 from ..ui.adapter import ui_adapter
 from ..ui.action_store import ResultActionStore
 from ..ui.intent import (
@@ -47,6 +48,7 @@ from .ui_actions import (
 	ConversationNewAction,
 	ConversationOpenAction,
 	OpenInNewChatAction,
+	NavigateToTargetAction,
 	parse_ui_action,
 )
 
@@ -394,7 +396,11 @@ class UseCasePresenter:
 			for item in (getattr(use_case_result, "output_items", None) or ())
 			if item.id in _OUTPUT_ITEM_ACTION_LABELS and self._output_item_has_data(item)
 		)
-		if not context_items and not output_items:
+		navigation_targets = tuple(
+			item for item in (result_metadata.get("navigation_targets") or ())
+			if isinstance(item, dict) and item.get("id") and item.get("name")
+		)
+		if not context_items and not output_items and not navigation_targets:
 			return []
 		# Store the full payload once; each action transports only its token and
 		# item id, so large page content or Base64 images never cross the event
@@ -403,12 +409,25 @@ class UseCasePresenter:
 			{
 				"context_items": [self._serialize_context_item(item) for item in context_items],
 				"output_items": [self._serialize_output_item(item) for item in output_items],
+				"navigation_targets": list(navigation_targets),
+				"navigation_context": getattr(use_case_result, "navigation_context", None),
 			}
 		)
 		actions = [
 			self._build_add_item_action(token, item.id)
 			for item in (*context_items, *output_items)
 		]
+		actions.extend(
+			ResultActionViewModel(
+				# The host uses action IDs as list keys. Each target therefore
+				# needs a unique ID even though all of them share one action kind.
+				id=f"navigate_to_target_{target['id']}",
+				label=translate("Go to {name}").format(name=str(target["name"])),
+				kind="navigate_to_target",
+				payload={"token": token, "target_id": str(target["id"])},
+			)
+			for target in navigation_targets
+		)
 		# TRANSLATORS: Result action that moves the complete use-case context and result into a new conversation.
 		actions.append(
 			ResultActionViewModel(
@@ -469,7 +488,8 @@ class UseCasePresenter:
 		| ConversationOpenAction
 		| ConversationDeleteAction
 		| AddItemToChatAction
-		| OpenInNewChatAction,
+		| OpenInNewChatAction
+		| NavigateToTargetAction,
 	) -> None:
 		if isinstance(action, ConversationNewAction):
 			self.open_chat_window(force_new_conversation=True)
@@ -491,6 +511,9 @@ class UseCasePresenter:
 			return
 		if isinstance(action, OpenInNewChatAction):
 			self._dispatch_open_in_new_chat(action)
+			return
+		if isinstance(action, NavigateToTargetAction):
+			self._dispatch_navigate_to_target(action)
 
 	def _dispatch_add_item_to_chat(self, action: AddItemToChatAction) -> None:
 		payload = self._result_action_store.pop(action.token)
@@ -533,6 +556,36 @@ class UseCasePresenter:
 			len(seed_messages),
 		)
 		self.open_chat_window(seed_messages=seed_messages, force_new_conversation=True)
+
+	def _dispatch_navigate_to_target(self, action: NavigateToTargetAction) -> None:
+		payload = self._result_action_store.get(action.token)
+		if payload is None:
+			log.debug("Navigation result action token expired: target_id=%s", action.target_id)
+			return
+		targets = payload.get("navigation_targets") or []
+		target = next(
+			(item for item in targets if isinstance(item, dict) and item.get("id") == action.target_id),
+			None,
+		)
+		if target is None:
+			log.warning("Navigation target missing from stored payload: target_id=%s", action.target_id)
+			return
+		# The result screen is a separate foreground WebView window. Close it
+		# before resolving the browser tree; otherwise NVDA can still enumerate
+		# the host while Windows is asynchronously switching foreground windows.
+		ui_adapter.close_window(reason="navigate_to_target")
+		navigation_context = payload.get("navigation_context")
+
+		def resolve_after_result_window_closes() -> None:
+			_moved, label = resolve_and_move_target(target, navigation_context)
+			nvda_ui.message(label)
+
+		try:
+			import core
+			core.callLater(350, resolve_after_result_window_closes)
+		except ImportError:
+			# Keeps the helper usable in the lightweight test environment.
+			resolve_after_result_window_closes()
 
 	def _build_seed_messages_from_payload(self, payload: dict[str, Any]) -> tuple[Message, ...]:
 		"""Build complete conversation seeds (user context + assistant result)."""

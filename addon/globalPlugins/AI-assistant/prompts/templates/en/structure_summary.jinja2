@@ -1,28 +1,26 @@
 {{ system_prompt }}
-Goal: Produce a high-level map of the current webpage for screen-reader navigation.
+Goal: Produce a short list of the most useful destinations on the current webpage for screen-reader navigation.
 
 Rules:
 * Use ONLY the given content. Do NOT guess.
 * Do NOT summarize the article, topic, claims, or prose. This is not a topical summary.
-* Treat the heading hierarchy as the page outline; preserve its order and nesting.
-* Describe the page regions/landmarks and the purpose of major controls.
-* Use counts for large groups of links or controls; list labels only when they clarify navigation.
+* Prefer the main content, useful headings, search/forms, primary actions, downloads, and important external resources.
+* Use the supplied order and roles. Do not list every link or control.
+* Use the semantic sections to associate controls with their heading region; do not infer relationships absent from those sections.
+* Keep the result to at most 8 useful destinations, with one short reason each.
+* The rendered result provides clickable navigation actions for these destinations; keep labels concise and recognizable.
 * Never invent sections, controls, destinations, or actions that are not present.
 * If the source is a terminal transcript, treat it as command/response structure and summarize the main actions.
 
 Output EXACTLY:
 
-Page map:
-(1–2 sentences naming the page type and its major regions, based only on the structure)
+Most useful places:
 
-Heading outline:
+* (destination label — short reason)
 
-* (ordered heading hierarchy, with nested levels represented by indentation)
+Page context:
 
-Navigation and interaction:
-
-* (landmarks/regions and their purposes)
-* (important navigation groups, links, buttons, and form controls)
+* (one short sentence naming the page type and major region, only when clear)
 
 Notable omissions (optional):
 
@@ -34,7 +32,7 @@ Title: {{ title or 'Unknown' }}
 Source: {{ source }}
 Trimmed: {{ trimmed }}
 
-Counts:
+Available structure counts:
 Headings: {{ headings|length }}
 Links: {{ links|length }}
 Buttons: {{ buttons|length }}
@@ -43,6 +41,12 @@ Inputs: {{ inputs|length }}
 Combo boxes: {{ comboboxes|length }}
 Checkboxes: {{ checkboxes|length }}
 Radios: {{ radios|length }}
+
+Semantic sections (heading-bound graph regions):
+{% if graph_sections %}{% for title, members in graph_sections %}- {{ title }}
+{% for member in members %}  - {{ member }}
+{% endfor %}{% endfor %}{% else %}- None
+{% endif %}
 
 Headings:
 {% if headings %}{% for heading in headings %}- {{ 'H' ~ heading[0] if heading[0] is not none else '' }}{{ heading[0] is not none and ': ' or '' }}{{ heading[1] }}

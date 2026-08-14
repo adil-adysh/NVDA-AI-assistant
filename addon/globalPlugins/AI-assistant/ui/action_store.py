@@ -23,6 +23,12 @@ class ResultActionStore:
 			payload = self._payloads.pop(token, None)
 		return dict(payload) if payload is not None else None
 
+	def get(self, token: str) -> dict[str, Any] | None:
+		"""Read a payload without consuming sibling result actions."""
+		with self._lock:
+			payload = self._payloads.get(token)
+		return dict(payload) if payload is not None else None
+
 	def clear(self) -> None:
 		with self._lock:
 			self._payloads.clear()
