@@ -134,6 +134,33 @@ def _build_rename_args(old_id: str, new_id: str) -> list[str]:
 	return ["rename", old_id, new_id]
 
 
+def _validate_model_id(model_id: str) -> str:
+	"""Validate an ID before passing it to LiteRT-LM or using it as a path."""
+	value = str(model_id or "").strip()
+	if (
+		not value
+		or any(ord(char) < 0x20 for char in value)
+		or "\\" in value
+		or any(part in {"", ".", ".."} for part in value.split("/"))
+	):
+		raise LiteRTServerError(f"Invalid LiteRT-LM model ID: {model_id!r}")
+	return value
+
+
+def _validate_huggingface_artifact(artifact: str) -> str:
+	"""Reject artifact paths that could escape the resolver's repository root."""
+	value = str(artifact or "").strip()
+	if (
+		not value
+		or "\\" in value
+		or "\x00" in value
+		or value.startswith("/")
+		or any(part in {"", ".", ".."} for part in value.split("/"))
+	):
+		raise LiteRTServerError(f"Invalid Hugging Face artifact: {artifact!r}")
+	return value
+
+
 def build_server_config(
 	default_num_ctx: int,
 	pinned_models: Mapping[str, Any],
@@ -331,7 +358,9 @@ class LiteRTServerSupervisor:
 	def base_url(self) -> str:
 		"""The base URL clients should use to reach the server."""
 		host, port = self._effective_host_port()
-		return f"http://{host}:{port}"
+		# RFC 2732 requires brackets around an IPv6 literal in a URL.
+		url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+		return f"http://{url_host}:{port}"
 
 	@property
 	def is_installed(self) -> bool:
@@ -430,7 +459,8 @@ class LiteRTServerSupervisor:
 
 		python_exe = _resolve_litert_python(self._server_python())
 
-		self._report(on_progress, f"Starting LiteRT-LM server on port {self._port}...")
+		_, effective_port = self._effective_host_port()
+		self._report(on_progress, f"Starting LiteRT-LM server on port {effective_port}...")
 
 		with self._lifecycle_lock:
 			if self.is_running:
@@ -447,6 +477,23 @@ class LiteRTServerSupervisor:
 				)
 				self._adopted = False
 			except Exception as exc:
+				# If a post-Popen operation fails, do not orphan the child or
+				# leave a handle that makes future starts incorrectly no-op.
+				process = self._process
+				self._process = None
+				self._adopted = False
+				if process is not None and process.poll() is None:
+					try:
+						process.terminate()
+						process.wait(timeout=5)
+					except OSError:
+						log.debug("Could not clean up failed LiteRT server start", exc_info=True)
+					except subprocess.TimeoutExpired:
+						try:
+							process.kill()
+							process.wait(timeout=5)
+						except (OSError, subprocess.TimeoutExpired):
+							log.debug("Failed to terminate failed LiteRT server start", exc_info=True)
 				raise LiteRTServerError(f"Failed to start LiteRT-LM server: {exc}") from exc
 
 		log.info(
@@ -484,18 +531,22 @@ class LiteRTServerSupervisor:
 		"""
 		with self._lifecycle_lock:
 			process = self._process
-			if process is not None and process.poll() is None:
-				log.debug("Stopping LiteRT server (pid=%d)...", process.pid)
-				process.terminate()
-				try:
-					process.wait(timeout=10)
-				except subprocess.TimeoutExpired:
-					log.warning("LiteRT server did not stop; killing")
-					process.kill()
-					process.wait(timeout=5)
-
-			self._process = None
-			self._adopted = False
+			try:
+				if process is not None and process.poll() is None:
+					log.debug("Stopping LiteRT server (pid=%d)...", process.pid)
+					try:
+						process.terminate()
+						process.wait(timeout=10)
+					except subprocess.TimeoutExpired:
+						log.warning("LiteRT server did not stop; killing")
+						process.kill()
+						process.wait(timeout=5)
+					except OSError:
+						# The process may have exited between poll and terminate.
+						log.debug("LiteRT server process was already gone", exc_info=True)
+			finally:
+				self._process = None
+				self._adopted = False
 		log.info("LiteRT server stopped")
 
 	def adopt(self) -> None:
@@ -528,7 +579,9 @@ class LiteRTServerSupervisor:
 		LiteRT-LM stores imported models under the directory supplied through
 		``LITERT_LM_DIR``.  This is deliberately not the global user home.
 		"""
-		if not model_id or ".." in model_id or "\\" in model_id or "\x00" in model_id:
+		try:
+			model_id = _validate_model_id(model_id)
+		except LiteRTServerError:
 			return None
 		dir_name = model_id.replace("/", "--")
 		return self._litert_dir() / "models" / dir_name
@@ -618,8 +671,7 @@ class LiteRTServerSupervisor:
 		model_path = Path(model_path)
 		if not model_path.is_file():
 			raise LiteRTServerError(f"Model file does not exist: {model_path}")
-		if not model_id or "\\" in model_id or ".." in model_id or "\x00" in model_id:
-			raise LiteRTServerError(f"Invalid LiteRT-LM model ID: {model_id!r}")
+		model_id = _validate_model_id(model_id)
 
 		import_args = _build_import_args(model_path, model_id)
 		try:
@@ -647,8 +699,9 @@ class LiteRTServerSupervisor:
 		catalog_file = catalog_dir / "model.litertlm" if catalog_dir is not None else None
 		if delete_source and catalog_file is not None and catalog_file.is_file():
 			try:
-				model_path.unlink(missing_ok=True)
-				log.debug("Deleted source model file %s after import", model_path)
+				if model_path.resolve() != catalog_file.resolve():
+					model_path.unlink(missing_ok=True)
+					log.debug("Deleted source model file %s after import", model_path)
 			except OSError:
 				log.debug("Could not delete source model file %s", model_path, exc_info=True)
 
@@ -671,8 +724,16 @@ class LiteRTServerSupervisor:
 		should be installed.
 		"""
 		python_exe = _resolve_litert_python(self._server_python())
-		if not repository or "/" not in repository or not artifact:
+		if (
+			not repository
+			or "/" not in repository
+			or any(part in {"", ".", ".."} for part in repository.split("/"))
+			or "\\" in repository
+			or "\x00" in repository
+		):
 			raise LiteRTServerError("A repository and explicit LiteRT-LM artifact are required")
+		artifact = _validate_huggingface_artifact(artifact)
+		model_id = _validate_model_id(model_id)
 		self._report(on_progress, f"Importing {artifact} from Hugging Face...")
 		try:
 			result = _run_litert_cli(
@@ -710,8 +771,7 @@ class LiteRTServerSupervisor:
 		"""
 		python_exe = _resolve_litert_python(self._server_python())
 
-		if not model_id or "\\" in model_id or ".." in model_id or "\x00" in model_id:
-			raise LiteRTServerError(f"Invalid LiteRT-LM model ID: {model_id!r}")
+		model_id = _validate_model_id(model_id)
 
 		log.debug("Unregistering model %s from LiteRT-LM catalog", model_id)
 
@@ -753,9 +813,8 @@ class LiteRTServerSupervisor:
 		"""
 		python_exe = _resolve_litert_python(self._server_python())
 
-		for model_id in (old_id, new_id):
-			if not model_id or "\\" in model_id or ".." in model_id or "\x00" in model_id:
-				raise LiteRTServerError(f"Invalid LiteRT-LM model ID: {model_id!r}")
+		old_id = _validate_model_id(old_id)
+		new_id = _validate_model_id(new_id)
 
 		log.debug("Renaming model %s → %s", old_id, new_id)
 
@@ -827,12 +886,9 @@ class LiteRTServerSupervisor:
 	def _effective_host_port(self) -> tuple[str, int]:
 		"""Resolve the server bind address from the configured ``litertServerUrl``.
 
-		The client adapter connects to the user-configurable server URL
-		(``litertServerUrl``), so the ``serve`` process must bind the same
-		host/port or the client and server drift apart.  The settings module
-		is imported lazily and the parse is defensive so this stays usable in
-		isolated environments without NVDA's config stack; on any failure the
-		constructor-provided host/port are kept.
+		The client adapter connects to the injected server URL, so the
+		``serve`` process must bind the same host/port or the client and server
+		drift apart. On any failure the constructor-provided host/port are kept.
 		"""
 		try:
 			url = self._endpoint_provider() if self._endpoint_provider is not None else ""
@@ -894,10 +950,21 @@ class LiteRTServerSupervisor:
 				log.debug("Could not remove stale LiteRT config.json", exc_info=True)
 			return
 		config_path.parent.mkdir(parents=True, exist_ok=True)
-		config_path.write_text(
-			json.dumps(config, indent=2) + "\n",
-			encoding="utf-8",
+		# Replace in one rename so a process crash cannot leave a truncated
+		# config that makes the next LiteRT server fail at startup.
+		payload = json.dumps(config, indent=2) + "\n"
+		tmp_path = config_path.with_name(
+			f".{config_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
 		)
+		try:
+			tmp_path.write_text(payload, encoding="utf-8")
+			tmp_path.replace(config_path)
+		except OSError:
+			try:
+				tmp_path.unlink(missing_ok=True)
+			except OSError:
+				pass
+			raise
 
 	@staticmethod
 	def _build_download_url(config: RuntimeConfig) -> str:

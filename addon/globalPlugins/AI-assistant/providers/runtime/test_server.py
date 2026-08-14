@@ -617,16 +617,10 @@ class SupervisorHostPortTests(unittest.TestCase):
 
 	def setUp(self) -> None:
 		self.supervisor = LiteRTServerSupervisor()
-		self._settings_mod = types.ModuleType(f"{PACKAGE_NAME}.config.settings")
-		self._settings_mod.get_litert_server_url = mock.MagicMock()
-		sys.modules[self._settings_mod.__name__] = self._settings_mod
-		self.addCleanup(sys.modules.pop, self._settings_mod.__name__, None)
 
 	def test_uses_configured_url_host_and_port(self) -> None:
 		"""A configured URL with a port drives the bind address."""
-		self._settings_mod.get_litert_server_url.return_value = (
-			"http://127.0.0.1:9555"
-		)
+		self.supervisor.configure(endpoint_provider=lambda: "http://127.0.0.1:9555")
 		self.assertEqual(
 			self.supervisor._effective_host_port(),  # pylint: disable=protected-access
 			("127.0.0.1", 9555),
@@ -634,7 +628,7 @@ class SupervisorHostPortTests(unittest.TestCase):
 
 	def test_falls_back_to_defaults_when_no_port(self) -> None:
 		"""A URL without a port keeps the constructor-provided defaults."""
-		self._settings_mod.get_litert_server_url.return_value = "http://127.0.0.1"
+		self.supervisor.configure(endpoint_provider=lambda: "http://127.0.0.1")
 		self.assertEqual(
 			self.supervisor._effective_host_port(),  # pylint: disable=protected-access
 			("127.0.0.1", 9379),
@@ -642,7 +636,7 @@ class SupervisorHostPortTests(unittest.TestCase):
 
 	def test_falls_back_to_defaults_when_settings_raise(self) -> None:
 		"""A failing settings read must not break server startup."""
-		self._settings_mod.get_litert_server_url.side_effect = RuntimeError("boom")
+		self.supervisor.configure(endpoint_provider=lambda: (_ for _ in ()).throw(RuntimeError("boom")))
 		self.assertEqual(
 			self.supervisor._effective_host_port(),  # pylint: disable=protected-access
 			("127.0.0.1", 9379),
