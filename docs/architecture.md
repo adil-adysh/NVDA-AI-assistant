@@ -68,6 +68,19 @@ The IPC boundary must not own use-case behavior, provider behavior, or renderer-
 - `addon/globalPlugins/AI-assistant/ui/host_process.py` launches and monitors the external host when needed.
 - `addon/globalPlugins/AI-assistant/plugin/presenter.py` maps use-case results into generic UI intents and presentation intent metadata.
 
+### Provider runtime boundaries
+
+Local inference runtimes follow the same application-boundary rule:
+
+- `service/` owns provider-neutral readiness and model-selection use cases.
+- `providers/llama_manager.py` coordinates llama model identities without owning UI state.
+- `providers/runtime/llama_models.py` owns catalog persistence, preset parsing, and source reconciliation.
+- `providers/runtime/llama_server.py` owns `llama-server` command construction, process lifecycle, endpoint health, and the cached `/models` catalog.
+- `providers/adapters/llama_cpp.py` translates runtime metadata into `ProviderModelInfo` and uses canonical model IDs for requests.
+- `plugin/background.py` is the composition-root entrypoint for asynchronous startup, readiness, and shutdown.
+
+The llama-server API is the runtime source of truth. The local JSON manifest and `models.ini` preserve configuration and import identity, but they cannot override the server’s advertised model list or capabilities.
+
 ### Host side
 
 - `nvda_ui_host/src/protocol.rs` is the single source of truth for envelope parsing and serialization.

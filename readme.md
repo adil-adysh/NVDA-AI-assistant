@@ -16,7 +16,7 @@ without leaving NVDA.
 
 The add-on combines quick actions with a persistent chat workflow, allowing summaries, screenshots, and page content to continue naturally into follow-up conversation.
 
-For fully local inference it can also run **LiteRT-LM**, a self-contained on-device runtime that is downloaded on demand — no separate Python or Ollama installation needed.
+For fully local inference it can also run **LiteRT-LM** or **llama-server**. LiteRT-LM is downloaded on demand; llama-server is discovered on `PATH` or can be configured with an explicit executable path.
 
 ---
 
@@ -106,6 +106,7 @@ Supports:
 * OpenAI-compatible APIs
 * Gemini
 * LiteRT-LM (fully local)
+* llama.cpp server through `llama-server`
 
 The unified OpenAI-compatible adapter also works with any other server that speaks the `/v1/chat/completions` protocol (for example, llama.cpp server).
 
@@ -117,6 +118,8 @@ Features include:
 * runtime model switching
 * provider enable / disable
 * one-click LiteRT-LM runtime installation
+* llama-server router presets with local GGUF and Hugging Face models
+* API-backed model availability and capability discovery
 * per-model sampling settings
 * human-readable model labels
 
@@ -138,6 +141,43 @@ Recommended LiteRT-LM models include Gemma 4 E2B/E4B and Qwen3 1.7B/4B/8B.
 
 ---
 
+## llama.cpp server (local inference)
+
+The addon integrates with `llama-server` in router mode. It starts the server with a models preset and keeps one server process alive while model selection is sent in each OpenAI-compatible request.
+
+Install llama.cpp and ensure `llama-server` is available on `PATH`, or set **llama-server executable** in the provider configuration. Configure the server endpoint, for example:
+
+```text
+http://127.0.0.1:8081
+```
+
+Set **Models preset path** to an existing preset such as:
+
+```text
+D:\llama-cpp\models.ini
+```
+
+The preset may contain global defaults in `[*]`, model-specific options, local `model =` paths, and Hugging Face `hf-repo =` entries. The addon preserves those options when reconciling imported models. Server settings such as host and port remain outside the preset and are configured through the addon.
+
+Example:
+
+```ini
+version = 1
+
+[*]
+ctx-size = 36864
+flash-attn = true
+
+[gemma4-26b]
+hf-repo = WhiskyAKM/Gemma-4-26B-A4B-NVFP4-GGUF:NVFP4
+```
+
+The addon queries `/models` and falls back to `/v1/models`. Successful responses are cached and treated as the runtime source of truth for model availability, model switching, status, modalities, and context metadata. A model can be configured using its preset section ID or a recognized Hugging Face source alias.
+
+Model switching does not restart a healthy router. The selected canonical model ID is sent with the chat request, and the server routes the request to that model. See [the llama-server integration guide](docs/llama-cpp-server.md) for the complete lifecycle and troubleshooting details.
+
+---
+
 ## Think mode
 
 Some providers and models (including most LiteRT-LM and Qwen3 models) support optional think mode for extended reasoning workflows.
@@ -155,6 +195,7 @@ Some providers and models (including most LiteRT-LM and Qwen3 models) support op
   * OpenAI-compatible API
   * Gemini
   * LiteRT-LM (local — runtime downloaded on demand)
+  * llama.cpp server (`llama-server`)
 
 ---
 
@@ -257,6 +298,7 @@ The settings panel allows you to:
 * configure per-model sampling settings (context window, temperature, top-k, top-p, max tokens, repetition penalty)
 * set global model defaults
 * configure API keys and endpoints
+* configure the llama-server executable and models preset path
 * enable or disable streaming
 * configure image quality and size
 * adjust timeout behavior
@@ -308,6 +350,7 @@ Download these from the model manager (Hugging Face). CPU and GPU/NPU variants a
 * Verify provider configuration if requests fail.
 * Ensure Ollama is running for local inference.
 * For LiteRT-LM, install the runtime and download a model from **Manage AI Providers** before use; the local server starts automatically.
+* For llama.cpp, verify `llama-server` is on `PATH` or configure its full executable path, verify the endpoint and preset path, and inspect `GET /models` for the canonical model IDs.
 * Download required models before use.
 
 ---

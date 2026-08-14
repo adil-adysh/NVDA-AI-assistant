@@ -1,3 +1,27 @@
+Unreleased
+==========
+
+Added
+-----
+
+* Added llama.cpp server integration through `llama-server` router mode.
+* Added configurable llama-server executable, endpoint, and models preset path.
+* Added API-backed llama model discovery using `/models` with `/v1/models` fallback.
+* Added capability discovery for text, image, and audio modalities plus context-window metadata.
+
+Changed
+-------
+
+* llama-server model API responses are cached and treated as the runtime source of truth.
+* Healthy llama-server routers now switch models without restarting the server.
+* Existing llama presets preserve global defaults, comments, and per-model runtime options.
+
+Fixed
+-----
+
+* Resolved llama model aliases between preset section IDs and Hugging Face source references.
+* Added automatic llama-server startup when llama.cpp becomes the active provider.
+
 v0.13.0
 Added
 • 
