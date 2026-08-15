@@ -175,6 +175,9 @@ image_module = _load_module(
 
 SummaryUseCase = summary_module.SummaryUseCase
 StructureSummaryUseCase = structure_summary_module.StructureSummaryUseCase
+structure_response_module = sys.modules[
+	f"{PACKAGE_NAME}.use_case.structure_summary_response"
+]
 ImageDescriptionUseCase = image_module.ImageDescriptionUseCase
 ResultContextItem = types_module.ResultContextItem
 ResultOutputItem = types_module.ResultOutputItem
@@ -277,23 +280,56 @@ class StreamingUseCaseTests(unittest.TestCase):
 		pipeline = _Pipeline(
 			PromptContext(
 				use_case_id="structure_summary",
-				extraction_result=ExtractionResult(text="example page"),
+				extraction_result=ExtractionResult(
+					text="example page",
+					structure=ExtractionStructure(headings=((1, "Intro"),)),
+				),
 			)
 		)
 
 		result = StructureSummaryUseCase().execute(pipeline, service, emit=emit)
 
-		self.assertEqual(result.output_text, "final summary")
+		self.assertIn("Intro", result.output_text)
 		self.assertTrue(callable(service.summary_stream_handler))
 		self.assertIn(("streaming", "partial summary"), events)
 		self.assertEqual(
 			[(item.id, item.content) for item in result.output_items],
-			[("structure_summary", "final summary")],
+			[("structure_summary", result.output_text)],
 		)
 		self.assertEqual(
 			[item.id for item in result.context_items],
-			[],
+			["page_structure"],
 		)
+
+	def test_structure_response_accepts_only_known_target_ids(self) -> None:
+		build_targets = structure_summary_module.build_navigation_targets
+		candidates = build_targets(ExtractionStructure(headings=((1, "Intro"),)))
+		known_id = candidates[0].id
+		parsed = structure_response_module.parse_structure_summary_response(
+			'{"page_context":"Settings","destinations":['
+			f'{{"target_id":"{known_id}","reason":"Primary section"}},'
+			'{"target_id":"not-real","reason":"Invented"}]}',
+			candidates,
+		)
+
+		self.assertTrue(parsed.structured)
+		self.assertEqual([item.target_id for item in parsed.destinations], [known_id])
+		self.assertIn("Intro", structure_response_module.render_structure_summary(parsed, candidates))
+
+	def test_structure_response_falls_back_to_deterministic_targets(self) -> None:
+		build_targets = structure_summary_module.build_navigation_targets
+		candidates = build_targets(ExtractionStructure(headings=((1, "Intro"),)))
+		parsed = structure_response_module.parse_structure_summary_response(
+			"not valid JSON",
+			candidates,
+		)
+
+		self.assertFalse(parsed.structured)
+		self.assertEqual(
+			[item.target_id for item in parsed.destinations],
+			[candidates[0].id],
+		)
+		self.assertNotIn("score", candidates[0].to_dict())
 
 	def test_image_description_use_case_passes_stream_handler_and_emits_streaming(self) -> None:
 		service = _StreamingLLMService()
