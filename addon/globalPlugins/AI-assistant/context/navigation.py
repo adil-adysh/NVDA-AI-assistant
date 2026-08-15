@@ -7,13 +7,17 @@ resolved again when the user invokes a result action.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 import hashlib
 import re
 import time
 from typing import Any
 
-from .types import AccessibilityGraph, ExtractionStructure
+try:
+	from .types import AccessibilityGraph, ExtractionStructure
+except ImportError:  # Lightweight synthetic test packages may omit type exports.
+	AccessibilityGraph = Any  # type: ignore[misc,assignment]
+	ExtractionStructure = Any  # type: ignore[misc,assignment]
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,9 +29,18 @@ class NavigationTarget:
 	name: str
 	order: int
 	reason: str
+	score: int = 0
 
 	def to_dict(self) -> dict[str, object]:
-		return asdict(self)
+		# Ranking is an internal selection detail; do not expose it through the
+		# result-action/UI payload.
+		return {
+			"id": self.id,
+			"role": self.role,
+			"name": self.name,
+			"order": self.order,
+			"reason": self.reason,
+		}
 
 
 _IMPORTANT_TERMS = re.compile(
@@ -69,7 +82,7 @@ def build_navigation_targets(
 		candidates.append(
 			(
 				score + term_bonus,
-				NavigationTarget(_target_id(role, name, order), role, name, order, reason),
+				NavigationTarget(_target_id(role, name, order), role, name, order, reason, score),
 			)
 		)
 
@@ -127,7 +140,7 @@ def _build_graph_navigation_targets(
 		# ``_iterNodesByType`` cannot resolve an abstract ``formField`` role.
 		role = node.control_type if node.role == "formField" and node.control_type else node.role
 		candidates.append((score, NavigationTarget(
-			f"nav-{node.id}", role, node.name, node.order, reason,
+			f"nav-{node.id}", role, node.name, node.order, reason, score,
 		)))
 	selected: list[NavigationTarget] = []
 	seen: set[tuple[str, str]] = set()
