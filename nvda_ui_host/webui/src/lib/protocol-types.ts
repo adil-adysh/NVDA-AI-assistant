@@ -59,6 +59,7 @@ export interface PresentationMetadata {
 	available_models?: string[];
 	available_model_labels?: Record<string, string>;
 	think_enabled?: boolean;
+	think_supported?: boolean;
 	chat_enabled?: boolean;
 	display_presentation?: DisplayPresentation;
 	attention_policy?: string;

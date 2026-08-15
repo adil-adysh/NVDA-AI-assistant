@@ -115,8 +115,10 @@
         </select>
     </label>
 
-    <label class="toggle-group" for="think-toggle">
-        <input id="think-toggle" type="checkbox" bind:checked={appState.control.thinkDraft} onchange={(event) => submitThinkModeToggle(event.currentTarget.checked)} disabled={controlsDisabled} />
-        <span id="think-mode-label">{t('think_mode_label', 'Think mode')}</span>
-    </label>
+	{#if appState.control.thinkSupported}
+		<label class="toggle-group" for="think-toggle">
+			<input id="think-toggle" type="checkbox" bind:checked={appState.control.thinkDraft} onchange={(event) => submitThinkModeToggle(event.currentTarget.checked)} disabled={controlsDisabled} />
+			<span id="think-mode-label">{t('think_mode_label', 'Think mode')}</span>
+		</label>
+	{/if}
 </div>

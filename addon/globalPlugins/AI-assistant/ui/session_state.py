@@ -36,6 +36,7 @@ class UISessionState:
 	conversation_summaries: tuple[SessionConversationSummary, ...]
 	localized_strings: dict[str, str]
 	think_enabled: bool
+	think_supported: bool
 	chat_enabled: bool
 	status_message: str | None = None
 	conversation_id: str | None = None
@@ -53,6 +54,7 @@ class UISessionState:
 			"conversation_summaries": [dict(item) for item in self.conversation_summaries],
 			"localized_strings": dict(self.localized_strings),
 			"think_enabled": self.think_enabled,
+			"think_supported": self.think_supported,
 			"chat_enabled": self.chat_enabled,
 		}
 		if self.conversation_id:
@@ -69,6 +71,20 @@ def _resolve_think_enabled(provider: str) -> bool:
 	"""Return the thinking setting for the active model."""
 	state = get_provider_state()
 	return get_think(provider, state.model_name)
+
+
+def _resolve_think_supported(provider: str, model_id: str) -> bool:
+	"""Return whether the active model advertises thinking support."""
+	if not model_id:
+		return False
+	from ..providers.capabilities import provider_supports_thinking
+	if not provider_supports_thinking(provider):
+		return False
+	from ..service.model_cache import model_catalog_cache
+	return any(
+		model.id == model_id and model.supports("thinking")
+		for model in model_catalog_cache.get_models_or_empty(provider)
+	)
 
 
 def _build_available_providers(translate: Translator) -> tuple[SessionProviderOption, ...]:
@@ -292,6 +308,10 @@ def build_session_state(
 		conversation_summaries=tuple(conversation_summaries or ()),
 		localized_strings=build_localized_strings(translate),
 		think_enabled=_resolve_think_enabled(provider_state.provider),
+		think_supported=_resolve_think_supported(
+			active_provider_state.provider,
+			active_provider_state.model_name,
+		),
 		chat_enabled=resolved_readiness.can_infer,
 		status_message=build_provider_status_message(translate, resolved_readiness),
 		conversation_id=conversation_id,

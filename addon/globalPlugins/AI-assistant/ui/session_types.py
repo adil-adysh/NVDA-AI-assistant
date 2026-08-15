@@ -49,6 +49,7 @@ class UISessionMetadata(TypedDict, total=False):
 	conversation_summaries: list[SessionConversationSummary]
 	localized_strings: dict[str, str]
 	think_enabled: bool
+	think_supported: bool
 	chat_enabled: bool
 	status_message: str
 	interaction_mode: InteractionMode

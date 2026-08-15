@@ -35,6 +35,7 @@ export function updateControlState(payload: Record<string, unknown>): void {
 	const availableProviders = readPresentationValue<(string | { id?: string; value?: string; label?: string })[]>(payload, 'available_providers');
 	const availableModels = readPresentationValue<string[]>(payload, 'available_models');
 	const thinkEnabled = readPresentationValue<boolean>(payload, 'think_enabled');
+	const thinkSupported = readPresentationValue<boolean>(payload, 'think_supported');
 	const chatEnabled = readPresentationValue<boolean>(payload, 'chat_enabled');
 
 	console.log(`[control-ops] updateControlState: availProviders=${availableProviders?.length ?? 'undefined'} availModels=${availableModels?.length ?? 'undefined'} provider=${(providerState as any)?.provider ?? 'undefined'} think=${thinkEnabled} chat=${chatEnabled}`);
@@ -56,6 +57,12 @@ export function updateControlState(payload: Record<string, unknown>): void {
 	if (typeof thinkEnabled === 'boolean') {
 		appState.control.thinkEnabled = thinkEnabled;
 		appState.control.thinkDraft = thinkEnabled;
+	}
+	if (typeof thinkSupported === 'boolean') {
+		appState.control.thinkSupported = thinkSupported;
+		if (!thinkSupported) {
+			appState.control.thinkDraft = false;
+		}
 	}
 	if (providerStatus && typeof providerStatus === 'object') {
 		appState.control.providerStatus = {
@@ -93,6 +100,7 @@ export function updateControlState(payload: Record<string, unknown>): void {
 		typeof providerState?.provider === 'string' ||
 		typeof providerState?.model === 'string' ||
 		typeof thinkEnabled === 'boolean' ||
+		typeof thinkSupported === 'boolean' ||
 		typeof chatEnabled === 'boolean'
 	) {
 		clearControlPending();

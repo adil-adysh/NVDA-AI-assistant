@@ -40,6 +40,7 @@ export const appState = $state({
 		selectedProvider: '',
 		selectedModel: '',
 		thinkEnabled: false,
+		thinkSupported: false,
 		providerDraft: '',
 		modelDraft: '',
 		thinkDraft: false,
