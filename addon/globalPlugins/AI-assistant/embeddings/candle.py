@@ -47,7 +47,10 @@ class CandleEmbeddingAdapter:
 				import embedding_engine
 			except ImportError as error:
 				raise RuntimeError("The optional embedding engine is unavailable") from error
-			self._engine = embedding_engine.EmbeddingEngine(self._model_id, self._cache_dir())
+			try:
+				self._engine = embedding_engine.EmbeddingEngine(self._model_id, self._cache_dir())
+			except TypeError:
+				self._engine = embedding_engine.EmbeddingEngine(self._model_id)
 		return tuple(tuple(float(value) for value in vector) for vector in self._engine.embed_batch(list(texts)))
 
 	def embed_query(self, query: str, instruction: str) -> Sequence[float]:

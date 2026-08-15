@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import shutil
 from typing import Any, Callable
 
 
@@ -19,9 +20,14 @@ class EmbeddingModelInfo:
 
 
 KNOWN_MODELS = (
-	EmbeddingModelInfo("harrier-oss-v1-270m", "Harrier OSS 270M", 640, 32768, 536.0, "Gemma 3"),
-	EmbeddingModelInfo("granite-embedding-97m-multilingual-r2", "Granite 97M", 384, 32768, 195.0, "ModernBERT"),
+	EmbeddingModelInfo("harrier-oss-v1-270m", "Harrier OSS 270M", 768, 8192, 545.0, "Gemma 3"),
+	EmbeddingModelInfo("granite-embedding-97m-multilingual-r2", "Granite 97M", 768, 8192, 186.0, "ModernBERT"),
 )
+
+_MODEL_REPOSITORIES = {
+	"harrier-oss-v1-270m": "models--microsoft--harrier-oss-v1-270m",
+	"granite-embedding-97m-multilingual-r2": "models--ibm-granite--granite-embedding-97m-multilingual-r2",
+}
 
 
 def embedding_cache_dir() -> Path:
@@ -52,7 +58,7 @@ class EmbeddingModelService:
 			import embedding_engine
 		except ImportError as error:
 			raise RuntimeError("The embedding engine is not installed") from error
-		engine = embedding_engine.EmbeddingEngine(model.id, str(embedding_cache_dir()))
+		engine = self._create_engine(embedding_engine, model.id)
 		# The native runtime downloads and validates all artifacts on first use.
 		engine.embed("embedding model readiness check")
 		if progress:
@@ -60,17 +66,45 @@ class EmbeddingModelService:
 
 	def is_cached(self, model_id: str) -> bool:
 		try:
-			import embedding_engine
-			return bool(embedding_engine.EmbeddingEngine(model_id, str(embedding_cache_dir())).is_cached())
+			self.get_model(model_id)
+			return any(self._has_artifacts(root) for root in self._cache_roots(model_id))
 		except Exception:
 			return False
 
 	def delete(self, model_id: str) -> None:
+		self.get_model(model_id)
+		for root in self._cache_roots(model_id):
+			if root.exists():
+				shutil.rmtree(root)
+
+	def _create_engine(self, embedding_engine: Any, model_id: str) -> Any:
+		"""Construct old and new native engine APIs."""
 		try:
-			import embedding_engine
-		except ImportError as error:
-			raise RuntimeError("The embedding engine is not installed") from error
-		embedding_engine.EmbeddingEngine.delete_cached(model_id, str(embedding_cache_dir()))
+			return embedding_engine.EmbeddingEngine(model_id, str(embedding_cache_dir()))
+		except TypeError:
+			# Current versions manage their own Hugging Face cache and accept only
+			# the model ID.
+			return embedding_engine.EmbeddingEngine(model_id)
+
+	def _cache_roots(self, model_id: str) -> tuple[Path, ...]:
+		repository = _MODEL_REPOSITORIES.get(model_id)
+		if repository is None:
+			return ()
+		user_cache = Path.home() / ".cache" / "huggingface" / "hub"
+		return (
+			embedding_cache_dir() / repository,
+			user_cache / repository,
+		)
+
+	@staticmethod
+	def _has_artifacts(root: Path) -> bool:
+		if not root.is_dir():
+			return False
+		return any(
+			path.is_file() and path.stat().st_size > 1024
+			for path in root.rglob("*")
+			if path.name.endswith((".safetensors", ".bin", ".gguf"))
+		)
 
 
 embedding_model_service = EmbeddingModelService()
