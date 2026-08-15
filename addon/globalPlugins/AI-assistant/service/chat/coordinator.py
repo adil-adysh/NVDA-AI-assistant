@@ -15,6 +15,7 @@ from ...context.budget import (
 	ApproximateTokenCounter,
 	ContextBudgetError,
 	ContextWindowBudget,
+	resolve_context_window_tokens,
 )
 from ...core.messages import ChatMessage, LLMResponse
 from ...core.events import ProgressHandler
@@ -221,7 +222,25 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 			model_info = self._llm_service.get_model_info()
 		except Exception:
 			log.debug("Unable to resolve chat model context metadata", exc_info=True)
-		context_window = getattr(model_info, "context_window", None) or 8192
+		provider_id = self._llm_service.provider_name()
+		model_id = getattr(model_info, "id", None)
+		model_configured_context = None
+		global_configured_context = None
+		try:
+			from ...config.model_config import get_model_sampling
+			from ...config.settings import get_num_ctx
+
+			if isinstance(model_id, str) and model_id:
+				model_configured_context = get_model_sampling(provider_id, model_id).num_ctx
+			global_configured_context = get_num_ctx()
+		except Exception:
+			log.debug("Unable to resolve configured chat model context metadata", exc_info=True)
+		context_window = resolve_context_window_tokens(
+			provider_id=provider_id,
+			model_context_tokens=getattr(model_info, "context_window", None),
+			model_configured_tokens=model_configured_context,
+			global_configured_tokens=global_configured_context,
+		)
 		output_limit = getattr(model_info, "output_token_limit", None)
 		reserved_output = 1024
 		if isinstance(output_limit, int) and output_limit > 0:

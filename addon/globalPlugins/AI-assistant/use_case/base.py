@@ -8,7 +8,11 @@ from collections.abc import Callable
 from typing import Any
 
 from ..context.formatting import format_page_context, format_page_structure
-from ..context.budget import ContextWindowBudget, validate_prompt_budget
+from ..context.budget import (
+	ContextWindowBudget,
+	resolve_context_window_tokens,
+	validate_prompt_budget,
+)
 from ..context.pipeline import ContextPipeline
 from ..context.types import ExtractionResult, PromptContext
 from ..providers.interfaces import PartialCallback
@@ -214,7 +218,27 @@ class UseCase(ABC):
 			model_info = llm_service.get_model_info()
 		except Exception:
 			logger.debug("Unable to resolve model context metadata", exc_info=True)
-		context_window = self.spec.context_window_tokens or getattr(model_info, "context_window", None) or 8192
+		provider_id = llm_service.provider_name()
+		model_id = getattr(model_info, "id", None)
+		model_configured_context = None
+		global_configured_context = None
+		try:
+			from ..config.model_config import get_model_sampling
+			from ..config.settings import get_num_ctx
+
+			if isinstance(model_id, str) and model_id:
+				model_configured_context = get_model_sampling(provider_id, model_id).num_ctx
+			global_configured_context = get_num_ctx()
+		except Exception:
+			logger.debug("Unable to resolve configured model context metadata", exc_info=True)
+		context_window = resolve_context_window_tokens(
+			provider_id=provider_id,
+			model_context_tokens=getattr(model_info, "context_window", None),
+			model_configured_tokens=model_configured_context,
+			global_configured_tokens=global_configured_context,
+		)
+		if self.spec.context_window_tokens is not None:
+			context_window = min(context_window, self.spec.context_window_tokens)
 		output_limit = getattr(model_info, "output_token_limit", None)
 		reserved_output = self.spec.reserved_output_tokens
 		if isinstance(output_limit, int) and output_limit > 0:

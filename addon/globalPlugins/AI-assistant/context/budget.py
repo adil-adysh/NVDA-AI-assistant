@@ -7,6 +7,11 @@ from dataclasses import dataclass
 from typing import Protocol
 
 
+LOCAL_PROVIDER_IDS = frozenset({"ollama", "litert-lm", "llama-cpp-server"})
+DEFAULT_CLOUD_CONTEXT_TOKENS = 262_144
+DEFAULT_CONTEXT_TOKENS = 8_192
+
+
 class TokenCounter(Protocol):
 	def count(self, text: str) -> int:
 		...
@@ -49,6 +54,42 @@ class ContextWindowBudget:
 
 class ContextBudgetError(RuntimeError):
 	"""Raised when a rendered prompt cannot fit the model context window."""
+
+
+def resolve_context_window_tokens(
+	*,
+	provider_id: str,
+	model_context_tokens: int | None,
+	model_configured_tokens: int | None,
+	global_configured_tokens: int | None,
+	cloud_default_tokens: int = DEFAULT_CLOUD_CONTEXT_TOKENS,
+	fallback_tokens: int = DEFAULT_CONTEXT_TOKENS,
+) -> int:
+	"""Resolve the effective context size for one active model.
+
+	Provider metadata describes the model's hard capacity. Local runtime
+	configuration may select a smaller window; cloud providers use the policy
+	default when reliable metadata is unavailable.
+	"""
+	provider = (provider_id or "").strip().lower()
+	is_local = provider in LOCAL_PROVIDER_IDS
+	model_context = _positive_int(model_context_tokens)
+	if model_context is not None:
+		if is_local:
+			configured = _positive_int(model_configured_tokens)
+			return min(model_context, configured) if configured is not None else model_context
+		return model_context
+	if is_local:
+		return (
+			_positive_int(model_configured_tokens)
+			or _positive_int(global_configured_tokens)
+			or max(1, fallback_tokens)
+		)
+	return max(1, cloud_default_tokens)
+
+
+def _positive_int(value: int | None) -> int | None:
+	return value if isinstance(value, int) and value > 0 else None
 
 
 def validate_prompt_budget(prompt: str, budget: ContextWindowBudget, counter: TokenCounter) -> int:
