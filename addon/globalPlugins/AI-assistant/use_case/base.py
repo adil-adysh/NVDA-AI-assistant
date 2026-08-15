@@ -167,7 +167,17 @@ class UseCase(ABC):
 
 		if emit is not None:
 			emit("building_prompt", building_prompt_message)
-		prompt = build_prompt(prompt_context)
+		# Prompt builders may use the available input budget to choose how much
+		# structured context to include.  Keep this opt-in through metadata so
+		# existing one-argument builders remain compatible.
+		prompt_context_for_prompt = dataclasses.replace(
+			prompt_context,
+			metadata={
+				**prompt_context.metadata,
+				"_prompt_input_token_limit": prompt_budget.input_token_limit,
+			},
+		)
+		prompt = build_prompt(prompt_context_for_prompt)
 		validate_prompt_budget(prompt, prompt_budget, self._token_counter())
 
 		if emit is not None:

@@ -146,9 +146,13 @@ class StructureSummaryUseCase(UseCase):
 
 	def _build_prompt(self, prompt_context: PromptContext) -> str:
 		extraction_result = self._get_extraction_result(prompt_context)
+		input_token_budget = prompt_context.metadata.get("_prompt_input_token_limit")
+		if not isinstance(input_token_budget, int):
+			input_token_budget = None
 		base_prompt = build_extraction_structure_summary_prompt(
 			extraction_result,
 			language=prompt_context.language,
+			input_token_budget=input_token_budget,
 		)
 		candidates = build_navigation_targets(
 			extraction_result.structure,

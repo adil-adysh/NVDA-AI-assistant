@@ -79,6 +79,31 @@ class GraphFirstPromptTests(unittest.TestCase):
 
 		self.assertIn("Legacy action", prompt)
 
+	def test_graph_detail_expands_with_available_input_budget(self) -> None:
+		nodes = tuple(
+			types_module.AccessibilityNode(f"b{index}", "button", f"Action {index}", index)
+			for index in range(40)
+		)
+		context = types_module.ExtractionResult(
+			title="Page",
+			app_title="Browser",
+			text="",
+			truncated=False,
+			graph=types_module.AccessibilityGraph(nodes=nodes),
+		)
+
+		small_prompt = summary_module.build_structure_summary_prompt(
+			context, input_token_budget=2500
+		)
+		large_prompt = summary_module.build_structure_summary_prompt(
+			context, input_token_budget=13000
+		)
+
+		self.assertIn("Buttons: 16", small_prompt)
+		self.assertIn("Buttons: 40", large_prompt)
+		self.assertNotIn("Action 39", small_prompt)
+		self.assertIn("Action 39", large_prompt)
+
 
 if __name__ == "__main__":
 	unittest.main()

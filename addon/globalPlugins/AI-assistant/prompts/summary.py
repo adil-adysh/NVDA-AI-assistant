@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from ..context.types import AccessibilityGraph, ExtractionResult
 from .base import build_system_prompt_for_nvda_assistant, render_prompt_template
 
@@ -19,45 +21,84 @@ _STRUCTURE_ITEM_LIMITS = {
 _MAX_STRUCTURE_LABEL_CHARS = 80
 
 
-def _bounded_structure_items(items: tuple[str, ...], field: str) -> tuple[str, ...]:
+@dataclass(frozen=True, slots=True)
+class _StructurePromptLimits:
+	max_sections: int
+	max_members_per_section: int
+	max_items: dict[str, int]
+	max_label_chars: int
+
+
+def _prompt_limits(input_token_budget: int | None) -> _StructurePromptLimits:
+	"""Choose graph detail from the actual available input budget."""
+	budget = input_token_budget if input_token_budget is not None else 4500
+	if budget < 3500:
+		return _StructurePromptLimits(4, 4, {
+			"headings": 20, "landmarks": 8, "links": 20, "buttons": 15,
+			"inputs": 10, "comboboxes": 10, "checkboxes": 10, "radios": 10,
+		}, 64)
+	if budget < 7000:
+		return _StructurePromptLimits(8, 6, _STRUCTURE_ITEM_LIMITS, _MAX_STRUCTURE_LABEL_CHARS)
+	if budget < 12000:
+		return _StructurePromptLimits(12, 8, {
+			key: value * 3 // 2 for key, value in _STRUCTURE_ITEM_LIMITS.items()
+		}, 96)
+	return _StructurePromptLimits(16, 10, {
+			key: value * 2 for key, value in _STRUCTURE_ITEM_LIMITS.items()
+	}, 112)
+
+
+def _bounded_structure_items(
+	items: tuple[str, ...],
+	field: str,
+	limits: _StructurePromptLimits,
+) -> tuple[str, ...]:
 	"""Bound noisy controls before they reach the structure prompt."""
-	limit = _STRUCTURE_ITEM_LIMITS.get(field)
+	limit = limits.max_items.get(field)
 	bounded = items if limit is None else items[:limit]
-	compact = tuple(_compact_structure_label(item) for item in bounded)
+	compact = tuple(_compact_structure_label(item, limits.max_label_chars) for item in bounded)
 	if limit is None or len(items) <= limit:
 		return compact
 	return (*compact, f"[additional {field} omitted: {len(items) - limit}]")
 
 
-def _compact_structure_label(value: object) -> str:
+def _compact_structure_label(value: object, max_chars: int = _MAX_STRUCTURE_LABEL_CHARS) -> str:
 	text = " ".join(str(value).split())
-	if len(text) <= _MAX_STRUCTURE_LABEL_CHARS:
+	if len(text) <= max_chars:
 		return text
-	return text[: _MAX_STRUCTURE_LABEL_CHARS - 1].rstrip() + "…"
+	return text[: max_chars - 1].rstrip() + "…"
 
 
-def _bounded_headings(items: tuple[tuple[int | None, str], ...]) -> tuple[tuple[int | None, str], ...]:
-	limit = _STRUCTURE_ITEM_LIMITS["headings"]
-	bounded = tuple((level, _compact_structure_label(name)) for level, name in items[:limit])
+def _bounded_headings(
+	items: tuple[tuple[int | None, str], ...], limits: _StructurePromptLimits
+) -> tuple[tuple[int | None, str], ...]:
+	limit = limits.max_items["headings"]
+	bounded = tuple(
+		(level, _compact_structure_label(name, limits.max_label_chars))
+		for level, name in items[:limit]
+	)
 	if len(items) <= limit:
 		return bounded
 	return (*bounded, (None, f"[additional headings omitted: {len(items) - limit}]"))
 
 
-def _graph_section_context(context: ExtractionResult) -> tuple[tuple[str, tuple[str, ...]], ...]:
+def _graph_section_context(
+	context: ExtractionResult,
+	limits: _StructurePromptLimits,
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
 	"""Compact graph projection for prompts; live objects never enter prompts."""
 	graph = context.graph
 	if graph is None:
 		return ()
 	nodes = {node.id: node for node in graph.nodes}
 	sections: list[tuple[str, tuple[str, ...]]] = []
-	for section in graph.sections[:8]:
+	for section in graph.sections[:limits.max_sections]:
 		members = tuple(
-			f"{node.role}: {_compact_structure_label(node.name)}"
+			f"{node.role}: {_compact_structure_label(node.name, limits.max_label_chars)}"
 			for node_id in section.node_ids
 			if (node := nodes.get(node_id)) is not None and node.name
-		)[:6]
-		sections.append((_compact_structure_label(section.title), members))
+		)[:limits.max_members_per_section]
+		sections.append((_compact_structure_label(section.title, limits.max_label_chars), members))
 	return tuple(sections)
 
 
@@ -102,8 +143,16 @@ def build_extraction_summary_prompt(context: ExtractionResult, language: str | N
 	return build_summary_prompt(context, language=language)
 
 
-def build_extraction_structure_summary_prompt(context: ExtractionResult, language: str | None = None) -> str:
-	return build_structure_summary_prompt(context, language=language)
+def build_extraction_structure_summary_prompt(
+	context: ExtractionResult,
+	language: str | None = None,
+	input_token_budget: int | None = None,
+) -> str:
+	return build_structure_summary_prompt(
+		context,
+		language=language,
+		input_token_budget=input_token_budget,
+	)
 
 
 def build_summary_prompt(context: ExtractionResult, language: str | None = None) -> str:
@@ -114,8 +163,13 @@ def build_summary_prompt(context: ExtractionResult, language: str | None = None)
 	return build_generic_summary_prompt(context, language=language)
 
 
-def build_structure_summary_prompt(context: ExtractionResult, language: str | None = None) -> str:
+def build_structure_summary_prompt(
+	context: ExtractionResult,
+	language: str | None = None,
+	input_token_budget: int | None = None,
+) -> str:
 	graph_structure = _graph_structure_context(context.graph) if context.graph and context.graph.nodes else None
+	limits = _prompt_limits(input_token_budget)
 	structure = context.structure
 	if graph_structure is not None:
 		# Use graph-derived values for every category when available.  This keeps
@@ -147,15 +201,15 @@ def build_structure_summary_prompt(context: ExtractionResult, language: str | No
 		title=context.title,
 		source=context.source,
 		trimmed="yes" if context.truncated else "no",
-		headings=_bounded_headings(tuple(headings)),
-		links=_bounded_structure_items(tuple(links), "links"),
-		buttons=_bounded_structure_items(tuple(buttons), "buttons"),
-		landmarks=_bounded_structure_items(tuple(landmarks), "landmarks"),
-		inputs=_bounded_structure_items(tuple(inputs), "inputs"),
-		comboboxes=_bounded_structure_items(tuple(comboboxes), "comboboxes"),
-		checkboxes=_bounded_structure_items(tuple(checkboxes), "checkboxes"),
-		radios=_bounded_structure_items(tuple(radios), "radios"),
-		graph_sections=_graph_section_context(context),
+		headings=_bounded_headings(tuple(headings), limits),
+		links=_bounded_structure_items(tuple(links), "links", limits),
+		buttons=_bounded_structure_items(tuple(buttons), "buttons", limits),
+		landmarks=_bounded_structure_items(tuple(landmarks), "landmarks", limits),
+		inputs=_bounded_structure_items(tuple(inputs), "inputs", limits),
+		comboboxes=_bounded_structure_items(tuple(comboboxes), "comboboxes", limits),
+		checkboxes=_bounded_structure_items(tuple(checkboxes), "checkboxes", limits),
+		radios=_bounded_structure_items(tuple(radios), "radios", limits),
+		graph_sections=_graph_section_context(context, limits),
 		# Structure summary is an inventory/outline task.  Passing article prose
 		# invites the model to produce a normal topical summary instead.
 		text="",

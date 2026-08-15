@@ -150,7 +150,7 @@ prompts_module = types.ModuleType(f"{PACKAGE_NAME}.prompts")
 prompts_module.build_extraction_summary_prompt = lambda extraction_result, language: (
 	f"summary:{extraction_result.text}:{language}"
 )
-prompts_module.build_extraction_structure_summary_prompt = lambda extraction_result, language: (
+prompts_module.build_extraction_structure_summary_prompt = lambda extraction_result, language, input_token_budget=None: (
 	f"structure:{extraction_result.text}:{language}"
 )
 prompts_module.build_image_description_prompt = lambda image_context, language: (
