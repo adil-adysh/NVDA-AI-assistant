@@ -382,7 +382,6 @@ def build_provider_config(provider: str) -> "OpenAICompatConfig":
 		generate_top_p=get_generate_top_p(),
 		generate_max_tokens=get_generate_max_tokens(),
 		generate_presence_penalty=get_generate_presence_penalty(),
-		think=_get_think_for(provider, model_name),
 		litert_backend=get_litert_backend() if spec.litert_engine_settings else "",
 		litert_cache=get_litert_cache() if spec.litert_engine_settings else "",
 		litert_cpu_threads=get_litert_cpu_threads() if spec.litert_engine_settings else 0,

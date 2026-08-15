@@ -32,7 +32,6 @@ class OpenAICompatConfig(ProviderConfig):
 	chat_path: str = "/v1/chat/completions"
 	models_path: str = "/v1/models"
 	organization: str | None = None
-	think: bool = False
 	generate_presence_penalty: float = 0.0
 	# LiteRT-LM server engine knobs.  These are provider-specific and
 	# unused by other OpenAI-compatible providers (empty/zero defaults).

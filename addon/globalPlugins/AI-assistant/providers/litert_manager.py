@@ -72,7 +72,6 @@ class LiteRTModelManager(ModelManagerProvider):
 		svc = self._download_service or ModelDownloadService()
 		supervisor = get_litert_supervisor()
 		models = recommended_models()
-		think = bool(self._config.think) if self._config is not None else False
 		server_ids_lower: set[str] = {s.lower() for s in supervisor.list_server_models()}
 
 		result: list[ManagedModel] = []
@@ -83,7 +82,7 @@ class LiteRTModelManager(ModelManagerProvider):
 					fn = variant.friendly_name
 					registered = fn.lower() in server_ids_lower
 					in_cache = svc.is_downloaded(variant.filename)
-					caps = effective_capabilities_for(model, variant, think)
+					caps = effective_capabilities_for(model, variant)
 					display = f"{model.display_name} — {variant.display_label}"
 					result.append(ManagedModel(
 						id=fn,
@@ -99,7 +98,7 @@ class LiteRTModelManager(ModelManagerProvider):
 				fn = model.friendly_name
 				registered = fn.lower() in server_ids_lower
 				in_cache = svc.is_downloaded(model.filename)
-				caps = effective_capabilities_for(model, think=think)
+				caps = effective_capabilities_for(model)
 				result.append(ManagedModel(
 					id=fn,
 					display_name=model.display_name,
@@ -118,7 +117,7 @@ class LiteRTModelManager(ModelManagerProvider):
 			parsed = lookup_by_friendly_name(server_id)
 			if parsed is not None:
 				model_def, variant = parsed
-				caps = effective_capabilities_for(model_def, variant, think)
+				caps = effective_capabilities_for(model_def, variant)
 				fn = variant.friendly_name if variant else model_def.friendly_name
 				display = f"{model_def.display_name} — {variant.display_label}" if variant else model_def.display_name
 				result.append(ManagedModel(

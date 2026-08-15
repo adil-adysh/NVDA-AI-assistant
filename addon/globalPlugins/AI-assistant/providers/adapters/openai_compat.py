@@ -280,7 +280,7 @@ class OpenAICompatProvider(LLMProvider):
 			num_ctx=sampling.num_ctx,
 			top_k=sampling.top_k,
 			repeat_penalty=sampling.repeat_penalty,
-			extra_body=self._request_extra_body(),
+			extra_body=self._request_extra_body(model),
 		)
 		choice = self._parse_choice(response)
 		return SummaryResponse(
@@ -441,10 +441,6 @@ class OpenAICompatProvider(LLMProvider):
 			if any(token in lowered for token in _OLLAMA_VISION_TOKENS):
 				capabilities.add("image_input")
 
-		# Think mode: the user toggle still gates "thinking" (unchanged).
-		if self._config.think:
-			capabilities.add("thinking")
-
 		context_window = None
 		if isinstance(details.get("context_length"), int):
 			context_window = details["context_length"]
@@ -511,8 +507,7 @@ class OpenAICompatProvider(LLMProvider):
 			litert_info = self._lookup_litert_model(model_id)
 		if litert_info is not None:
 			model_def, variant = litert_info
-			think = bool(getattr(self._config, "think", False))
-			variant_caps = self._capabilities_for_litert(model_def, variant, think)
+			variant_caps = self._capabilities_for_litert(model_def, variant)
 			capabilities.update(variant_caps)
 			capabilities.add("tools")
 
@@ -553,8 +548,7 @@ class OpenAICompatProvider(LLMProvider):
 			litert_info = self._lookup_litert_via_server(model_id)
 			if litert_info is not None:
 				model_def, variant = litert_info
-				think = bool(getattr(self._config, "think", False))
-				variant_caps = self._capabilities_for_litert(model_def, variant, think)
+				variant_caps = self._capabilities_for_litert(model_def, variant)
 				capabilities.update(variant_caps)
 				capabilities.add("tools")
 
@@ -570,7 +564,6 @@ class OpenAICompatProvider(LLMProvider):
 	def _capabilities_for_litert(
 		model_def: object,
 		variant: object | None,
-		think: bool,
 	) -> set[str]:
 		"""Build a capabilities set for a LiteRT model+variant using the
 		merged catalog definition.
@@ -584,14 +577,16 @@ class OpenAICompatProvider(LLMProvider):
 			effective_capabilities_for = None  # type: ignore[assignment]
 
 		if effective_capabilities_for is not None:
-			caps_tuple = effective_capabilities_for(model_def, variant, think)
+			# Capabilities describe model support, not the user's current
+			# per-model preference.
+			caps_tuple = effective_capabilities_for(model_def, variant)
 			return set(caps_tuple)
 
 		# Fallback if litert_models module not available.
 		caps: set[str] = set()
 		if getattr(model_def, "vision", False):
 			caps.add("image_input")
-		if think and getattr(model_def, "thinking", False):
+		if getattr(model_def, "thinking", False):
 			caps.add("thinking")
 		if getattr(model_def, "mtp", False):
 			caps.add("mtp")
@@ -681,7 +676,7 @@ class OpenAICompatProvider(LLMProvider):
 				}
 			],
 			"stream": False,
-			"think": bool(self._config.think),
+			"think": self._thinking_enabled(model),
 			"options": self._ollama_options(sampling),
 		}
 
@@ -731,7 +726,7 @@ class OpenAICompatProvider(LLMProvider):
 			num_ctx=sampling.num_ctx,
 			top_k=sampling.top_k,
 			repeat_penalty=sampling.repeat_penalty,
-			extra_body=self._request_extra_body(),
+			extra_body=self._request_extra_body(model),
 		)
 		choice = self._parse_choice(response)
 		return SummaryResponse(
@@ -782,7 +777,7 @@ class OpenAICompatProvider(LLMProvider):
 				num_ctx=sampling.num_ctx,
 				top_k=sampling.top_k,
 				repeat_penalty=sampling.repeat_penalty,
-				extra_body=self._request_extra_body(),
+				extra_body=self._request_extra_body(model),
 			)
 		except Exception as exc:
 			raise LLMProviderError(str(exc)) from exc
@@ -846,7 +841,7 @@ class OpenAICompatProvider(LLMProvider):
 			"model": model,
 			"messages": ollama_messages,
 			"stream": False,
-			"think": bool(self._config.think),
+			"think": self._thinking_enabled(model),
 			"options": self._ollama_options(sampling),
 		}
 		if tools:
@@ -903,7 +898,7 @@ class OpenAICompatProvider(LLMProvider):
 				num_ctx=sampling.num_ctx,
 				top_k=sampling.top_k,
 				repeat_penalty=sampling.repeat_penalty,
-				extra_body=self._request_extra_body(),
+				extra_body=self._request_extra_body(model),
 			):
 				chunks.append(chunk)
 
@@ -1074,7 +1069,12 @@ class OpenAICompatProvider(LLMProvider):
 			raise MissingModelError("Model name is required.")
 		return str(model).strip()
 
-	def _request_extra_body(self) -> dict[str, Any] | None:
+	def _thinking_enabled(self, model_id: str) -> bool:
+		"""Return the persisted thinking preference for one model."""
+		from ...config.settings import get_think
+		return get_think(self._provider_id, model_id)
+
+	def _request_extra_body(self, model_id: str) -> dict[str, Any] | None:
 		"""Return backend-specific request controls.
 
 		Both local OpenAI-compatible servers support explicit per-request
@@ -1082,7 +1082,7 @@ class OpenAICompatProvider(LLMProvider):
 		it lets the server/template choose its default, which can make the UI
 		toggle ineffective.
 		"""
-		enabled = bool(self._config.think)
+		enabled = self._thinking_enabled(model_id)
 		if self._provider_id == "litert-lm":
 			# LiteRT-LM's OpenAI server maps reasoning_effort to
 			# ThinkingConfig(enable_thinking=...).

@@ -86,7 +86,6 @@ def _make_config(
 		generate_top_k=0,
 		generate_top_p=0.9,
 		generate_max_tokens=512,
-		think=False,
 	)
 
 
