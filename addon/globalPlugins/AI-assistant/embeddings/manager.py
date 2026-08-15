@@ -20,8 +20,8 @@ class EmbeddingModelInfo:
 
 
 KNOWN_MODELS = (
-	EmbeddingModelInfo("harrier-oss-v1-270m", "Harrier OSS 270M", 768, 8192, 545.0, "Gemma 3"),
-	EmbeddingModelInfo("granite-embedding-97m-multilingual-r2", "Granite 97M", 768, 8192, 186.0, "ModernBERT"),
+	EmbeddingModelInfo("harrier-oss-v1-270m", "Harrier OSS 270M", 640, 32768, 545.0, "Gemma 3"),
+	EmbeddingModelInfo("granite-embedding-97m-multilingual-r2", "Granite 97M", 384, 32768, 186.0, "ModernBERT"),
 )
 
 _MODEL_REPOSITORIES = {
