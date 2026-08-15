@@ -23,6 +23,16 @@ CAPABILITY_TEXT_OUTPUT = "text_output"
 CAPABILITY_THINKING = "thinking"
 CAPABILITY_TOOLS = "tools"
 
+# Providers for which the add-on sends an explicit per-request thinking
+# control.  Capability metadata alone is not enough: a model may advertise
+# reasoning while a provider adapter still cannot activate/deactivate it.
+THINKING_PROVIDER_IDS = frozenset({"ollama", "litert-lm", "llama-cpp-server"})
+
+
+def provider_supports_thinking(provider_id: str) -> bool:
+	"""Return whether the active adapter can control model thinking."""
+	return str(provider_id or "").strip().lower() in THINKING_PROVIDER_IDS
+
 
 @dataclass(frozen=True)
 class ModelCapabilities:

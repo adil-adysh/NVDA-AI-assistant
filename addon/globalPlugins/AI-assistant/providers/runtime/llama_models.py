@@ -52,6 +52,22 @@ class LlamaModelRecord:
 def llama_model_capabilities(item: dict[str, object]) -> tuple[str, ...]:
 	"""Normalize llama-server architecture metadata to provider capabilities."""
 	caps = {"chat", "completion", "streaming", "text_input", "text_output"}
+	status = item.get("status")
+	if isinstance(status, dict):
+		args = status.get("args")
+		if isinstance(args, list):
+			normalized_args = [str(value).strip().lower() for value in args]
+			for index, value in enumerate(normalized_args[:-1]):
+				if value != "--reasoning":
+					continue
+				reasoning_value = normalized_args[index + 1]
+				if reasoning_value not in {"off", "false", "none"}:
+					caps.add("thinking")
+					break
+			for index, value in enumerate(normalized_args[:-1]):
+				if value == "--reasoning-format" and normalized_args[index + 1] not in {"none", "off"}:
+					caps.add("thinking")
+					break
 	architecture = item.get("architecture")
 	if isinstance(architecture, dict):
 		inputs = {str(value).lower() for value in architecture.get("input_modalities", [])}

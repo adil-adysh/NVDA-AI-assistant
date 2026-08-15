@@ -581,7 +581,6 @@ def recommended_models() -> tuple[LiteRTModelDef, ...]:
 def effective_capabilities_for(
 	model: LiteRTModelDef,
 	variant: ModelVariant | None = None,
-	think: bool = False,
 ) -> tuple[str, ...]:
 	"""Return the effective capabilities tuple for *model*, optionally
 	overridden by *variant*.
@@ -595,8 +594,6 @@ def effective_capabilities_for(
 	Args:
 	    model: The parent model definition.
 	    variant: An optional specific variant to check overrides for.
-	    think: Whether the user has enabled thinking mode in settings.
-
 	Returns:
 	    A tuple of capability strings sorted alphabetically.
 	"""
@@ -610,11 +607,12 @@ def effective_capabilities_for(
 	if vision_flag:
 		caps.extend(("vision", "image_input"))
 
-	# Thinking: variant override → model default → think setting.
+	# Thinking: variant override → model default.  This is a capability
+	# declaration; the user's enabled/disabled preference is stored separately.
 	thinking_flag = model.thinking
 	if variant is not None and variant.thinking is not None:
 		thinking_flag = variant.thinking
-	if think and thinking_flag:
+	if thinking_flag:
 		caps.append("thinking")
 
 	# Multi-Token Prediction (MTP) — model-level only, no variant override.
