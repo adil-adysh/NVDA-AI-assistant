@@ -33,6 +33,14 @@ class LLMService(Protocol):
 	def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
 		...
 
+	def summarize_structured(
+		self,
+		prompt: str,
+		schema: dict[str, object],
+		stream_handler: PartialCallback | None = None,
+	) -> SummaryResponse:
+		...
+
 	def describe_image(
 		self,
 		image_base64: str,
@@ -82,6 +90,18 @@ class ProviderLLMService:
 	def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
 		effective = stream_handler if is_streaming_enabled() else None
 		return self._provider.summarize(prompt, stream_handler=effective)
+
+	def summarize_structured(
+		self,
+		prompt: str,
+		schema: dict[str, object],
+		stream_handler: PartialCallback | None = None,
+	) -> SummaryResponse:
+		# Structured responses are intentionally non-streaming: emitting partial
+		# JSON would not be a valid displayable structure-summary response.
+		return self._provider.summarize_structured(
+			prompt, schema=schema, stream_handler=None
+		)
 
 	def describe_image(
 		self,

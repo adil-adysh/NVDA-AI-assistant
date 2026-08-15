@@ -12,9 +12,11 @@ from ..context.navigation import build_navigation_targets
 from ..prompts import build_extraction_structure_summary_prompt
 from ..context.types import ExtractionIntent, PageStructureRequest, PromptContext
 from ..service.llm import LLMService
+from ..providers.interfaces import StructuredOutputNotSupportedError
 from .base import UseCase, build_page_context_items
 from .types import ResultOutputItem, UseCaseResult, UseCaseSpec
 from .structure_summary_response import (
+	STRUCTURE_SUMMARY_JSON_SCHEMA,
 	parse_structure_summary_response,
 	render_structure_summary,
 )
@@ -130,6 +132,16 @@ class StructureSummaryUseCase(UseCase):
 				provider="local",
 				model="deterministic-fallback",
 			)
+		structured_call = getattr(llm_service, "summarize_structured", None)
+		if callable(structured_call):
+			try:
+				return structured_call(
+					prompt,
+					schema=STRUCTURE_SUMMARY_JSON_SCHEMA,
+					stream_handler=None,
+				)
+			except StructuredOutputNotSupportedError:
+				pass
 		return llm_service.summarize(prompt, stream_handler=stream_handler)
 
 	def _build_prompt(self, prompt_context: PromptContext) -> str:

@@ -38,6 +38,7 @@ from ..interfaces import (
 	ProgressCallback,
 	ProviderModelInfo,
 	SamplingDefaults,
+	StructuredOutputNotSupportedError,
 )
 
 try:
@@ -288,6 +289,75 @@ class OpenAICompatProvider(LLMProvider):
 			model=model,
 			provider=self.provider_name(),
 		)
+
+	def summarize_structured(
+		self,
+		prompt: str,
+		schema: dict[str, Any],
+		stream_handler: PartialCallback | None = None,
+	) -> SummaryResponse:
+		"""Generate a summary constrained by an OpenAI JSON schema.
+
+		LiteRT-LM (9379) and llama-server (8081) both expose the same
+		OpenAI-compatible chat endpoint, so the schema is sent through the
+		standard ``response_format`` request field. The response is kept
+		non-streaming because partial JSON is not safely consumable by the
+		structure-summary validator.
+		"""
+		model = self._resolve_model()
+		sampling = self._resolve_sampling(model)
+		messages: list[dict[str, Any]] = [
+			{
+				"role": "system",
+				"content": "Return only JSON matching the supplied schema.",
+			},
+			{"role": "user", "content": prompt},
+		]
+		response_format = self._structured_response_format(schema)
+		try:
+			response = self._client.chat_completion(
+				model=model,
+				messages=messages,
+				temperature=sampling.temperature,
+				top_p=sampling.top_p,
+				max_tokens=sampling.max_tokens,
+				num_ctx=sampling.num_ctx,
+				top_k=sampling.top_k,
+				repeat_penalty=sampling.repeat_penalty,
+				extra_body=self._request_extra_body(model, response_format=response_format),
+			)
+		except Exception as error:
+			# Older local servers may reject response_format while still
+			# supporting ordinary chat completions. Let the use case retry through
+			# its existing text-parser fallback in that case.
+			if "response_format" in str(error).lower() or "json_schema" in str(error).lower():
+				raise StructuredOutputNotSupportedError(str(error)) from error
+			raise
+		choice = self._parse_choice(response)
+		return SummaryResponse(
+			text=choice.get("content", ""),
+			model=model,
+			provider=self.provider_name(),
+			metadata={"structured_output": True},
+		)
+
+	def _structured_response_format(self, schema: dict[str, Any]) -> dict[str, Any]:
+		"""Build the schema envelope accepted by the active local server.
+
+		llama-server's compatible endpoint uses ``json_object`` with a sibling
+		``schema`` field, while LiteRT-LM accepts the OpenAI-style ``json_schema``
+		wrapper. Both still enforce the same application schema.
+		"""
+		if self._provider_id == "llama-cpp-server":
+			return {"type": "json_object", "schema": schema}
+		return {
+			"type": "json_schema",
+			"json_schema": {
+				"name": "structure_summary",
+				"strict": True,
+				"schema": schema,
+			},
+		}
 
 	def describe_image(
 		self,
@@ -1074,7 +1144,12 @@ class OpenAICompatProvider(LLMProvider):
 		from ...config.settings import get_think
 		return get_think(self._provider_id, model_id)
 
-	def _request_extra_body(self, model_id: str) -> dict[str, Any] | None:
+	def _request_extra_body(
+		self,
+		model_id: str,
+		*,
+		response_format: dict[str, Any] | None = None,
+	) -> dict[str, Any] | None:
 		"""Return backend-specific request controls.
 
 		Both local OpenAI-compatible servers support explicit per-request
@@ -1086,17 +1161,29 @@ class OpenAICompatProvider(LLMProvider):
 		if self._provider_id == "litert-lm":
 			# LiteRT-LM's OpenAI server maps reasoning_effort to
 			# ThinkingConfig(enable_thinking=...).
-			return {"reasoning_effort": "high" if enabled else "none"}
+			body: dict[str, Any] = {"reasoning_effort": "high" if enabled else "none"}
+			if response_format is not None:
+				body["response_format"] = response_format
+			return body
 		if self._provider_id == "ollama":
 			# Ollama's OpenAI-compatible endpoint translates this field to
 			# its native thinking control.
-			return {"reasoning_effort": "high" if enabled else "none"}
+			body = {"reasoning_effort": "high" if enabled else "none"}
+			if response_format is not None:
+				body["response_format"] = response_format
+			return body
 		if self._provider_id != "llama-cpp-server":
-			return None
-		return {
+			body = {}
+			if response_format is not None:
+				body["response_format"] = response_format
+			return body or None
+		body = {
 			"reasoning_format": "deepseek" if enabled else "none",
 			"chat_template_kwargs": {"enable_thinking": enabled},
 		}
+		if response_format is not None:
+			body["response_format"] = response_format
+		return body
 
 	def _resolve_sampling(self, model_id: str) -> ModelSamplingConfig:
 		"""Return the effective sampling parameters for *model_id*.

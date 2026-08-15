@@ -9,6 +9,30 @@ from typing import Any, Iterable
 from ..context.navigation import NavigationTarget
 
 
+STRUCTURE_SUMMARY_JSON_SCHEMA: dict[str, object] = {
+	"type": "object",
+	"additionalProperties": False,
+	"properties": {
+		"page_context": {"type": ["string", "null"]},
+		"destinations": {
+			"type": "array",
+			"maxItems": 8,
+			"items": {
+				"type": "object",
+				"additionalProperties": False,
+				"properties": {
+					"target_id": {"type": "string"},
+					"reason": {"type": "string"},
+				},
+				"required": ["target_id", "reason"],
+			},
+		},
+		"omissions": {"type": ["string", "null"]},
+	},
+	"required": ["page_context", "destinations", "omissions"],
+}
+
+
 @dataclass(frozen=True, slots=True)
 class StructureSummaryDestination:
 	target_id: str

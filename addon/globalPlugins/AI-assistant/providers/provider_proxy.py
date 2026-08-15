@@ -49,6 +49,17 @@ class ProviderProxy(LLMProvider):
 		self._warn_if_main_thread("summarize")
 		return self._runtime.summarize(prompt, stream_handler=stream_handler)
 
+	def summarize_structured(
+		self,
+		prompt: str,
+		schema: dict[str, object],
+		stream_handler: PartialCallback | None = None,
+	) -> SummaryResponse:
+		self._warn_if_main_thread("summarize_structured")
+		return self._runtime.summarize_structured(
+			prompt, schema=schema, stream_handler=stream_handler
+		)
+
 	def describe_image(
 		self,
 		image_base64: str,

@@ -51,6 +51,10 @@ class FeatureNotSupportedError(LLMProviderError):
 	"""
 
 
+class StructuredOutputNotSupportedError(FeatureNotSupportedError):
+	"""Raised when a provider cannot enforce a requested JSON schema."""
+
+
 class DownloadCancelledError(Exception):
 	"""Raised by download workers when the user cancels a download.
 
@@ -113,6 +117,16 @@ class LLMProvider(abc.ABC):
 	@abc.abstractmethod
 	def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
 		raise NotImplementedError
+
+	def summarize_structured(
+		self,
+		prompt: str,
+		schema: dict[str, Any],
+		stream_handler: PartialCallback | None = None,
+	) -> SummaryResponse:
+		raise StructuredOutputNotSupportedError(
+			f"Provider {self.provider_name()} does not support structured summaries"
+		)
 
 	@abc.abstractmethod
 	def describe_image(

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 import types
 import unittest
@@ -127,9 +128,14 @@ class _FeatureNotSupportedErrorStub(Exception):
 	"""Stand-in for providers.interfaces.FeatureNotSupportedError."""
 
 
+class _StructuredOutputNotSupportedErrorStub(_FeatureNotSupportedErrorStub):
+	"""Stand-in for providers.interfaces.StructuredOutputNotSupportedError."""
+
+
 providers_interfaces_module = types.ModuleType(f"{PACKAGE_NAME}.providers.interfaces")
 providers_interfaces_module.PartialCallback = object
 providers_interfaces_module.FeatureNotSupportedError = _FeatureNotSupportedErrorStub
+providers_interfaces_module.StructuredOutputNotSupportedError = _StructuredOutputNotSupportedErrorStub
 sys.modules[providers_interfaces_module.__name__] = providers_interfaces_module
 
 service_llm_module = types.ModuleType(f"{PACKAGE_NAME}.service.llm")
@@ -215,6 +221,26 @@ class _StreamingLLMService:
 		if stream_handler is not None:
 			stream_handler("partial image", len("partial image"))
 		return types.SimpleNamespace(text="final image", model="test-model", provider="test")
+
+
+class _StructuredLLMService(_StreamingLLMService):
+	def __init__(self) -> None:
+		super().__init__()
+		self.structured_schema = None
+
+	def summarize_structured(self, _prompt: str, schema, stream_handler=None):
+		self.structured_schema = schema
+		self.summary_stream_handler = stream_handler
+		target_id = re.search(r"target_id=(nav-[a-f0-9]+)", _prompt).group(1)
+		return types.SimpleNamespace(
+			text=(
+				'{"page_context":"Intro page","destinations":['
+				f'{{"target_id":"{target_id}","reason":"Primary section"}}],'
+				'"omissions":null}'
+			),
+			model="structured-model",
+			provider="test",
+		)
 
 
 class StreamingUseCaseTests(unittest.TestCase):
@@ -330,6 +356,25 @@ class StreamingUseCaseTests(unittest.TestCase):
 			[candidates[0].id],
 		)
 		self.assertNotIn("score", candidates[0].to_dict())
+
+	def test_structure_summary_uses_provider_json_schema_when_available(self) -> None:
+		service = _StructuredLLMService()
+		pipeline = _Pipeline(
+			PromptContext(
+				use_case_id="structure_summary",
+				extraction_result=ExtractionResult(
+					text="example page",
+					structure=ExtractionStructure(headings=((1, "Intro"),)),
+				),
+			)
+		)
+
+		result = StructureSummaryUseCase().execute(pipeline, service)
+
+		self.assertIsInstance(service.structured_schema, dict)
+		self.assertEqual(service.structured_schema["required"], ["page_context", "destinations", "omissions"])
+		self.assertIsNone(service.summary_stream_handler)
+		self.assertTrue(result.metadata["structure_summary_structured"])
 
 	def test_image_description_use_case_passes_stream_handler_and_emits_streaming(self) -> None:
 		service = _StreamingLLMService()

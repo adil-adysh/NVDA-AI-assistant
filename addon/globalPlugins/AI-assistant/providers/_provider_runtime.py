@@ -55,6 +55,16 @@ class ProviderRuntime:
 	def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
 		return self.get_provider().summarize(prompt, stream_handler=stream_handler)
 
+	def summarize_structured(
+		self,
+		prompt: str,
+		schema: dict[str, object],
+		stream_handler: PartialCallback | None = None,
+	) -> SummaryResponse:
+		return self.get_provider().summarize_structured(
+			prompt, schema=schema, stream_handler=stream_handler
+		)
+
 	def describe_image(
 		self,
 		image_base64: str,
