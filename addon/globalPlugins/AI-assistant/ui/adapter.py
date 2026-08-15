@@ -461,6 +461,11 @@ class UIAdapter:
 		if raw is None:
 			return None
 		if isinstance(raw, dict):
+			message = raw.get("message")
+			if isinstance(message, dict):
+				thinking = message.get("thinking")
+				if isinstance(thinking, str) and thinking.strip():
+					return thinking
 			choices = raw.get("choices")
 			if isinstance(choices, list):
 				for choice in choices:

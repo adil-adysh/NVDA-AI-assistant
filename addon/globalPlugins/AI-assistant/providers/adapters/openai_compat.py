@@ -681,6 +681,7 @@ class OpenAICompatProvider(LLMProvider):
 				}
 			],
 			"stream": False,
+			"think": bool(self._config.think),
 			"options": self._ollama_options(sampling),
 		}
 
@@ -845,6 +846,7 @@ class OpenAICompatProvider(LLMProvider):
 			"model": model,
 			"messages": ollama_messages,
 			"stream": False,
+			"think": bool(self._config.think),
 			"options": self._ollama_options(sampling),
 		}
 		if tools:
@@ -1075,13 +1077,22 @@ class OpenAICompatProvider(LLMProvider):
 	def _request_extra_body(self) -> dict[str, Any] | None:
 		"""Return backend-specific request controls.
 
-		llama-server supports explicit per-request reasoning controls. Sending
-		both values is important: omitting the field lets the server/template
-		auto-detect thinking, which makes disabling the UI toggle ineffective.
+		Both local OpenAI-compatible servers support explicit per-request
+		reasoning controls. Sending the disabled value is important: omitting
+		it lets the server/template choose its default, which can make the UI
+		toggle ineffective.
 		"""
+		enabled = bool(self._config.think)
+		if self._provider_id == "litert-lm":
+			# LiteRT-LM's OpenAI server maps reasoning_effort to
+			# ThinkingConfig(enable_thinking=...).
+			return {"reasoning_effort": "high" if enabled else "none"}
+		if self._provider_id == "ollama":
+			# Ollama's OpenAI-compatible endpoint translates this field to
+			# its native thinking control.
+			return {"reasoning_effort": "high" if enabled else "none"}
 		if self._provider_id != "llama-cpp-server":
 			return None
-		enabled = bool(self._config.think)
 		return {
 			"reasoning_format": "deepseek" if enabled else "none",
 			"chat_template_kwargs": {"enable_thinking": enabled},
