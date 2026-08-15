@@ -30,8 +30,6 @@ class ProviderConfigSpec:
 	chat_path_key: str | None = None
 	chat_path_default: str = defaults.DEFAULT_OPENAI_CHAT_PATH
 	models_path: str = defaults.DEFAULT_OPENAI_MODELS_PATH
-	think_key: str | None = None
-	think_default: bool = False
 	litert_engine_settings: bool = False
 
 
@@ -42,8 +40,6 @@ PROVIDER_CONFIG_SPECS: dict[str, ProviderConfigSpec] = {
 		model_default=defaults.DEFAULT_OLLAMA_MODEL,
 		base_url_key="ollamaServerUrl",
 		base_url_default=defaults.DEFAULT_OLLAMA_URL,
-		think_key="ollamaThink",
-		think_default=defaults.DEFAULT_OLLAMA_THINK,
 	),
 	"gemini": ProviderConfigSpec(
 		provider_id="gemini",
@@ -71,8 +67,6 @@ PROVIDER_CONFIG_SPECS: dict[str, ProviderConfigSpec] = {
 		model_default=defaults.DEFAULT_LITERT_MODEL,
 		base_url_key="litertServerUrl",
 		base_url_default=defaults.DEFAULT_LITERT_URL,
-		think_key="litertThink",
-		think_default=defaults.DEFAULT_LITERT_THINK,
 		litert_engine_settings=True,
 	),
 	"llama-cpp-server": ProviderConfigSpec(

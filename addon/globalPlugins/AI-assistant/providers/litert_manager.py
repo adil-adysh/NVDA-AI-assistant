@@ -14,7 +14,6 @@ from logHandler import log
 
 from ..config.settings import (
 	get_litert_model_name,
-	get_litert_think,
 	set_litert_model_name,
 )
 from .config import OpenAICompatConfig
@@ -73,7 +72,7 @@ class LiteRTModelManager(ModelManagerProvider):
 		svc = self._download_service or ModelDownloadService()
 		supervisor = get_litert_supervisor()
 		models = recommended_models()
-		think = bool(self._config.think if self._config is not None else None) or get_litert_think()
+		think = bool(self._config.think) if self._config is not None else False
 		server_ids_lower: set[str] = {s.lower() for s in supervisor.list_server_models()}
 
 		result: list[ManagedModel] = []

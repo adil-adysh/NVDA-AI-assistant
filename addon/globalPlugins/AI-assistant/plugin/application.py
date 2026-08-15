@@ -397,6 +397,12 @@ class AIAssistantApplication:
 		def _fetch_and_announce() -> None:
 			try:
 				provider_id = get_provider()
+				# Managed providers become authoritative only after their server
+				# has been started/adopted.  Refresh the shared catalog here so a
+				# startup-time empty cache cannot produce a false empty menu.
+				if provider_id in {"litert-lm", "llama-cpp-server"}:
+					ensure_provider_server_ready()
+					provider_control_service.refresh_models(provider_id)
 				models = provider_control_service.list_enabled_models(provider_id)
 			except Exception:
 				log.exception("Failed to list models")

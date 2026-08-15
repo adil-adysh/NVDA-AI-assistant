@@ -93,14 +93,25 @@ class ProviderControlService:
 		while fetching from the network.  Call from a background thread
 		or ensure ``preload_async`` has been called first.
 		"""
-		return self._get_model_cache().get_models(provider_id)
+		return self._get_model_cache().get_models(self._normalize_provider_id(provider_id))
 
 	def list_models_cached(self, provider_id: str) -> tuple[ProviderModelInfo, ...]:
 		"""Return models from cache, or ``()`` if not yet populated.
 
 		Never blocks — safe for the NVDA main thread.
 		"""
-		return self._get_model_cache().get_models_or_empty(provider_id)
+		return self._get_model_cache().get_models_or_empty(self._normalize_provider_id(provider_id))
+
+	def refresh_models(self, provider_id: str) -> tuple[ProviderModelInfo, ...]:
+		"""Refresh and return the authoritative catalog for *provider_id*.
+
+		Local providers expose dynamic server registries, so a result cached
+		before their server starts must not hide models that are now ready.
+		"""
+		provider_id = self._normalize_provider_id(provider_id)
+		cache = self._get_model_cache()
+		cache.invalidate(provider_id)
+		return cache.get_models(provider_id)
 
 	def list_enabled_models(
 		self,
@@ -114,6 +125,7 @@ class ProviderControlService:
 		as enabled; only models the user has explicitly disabled are
 		hidden.
 		"""
+		provider_id = self._normalize_provider_id(provider_id)
 		models = self.list_models(provider_id)
 		if not models:
 			return ()
@@ -206,7 +218,8 @@ class ProviderControlService:
 
 	def set_think_mode(self, enabled: bool) -> ProviderControlResult:
 		provider = get_provider()
-		set_think(provider, enabled)
+		state = get_provider_state()
+		set_think(provider, enabled, model_id=state.model_name)
 		save()
 		return self.current_state()
 
@@ -218,6 +231,10 @@ class ProviderControlService:
 	def _resolve_provider_display_name(provider_id: str) -> str:
 		from .provider_readiness import get_provider_display_name
 		return get_provider_display_name(provider_id)
+
+	@staticmethod
+	def _normalize_provider_id(provider_id: str) -> str:
+		return str(provider_id or "").strip().lower()
 
 
 provider_control_service = ProviderControlService()

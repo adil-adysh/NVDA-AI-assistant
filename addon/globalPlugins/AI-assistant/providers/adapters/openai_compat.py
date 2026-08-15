@@ -206,12 +206,29 @@ class OpenAICompatProvider(LLMProvider):
 	# ------------------------------------------------------------------
 
 	def list_models(self) -> tuple[ProviderModelInfo, ...]:
+		# LiteRT-LM is a local managed provider.  Its server registry is the
+		# authoritative catalog; the generic OpenAI endpoint is often exposed
+		# only as a health check and may legitimately return no models.
+		if self._is_litert_backend():
+			return self._list_models_litert_server()
+
 		# 1. Try Ollama-native /api/tags for rich metadata.
 		if self._detect_ollama():
 			return self._list_models_ollama_native()
 
 		# 2. Fall back to /v1/models + name inference.
 		return self._list_models_openai_compat()
+
+	def _list_models_litert_server(self) -> tuple[ProviderModelInfo, ...]:
+		"""List models registered in the add-on-managed LiteRT server."""
+		try:
+			from ..runtime.server import get_litert_supervisor
+
+			model_ids = sorted(get_litert_supervisor().list_server_models())
+		except Exception as exc:
+			log.debug("OpenAICompatProvider: LiteRT model listing failed: %s", exc)
+			return ()
+		return tuple(self._capabilities_for_model(model_id) for model_id in model_ids if model_id)
 
 	def get_model_info(self, model_name: str | None = None) -> ProviderModelInfo | None:
 		resolved = (model_name or self._resolve_model()).strip()
@@ -263,6 +280,7 @@ class OpenAICompatProvider(LLMProvider):
 			num_ctx=sampling.num_ctx,
 			top_k=sampling.top_k,
 			repeat_penalty=sampling.repeat_penalty,
+			extra_body=self._request_extra_body(),
 		)
 		choice = self._parse_choice(response)
 		return SummaryResponse(
@@ -712,6 +730,7 @@ class OpenAICompatProvider(LLMProvider):
 			num_ctx=sampling.num_ctx,
 			top_k=sampling.top_k,
 			repeat_penalty=sampling.repeat_penalty,
+			extra_body=self._request_extra_body(),
 		)
 		choice = self._parse_choice(response)
 		return SummaryResponse(
@@ -762,6 +781,7 @@ class OpenAICompatProvider(LLMProvider):
 				num_ctx=sampling.num_ctx,
 				top_k=sampling.top_k,
 				repeat_penalty=sampling.repeat_penalty,
+				extra_body=self._request_extra_body(),
 			)
 		except Exception as exc:
 			raise LLMProviderError(str(exc)) from exc
@@ -881,6 +901,7 @@ class OpenAICompatProvider(LLMProvider):
 				num_ctx=sampling.num_ctx,
 				top_k=sampling.top_k,
 				repeat_penalty=sampling.repeat_penalty,
+				extra_body=self._request_extra_body(),
 			):
 				chunks.append(chunk)
 
@@ -1050,6 +1071,21 @@ class OpenAICompatProvider(LLMProvider):
 		if not model or not str(model).strip():
 			raise MissingModelError("Model name is required.")
 		return str(model).strip()
+
+	def _request_extra_body(self) -> dict[str, Any] | None:
+		"""Return backend-specific request controls.
+
+		llama-server supports explicit per-request reasoning controls. Sending
+		both values is important: omitting the field lets the server/template
+		auto-detect thinking, which makes disabling the UI toggle ineffective.
+		"""
+		if self._provider_id != "llama-cpp-server":
+			return None
+		enabled = bool(self._config.think)
+		return {
+			"reasoning_format": "deepseek" if enabled else "none",
+			"chat_template_kwargs": {"enable_thinking": enabled},
+		}
 
 	def _resolve_sampling(self, model_id: str) -> ModelSamplingConfig:
 		"""Return the effective sampling parameters for *model_id*.

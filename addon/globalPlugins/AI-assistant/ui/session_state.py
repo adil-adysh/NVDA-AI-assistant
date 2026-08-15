@@ -66,8 +66,9 @@ _READINESS_SERVICE = ProviderReadinessService()
 
 
 def _resolve_think_enabled(provider: str) -> bool:
-	"""Return the think-mode setting for the active provider."""
-	return get_think(provider)
+	"""Return the thinking setting for the active model."""
+	state = get_provider_state()
+	return get_think(provider, state.model_name)
 
 
 def _build_available_providers(translate: Translator) -> tuple[SessionProviderOption, ...]:

@@ -171,13 +171,13 @@ class ModelConfigStore:
 	# Public API
 	# ------------------------------------------------------------------
 
-	def get(self, provider: str, model_id: str) -> dict[str, int | float]:
+	def get(self, provider: str, model_id: str) -> dict[str, object]:
 		"""Return the pinned sampling values for *model_id* (explicit only)."""
 		with self._lock:
 			data = self._read()
 			return dict(data.get(provider, {}).get(model_id, {}))
 
-	def all(self, provider: str) -> dict[str, dict[str, int | float]]:
+	def all(self, provider: str) -> dict[str, dict[str, object]]:
 		"""Return every pinned model's sampling values for *provider*.
 
 		Maps ``model_id`` to its explicit pinned values.  Used by the
@@ -191,7 +191,7 @@ class ModelConfigStore:
 				model_id: dict(values) for model_id, values in provider_map.items()
 			}
 
-	def set(self, provider: str, model_id: str, values: dict[str, int | float]) -> None:
+	def set(self, provider: str, model_id: str, values: dict[str, object]) -> None:
 		"""Persist the pinned sampling values for *model_id*."""
 		with self._lock:
 			data = self._read()
@@ -211,7 +211,7 @@ class ModelConfigStore:
 	# Internal
 	# ------------------------------------------------------------------
 
-	def _read(self) -> dict[str, dict[str, dict[str, int | float]]]:
+	def _read(self) -> dict[str, dict[str, dict[str, object]]]:
 		try:
 			if self._path.exists():
 				raw = json.loads(self._path.read_text(encoding="utf-8"))
@@ -221,7 +221,7 @@ class ModelConfigStore:
 			pass
 		return {}
 
-	def _write(self, data: dict[str, dict[str, dict[str, int | float]]]) -> None:
+	def _write(self, data: dict[str, dict[str, dict[str, object]]]) -> None:
 		self._path.parent.mkdir(parents=True, exist_ok=True)
 		self._path.write_text(
 			json.dumps(data, indent=2, sort_keys=True),
@@ -232,6 +232,20 @@ class ModelConfigStore:
 # ---------------------------------------------------------------------------
 # Read / write helpers
 # ---------------------------------------------------------------------------
+
+
+def get_model_thinking(provider_id: str, model_id: str) -> bool:
+	"""Return the per-model thinking preference, defaulting to disabled."""
+	value = ModelConfigStore().get(provider_id, model_id).get("thinking")
+	return value if isinstance(value, bool) else False
+
+
+def set_model_thinking(provider_id: str, model_id: str, enabled: bool) -> None:
+	"""Persist thinking for one model; provider-wide thinking is unsupported."""
+	store = ModelConfigStore()
+	values = store.get(provider_id, model_id)
+	values["thinking"] = bool(enabled)
+	store.set(provider_id, model_id, values)
 
 
 def get_model_sampling(provider_id: str, model_id: str) -> ModelSamplingConfig:
@@ -267,7 +281,12 @@ def set_model_sampling(
 		for field in SAMPLING_FIELD_IDS
 		if (value := getattr(config, field)) is not None
 	}
-	ModelConfigStore().set(provider_id, model_id, values)
+	store = ModelConfigStore()
+	# Model-level flags (such as thinking) share this record.  Merge the
+	# sampling values so changing sampling does not reset those flags.
+	stored = store.get(provider_id, model_id)
+	stored.update(values)
+	store.set(provider_id, model_id, stored)
 	if str(provider_id or "").strip().lower() == "litert-lm":
 		# A pinned num_ctx changes the server's per-model max_num_tokens,
 		# so the LiteRT server must restart to apply it.
@@ -278,7 +297,14 @@ def set_model_sampling(
 
 def clear_model_sampling(provider_id: str, model_id: str) -> None:
 	"""Remove every pinned sampling value for *model_id*."""
-	ModelConfigStore().clear(provider_id, model_id)
+	store = ModelConfigStore()
+	stored = store.get(provider_id, model_id)
+	for field in SAMPLING_FIELD_IDS:
+		stored.pop(field, None)
+	if stored:
+		store.set(provider_id, model_id, stored)
+	else:
+		store.clear(provider_id, model_id)
 
 
 # ---------------------------------------------------------------------------

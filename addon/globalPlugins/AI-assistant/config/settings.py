@@ -234,12 +234,12 @@ def _get_api_key_for(provider: str) -> str:
 	return _read_string(spec.api_key_key, "") if spec and spec.api_key_key else ""
 
 
-def _get_think_for(provider: str) -> bool:
-	"""Read the think/reasoning toggle for a given provider."""
-	spec = get_provider_config_spec(provider)
-	if spec is None or spec.think_key is None:
+def _get_think_for(provider: str, model_id: str | None = None) -> bool:
+	"""Read the per-model thinking toggle; thinking is disabled by default."""
+	if not model_id:
 		return False
-	return _read_bool(spec.think_key, spec.think_default)
+	from .model_config import get_model_thinking
+	return get_model_thinking(provider, model_id)
 
 
 # ---------------------------------------------------------------------------
@@ -251,9 +251,6 @@ def get_ollama_model_name() -> str:
 
 def get_ollama_server_url() -> str:
 	return _get_base_url_for("ollama")
-
-def get_ollama_think() -> bool:
-	return _get_think_for("ollama")
 
 def get_gemini_model_name() -> str:
 	return _get_model_name_for("gemini")
@@ -281,9 +278,6 @@ def get_openai_chat_path() -> str:
 
 def get_litert_model_name() -> str:
 	return _get_model_name_for("litert-lm")
-
-def get_litert_think() -> bool:
-	return _get_think_for("litert-lm")
 
 def get_litert_server_url() -> str:
 	return _get_base_url_for("litert-lm")
@@ -368,10 +362,11 @@ def build_provider_config(provider: str) -> "OpenAICompatConfig":
 	spec = get_provider_config_spec(provider)
 	if spec is None:
 		raise ValueError(f"Unsupported provider: {provider}")
+	model_name = _get_model_name_for(provider)
 	chat_path, models_path = _get_openai_endpoint_paths(provider)
 	return OpenAICompatConfig(
 		provider=str(provider).strip().lower(),
-		model_name=_get_model_name_for(provider),
+		model_name=model_name,
 		base_url=_get_base_url_for(provider),
 		api_key=_get_api_key_for(provider),
 		api_token=_read_string(spec.api_token_key, "") if spec.api_token_key else None,
@@ -387,7 +382,7 @@ def build_provider_config(provider: str) -> "OpenAICompatConfig":
 		generate_top_p=get_generate_top_p(),
 		generate_max_tokens=get_generate_max_tokens(),
 		generate_presence_penalty=get_generate_presence_penalty(),
-		think=_get_think_for(provider),
+		think=_get_think_for(provider, model_name),
 		litert_backend=get_litert_backend() if spec.litert_engine_settings else "",
 		litert_cache=get_litert_cache() if spec.litert_engine_settings else "",
 		litert_cpu_threads=get_litert_cpu_threads() if spec.litert_engine_settings else 0,
@@ -558,10 +553,6 @@ def set_ollama_server_url(serverUrl: str) -> None:
 	_set_value("ollamaServerUrl", str(serverUrl).strip(), notify=True)
 
 
-def set_ollama_think(think: bool) -> None:
-	_set_value("ollamaThink", bool(think), notify=True)
-
-
 def set_gemini_model_name(modelName: str) -> None:
 	_set_value("geminiModelName", str(modelName).strip(), notify=True)
 
@@ -578,9 +569,6 @@ def set_litert_model_name(modelName: str) -> None:
 	_set_value("litertModelName", str(modelName).strip(), notify=True)
 	_notify_litert_server_config_changed()
 
-
-def set_litert_think(think: bool) -> None:
-	_set_value("litertThink", bool(think), notify=True)
 
 def set_litert_server_url(serverUrl: str) -> None:
 	_set_value("litertServerUrl", str(serverUrl).strip().rstrip("/"), notify=True)
@@ -624,28 +612,18 @@ def set_llama_start_on_startup(enabled: bool) -> None:
 	_set_value("llamaStartOnStartup", bool(enabled))
 
 
-def get_think(provider_id: str) -> bool:
-	"""Return the think-mode toggle for *provider_id*.
-
-	Uses :class:`ProviderCapabilities` to resolve the correct config
-	key, eliminating the need for callers to branch on provider ID.
-	"""
-	from ..providers.registry import get_provider_capabilities  # pylint: disable=import-outside-toplevel
-
-	caps = get_provider_capabilities(provider_id)
-	if not caps.think_config_key:
-		return False
-	return _read_bool(caps.think_config_key, False)
+def get_think(provider_id: str, model_id: str | None = None) -> bool:
+	"""Return the per-model thinking toggle, disabled when no model is given."""
+	return _get_think_for(provider_id, model_id)
 
 
-def set_think(provider_id: str, enabled: bool) -> None:
-	"""Persist the think-mode toggle for *provider_id*."""
-	from ..providers.registry import get_provider_capabilities  # pylint: disable=import-outside-toplevel
-
-	caps = get_provider_capabilities(provider_id)
-	if not caps.think_config_key:
+def set_think(provider_id: str, enabled: bool, model_id: str | None = None) -> None:
+	"""Persist thinking for one model; calls without a model are ignored."""
+	if not model_id:
 		return
-	_set_value(caps.think_config_key, bool(enabled), notify=True)
+	from .model_config import set_model_thinking
+	set_model_thinking(provider_id, model_id, enabled)
+	_notify_provider_state_changed()
 
 
 # ---------------------------------------------------------------------------
@@ -692,9 +670,6 @@ def set_openai_compat_config(config: "OpenAICompatConfig", activate: bool = True
 
 	if spec.chat_path_key:
 		values[spec.chat_path_key] = config.chat_path
-
-	if spec.think_key:
-		values[spec.think_key] = config.think
 
 	if spec.litert_engine_settings:
 		values["litertBackend"] = config.litert_backend

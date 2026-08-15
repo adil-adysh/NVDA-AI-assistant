@@ -95,8 +95,16 @@ class ModelCatalogCache:
         """
         with self._lock:
             entry = self._entries.get(provider_id)
-        if isinstance(entry, tuple):
+        if isinstance(entry, tuple) and entry:
             return entry
+
+        # An empty result is not a durable catalog state.  Providers can be
+        # starting up (the local servers are intentionally started after
+        # add-on initialization), and cloud discovery can fail transiently.
+        # Retrying here prevents startup discovery failures from becoming a
+        # permanent "no models" state until the next manual refresh.
+        if isinstance(entry, tuple):
+            self.invalidate(provider_id)
 
         # Not cached yet — fetch synchronously (deduplicated).
         return self._fetch_and_cache(provider_id)
@@ -222,13 +230,12 @@ class ModelCatalogCache:
 
         if is_owner:
             # Perform the actual fetch, then signal waiters.
-            models = self._perform_fetch(provider_id)
-            with self._lock:
-                # Never let an invalidated in-flight request replace newer data.
-                if self._entries.get(provider_id) is gate:
-                    self._entries[provider_id] = models
-            gate.result = models
-            gate.event.set()
+            try:
+                models = self._perform_fetch(provider_id)
+            except Exception:
+                log.exception("ModelCatalogCache: unexpected fetch failure for '%s'", provider_id)
+                models = ()
+            self._finish_fetch(provider_id, gate, models)
             return models
         else:
             # Wait for the in-flight fetch to complete.
@@ -265,6 +272,20 @@ class ModelCatalogCache:
         )
         return models
 
+    def _finish_fetch(
+        self,
+        provider_id: str,
+        gate: _FetchGate,
+        models: tuple[ProviderModelInfo, ...],
+    ) -> None:
+        """Publish a fetch result and release all waiters."""
+        with self._lock:
+            # Never let an invalidated in-flight request replace newer data.
+            if self._entries.get(provider_id) is gate:
+                self._entries[provider_id] = models
+        gate.result = models
+        gate.event.set()
+
     def _preload_background(self) -> None:
         """Fetch models for all enabled providers (runs in a daemon thread).
 
@@ -293,23 +314,20 @@ class ModelCatalogCache:
         """Fetch models in background, store result in cache.
 
         The ``_FetchGate`` was already registered by ``preload_async``
-        or ``refresh_async``, so ``_fetch_and_cache`` will claim
-        ownership and perform the actual HTTP call.
+        or ``refresh_async``.  It is therefore already owned by this
+        worker; calling ``_fetch_and_cache`` here would mistake the
+        worker's own gate for another thread's gate and wait forever.
         """
         try:
-            self._fetch_and_cache(provider_id)
+            models = self._perform_fetch(provider_id)
+            self._finish_fetch(provider_id, gate, models)
         except Exception:
             log.exception(
                 "ModelCatalogCache: background fetch failed for '%s'",
                 provider_id,
             )
             # Store empty result so waiters are unblocked even on failure.
-            with self._lock:
-                entry = self._entries.get(provider_id)
-                if entry is gate:
-                    entry.result = ()
-                    entry.event.set()
-                    self._entries[provider_id] = ()
+            self._finish_fetch(provider_id, gate, ())
 
 
 class ModelCapabilityCache:

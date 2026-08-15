@@ -160,6 +160,12 @@ def ensure_provider_server_ready(on_progress: Callable[[str], None] | None = Non
 	provider = get_provider()
 	if provider == "litert-lm":
 		ensure_litert_server_ready(on_progress=on_progress)
+		# Startup discovery may have run before the managed server was ready.
+		# Refresh the shared catalog after readiness so model selection sees the
+		# server's actual model list immediately.
+		from ..service.model_cache import model_catalog_cache
+
+		model_catalog_cache.refresh_async(provider)
 		return
 	if provider != "llama-cpp-server":
 		return
@@ -172,6 +178,9 @@ def ensure_provider_server_ready(on_progress: Callable[[str], None] | None = Non
 		if record is None:
 			raise LLMProviderError(f"Unknown llama.cpp model: {config.model_name}")
 		manager.ensure_running(record, on_progress=on_progress)
+		from ..service.model_cache import model_catalog_cache
+
+		model_catalog_cache.refresh_async(provider)
 
 
 def _ensure_litert_server_ready_locked(

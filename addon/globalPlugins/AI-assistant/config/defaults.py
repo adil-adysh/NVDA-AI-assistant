@@ -33,11 +33,9 @@ DEFAULT_GENERATE_TOP_K = 10
 DEFAULT_GENERATE_TOP_P = 0.85
 DEFAULT_GENERATE_MAX_TOKENS = 1024
 DEFAULT_GENERATE_PRESENCE_PENALTY = 0
-DEFAULT_OLLAMA_THINK = False
 
 DEFAULT_LITERT_MODEL = "litert-community/gemma-4-E2B-it-litert-lm"
 DEFAULT_LITERT_URL = "http://127.0.0.1:9379"
-DEFAULT_LITERT_THINK = False
 
 # LiteRT-LM server engine defaults.  An empty backend/cache means "use the
 # engine default" — the key is omitted from config.json entirely and litert-lm
@@ -50,7 +48,7 @@ DEFAULT_LITERT_CPU_THREADS = 0
 DEFAULT_LITERT_START_ON_STARTUP = True
 
 DEFAULT_LLAMA_CPP_MODEL = ""
-DEFAULT_LLAMA_CPP_URL = "http://127.0.0.1:8080"
+DEFAULT_LLAMA_CPP_URL = "http://127.0.0.1:8081"
 DEFAULT_LLAMA_CPP_EXECUTABLE = "llama-server"
 # Start the active llama-server in the background during add-on startup.
 DEFAULT_LLAMA_START_ON_STARTUP = True

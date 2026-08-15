@@ -8,9 +8,8 @@ question *"how do I connect to and configure this provider/runtime?"*.
 It deliberately contains **no model fields**: model selection, model
 download, and active-model handling belong to the provider-specific
 model manager.  This is enforced structurally — the field registry has
-no model-related field IDs — not merely by omitting widgets.  Think /
-reasoning mode (a runtime behavior, not a model property) is offered
-for the runtimes that support it.
+no model-related field IDs — not merely by omitting widgets.  Thinking
+mode is controlled from the active model session instead.
 """
 
 from __future__ import annotations
@@ -32,7 +31,6 @@ from ..providers.registry import (
 	ConfigureFieldSpec,
 	configure_dialog_title,
 	get_configure_fields,
-	get_provider_capabilities,
 	is_installable,
 	is_runtime_installed,
 	provider_display_name,
@@ -118,15 +116,6 @@ class ProviderConfigureDialog(wx.Dialog):
 		for spec in self._fields:
 			self._add_field_row(s_helper, spec)
 			s_helper.sizer.AddSpacer(4)
-
-		caps = get_provider_capabilities(self._provider_id)
-		if caps.think_config_key:
-			# TRANSLATORS: Checkbox that enables think/reasoning mode for a provider runtime.
-			self._think_cb = wx.CheckBox(
-				self,
-				label=_("Enable think/reasoning mode"),
-			)
-			s_helper.addItem(self._think_cb)
 
 		s_helper.sizer.AddSpacer(8)
 
@@ -226,8 +215,6 @@ class ProviderConfigureDialog(wx.Dialog):
 		if is_installable(self._provider_id):
 			self._refresh_runtime_status()
 
-		if hasattr(self, "_think_cb"):
-			self._think_cb.Value = bool(getattr(self._config, "think", False))
 
 	def _refresh_runtime_status(self) -> None:
 		if is_runtime_installed(self._provider_id):
@@ -271,8 +258,6 @@ class ProviderConfigureDialog(wx.Dialog):
 				values[attr] = int(lch.control.GetValue())
 			else:
 				values[attr] = lch.control.GetValue().strip()
-		if hasattr(self, "_think_cb"):
-			values["think"] = self._think_cb.Value
 		return type(self._config)(**values)
 
 	def _on_toggle_secret(self, field_id: str, event: wx.CommandEvent) -> None:

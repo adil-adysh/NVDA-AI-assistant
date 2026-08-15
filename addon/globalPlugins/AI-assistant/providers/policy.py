@@ -17,7 +17,6 @@ class ProviderPolicy:
 	display_name: str
 	kind: str
 	credential_groups: tuple[tuple[str, ...], ...] = ()
-	think_config_key: str = ""
 	has_install_step: bool = False
 	requires_runtime: bool = False
 	requires_server_url: bool = True
@@ -39,7 +38,6 @@ PROVIDER_POLICIES: dict[str, ProviderPolicy] = {
 		provider_id="ollama",
 		display_name="Ollama",
 		kind="local",
-		think_config_key="ollamaThink",
 	),
 	"gemini": ProviderPolicy(
 		provider_id="gemini",
@@ -58,7 +56,6 @@ PROVIDER_POLICIES: dict[str, ProviderPolicy] = {
 		provider_id="litert-lm",
 		display_name="LiteRT-LM",
 		kind="local",
-		think_config_key="litertThink",
 		has_install_step=True,
 		requires_runtime=True,
 	),

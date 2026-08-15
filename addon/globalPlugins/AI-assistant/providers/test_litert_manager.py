@@ -79,10 +79,8 @@ class _FakeYamlStore:
 defaults_module = types.ModuleType(f"{PACKAGE_NAME}.config.defaults")
 defaults_module.DEFAULT_LITERT_MODEL = "litert-community/gemma-4-E2B-it-litert-lm"
 defaults_module.DEFAULT_LITERT_URL = "http://127.0.0.1:9379"
-defaults_module.DEFAULT_LITERT_THINK = False
 defaults_module.DEFAULT_OLLAMA_MODEL = "ministral-3:3b"
 defaults_module.DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
-defaults_module.DEFAULT_OLLAMA_THINK = False
 defaults_module.DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 defaults_module.DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
 defaults_module.DEFAULT_GEMINI_CHAT_PATH = "/v1beta/openai/chat/completions"

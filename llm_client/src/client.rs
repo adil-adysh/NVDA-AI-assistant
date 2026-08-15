@@ -69,6 +69,7 @@ impl HttpClient {
         num_ctx: Option<u32>,
         top_k: Option<u32>,
         repeat_penalty: Option<f64>,
+        extra: Option<&serde_json::Map<String, Value>>,
     ) -> PyResult<Value> {
         let request = ChatCompletionRequest {
             model: model.to_string(),
@@ -82,6 +83,7 @@ impl HttpClient {
             repeat_penalty,
             stream: Some(false),
             stream_options: None,
+            extra: extra.cloned().unwrap_or_default(),
         };
 
         let request_body = serde_json::to_string(&request)
@@ -108,6 +110,7 @@ impl HttpClient {
         num_ctx: Option<u32>,
         top_k: Option<u32>,
         repeat_penalty: Option<f64>,
+        extra: Option<&serde_json::Map<String, Value>>,
     ) -> PyResult<StreamingResponse> {
         let request = ChatCompletionRequest {
             model: model.to_string(),
@@ -123,6 +126,7 @@ impl HttpClient {
             stream_options: Some(StreamOptions {
                 include_usage: true,
             }),
+            extra: extra.cloned().unwrap_or_default(),
         };
 
         let request_body = serde_json::to_string(&request)

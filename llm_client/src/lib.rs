@@ -125,6 +125,7 @@ impl OpenAiClient {
         num_ctx = None,
         top_k = None,
         repeat_penalty = None,
+        extra_body = None,
     ))]
     fn chat_completion(
         &self,
@@ -137,6 +138,7 @@ impl OpenAiClient {
         num_ctx: Option<u32>,
         top_k: Option<u32>,
         repeat_penalty: Option<f64>,
+        extra_body: Option<PyObject>,
     ) -> PyResult<PyObject> {
         let chat_messages = Python::with_gil(|py| {
             messages
@@ -156,6 +158,17 @@ impl OpenAiClient {
             .transpose()?;
 
         let model = model.to_owned();
+        let extra_value = Python::with_gil(|py| {
+            extra_body
+                .as_ref()
+                .map(|obj| py_object_to_json_value(py, obj))
+                .transpose()
+        })?;
+        let extra = match extra_value {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::Object(map)) => Some(map),
+            Some(_) => return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>("extra_body must be a dict")),
+        };
         let response = Python::with_gil(|py| {
             py.allow_threads(|| {
                 self.http.chat_completion(
@@ -168,6 +181,7 @@ impl OpenAiClient {
                     num_ctx,
                     top_k,
                     repeat_penalty,
+                    extra.as_ref(),
                 )
             })
         })?;
@@ -191,6 +205,7 @@ impl OpenAiClient {
         num_ctx = None,
         top_k = None,
         repeat_penalty = None,
+        extra_body = None,
     ))]
     fn chat_completion_stream(
         &self,
@@ -203,6 +218,7 @@ impl OpenAiClient {
         num_ctx: Option<u32>,
         top_k: Option<u32>,
         repeat_penalty: Option<f64>,
+        extra_body: Option<PyObject>,
     ) -> PyResult<streaming::StreamingResponse> {
         let chat_messages = Python::with_gil(|py| {
             messages
@@ -222,6 +238,17 @@ impl OpenAiClient {
             .transpose()?;
 
         let model = model.to_owned();
+        let extra_value = Python::with_gil(|py| {
+            extra_body
+                .as_ref()
+                .map(|obj| py_object_to_json_value(py, obj))
+                .transpose()
+        })?;
+        let extra = match extra_value {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::Object(map)) => Some(map),
+            Some(_) => return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>("extra_body must be a dict")),
+        };
         Python::with_gil(|py| {
             py.allow_threads(|| {
                 self.http.chat_completion_stream(
@@ -234,6 +261,7 @@ impl OpenAiClient {
                     num_ctx,
                     top_k,
                     repeat_penalty,
+                    extra.as_ref(),
                 )
             })
         })
