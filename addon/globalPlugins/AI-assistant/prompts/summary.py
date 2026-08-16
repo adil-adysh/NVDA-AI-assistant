@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..context.types import AccessibilityGraph, ExtractionResult
+from ..context.structure_summary import build_structure_prompt_context
+from ..context.budget import ApproximateTokenCounter
 from .base import build_system_prompt_for_nvda_assistant, render_prompt_template
 
 
@@ -27,6 +29,8 @@ class _StructurePromptLimits:
 	max_members_per_section: int
 	max_items: dict[str, int]
 	max_label_chars: int
+	max_targets: int
+	max_snippet_chars: int
 
 
 def _prompt_limits(input_token_budget: int | None) -> _StructurePromptLimits:
@@ -36,16 +40,16 @@ def _prompt_limits(input_token_budget: int | None) -> _StructurePromptLimits:
 		return _StructurePromptLimits(4, 4, {
 			"headings": 20, "landmarks": 8, "links": 20, "buttons": 15,
 			"inputs": 10, "comboboxes": 10, "checkboxes": 10, "radios": 10,
-		}, 64)
+		}, 64, 16, 420)
 	if budget < 7000:
-		return _StructurePromptLimits(8, 6, _STRUCTURE_ITEM_LIMITS, _MAX_STRUCTURE_LABEL_CHARS)
+		return _StructurePromptLimits(8, 6, _STRUCTURE_ITEM_LIMITS, _MAX_STRUCTURE_LABEL_CHARS, 160, 700)
 	if budget < 12000:
 		return _StructurePromptLimits(12, 8, {
 			key: value * 3 // 2 for key, value in _STRUCTURE_ITEM_LIMITS.items()
-		}, 96)
+		}, 96, 256, 900)
 	return _StructurePromptLimits(16, 10, {
 			key: value * 2 for key, value in _STRUCTURE_ITEM_LIMITS.items()
-	}, 112)
+	}, 112, 384, 1200)
 
 
 def _bounded_structure_items(
@@ -168,52 +172,40 @@ def build_structure_summary_prompt(
 	language: str | None = None,
 	input_token_budget: int | None = None,
 ) -> str:
-	graph_structure = _graph_structure_context(context.graph) if context.graph and context.graph.nodes else None
 	limits = _prompt_limits(input_token_budget)
-	structure = context.structure
-	if graph_structure is not None:
-		# Use graph-derived values for every category when available.  This keeps
-		# the existing localized templates stable while eliminating structure/
-		# graph drift in browser prompts.
-		get_items = graph_structure.get
-		headings = get_items("headings", ())
-		links = get_items("links", ())
-		buttons = get_items("buttons", ())
-		landmarks = get_items("landmarks", ())
-		inputs = get_items("inputs", ())
-		comboboxes = get_items("comboboxes", ())
-		checkboxes = get_items("checkboxes", ())
-		radios = get_items("radios", ())
-	else:
-		headings = structure.headings if structure else ()
-		links = structure.links if structure else ()
-		buttons = structure.buttons if structure else ()
-		landmarks = structure.landmarks if structure else ()
-		inputs = structure.inputs if structure else ()
-		comboboxes = structure.comboboxes if structure else ()
-		checkboxes = structure.checkboxes if structure else ()
-		radios = structure.radios if structure else ()
-	return render_prompt_template(
-		"structure_summary.jinja2",
-		language=language,
-		system_prompt=build_system_prompt_for_nvda_assistant(language=language),
-		app_title=context.app_title,
-		title=context.title,
-		source=context.source,
-		trimmed="yes" if context.truncated else "no",
-		headings=_bounded_headings(tuple(headings), limits),
-		links=_bounded_structure_items(tuple(links), "links", limits),
-		buttons=_bounded_structure_items(tuple(buttons), "buttons", limits),
-		landmarks=_bounded_structure_items(tuple(landmarks), "landmarks", limits),
-		inputs=_bounded_structure_items(tuple(inputs), "inputs", limits),
-		comboboxes=_bounded_structure_items(tuple(comboboxes), "comboboxes", limits),
-		checkboxes=_bounded_structure_items(tuple(checkboxes), "checkboxes", limits),
-		radios=_bounded_structure_items(tuple(radios), "radios", limits),
-		graph_sections=_graph_section_context(context, limits),
-		# Structure summary is an inventory/outline task.  Passing article prose
-		# invites the model to produce a normal topical summary instead.
-		text="",
-	)
+	budget = input_token_budget or 4500
+	counter = ApproximateTokenCounter()
+	# Keep room for the system prompt, instructions, schema, and provider framing.
+	page_chars = max(3000, (budget - 2048) * 3)
+	for attempt in range(8):
+		page_map = build_structure_prompt_context(
+			context.graph,
+			context.structure,
+			title=context.title,
+			app_title=context.app_title,
+			source=context.source,
+			truncated=context.truncated,
+			max_sections=max(2, limits.max_sections - attempt // 2),
+			max_targets=max(8, limits.max_targets * (8 - attempt) // 8),
+			max_label_chars=max(48, limits.max_label_chars - attempt * 8),
+			max_snippet_chars=max(120, limits.max_snippet_chars * (8 - attempt) // 8),
+			max_context_chars=max(2400, page_chars * (8 - attempt) // 8),
+		)
+		prompt = render_prompt_template(
+			"structure_summary.jinja2",
+			language=language,
+			system_prompt=build_system_prompt_for_nvda_assistant(language=language),
+			app_title=context.app_title,
+			title=context.title,
+			source=context.source,
+			trimmed="yes" if context.truncated else "no",
+			marked_text=page_map.to_marked_text(),
+		)
+		if input_token_budget is None or counter.count(prompt) <= budget:
+			return prompt
+	# Return the smallest projection so the normal budget validator can provide
+	# the classified, user-facing error if the fixed instructions are too large.
+	return prompt
 
 
 def build_browser_summary_prompt(context: ExtractionResult, language: str | None = None) -> str:

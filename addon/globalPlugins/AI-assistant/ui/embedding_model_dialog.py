@@ -10,6 +10,7 @@ from gui import guiHelper
 
 from ..config.settings import get_embedding_model, set_embedding_model
 from ..embeddings.manager import embedding_model_service
+from ..service.error_reporter import ErrorContext, error_reporter
 from .download_progress import DownloadProgressDialog
 from .task_runner import TaskHandle, background_tasks
 
@@ -79,7 +80,16 @@ class EmbeddingModelManagementDialog(wx.Dialog):
 				(model.id, embedding_model_service.is_cached(model.id)) for model in self._models
 			),
 			on_success=self._on_status_loaded,
-			on_error=lambda error: wx.MessageBox(str(error), _("Unable to inspect embedding models"), wx.ICON_ERROR, parent=self),
+			on_error=lambda error: error_reporter.report(
+				error,
+				ErrorContext(operation="inspect embedding models", origin="embedding model manager", optional=True),
+				owner=lambda presentation: wx.MessageBox(
+					presentation.message,
+					presentation.title,
+					wx.ICON_ERROR,
+					parent=self,
+				),
+			),
 			is_alive=lambda: not self._destroyed,
 		)
 
@@ -114,7 +124,16 @@ class EmbeddingModelManagementDialog(wx.Dialog):
 			set_embedding_model(model.id)
 			self._refresh()
 		except Exception as error:
-			wx.MessageBox(str(error), _("Error"), wx.ICON_ERROR, parent=self)
+			error_reporter.report(
+				error,
+				ErrorContext(operation="set embedding model", model=model.id, origin="embedding model manager"),
+				owner=lambda presentation: wx.MessageBox(
+					presentation.message,
+					presentation.title,
+					wx.ICON_ERROR,
+					parent=self,
+				),
+			)
 
 	def _on_prepare(self, _event: wx.CommandEvent) -> None:
 		model = self._selected()
@@ -138,7 +157,16 @@ class EmbeddingModelManagementDialog(wx.Dialog):
 		self._delete_task = background_tasks.submit(
 			lambda _cancel: embedding_model_service.delete(model_id),
 			on_success=lambda _result: self._mark_deleted(model_id),
-			on_error=lambda error: wx.MessageBox(str(error), _("Error"), wx.ICON_ERROR, parent=self),
+			on_error=lambda error: error_reporter.report(
+				error,
+				ErrorContext(operation="delete embedding model", model=model_id, origin="embedding model manager"),
+				owner=lambda presentation: wx.MessageBox(
+					presentation.message,
+					presentation.title,
+					wx.ICON_ERROR,
+					parent=self,
+				),
+			),
 			on_finally=self._finish_delete,
 			is_alive=lambda: not self._destroyed,
 		)

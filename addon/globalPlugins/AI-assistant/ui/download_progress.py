@@ -15,6 +15,7 @@ from logHandler import log
 
 from ..config import defaults
 from ..providers.interfaces import DownloadCancelledError
+from ..service.error_reporter import ErrorContext, error_reporter
 from .task_runner import UiDispatcher
 
 _ = cast(Callable[[str], str], getattr(builtins, "_", lambda s: s))
@@ -233,12 +234,15 @@ class DownloadProgressDialog(wx.Dialog):
 				# Partial file left in place for future resume.
 				dlg.signal_complete(False)
 			except Exception as exc:
-				log.error("Download failed: %s", exc)
-				dlg.signal_complete(
-					False,
-					# TRANSLATORS: Generic download failure; {error} is the reason.
-					_("Download failed: {error}").format(error=exc),
+				error_reporter.report(
+					exc,
+					ErrorContext(operation=title, origin="download progress dialog"),
+					owner=lambda presentation: dlg.signal_complete(
+						False,
+						f"{presentation.title}: {presentation.message}",
+					),
 				)
+				dlg.signal_complete(False)
 
 		thread = threading.Thread(target=wrapper, daemon=True)
 		thread.start()

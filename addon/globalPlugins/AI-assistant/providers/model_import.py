@@ -42,6 +42,11 @@ class ModelImportRequest:
 		return Path(self.source).suffix.lower()
 
 
+def default_model_id_for_file(source: str | Path) -> str:
+	"""Return the editable runtime-ID default for a selected local file."""
+	return Path(source).stem
+
+
 def parse_model_import_source(
 	source: str,
 	model_id: str | None = None,

@@ -20,7 +20,7 @@ from ..providers.model_manager import (
 	ModelManagerProvider,
 	ModelState,
 )
-from ..providers.model_import import parse_model_import_source
+from ..providers.model_import import default_model_id_for_file, parse_model_import_source
 from ..providers.registry import (
 	build_model_manager,
 	model_manager_title,
@@ -29,9 +29,20 @@ from ..providers.registry import (
 from .download_progress import DownloadProgressDialog
 from ..config.enabled_models import EnabledModelsStore
 from ..service.model_cache import model_capability_cache, model_catalog_cache
+from ..service.error_reporter import ErrorContext, error_reporter
 from .task_runner import TaskHandle, background_tasks
 
 _RECOMMENDED_PRIORITY = 50
+
+
+def import_file_wildcard(provider_id: str) -> str:
+	"""Return the local model-file filter for a provider."""
+	provider = str(provider_id or "").strip().lower()
+	if provider == "litert-lm":
+		return _("LiteRT-LM files (*.litertlm)|*.litertlm|All files (*.*)|*.*")
+	if provider in {"llama-cpp", "llama-cpp-server"}:
+		return _("GGUF files (*.gguf)|*.gguf|All files (*.*)|*.*")
+	return _("Model files|*.gguf;*.litertlm;*.litert|All files (*.*)|*.*")
 
 
 class ModelManagerDialog(wx.Dialog):
@@ -133,10 +144,14 @@ class ModelManagerDialog(wx.Dialog):
 		self._download_btn.Bind(wx.EVT_BUTTON, self._on_download)
 		button_sizer.Add(self._download_btn, flag=wx.RIGHT, border=5)
 
-		# TRANSLATORS: Button to import a local or Hugging Face model.
-		self._import_btn = wx.Button(self, label=_("Import..."))
-		self._import_btn.Bind(wx.EVT_BUTTON, self._on_import)
-		button_sizer.Add(self._import_btn, flag=wx.RIGHT, border=5)
+		# TRANSLATORS: Button to import a local model file.
+		self._import_file_btn = wx.Button(self, label=_("Import file..."))
+		self._import_file_btn.Bind(wx.EVT_BUTTON, self._on_import_file)
+		button_sizer.Add(self._import_file_btn, flag=wx.RIGHT, border=5)
+		# TRANSLATORS: Button to import a model from Hugging Face.
+		self._import_hf_btn = wx.Button(self, label=_("Import from Hugging Face..."))
+		self._import_hf_btn.Bind(wx.EVT_BUTTON, self._on_import_hugging_face)
+		button_sizer.Add(self._import_hf_btn, flag=wx.RIGHT, border=5)
 
 		# TRANSLATORS: Button to delete a downloaded model.
 		self._delete_btn = wx.Button(self, label=_("Delete"))
@@ -195,8 +210,28 @@ class ModelManagerDialog(wx.Dialog):
 		if self._is_destroyed:
 			return
 		self._fetch_task = None
-		log.error("Unable to list models for %s: %s", self._provider.provider_id, error)
-		self._populate_model_list([])
+		error_reporter.report(
+			error,
+			ErrorContext(
+				operation="model catalog refresh",
+				provider=self._provider.provider_id,
+				origin="model manager",
+				optional=True,
+			),
+			owner=lambda presentation: wx.MessageBox(
+				presentation.message,
+				presentation.title,
+				wx.ICON_ERROR,
+				parent=self,
+			),
+		)
+		# Keep the last known catalog; a failed refresh must not look like an
+		# empty provider or cause the user to lose the current selection.
+		if self._models:
+			self._populate_model_list(self._models)
+		else:
+			self._list.DeleteAllItems()
+			self._list.InsertItem(0, _("Unable to load models. Try again."))
 
 	def _show_loading_indicator(self) -> None:
 		"""Display a 'Loading models...' placeholder."""
@@ -225,8 +260,9 @@ class ModelManagerDialog(wx.Dialog):
 		"""Fetch provider models off the wx thread."""
 		if self._fetch_task is not None and not self._fetch_task.done:
 			return
-		self._list.DeleteAllItems()
-		self._show_loading_indicator()
+		if not self._models:
+			self._list.DeleteAllItems()
+			self._show_loading_indicator()
 		self._update_buttons()
 		self._fetch_task = background_tasks.submit(
 			lambda _cancel: list(self._provider.list_managed_models()),
@@ -367,7 +403,8 @@ class ModelManagerDialog(wx.Dialog):
 		if self._mutation_task is not None and not self._mutation_task.done:
 			for button in (
 				self._download_btn,
-				self._import_btn,
+				self._import_file_btn,
+				self._import_hf_btn,
 				self._delete_btn,
 				self._set_active_btn,
 				self._configure_btn,
@@ -377,7 +414,8 @@ class ModelManagerDialog(wx.Dialog):
 		model = self._get_selected_model()
 		if model is None:
 			self._download_btn.Disable()
-			self._import_btn.Disable()
+			self._import_file_btn.Disable()
+			self._import_hf_btn.Disable()
 			self._delete_btn.Disable()
 			self._set_active_btn.Disable()
 			self._configure_btn.Disable()
@@ -391,7 +429,8 @@ class ModelManagerDialog(wx.Dialog):
 		can_del = self._provider.features.delete and model.state == ModelState.DOWNLOADED
 
 		self._download_btn.Enable(can_dl)
-		self._import_btn.Enable(self._provider.features.import_model)
+		self._import_file_btn.Enable(self._provider.features.import_model)
+		self._import_hf_btn.Enable(self._provider.features.import_model)
 		self._delete_btn.Enable(can_del)
 		self._set_active_btn.Enable(model.state.is_ready())
 		self._configure_btn.Enable(True)
@@ -500,11 +539,20 @@ class ModelManagerDialog(wx.Dialog):
 		model_id = model.id
 		self._mutation_task = background_tasks.submit(
 			lambda _cancel: self._provider.delete_model(model_id),
-			on_error=lambda error: wx.MessageBox(
-				_("Failed to delete model: {}").format(error),
-				_("Error"),
-				wx.ICON_ERROR,
-				parent=self,
+			on_error=lambda error: error_reporter.report(
+				error,
+				ErrorContext(
+					operation="delete model",
+					provider=self._provider.provider_id,
+					model=model_id,
+					origin="model manager",
+				),
+				owner=lambda presentation: wx.MessageBox(
+					presentation.message,
+					presentation.title,
+					wx.ICON_ERROR,
+					parent=self,
+				),
 			),
 			on_finally=self._finish_mutation,
 			is_alive=lambda: not self._is_destroyed,
@@ -516,39 +564,39 @@ class ModelManagerDialog(wx.Dialog):
 		if not self._is_destroyed:
 			self._refresh_model_list()
 
-	def _on_import(self, _event: wx.CommandEvent) -> None:
-		if not self._provider.features.import_model:
-			return
-		source_dialog = wx.TextEntryDialog(
-			self,
-			_("Enter a local model file or Hugging Face reference (use repo:quantization for llama.cpp):"),
-			_("Import Model"),
-		)
-		try:
-			if source_dialog.ShowModal() != wx.ID_OK:
-				return
-			source = source_dialog.GetValue().strip()
-		finally:
-			source_dialog.Destroy()
-		if not source:
-			return
-
+	def _prompt_model_id(self, default: str | None = None) -> tuple[bool, str | None]:
 		model_id_dialog = wx.TextEntryDialog(
 			self,
-			_("Optional runtime model ID (leave blank for the default):"),
+			_("Runtime model ID:"),
 			_("Import Model"),
 		)
 		try:
+			if default:
+				model_id_dialog.SetValue(default)
 			if model_id_dialog.ShowModal() != wx.ID_OK:
-				return
-			model_id = model_id_dialog.GetValue().strip() or None
+				return False, None
+			return True, model_id_dialog.GetValue().strip() or None
 		finally:
 			model_id_dialog.Destroy()
 
+	def _run_import(self, source: str, model_id: str | None) -> None:
 		try:
 			request = parse_model_import_source(source, model_id, self._provider.provider_id)
 		except ValueError as exc:
-			wx.MessageBox(str(exc), _("Invalid model source"), wx.ICON_ERROR)
+			error_reporter.report(
+				exc,
+				ErrorContext(
+					operation="validate model import",
+					provider=self._provider.provider_id,
+					origin="model manager",
+				),
+				owner=lambda presentation: wx.MessageBox(
+					presentation.message,
+					_("Invalid model source"),
+					wx.ICON_ERROR,
+					parent=self,
+				),
+			)
 			return
 
 		def worker(dlg: DownloadProgressDialog) -> None:
@@ -567,6 +615,46 @@ class ModelManagerDialog(wx.Dialog):
 			on_complete=self._refresh_model_list,
 			initial_message=_("Importing model..."),
 		)
+
+	def _on_import_file(self, _event: wx.CommandEvent) -> None:
+		if not self._provider.features.import_model:
+			return
+		file_dialog = wx.FileDialog(
+			self,
+			message=_("Select model file"),
+			wildcard=import_file_wildcard(self._provider.provider_id),
+			style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
+		)
+		try:
+			if file_dialog.ShowModal() != wx.ID_OK:
+				return
+			source = file_dialog.GetPath()
+		finally:
+			file_dialog.Destroy()
+		confirmed, model_id = self._prompt_model_id(default_model_id_for_file(source))
+		if not confirmed:
+			return
+		self._run_import(source, model_id)
+
+	def _on_import_hugging_face(self, _event: wx.CommandEvent) -> None:
+		if not self._provider.features.import_model:
+			return
+		source_dialog = wx.TextEntryDialog(
+			self,
+			_("Enter a Hugging Face repository reference (use repo:quantization for llama.cpp):"),
+			_("Import from Hugging Face"),
+		)
+		try:
+			if source_dialog.ShowModal() != wx.ID_OK:
+				return
+			source = source_dialog.GetValue().strip()
+		finally:
+			source_dialog.Destroy()
+		if not source:
+			return
+		confirmed, model_id = self._prompt_model_id()
+		if confirmed:
+			self._run_import(source, model_id)
 
 	def _on_set_active(self, _event: wx.CommandEvent) -> None:
 		model = self._get_selected_model()

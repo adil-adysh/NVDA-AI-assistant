@@ -5,6 +5,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
 import threading
+import time
 import types
 import unittest
 
@@ -18,13 +19,36 @@ def _load_runner():
 	wx_stub = types.ModuleType("wx")
 	wx_stub.CallAfter = lambda callback: callbacks.append(callback)
 	log_stub = types.ModuleType("logHandler")
-	log_stub.log = types.SimpleNamespace(debug=lambda *args, **kwargs: None, error=lambda *args, **kwargs: None)
+	log_stub.log = types.SimpleNamespace(
+		debug=lambda *args, **kwargs: None,
+		error=lambda *args, **kwargs: None,
+		exception=lambda *args, **kwargs: None,
+	)
 	sys.modules["wx"] = wx_stub
 	sys.modules["logHandler"] = log_stub
-	spec = spec_from_file_location(MODULE_NAME, ROOT / "task_runner.py")
+	package_name = "task_runner_test_package"
+	package = types.ModuleType(package_name)
+	package.__path__ = [str(ROOT.parent)]
+	ui_package = types.ModuleType(f"{package_name}.ui")
+	ui_package.__path__ = [str(ROOT)]
+	service_package = types.ModuleType(f"{package_name}.service")
+	service_package.__path__ = [str(ROOT.parent / "service")]
+	service_errors = types.ModuleType(f"{package_name}.service.error_reporter")
+	service_errors.ErrorContext = lambda **kwargs: kwargs
+	service_errors.ErrorReporter = object
+	reported: list[tuple[object, object]] = []
+	service_errors.error_reporter = types.SimpleNamespace(
+		reported=reported,
+		report=lambda error, context, **kwargs: reported.append((error, context)),
+	)
+	sys.modules[package_name] = package
+	sys.modules[f"{package_name}.ui"] = ui_package
+	sys.modules[f"{package_name}.service"] = service_package
+	sys.modules[f"{package_name}.service.error_reporter"] = service_errors
+	spec = spec_from_file_location(f"{package_name}.ui.task_runner", ROOT / "task_runner.py")
 	assert spec is not None and spec.loader is not None
 	module = module_from_spec(spec)
-	sys.modules[MODULE_NAME] = module
+	sys.modules[spec.name] = module
 	spec.loader.exec_module(module)
 	return module, callbacks
 
@@ -41,6 +65,10 @@ class BackgroundTaskRunnerTests(unittest.TestCase):
 				on_success=results.append,
 			)
 			handle._future.result(timeout=2)
+			for _ in range(20):
+				if callbacks:
+					break
+				time.sleep(0.01)
 			self.assertEqual(results, [])
 			for callback in callbacks:
 				callback()
@@ -59,6 +87,21 @@ class BackgroundTaskRunnerTests(unittest.TestCase):
 			for callback in callbacks:
 				callback()
 			self.assertEqual(results, [])
+		finally:
+			runner._executor.shutdown(wait=True)
+
+	def test_failure_without_handler_is_reported(self) -> None:
+		runner_module, callbacks = _load_runner()
+		runner = runner_module.BackgroundTaskRunner(max_workers=1)
+		try:
+			handle = runner.submit(lambda _cancel: (_ for _ in ()).throw(RuntimeError("boom")))
+			with self.assertRaises(RuntimeError):
+				handle._future.result(timeout=2)
+			for _ in range(20):
+				if runner_module.error_reporter.reported:
+					break
+				time.sleep(0.01)
+			self.assertEqual(len(runner_module.error_reporter.reported), 1)
 		finally:
 			runner._executor.shutdown(wait=True)
 

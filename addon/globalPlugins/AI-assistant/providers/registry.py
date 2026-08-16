@@ -153,8 +153,8 @@ class ConfigureFieldSpec:
 	model selection belongs to the model manager, never to Configure.
 
 	``kind`` selects the widget rendered by the dialog: ``text``
-	(default), ``choice`` (a combo box restricted to ``choices``), or
-	``int`` (a numeric spin control).
+	(default), ``choice`` (a combo box restricted to ``choices``), ``int``
+	(a numeric spin control), or ``file`` (a path field with a picker).
 	"""
 
 	id: str
@@ -162,7 +162,7 @@ class ConfigureFieldSpec:
 	label: str
 	secret: bool = False
 	required: bool = True
-	#: Widget kind: ``"text"``, ``"choice"`` or ``"int"``.
+	#: Widget kind: ``"text"``, ``"choice"``, ``"int"`` or ``"file"``.
 	kind: str = "text"
 	#: Allowed values when ``kind == "choice"``.
 	choices: tuple[str, ...] = ()
@@ -170,6 +170,8 @@ class ConfigureFieldSpec:
 	#: selected, the persisted value is ``""`` so the key is omitted from the
 	#: server config and litert-lm falls back to its own default.
 	default_choice: str = ""
+	#: wx file-dialog wildcard used when ``kind == "file"``.
+	file_wildcard: str = "All files (*.*)|*.*"
 
 
 #: Configuration fields exposed by each provider's Configure dialog.
@@ -217,7 +219,13 @@ _CONFIGURE_FIELDS: dict[str, tuple[ConfigureFieldSpec, ...]] = {
 	"llama-cpp-server": (
 		ConfigureFieldSpec("server_url", _("Server URL:")),
 		ConfigureFieldSpec("server_executable", _("llama-server executable:"), required=False),
-		ConfigureFieldSpec("models_preset", _("Models preset path:"), required=False),
+		ConfigureFieldSpec(
+			"models_preset",
+			_("Models preset path:"),
+			kind="file",
+			file_wildcard=_("INI files (*.ini)|*.ini|All files (*.*)|*.*"),
+			required=False,
+		),
 	),
 }
 

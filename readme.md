@@ -151,7 +151,7 @@ Install llama.cpp and ensure `llama-server` is available on `PATH`, or set **lla
 http://127.0.0.1:8081
 ```
 
-Set **Models preset path** to an existing preset such as:
+In the llama.cpp provider configuration, use **Browse...** beside **Models preset path** to select an existing `.ini` preset. The selected path is saved immediately. For example:
 
 ```text
 D:\llama-cpp\models.ini

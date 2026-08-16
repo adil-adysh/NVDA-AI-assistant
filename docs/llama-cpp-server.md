@@ -21,7 +21,7 @@ Configure llama.cpp under **Manage AI Providers**:
 | --- | --- | --- |
 | Server URL | `http://127.0.0.1:8081` | OpenAI-compatible llama-server endpoint |
 | llama-server executable | `llama-server` | Executable name or full path; `PATH` is used when blank |
-| Models preset path | `D:\llama-cpp\models.ini` | Optional user-owned router preset |
+| Models preset path | `D:\llama-cpp\models.ini` | Optional user-owned router preset; select it with the Configure dialog’s file picker |
 
 When no preset path is configured, the addon uses:
 

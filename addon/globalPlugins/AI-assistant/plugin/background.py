@@ -13,7 +13,7 @@ from ..providers.interfaces import LLMProviderError, ProviderConfigurationError
 from ..providers.runtime.server import LiteRTServerError, get_litert_supervisor
 from ..providers.runtime.llama_server import shutdown_llama_servers
 from ..providers.llama_manager import LlamaCppModelManager
-from ..service.error_presentation import present_error
+from ..service.error_reporter import ErrorContext, error_reporter
 from ..service.llm import LLMService
 from ..service.provider_readiness import ProviderReadinessService, get_provider_display_name
 from ..config.settings import get_provider, get_model_name
@@ -68,8 +68,11 @@ def _on_litert_server_config_changed() -> None:
 			# start uses the new settings and surface the limitation.
 			try:
 				supervisor.sync_config()
-			except Exception:
-				log.exception("Failed to regenerate LiteRT config.json")
+			except Exception as error:
+				error_reporter.report(
+					error,
+					ErrorContext(operation="regenerate LiteRT configuration", provider="litert-lm", origin="server configuration"),
+				)
 			log.warning(
 				"LiteRT engine settings changed but the server was adopted "
 				"(no process handle). Stop the server or restart NVDA to apply."
@@ -94,8 +97,11 @@ def _restart_litert_server_worker() -> None:
 		# concurrent start/import triggered by opening chat.
 		with _litert_readiness_lock:
 			_restart_litert_server_locked()
-	except Exception:
-		log.exception("LiteRT server restart after config change failed")
+	except Exception as error:
+		error_reporter.report(
+			error,
+			ErrorContext(operation="restart LiteRT server", provider="litert-lm", origin="server configuration"),
+		)
 	finally:
 		with _litert_restart_lock:
 			_litert_restart_pending = False
@@ -110,6 +116,10 @@ def _restart_litert_server_locked() -> None:
 	supervisor.restart()
 	if not supervisor.wait_until_ready(timeout=60.0):
 		log.error("LiteRT server did not become ready after config-change restart")
+		error_reporter.report(
+			LiteRTServerError("LiteRT-LM server did not become ready after configuration changed."),
+			ErrorContext(operation="restart LiteRT server", provider="litert-lm", origin="server configuration"),
+		)
 
 
 subscribe_litert_server_config_change(_on_litert_server_config_changed)
@@ -430,11 +440,11 @@ class BackgroundTaskRunner:
 				model = self._llm_service.ensure_model_available(
 					on_progress=lambda text: nvda_ui.queue(nvda_ui.message, text)
 				)
-			except LLMProviderError as error:
-				nvda_ui.queue(nvda_ui.message, present_error(error, _).message)
 			except Exception as error:
-				log.exception("Unexpected error during model preload")
-				nvda_ui.queue(nvda_ui.message, present_error(error, _).message)
+				error_reporter.report(
+					error,
+					ErrorContext(operation="model preload", provider=readiness.provider, origin="background preload", optional=True),
+				)
 			else:
 				# TRANSLATORS: Message spoken when a provider model is confirmed ready. {provider} and {model} are replaced with the provider and model names.
 				nvda_ui.queue(
@@ -460,7 +470,7 @@ class BackgroundTaskRunner:
 						on_progress=lambda msg: nvda_ui.queue(nvda_ui.message, msg),
 					)
 				result = self._use_case_engine.execute(use_case_id, progress=self._progress_handler)
-			except ProviderConfigurationError:
+			except ProviderConfigurationError as error:
 				log.exception(
 					f"BackgroundTaskRunner blocked by provider configuration for use case {use_case_id}"
 				)
@@ -469,23 +479,27 @@ class BackgroundTaskRunner:
 				message = build_provider_status_message(_, readiness) or _(
 					"The selected provider is not fully configured."
 				)
-				nvda_ui.queue(nvda_ui.message, message)
-				if self._error_handler is not None:
-					self._error_handler(title, message)
+				error_reporter.report(
+					ProviderConfigurationError(message) if not str(error).strip() else error,
+					ErrorContext(operation=str(use_case_id), origin="use case"),
+					owner=(lambda p: self._error_handler(title, p.message)) if self._error_handler else None,
+				)
 				return
 			except LiteRTServerError as error:
 				log.exception(f"BackgroundTaskRunner LiteRT server error for use case {use_case_id}")
-				message = present_error(error, _).message
-				nvda_ui.queue(nvda_ui.message, message)
-				if self._error_handler is not None:
-					self._error_handler(title, message)
+				error_reporter.report(
+					error,
+					ErrorContext(operation=str(use_case_id), origin="use case"),
+					owner=(lambda p: self._error_handler(title, p.message)) if self._error_handler else None,
+				)
 				return
 			except Exception as error:
 				log.exception(f"BackgroundTaskRunner failed executing use case {use_case_id}")
-				message = present_error(error, _).message
-				nvda_ui.queue(nvda_ui.message, message)
-				if self._error_handler is not None:
-					self._error_handler(title, message)
+				error_reporter.report(
+					error,
+					ErrorContext(operation=str(use_case_id), origin="use case"),
+					owner=(lambda p: self._error_handler(title, p.message)) if self._error_handler else None,
+				)
 				return
 
 			nvda_ui.queue(render_result, result)

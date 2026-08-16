@@ -168,11 +168,85 @@ class BrowserFieldParser:
 			if node is not None:
 				nodes.append(node)
 		nodes = sorted(nodes, key=lambda node: node.order)
-		known_ids = {node.id for node in nodes}
-		return tuple(
-			replace(node, parent_id=None) if node.parent_id not in known_ids else node
-			for node in nodes
-		)
+		return self._normalize_graph_nodes(nodes)
+
+	def _normalize_graph_nodes(self, nodes: list[AccessibilityNode]) -> tuple[AccessibilityNode, ...]:
+		"""Remove wrapper noise while preserving the semantic tree.
+
+		NVDA's field stream includes layout containers whose accessible name is
+		the concatenation of their descendants.  Nested wrappers consequently
+		repeat the same label several times.  Keep the first meaningful wrapper,
+		drop unnamed non-root wrappers, and reparent retained children to the
+		nearest retained ancestor.
+		"""
+		by_id = {node.id: node for node in nodes}
+		removed: set[str] = set()
+
+		for node in nodes:
+			# Keep named semantic nodes and typed landmarks.  An unnamed control
+			# has no actionable identity and can otherwise become a second root
+			# when NVDA emits it outside the main field stack.
+			if (
+				node.name.strip()
+				or (node.role == "landmark" and node.landmark)
+				or (node.role == "container" and node.parent_id is None)
+			):
+				continue
+			removed.add(node.id)
+
+		def retained_ancestor(node_id: str | None) -> AccessibilityNode | None:
+			seen: set[str] = set()
+			current_id = node_id
+			while current_id is not None and current_id not in seen:
+				seen.add(current_id)
+				current = by_id.get(current_id)
+				if current is None:
+					return None
+				if current.id not in removed:
+					return current
+				current_id = current.parent_id
+			return None
+
+		for node in nodes:
+			if node.id in removed or node.role != "container":
+				continue
+			parent = retained_ancestor(node.parent_id)
+			if parent is not None and parent.role in {"container", "landmark"} and self._same_label(node.name, parent.name):
+				removed.add(node.id)
+
+		# A generic wrapper with one child often has a label made from the
+		# child's label plus a nearby text fragment.  It contributes no
+		# navigable semantics, so collapse it as well (for example, a static
+		# "Main Submit" wrapper around a Submit button).
+		for node in nodes:
+			if node.id in removed or node.role != "container":
+				continue
+			children = [child for child in nodes if child.parent_id == node.id and child.id not in removed]
+			if len(children) == 1 and children[0].name and children[0].name.casefold() in node.name.casefold():
+				removed.add(node.id)
+
+		result: list[AccessibilityNode] = []
+		for node in nodes:
+			if node.id in removed:
+				continue
+			parent = retained_ancestor(node.parent_id)
+			if (
+				node.parent_id is None
+				and node.role == "container"
+				and len(node.name) > 256
+				and node.name == node.text
+			):
+				# The root container's label is usually the complete page text
+				# repeated by NVDA.  Sections retain the useful page content, so
+				# keeping this duplicate makes the graph much larger without
+				# adding structure.
+				node = replace(node, name="", text="")
+			result.append(replace(node, parent_id=parent.id if parent is not None else None))
+		return tuple(result)
+
+	@staticmethod
+	def _same_label(left: str, right: str) -> bool:
+		return " ".join(left.split()).casefold() == " ".join(right.split()).casefold()
 
 	def _graph_node_from_frame(
 		self, frame: dict[str, object], parents: list[dict[str, object]]

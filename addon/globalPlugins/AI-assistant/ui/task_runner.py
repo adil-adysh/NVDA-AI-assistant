@@ -16,6 +16,7 @@ import uuid
 import wx
 from logHandler import log
 
+from ..service.error_reporter import ErrorContext, ErrorReporter, error_reporter
 
 T = TypeVar("T")
 
@@ -57,6 +58,7 @@ class BackgroundTaskRunner:
 	"""
 
 	def __init__(self, max_workers: int = 4) -> None:
+		self._error_reporter = error_reporter
 		self._executor = ThreadPoolExecutor(
 			max_workers=max_workers,
 			thread_name_prefix="NVDA-AI-worker",
@@ -71,10 +73,12 @@ class BackgroundTaskRunner:
 		on_finally: Callable[[], None] | None = None,
 		is_alive: Callable[[], bool] | None = None,
 		task_name: str | None = None,
+		error_reporter_instance: ErrorReporter | None = None,
 	) -> TaskHandle[T]:
 		cancel_event = threading.Event()
 		operation_id = uuid.uuid4().hex
 		name = task_name or getattr(work, "__qualname__", "background_task")
+		reporter = error_reporter_instance or self._error_reporter
 		submitted_at = time.perf_counter()
 		started_at: float | None = None
 
@@ -92,7 +96,13 @@ class BackgroundTaskRunner:
 		def dispatch(callback: Callable[[], None]) -> None:
 			def guarded_callback() -> None:
 				if is_alive is None or is_alive():
-					callback()
+					try:
+						callback()
+					except Exception as error:
+						reporter.report(
+							error,
+							ErrorContext(operation=name, origin="background task callback"),
+						)
 
 			UiDispatcher.post(guarded_callback)
 
@@ -124,8 +134,11 @@ class BackgroundTaskRunner:
 					error_type=type(error).__name__,
 				)
 				log.error("Background UI task failed: %s", error, exc_info=True)
-				if on_error is not None:
+				context = ErrorContext(operation=name, origin="background task")
+				if on_error is not None and (is_alive is None or is_alive()):
 					dispatch(lambda: on_error(error))
+				else:
+					reporter.report(error, context)
 			else:
 				report(
 					"task_completed",

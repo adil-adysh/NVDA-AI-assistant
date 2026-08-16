@@ -231,11 +231,11 @@ class _StructuredLLMService(_StreamingLLMService):
 	def summarize_structured(self, _prompt: str, schema, stream_handler=None):
 		self.structured_schema = schema
 		self.summary_stream_handler = stream_handler
-		target_id = re.search(r"target_id=(nav-[a-f0-9]+)", _prompt).group(1)
 		return types.SimpleNamespace(
 			text=(
-				'{"page_context":"Intro page","destinations":['
-				f'{{"target_id":"{target_id}","reason":"Primary section"}}],'
+				'{"overview":"Intro page","sections":['
+				'{"title":"Intro","target_id":null,"summary":"Primary section",'
+				'"important_targets":[]}],'
 				'"omissions":null}'
 			),
 			model="structured-model",
@@ -357,6 +357,24 @@ class StreamingUseCaseTests(unittest.TestCase):
 		)
 		self.assertNotIn("score", candidates[0].to_dict())
 
+	def test_structure_response_accepts_llm_grouping_and_rejects_unknown_targets(self) -> None:
+		candidates = structure_summary_module.build_navigation_targets(
+			ExtractionStructure(headings=((1, "Intro"),), buttons=("Save",))
+		)
+		known_id = candidates[0].id
+		parsed = structure_response_module.parse_structure_summary_response(
+			"{" +
+			f'"overview":"A settings page","sections":[{{"title":"Account",'
+			f'"target_id":"{known_id}","summary":"Profile settings",'
+			'"important_targets":[{"target_id":"not-real","reason":"bad"}]}],"omissions":null}',
+			candidates,
+		)
+
+		self.assertTrue(parsed.structured)
+		self.assertEqual(parsed.overview, "A settings page")
+		self.assertEqual(parsed.sections[0].title, "Account")
+		self.assertEqual([item.target_id for item in parsed.destinations], [known_id])
+
 	def test_structure_summary_uses_provider_json_schema_when_available(self) -> None:
 		service = _StructuredLLMService()
 		pipeline = _Pipeline(
@@ -372,7 +390,7 @@ class StreamingUseCaseTests(unittest.TestCase):
 		result = StructureSummaryUseCase().execute(pipeline, service)
 
 		self.assertIsInstance(service.structured_schema, dict)
-		self.assertEqual(service.structured_schema["required"], ["page_context", "destinations", "omissions"])
+		self.assertEqual(service.structured_schema["required"], ["overview", "sections", "omissions"])
 		self.assertIsNone(service.summary_stream_handler)
 		self.assertTrue(result.metadata["structure_summary_structured"])
 

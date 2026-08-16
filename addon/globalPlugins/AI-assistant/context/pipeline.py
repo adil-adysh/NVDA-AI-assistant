@@ -110,6 +110,12 @@ class ContextPipeline:
 		"""
 		return self._main_thread_executor(callable_)
 
+	def capture_current_page_snapshot(self) -> ExtractionSnapshot | None:
+		"""Extract the current page through the shared main-thread boundary."""
+		if self._page_extractor is None:
+			return None
+		return self._main_thread_executor(self._page_extractor)
+
 	# ── Snapshot resolution (NVDA main thread) ─────────────────────
 
 	def _needs_page_snapshot(self, intent: ExtractionIntent) -> bool:

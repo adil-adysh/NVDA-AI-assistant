@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import builtins
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, cast
 
 import wx
@@ -35,6 +36,7 @@ from ..providers.registry import (
 	is_runtime_installed,
 	provider_display_name,
 )
+from ..service.error_reporter import ErrorContext, error_reporter
 from .task_runner import TaskHandle, background_tasks
 
 
@@ -77,6 +79,18 @@ class ProviderConfigureDialog(wx.Dialog):
 		self._test_task: TaskHandle[tuple[bool, str]] | None = None
 		self._provider_name = provider_name
 		self._config = build_provider_config(provider_id)
+
+	def _report_error(self, error: Exception, operation: str) -> None:
+		error_reporter.report(
+			error,
+			ErrorContext(operation=operation, provider=self._provider_id, origin="provider configuration"),
+			owner=lambda presentation: wx.MessageBox(
+				presentation.message,
+				presentation.title,
+				wx.ICON_ERROR,
+				parent=self,
+			),
+		)
 		self._fields = get_configure_fields(provider_id)
 		#: Per-field LabeledControlHelper keyed by spec.id.
 		self._lch: dict[str, LabeledControlHelper] = {}
@@ -167,6 +181,15 @@ class ProviderConfigureDialog(wx.Dialog):
 				max=64,
 				initial=0,
 			)
+		elif spec.kind == "file":
+			lch = LabeledControlHelper(self, spec.label, wx.TextCtrl)
+			browse = wx.Button(self, label=_("Browse..."))
+			browse.SetName(_("Browse for {} file").format(spec.label.rstrip(":")))
+			browse.Bind(
+				wx.EVT_BUTTON,
+				lambda _event, field_id=spec.id, field_spec=spec: self._on_browse_file(field_id, field_spec),
+			)
+			lch.sizer.Add(browse, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 5)
 		else:
 			style = wx.TE_PASSWORD if spec.secret else 0
 			lch = LabeledControlHelper(self, spec.label, wx.TextCtrl, style=style)
@@ -183,6 +206,43 @@ class ProviderConfigureDialog(wx.Dialog):
 			)
 			s_helper.addItem(show_cb)
 			self._secret_cbs[spec.id] = show_cb
+
+	def _on_browse_file(self, field_id: str, spec: ConfigureFieldSpec) -> None:
+		lch = self._lch.get(field_id)
+		if lch is None:
+			return
+		current = str(lch.control.GetValue() or "").strip()
+		default_dir = ""
+		if current:
+			candidate = Path(current)
+			if candidate.parent != Path("."):
+				default_dir = str(candidate.parent)
+		dialog = wx.FileDialog(
+			self,
+			message=_("Select {} file").format(spec.label.rstrip(":")),
+			defaultDir=default_dir,
+			wildcard=spec.file_wildcard,
+			style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
+		)
+		try:
+			if dialog.ShowModal() != wx.ID_OK:
+				return
+			selected = dialog.GetPath()
+		finally:
+			dialog.Destroy()
+		lch.control.SetValue(selected)
+		if field_id != "models_preset":
+			return
+		# Preset selection is intentionally durable immediately. Only this field
+		# is persisted so unrelated edits in the open dialog remain cancelable.
+		try:
+			values = {**vars(self._config), "provider": self._provider_id, "models_preset": selected.strip()}
+			persisted = type(self._config)(**values)
+			set_openai_compat_config(persisted, activate=False)
+			self._config = persisted
+		except Exception as exc:
+			lch.control.SetValue(current)
+			self._report_error(exc, "save llama-server preset path")
 
 	def _populate_fields(self) -> None:
 		"""Fill the fields from the persisted provider configuration."""
@@ -342,13 +402,7 @@ class ProviderConfigureDialog(wx.Dialog):
 			# pylint: disable=broad-exception-caught
 			set_openai_compat_config(self._draft_config(), activate=False)
 		except Exception as exc:
-			log.error("Failed to save configuration for %s: %s", self._provider_id, exc)
-			wx.MessageBox(
-				# TRANSLATORS: Error shown when saving provider configuration fails; {error} is the reason.
-				_("Failed to save configuration: {}").format(exc),
-				_("Error"),
-				wx.ICON_ERROR,
-			)
+			self._report_error(exc, "save provider configuration")
 			return
 		self._destroyed = True
 		if self._test_task is not None:

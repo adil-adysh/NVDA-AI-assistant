@@ -39,12 +39,19 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._providers_item = self._submenu.Append(
 			wx.ID_ANY, _("&Manage AI Providers..."),
 		)
+		# TRANSLATORS: Name of the menu item to open AI Assistant settings.
+		self._settings_item = self._submenu.Append(
+			wx.ID_ANY, _("&Settings..."),
+		)
 		# TRANSLATORS: Name of the submenu in NVDA's Tools menu for AI Assistant features.
 		self._submenu_parent_item = self._tools_menu.AppendSubMenu(
 			self._submenu, _("AI Assistant"),
 		)
 		gui.mainFrame.sysTrayIcon.Bind(
 			wx.EVT_MENU, self._on_tools_manage_providers, self._providers_item,
+		)
+		gui.mainFrame.sysTrayIcon.Bind(
+			wx.EVT_MENU, self._on_tools_settings, self._settings_item,
 		)
 
 	def _restore_default_gesture_bindings(self) -> None:
@@ -55,6 +62,13 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		from ..ui.provider_dialog import open_provider_dialog
 		gui.mainFrame.prePopup()
 		open_provider_dialog(gui.mainFrame)
+		gui.mainFrame.postPopup()
+
+	def _on_tools_settings(self, _event: wx.CommandEvent) -> None:
+		"""Open the tabbed AI Assistant settings dialog."""
+		from ..ui.settings_panel import open_settings_dialog
+		gui.mainFrame.prePopup()
+		open_settings_dialog(gui.mainFrame)
 		gui.mainFrame.postPopup()
 
 	def terminate(self) -> None:
@@ -126,10 +140,18 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._app.open_chat_with_screenshot()
 
 	@script(
+		# TRANSLATORS: Description for the script that saves the current accessibility graph.
+		description=_("Captures and saves the current accessibility graph as a .ag file."),
+	)
+	def script_captureAccessibilityGraph(self, gesture: Any):
+		log.debug("Script captureAccessibilityGraph invoked gesture=%s", gesture)
+		self._app.capture_accessibility_graph()
+
+	@script(
 		# TRANSLATORS: Description for the script that activates the AI assistant command layer.
 		description=_(
 			"Activate the AI assistant command layer. "
-			"Press S for summary, O for structure summary, G for spelling and grammar, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object, V for attach selection, B for attach clipboard, H for help."
+			"Press S for summary, O for structure summary, A for accessibility graph capture, G for spelling and grammar, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object, V for attach selection, B for attach clipboard, H for help."
 		),
 		gesture="kb:NVDA+Shift+A",
 	)

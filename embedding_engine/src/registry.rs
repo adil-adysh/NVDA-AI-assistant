@@ -23,6 +23,7 @@ pub trait InitializedModel: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct ModelDescriptor {
     pub id: String,
+    pub name: String,
     pub repository: String,
     pub architecture: String,
     pub dimensions: usize,
@@ -35,6 +36,7 @@ impl ModelDescriptor {
     fn to_json(&self) -> JsonValue {
         serde_json::json!({
             "id": self.id,
+            "name": self.name,
             "repository": self.repository,
             "architecture": self.architecture,
             "dimensions": self.dimensions,
@@ -81,6 +83,7 @@ impl ModelRegistry {
             mini_lm_id.clone(),
             ModelDescriptor {
                 id: mini_lm_id.clone(),
+                name: "all-MiniLM-L6-v2".to_string(),
                 repository: "sentence-transformers/all-MiniLM-L6-v2".to_string(),
                 architecture: "BERT".to_string(),
                 dimensions: 384,
@@ -106,6 +109,7 @@ impl ModelRegistry {
             granite_id.clone(),
             ModelDescriptor {
                 id: granite_id.clone(),
+                name: "Granite 97M".to_string(),
                 repository: "ibm-granite/granite-embedding-97m-multilingual-r2".to_string(),
                 architecture: "ModernBERT".to_string(),
                 dimensions: 384,
@@ -136,6 +140,7 @@ impl ModelRegistry {
             harrier_id.clone(),
             ModelDescriptor {
                 id: harrier_id.clone(),
+                name: "Harrier OSS 270M".to_string(),
                 repository: "microsoft/harrier-oss-v1-270m".to_string(),
                 architecture: "Gemma3".to_string(),
                 dimensions: 640,

@@ -37,6 +37,13 @@ def _load_module(module_name: str, file_path: Path):
 _register_package(PACKAGE_NAME, ROOT_DIR)
 _register_package(f"{PACKAGE_NAME}.providers", ROOT_DIR / "providers")
 _register_package(f"{PACKAGE_NAME}.service", ROOT_DIR / "service")
+_register_package(f"{PACKAGE_NAME}.context", ROOT_DIR / "context")
+log_module = types.ModuleType("logHandler")
+log_module.log = types.SimpleNamespace(
+	error=lambda *args, **kwargs: None,
+	exception=lambda *args, **kwargs: None,
+)
+sys.modules["logHandler"] = log_module
 
 # error_presentation.present_error lazily imports the NVDA-bound image
 # package (screen curtain); stub it so this suite stays standalone.
@@ -62,12 +69,19 @@ error_presentation_module = _load_module(
 	f"{PACKAGE_NAME}.service.error_presentation",
 	ROOT_DIR / "service" / "error_presentation.py",
 )
+error_reporter_module = _load_module(
+	f"{PACKAGE_NAME}.service.error_reporter",
+	ROOT_DIR / "service" / "error_reporter.py",
+)
 
 LLMProviderError = interfaces_module.LLMProviderError
 MissingCredentialsError = interfaces_module.MissingCredentialsError
 UnsupportedModelError = interfaces_module.UnsupportedModelError
 FeatureNotSupportedError = interfaces_module.FeatureNotSupportedError
 present_error = error_presentation_module.present_error
+ErrorContext = error_reporter_module.ErrorContext
+ErrorReporter = error_reporter_module.ErrorReporter
+ContextBudgetError = sys.modules[f"{PACKAGE_NAME}.context.budget"].ContextBudgetError
 suggest_for_status = error_mapping_module.suggest_for_status
 
 
@@ -110,12 +124,57 @@ class ErrorPresentationTests(unittest.TestCase):
 		self.assertEqual(presentation.title, "Provider request failed")
 		self.assertEqual(presentation.message, "Gemini request timed out.")
 
-	def test_internal_errors_are_generic(self) -> None:
+	def test_unexpected_errors_are_safe_and_user_visible(self) -> None:
 		presentation = present_error(RuntimeError("stack-specific detail"))
 
-		self.assertEqual(presentation.title, "Internal error")
+		self.assertEqual(presentation.title, "AI Assistant error")
 		self.assertEqual(presentation.message, "Something went wrong inside the add-on. Please try again.")
-		self.assertTrue(presentation.is_internal)
+		self.assertFalse(presentation.is_internal)
+
+	def test_unexpected_errors_include_diagnostic_reference(self) -> None:
+		presentation = present_error(RuntimeError("stack-specific detail"), diagnostic_id="abc123")
+
+		self.assertIn("Reference: abc123", presentation.message)
+
+	def test_context_budget_errors_are_actionable(self) -> None:
+		presentation = present_error(ContextBudgetError("Prompt exceeds the available input budget."))
+
+		self.assertEqual(presentation.title, "Context too large")
+		self.assertIn("smaller page", presentation.message)
+		self.assertFalse(presentation.is_internal)
+
+	def test_reporter_prefers_contextual_surface(self) -> None:
+		notifications: list[str] = []
+		contextual: list[str] = []
+		reporter = ErrorReporter(notifications.append)
+		reporter.report(
+			RuntimeError("boom"),
+			ErrorContext(operation="test operation"),
+			owner=lambda presentation: contextual.append(presentation.message),
+		)
+
+		self.assertEqual(len(contextual), 1)
+		self.assertEqual(notifications, [])
+
+	def test_reporter_falls_back_when_contextual_surface_fails(self) -> None:
+		notifications: list[str] = []
+		reporter = ErrorReporter(notifications.append)
+		reporter.report(
+			RuntimeError("boom"),
+			ErrorContext(operation="test operation"),
+			owner=lambda _presentation: (_ for _ in ()).throw(RuntimeError("closed")),
+		)
+
+		self.assertEqual(len(notifications), 1)
+
+	def test_optional_errors_are_deduplicated(self) -> None:
+		notifications: list[str] = []
+		reporter = ErrorReporter(notifications.append)
+		context = ErrorContext(operation="catalog refresh", optional=True)
+		reporter.report(RuntimeError("offline"), context)
+		reporter.report(RuntimeError("offline"), context)
+
+		self.assertEqual(len(notifications), 1)
 
 	def test_rate_limit_mapped_to_actionable(self) -> None:
 		suggestion = suggest_for_status(429)

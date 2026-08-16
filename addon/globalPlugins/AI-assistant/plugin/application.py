@@ -8,7 +8,6 @@ from collections.abc import Callable
 from typing import Any, cast
 
 import addonHandler
-import gui
 from logHandler import log
 
 from ..config.state import ProviderState, subscribe_provider_state_change, unsubscribe_provider_state_change
@@ -20,12 +19,13 @@ from ..config.settings import (
 	get_provider_state,
 )
 from ..context.extractors.selection import safe_extract_selection
+from ..context.graph_store import save_accessibility_graph
 from ..service import get_provider_display_name, provider_control_service
+from ..service.error_reporter import ErrorContext, error_reporter
 from ..service.model_cache import model_catalog_cache
 from ..ui.host_process import stop_host
 from ..ui.adapter import ui_adapter
 from ..providers.runtime.llama_server import shutdown_llama_servers
-from ..ui.settings_panel import AIAssistantSettingsPanel
 from ..ui import nvda_ui
 from ..ui.session_state import build_provider_status_message
 from ..utils.clipboard import safe_read_clipboard
@@ -79,6 +79,7 @@ class AIAssistantApplication:
 			bindings=(
 				("s", host.script_summarizeCurrentPage),
 				("o", host.script_summarizePageStructure),
+				("a", host.script_captureAccessibilityGraph),
 				("g", host.script_proofreadFocusedText),
 				("i", host.script_describeCurrentWindow),
 				("f", host.script_describeFocusedObject),
@@ -88,20 +89,24 @@ class AIAssistantApplication:
 				("z", host.script_attachFocusedObjectToChat),
 				("v", host.script_attachSelectionToChat),
 				("b", host.script_attachClipboardToChat),
-				("t", host.script_toggleAIProvider),			("m", host.script_selectModel),				("h", host.script_assistantLayerHelp),
+				("t", host.script_toggleAIProvider),
+				("m", host.script_selectModel),
+				("h", host.script_assistantLayerHelp),
 			),
 			bind_gesture=host.bindGesture,
 			clear_gesture_bindings=host.clearGestureBindings,
 			restore_default_gestures=host._restore_default_gesture_bindings,
 		)
 		subscribe_provider_state_change(self._on_provider_state_change)
-		self._register_settings_panel()
 		# Preload model catalog for all enabled providers in the background
 		# so that the first "m" gesture or model manager dialog open is instant.
 		try:
 			model_catalog_cache.preload_all()
-		except Exception:
-			log.exception("Failed to start model catalog preload")
+		except Exception as error:
+			error_reporter.report(
+				error,
+				ErrorContext(operation="model catalog preload", origin="application startup", optional=True),
+			)
 		log.debug("Browser Assistant plugin initialized")
 
 	@property
@@ -136,8 +141,16 @@ class AIAssistantApplication:
 			# path adopts a healthy server whose handle was lost after an
 			# NVDA restart, and starts one otherwise — without blocking here.
 			from .background import ensure_provider_server_ready
+			def start_server() -> None:
+				try:
+					ensure_provider_server_ready()
+				except Exception as error:
+					error_reporter.report(
+						error,
+						ErrorContext(operation="provider server startup", provider=provider, origin="application startup"),
+					)
 			threading.Thread(
-				target=ensure_provider_server_ready,
+				target=start_server,
 				name=f"{provider}ServerAutoStart",
 				daemon=True,
 			).start()
@@ -181,7 +194,6 @@ class AIAssistantApplication:
 			).start()
 		except Exception:
 			log.exception("Error stopping llama-server instances during terminate")
-		self._unregister_settings_panel()
 
 	def _on_provider_state_change(self, provider_state: ProviderState) -> None:
 		"""Handle provider state changes off the main thread.
@@ -341,6 +353,35 @@ class AIAssistantApplication:
 	def activate_assistant_layer(self) -> None:
 		self.layer_mode.activate()
 
+	def capture_accessibility_graph(self) -> None:
+		nvda_ui.message(_("Capturing the current accessibility graph."))
+		threading.Thread(
+			target=self._capture_accessibility_graph_worker,
+			name="AccessibilityGraphCapture",
+			daemon=True,
+		).start()
+
+	def _capture_accessibility_graph_worker(self) -> None:
+		try:
+			snapshot = self._services.context_pipeline.capture_current_page_snapshot()
+			graph = getattr(snapshot, "graph", None) if snapshot is not None else None
+			if graph is None:
+				nvda_ui.queue(nvda_ui.message, _("No accessibility graph is available for the current window."))
+				return
+			path = save_accessibility_graph(
+				graph,
+				title=getattr(snapshot, "title", ""),
+				app_title=getattr(snapshot, "appTitle", ""),
+				source=getattr(snapshot, "source", ""),
+			)
+			nvda_ui.queue(
+				nvda_ui.message,
+				_("Accessibility graph saved as {filename}.").format(filename=path.name),
+			)
+		except Exception:
+			log.exception("Unable to capture accessibility graph")
+			nvda_ui.queue(nvda_ui.message, _("Unable to save the accessibility graph."))
+
 	def toggle_provider(self) -> None:
 		"""Announce enabled providers with digit labels and enter digit-selection mode."""
 		enabled = get_enabled_providers()
@@ -368,8 +409,10 @@ class AIAssistantApplication:
 		try:
 			result = provider_control_service.select_provider(provider_id)
 		except Exception as error:
-			from ..service.error_presentation import present_error
-			nvda_ui.message(present_error(error, _).message)
+			error_reporter.report(
+				error,
+				ErrorContext(operation="select provider", provider=provider_id, origin="provider selector"),
+			)
 			return
 		if provider_id in {"litert-lm", "llama-cpp-server"}:
 			threading.Thread(
@@ -404,8 +447,11 @@ class AIAssistantApplication:
 					ensure_provider_server_ready()
 					provider_control_service.refresh_models(provider_id)
 				models = provider_control_service.list_enabled_models(provider_id)
-			except Exception:
-				log.exception("Failed to list models")
+			except Exception as error:
+				error_reporter.report(
+					error,
+				ErrorContext(operation="select model", provider=get_provider(), origin="model selector"),
+				)
 				def _announce_error() -> None:
 					# TRANSLATORS: Message spoken when model listing fails.
 					nvda_ui.message(_("Could not list models for the current provider."))
@@ -449,8 +495,10 @@ class AIAssistantApplication:
 		try:
 			result = provider_control_service.select_model(model_id)
 		except Exception as error:
-			from ..service.error_presentation import present_error
-			nvda_ui.message(present_error(error, _).message)
+			error_reporter.report(
+				error,
+				ErrorContext(operation="select model", model=model_id, origin="model selector"),
+			)
 			return
 		# TRANSLATORS: Message spoken when the AI model is switched.
 		message = _("Model switched to {model} on {provider}.").format(
@@ -463,19 +511,9 @@ class AIAssistantApplication:
 		nvda_ui.message(
 			# TRANSLATORS: Help message listing all available AI assistant layer commands.
 			_(
-				"Assistant layer commands: S for summary, O for structure summary, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object to chat, V for attach selection to chat, B for attach clipboard to chat, T for provider select, M for model select, H for help. Press the key after activating the layer with NVDA+Shift+A."
+				"Assistant layer commands: S for summary, O for structure summary, A for accessibility graph capture, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object to chat, V for attach selection to chat, B for attach clipboard to chat, T for provider select, M for model select, H for help. Press the key after activating the layer with NVDA+Shift+A."
 			)
 		)
 
 	def on_provider_state_changed(self, provider_state: ProviderState) -> None:
 		self.presenter.update_provider_state(provider_state)
-
-	def _register_settings_panel(self) -> None:
-		category_classes = gui.settingsDialogs.NVDASettingsDialog.categoryClasses
-		if AIAssistantSettingsPanel not in category_classes:
-			category_classes.append(AIAssistantSettingsPanel)
-
-	def _unregister_settings_panel(self) -> None:
-		category_classes = gui.settingsDialogs.NVDASettingsDialog.categoryClasses
-		if AIAssistantSettingsPanel in category_classes:
-			category_classes.remove(AIAssistantSettingsPanel)

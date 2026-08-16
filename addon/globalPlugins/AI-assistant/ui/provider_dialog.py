@@ -38,6 +38,7 @@ from ..providers.registry import (
 	set_active_provider,
 	set_provider_enabled,
 )
+from ..service.error_reporter import ErrorContext, error_reporter
 from .download_progress import DownloadProgressDialog
 from .model_manager import open_model_manager
 from .provider_configure import build_configure_dialog
@@ -53,6 +54,18 @@ _ = cast(Callable[[str], str], getattr(builtins, "_", _translate))
 class ProviderManagementDialog(wx.Dialog):
 	# TRANSLATORS: Title of the AI provider management dialog.
 	_TITLE = _("AI Assistant — Manage AI Providers")
+
+	def _report_error(self, error: Exception, operation: str, provider: str | None = None) -> None:
+		error_reporter.report(
+			error,
+			ErrorContext(operation=operation, provider=provider, origin="provider management"),
+			owner=lambda presentation: wx.MessageBox(
+				presentation.message,
+				presentation.title,
+				wx.ICON_ERROR,
+				parent=self,
+			),
+		)
 
 	def __init__(self, parent: wx.Window) -> None:
 		super().__init__(
@@ -263,13 +276,7 @@ class ProviderManagementDialog(wx.Dialog):
 			# pylint: disable=broad-exception-caught
 			set_active_provider(info.id)
 		except Exception as exc:
-			log.error("Failed to activate provider %s: %s", info.id, exc)
-			wx.MessageBox(
-				# TRANSLATORS: Error shown when activating a provider fails; {error} is the reason.
-				_("Failed to activate provider: {}").format(exc),
-				_("Error"),
-				wx.ICON_ERROR,
-			)
+			self._report_error(exc, "activate provider", info.id)
 			return
 		self._refresh_provider_list()
 
@@ -289,13 +296,7 @@ class ProviderManagementDialog(wx.Dialog):
 			# pylint: disable=broad-exception-caught
 			set_provider_enabled(info.id, True)
 		except Exception as exc:
-			log.error("Failed to enable provider %s: %s", info.id, exc)
-			wx.MessageBox(
-				# TRANSLATORS: Error shown when enabling a provider fails; {error} is the reason.
-				_("Failed to enable provider: {}").format(exc),
-				_("Error"),
-				wx.ICON_ERROR,
-			)
+			self._report_error(exc, "enable provider", info.id)
 			return
 		self._refresh_provider_list()
 
@@ -332,13 +333,7 @@ class ProviderManagementDialog(wx.Dialog):
 				# pylint: disable=broad-exception-caught
 				set_active_provider(other_enabled[0])
 			except Exception as exc:
-				log.error("Failed to switch active provider: %s", exc)
-				wx.MessageBox(
-					# TRANSLATORS: Error shown when switching the active provider fails; {error} is the reason.
-					_("Failed to switch active provider: {}").format(exc),
-					_("Error"),
-					wx.ICON_ERROR,
-				)
+				self._report_error(exc, "switch active provider", other_enabled[0])
 				return
 		try:
 			# Broad catch is deliberate: persistence failures are surfaced
@@ -346,13 +341,7 @@ class ProviderManagementDialog(wx.Dialog):
 			# pylint: disable=broad-exception-caught
 			set_provider_enabled(info.id, False)
 		except Exception as exc:
-			log.error("Failed to disable provider %s: %s", info.id, exc)
-			wx.MessageBox(
-				# TRANSLATORS: Error shown when disabling a provider fails; {error} is the reason.
-				_("Failed to disable provider: {}").format(exc),
-				_("Error"),
-				wx.ICON_ERROR,
-			)
+			self._report_error(exc, "disable provider", info.id)
 			return
 		self._refresh_provider_list()
 

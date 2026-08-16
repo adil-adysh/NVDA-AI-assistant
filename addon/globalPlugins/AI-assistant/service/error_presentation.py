@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import cast
 
+from ..context.budget import ContextBudgetError
 from ..providers.error_mapping import (
 	ErrorSuggestion,
 	suggest_for_status,
@@ -31,6 +32,7 @@ class ErrorPresentation:
 	title: str
 	message: str
 	is_internal: bool = False
+	diagnostic_id: str | None = None
 
 
 def _make_presentation(_title: str, suggestion: ErrorSuggestion, translate: Translator) -> ErrorPresentation:
@@ -57,7 +59,11 @@ def _is_connection_refused(message: str) -> bool:
 	return False
 
 
-def present_error(error: Exception, translate: Translator | None = None) -> ErrorPresentation:
+def present_error(
+	error: Exception,
+	translate: Translator | None = None,
+	diagnostic_id: str | None = None,
+) -> ErrorPresentation:
 	translate = translate or _
 	message_text = str(error).strip()
 
@@ -96,6 +102,16 @@ def present_error(error: Exception, translate: Translator | None = None) -> Erro
 			# TRANSLATORS: Message shown when the active provider lacks a capability required by the requested operation.
 			message=message_text or translate("The active provider does not support this feature."),
 		)
+	if isinstance(error, ContextBudgetError):
+		return ErrorPresentation(
+			# TRANSLATORS: Title shown when the page is too large for the selected model context window.
+			title=translate("Context too large"),
+			# TRANSLATORS: Message shown when structure or page context exceeds the model input budget.
+			message=translate(
+				"The current page contains more information than the selected model can process. "
+				"Try again on a smaller page or reduce the amount of page content."
+			),
+		)
 
 	# ── Generic LLM provider error ──
 	if isinstance(error, LLMProviderError):
@@ -126,8 +142,12 @@ def present_error(error: Exception, translate: Translator | None = None) -> Erro
 	# ── Fallback — unexpected internal error ──
 	return ErrorPresentation(
 		# TRANSLATORS: Title shown when an unexpected internal error occurs in the add-on.
-		title=translate("Internal error"),
+		title=translate("AI Assistant error"),
 		# TRANSLATORS: Message shown when an unexpected internal error occurs, asking the user to try again.
-		message=translate("Something went wrong inside the add-on. Please try again."),
-		is_internal=True,
+		message=(
+			translate("Something went wrong inside the add-on. Please try again.")
+			+ (f" {translate('Reference')}: {diagnostic_id}." if diagnostic_id else "")
+		),
+		is_internal=False,
+		diagnostic_id=diagnostic_id,
 	)

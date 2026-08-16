@@ -105,8 +105,8 @@ impl EmbeddingEngine {
 
     /// Return metadata for a specific model.
     ///
-    /// Returns a dict with keys: ``id``, ``dimensions``, ``max_tokens``,
-    /// ``architecture``, ``repository``.
+    /// Returns a dict with keys: ``id``, ``name``, ``dimensions``,
+    /// ``max_tokens``, ``architecture``, ``repository``.
     #[staticmethod]
     fn model_info(model_id: &str) -> PyResult<Option<PyObject>> {
         let registry = ModelRegistry::default();

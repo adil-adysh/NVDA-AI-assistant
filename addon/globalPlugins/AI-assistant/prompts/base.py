@@ -27,6 +27,11 @@ SYSTEM_PROMPT_TEMPLATE = "system_prompt.jinja2"
 
 def _iter_template_names(template_name: str, language: str | None = None) -> tuple[str, ...]:
 	candidates: list[str] = []
+	# The structure-summary contract is schema-sensitive. Until localized
+	# versions are migrated to the canonical page-map template, always use the
+	# English contract template; the system prompt remains localized separately.
+	if template_name == "structure_summary.jinja2":
+		return ("en/structure_summary.jinja2",)
 	if language:
 		normalized_language = language.strip()
 		language_variants: list[str] = []

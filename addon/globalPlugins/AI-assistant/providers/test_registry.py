@@ -593,6 +593,12 @@ class ConfigureFieldSpecTests(unittest.TestCase):
 		self.assertFalse(fields["cache"].required)
 		self.assertFalse(fields["cpu_thread_count"].required)
 
+	def test_llama_preset_is_a_file_field(self) -> None:
+		fields = {spec.id: spec for spec in get_configure_fields("llama-cpp-server")}
+		self.assertEqual(fields["models_preset"].kind, "file")
+		self.assertIn("*.ini", fields["models_preset"].file_wildcard)
+		self.assertIn("All files", fields["models_preset"].file_wildcard)
+
 
 class DialogTitleTests(unittest.TestCase):
 	"""Dialog titles identify the provider (spec sections 45, 54)."""
