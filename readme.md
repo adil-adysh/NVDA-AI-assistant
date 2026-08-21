@@ -237,6 +237,52 @@ ollama ls
 
 Tip: Use **Configure Active Model** to tune per-model sampling settings (context window, temperature, top-k, top-p, max tokens, repetition penalty).
 
+## Git-explain developer workflow
+
+This repository is configured to use the local `git-explain` tool for understanding changed source code with the Unsloth llama.cpp model.
+
+Configuration is stored locally in:
+
+```text
+.git\git-explain.toml
+```
+
+The active model profile is:
+
+```text
+Provider: llama_cpp
+Model: git-explain-unsloth35b
+Endpoint: http://127.0.0.1:8083/v1
+```
+
+The `git-explain` release binary is installed at:
+
+```text
+C:\Users\adilh\.local\bin\git-explain.exe
+```
+
+That directory is on the user `PATH`, so from this repository you can run:
+
+```powershell
+git explain
+```
+
+The command opens a browser view of changed supported source units immediately. Select **Generate explanation** for normal explanations or **Explain this code in depth** for deep explanations. Results are cached per source unit in:
+
+```text
+.git\git-explain\cache.sqlite
+```
+
+Useful maintenance commands:
+
+```powershell
+git explain config show
+git explain cache status
+git explain cache clear
+```
+
+The current Git-explain integration analyzes supported tracked or staged changes. Untracked files, including the local `prompts/` directory, are not included yet.
+
 ---
 
 # Commands
