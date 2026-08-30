@@ -1,0 +1,3 @@
+[nvda]
+repository = "https://github.com/nvaccess/nvda.git"
+revision = "797a881381f8bedabc13456d3aa76bdd77d71503"

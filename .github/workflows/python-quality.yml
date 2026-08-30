@@ -1,0 +1,75 @@
+name: Python quality
+
+on:
+  push:
+    paths:
+      - "**.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "nvda-source.toml"
+      - ".github/workflows/python-quality.yml"
+  pull_request:
+    paths:
+      - "**.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "nvda-source.toml"
+      - ".github/workflows/python-quality.yml"
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: NVDA-AI-assistant
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: NVDA-AI-assistant
+      - uses: actions/checkout@v4
+        with:
+          repository: nvaccess/nvda
+          ref: 797a881381f8bedabc13456d3aa76bdd77d71503
+          path: nvda
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.21"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run pytest
+      - run: uv run scons --dry-run
+
+  built-nvda-integration:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: NVDA-AI-assistant
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: NVDA-AI-assistant
+      - uses: actions/checkout@v4
+        with:
+          repository: nvaccess/nvda
+          ref: 797a881381f8bedabc13456d3aa76bdd77d71503
+          path: nvda
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.21"
+          enable-cache: true
+      - name: Build NVDA native artifacts
+        working-directory: nvda
+        run: |
+          uv sync
+          uv run scons
+      - run: uv sync --locked
+      - run: uv run pytest -m nvda_integration

@@ -1,3 +1,52 @@
+[project]
+name = "nvda-ai-assistant-dev"
+version = "0.0.0"
+description = "Development and test environment for the NVDA AI Assistant add-on"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+	"comtypes==1.4.13",
+	"configobj @ git+https://github.com/DiffSK/configobj@9c8a0a80c767bf8a3d6493ed01df6c351bddca42",
+	"jinja2==3.1.6",
+	"latex2mathml==3.78.1",
+	"markdown==3.10",
+	"pillow==12.1.1",
+	"pyserial==3.5",
+	"pywin32==311",
+	"pyyaml==6.0.3",
+	"wxpython==4.2.4",
+]
+
+[dependency-groups]
+dev = [
+	"pytest==9.0.2",
+	"ruff==0.15.9",
+	"scons==4.10.1",
+]
+
+[tool.uv]
+package = false
+default-groups = ["dev"]
+environments = ["sys_platform == 'win32'"]
+required-version = ">=0.9"
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib", "-m", "not nvda_integration"]
+testpaths = [
+	"tests",
+]
+python_files = ["test_*.py"]
+markers = [
+	"nvda_integration: requires a built sibling NVDA checkout and its native helper DLLs",
+]
+norecursedirs = [
+	".git",
+	".venv",
+	"addon/globalPlugins/AI-assistant/lib",
+	"dist",
+	"embedding_engine",
+	"memory_engine",
+]
+
 [tool.ruff]
 line-length = 110
 
