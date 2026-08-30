@@ -8,7 +8,6 @@ token-limit boundary behaviour.
 
 from __future__ import annotations
 
-import math
 import sys
 import os
 

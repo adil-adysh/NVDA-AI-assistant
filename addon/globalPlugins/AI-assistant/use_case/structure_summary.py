@@ -8,7 +8,7 @@ from collections.abc import Callable
 from types import SimpleNamespace
 
 from ..context.pipeline import ContextPipeline
-from ..context.navigation import build_llm_navigation_candidates, build_navigation_targets
+from ..context.navigation import build_llm_navigation_candidates
 from ..prompts import build_extraction_structure_summary_prompt
 from ..context.types import ExtractionIntent, PageStructureRequest, PromptContext
 from ..service.llm import LLMService

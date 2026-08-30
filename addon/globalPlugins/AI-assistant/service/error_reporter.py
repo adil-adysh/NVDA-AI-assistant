@@ -14,7 +14,8 @@ from .error_presentation import ErrorPresentation, Translator, present_error
 try:
 	_ = builtins._
 except AttributeError:
-	_ = lambda text: text
+	def _(text: str) -> str:
+		return text
 
 
 @dataclass(frozen=True, slots=True)

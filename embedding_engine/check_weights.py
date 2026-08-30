@@ -1,6 +1,5 @@
 import torch
 from transformers import AutoTokenizer, AutoModel
-import embedding_engine
 
 tokenizer = AutoTokenizer.from_pretrained('microsoft/harrier-oss-v1-270m')
 

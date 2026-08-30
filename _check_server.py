@@ -1,6 +1,5 @@
 """Quick script to check litert-lm server process and test vision."""
 import json
-import os
 import subprocess
 import urllib.request
 

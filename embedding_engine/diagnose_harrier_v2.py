@@ -7,22 +7,17 @@ implementation and compares against corresponding Rust/Candle tensors.
 Uses identical token IDs to eliminate tokenizer differences.
 """
 
-import math
 import json
-import sys
 import torch
 import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModel
 from transformers.models.gemma3.modeling_gemma3 import (
     Gemma3TextModel,
-    Gemma3RMSNorm,
     Gemma3DecoderLayer,
     Gemma3Attention,
     Gemma3MLP,
-    Gemma3RotaryEmbedding,
     apply_rotary_pos_emb,
 )
-from typing import Optional
 
 # ── Utilities ───────────────────────────────────────────────────────────────
 
@@ -54,9 +49,6 @@ def compare_fingerprints(ref: dict, rust: dict) -> dict:
 
     if ref["shape"] != rust["shape"]:
         return {"status": "SHAPE_MISMATCH", "ref_shape": ref["shape"], "rust_shape": rust["shape"]}
-
-    ref_flat = [ref["first5"][i] if i < 5 else 0 for i in range(5)]
-    rust_flat = [rust["first5"][i] if i < 5 else 0 for i in range(5)]
 
     max_abs_diff = max(abs(ref["max"] - rust["max"]), abs(ref["min"] - rust["min"]))
     mean_abs_diff = abs(ref["mean"] - rust["mean"])

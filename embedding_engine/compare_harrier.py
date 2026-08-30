@@ -9,7 +9,6 @@ Prints full-precision comparison metrics.
 """
 
 import math
-import sys
 import embedding_engine
 
 
@@ -123,7 +122,7 @@ def main() -> None:
     ref_cos = cosine(ref_sim_a[0], ref_sim_b[0])
     rust_cos = cosine(rust_sim_a[0], rust_sim_b[0])
     print(f"\n{'=' * 60}")
-    print(f"  Cosine similarity (similar pair)")
+    print("  Cosine similarity (similar pair)")
     print(f"{'=' * 60}")
     print(f"  Reference cosine: {ref_cos:.10f}")
     print(f"  Rust cosine:      {rust_cos:.10f}")

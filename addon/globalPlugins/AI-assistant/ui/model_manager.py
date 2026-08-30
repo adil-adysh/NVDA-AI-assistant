@@ -13,7 +13,6 @@ from __future__ import annotations
 import wx
 
 from gui import guiHelper
-from logHandler import log
 
 from ..providers.model_manager import (
 	ManagedModel,

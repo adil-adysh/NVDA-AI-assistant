@@ -24,7 +24,6 @@ from typing import cast
 
 import wx
 from gui import guiHelper
-from logHandler import log
 
 from ..config.settings import get_enabled_providers
 from ..providers.registry import (

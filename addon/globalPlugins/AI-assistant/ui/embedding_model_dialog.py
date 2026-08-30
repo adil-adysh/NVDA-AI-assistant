@@ -6,7 +6,6 @@ import builtins
 from typing import Callable, cast
 
 import wx
-from gui import guiHelper
 
 from ..config.settings import get_embedding_model, set_embedding_model
 from ..embeddings.manager import embedding_model_service

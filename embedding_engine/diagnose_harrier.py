@@ -3,11 +3,9 @@ Layer-by-layer diagnostic comparing PyTorch reference vs Rust/Candle Harrier.
 """
 
 import math
-import sys
 import torch
 import embedding_engine
 from transformers import AutoTokenizer, AutoModel
-from sentence_transformers import SentenceTransformer
 
 
 def compare_tensor(name: str, ref: torch.Tensor, rust_values: list[float], rust_shape: tuple) -> None:
