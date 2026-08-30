@@ -423,41 +423,75 @@ class BackgroundTaskRunner:
 		self._progress_handler = progress_handler
 		self._error_handler = error_handler
 		self._readiness_service = readiness_service or ProviderReadinessService()
+		self._closed = threading.Event()
+		self._threads: set[threading.Thread] = set()
+		self._threads_lock = threading.Lock()
+
+	def close(self) -> None:
+		"""Cancel delivery from current jobs and reject new background work.
+
+		Provider shutdown owns interruption of blocking network/native calls.  This
+		method is deliberately non-blocking because NVDA termination must not wait
+		for those calls, but workers that finish later cannot enqueue UI updates.
+		"""
+		self._closed.set()
+
+	def _start_worker(self, *, target: Callable[[], None], name: str) -> bool:
+		if self._closed.is_set():
+			return False
+
+		def tracked_target() -> None:
+			try:
+				if not self._closed.is_set():
+					target()
+			finally:
+				with self._threads_lock:
+					self._threads.discard(threading.current_thread())
+
+		thread = threading.Thread(target=tracked_target, name=name, daemon=True)
+		with self._threads_lock:
+			if self._closed.is_set():
+				return False
+			self._threads.add(thread)
+		thread.start()
+		return True
 
 	def start_model_preload(self) -> None:
 		def worker() -> None:
+			provider = get_provider()
 			try:
 				readiness = self._readiness_service.evaluate_active()
-				if not readiness.can_infer:
+				provider = readiness.provider
+				if self._closed.is_set() or not readiness.can_infer:
 					log.debug("Skipping model preload for %s; provider is not ready", readiness.provider)
 					return
 				provider_name = get_provider_display_name(readiness.provider)
 				# TRANSLATORS: Message spoken while checking model availability for a provider. {provider} is replaced with the provider name.
-				nvda_ui.queue(
-					nvda_ui.message,
-					_("Checking {provider} model availability.").format(provider=provider_name),
-				)
+				if not self._closed.is_set():
+					nvda_ui.queue(
+						nvda_ui.message,
+						_("Checking {provider} model availability.").format(provider=provider_name),
+					)
 				model = self._llm_service.ensure_model_available(
-					on_progress=lambda text: nvda_ui.queue(nvda_ui.message, text)
+					on_progress=lambda text: (
+						nvda_ui.queue(nvda_ui.message, text) if not self._closed.is_set() else None
+					)
 				)
 			except Exception as error:
 				error_reporter.report(
 					error,
-					ErrorContext(operation="model preload", provider=readiness.provider, origin="background preload", optional=True),
+					ErrorContext(operation="model preload", provider=provider, origin="background preload", optional=True),
 				)
 			else:
+				if self._closed.is_set():
+					return
 				# TRANSLATORS: Message spoken when a provider model is confirmed ready. {provider} and {model} are replaced with the provider and model names.
 				nvda_ui.queue(
 					nvda_ui.message,
 					_("{provider} model {model} is ready.").format(provider=provider_name, model=model),
 				)
 
-		thread = threading.Thread(
-			target=worker,
-			name="BrowserAssistantModelPreload",
-			daemon=True,
-		)
-		thread.start()
+		self._start_worker(target=worker, name="BrowserAssistantModelPreload")
 
 	def run_use_case_in_background(
 		self, use_case_id: UseCaseId, title: str, render_result: Callable[[Any], None]
@@ -465,10 +499,16 @@ class BackgroundTaskRunner:
 		def worker() -> None:
 			log.debug("BackgroundTaskRunner worker starting use_case_id=%s title=%s", use_case_id, title)
 			try:
+				if self._closed.is_set():
+					return
 				if use_case_id not in _NON_LLM_USE_CASES:
 					ensure_provider_server_ready(
-						on_progress=lambda msg: nvda_ui.queue(nvda_ui.message, msg),
+						on_progress=lambda msg: (
+							nvda_ui.queue(nvda_ui.message, msg) if not self._closed.is_set() else None
+						),
 					)
+				if self._closed.is_set():
+					return
 				result = self._use_case_engine.execute(use_case_id, progress=self._progress_handler)
 			except ProviderConfigurationError as error:
 				log.exception(
@@ -502,12 +542,8 @@ class BackgroundTaskRunner:
 				)
 				return
 
-			nvda_ui.queue(render_result, result)
+			if not self._closed.is_set():
+				nvda_ui.queue(render_result, result)
 
-		thread = threading.Thread(
-			target=worker,
-			name=f"AIassistant{title.replace(' ', '')}Worker",
-			daemon=True,
-		)
-		thread.start()
-		log.debug("BackgroundTaskRunner started thread for use_case_id=%s title=%s", use_case_id, title)
+		if self._start_worker(target=worker, name=f"AIassistant{title.replace(' ', '')}Worker"):
+			log.debug("BackgroundTaskRunner started thread for use_case_id=%s title=%s", use_case_id, title)

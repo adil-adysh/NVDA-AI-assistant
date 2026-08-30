@@ -160,6 +160,10 @@ class AIAssistantApplication:
 
 	def terminate(self) -> None:
 		try:
+			self.background.close()
+		except Exception:
+			log.exception("Error closing background tasks during terminate")
+		try:
 			self.presenter.close()
 		except Exception:
 			log.exception("Error closing presenter during terminate")

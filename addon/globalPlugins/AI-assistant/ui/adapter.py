@@ -23,6 +23,9 @@ from .stream_projection import StreamProjection
 from ..utils.markdown import render_markdown_to_html
 
 
+_STOP_WORKER = object()
+
+
 class UIAdapter:
 	def __init__(self) -> None:
 		self._host_lifecycle = HostLifecycleService()
@@ -32,7 +35,9 @@ class UIAdapter:
 		self._session_metadata_provider: Callable[[], dict[str, Any]] | None = None
 		self._litert_ready_handler: Callable[[Callable[[str], None] | None], None] | None = None
 		self._pending_session_metadata: dict[str, Any] | None = None
-		self._command_queue: queue.Queue[tuple[Callable[[], None], Callable[[], None]]] = queue.Queue()
+		self._command_queue: queue.Queue[
+			tuple[Callable[[], None], Callable[[], None]] | object
+		] = queue.Queue()
 		self._running = True
 		self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
 		self._worker_thread.start()
@@ -66,12 +71,19 @@ class UIAdapter:
 			log.exception("UIAdapter host cleanup failed")
 		finally:
 			self._running = False
+			self._command_queue.put(_STOP_WORKER)
+			if threading.current_thread() is not self._worker_thread:
+				self._worker_thread.join(timeout=1.0)
 
 	def _worker_loop(self) -> None:
 		log.debug("UIAdapter worker thread started")
-		while self._running:
+		while True:
 			try:
-				command, fallback = self._command_queue.get(block=True)
+				item = self._command_queue.get(block=True)
+				if item is _STOP_WORKER:
+					self._command_queue.task_done()
+					break
+				command, fallback = item
 				log.debug("UIAdapter dequeued command %s", command)
 				log.debug("QUEUE ID (worker): %s", id(self._command_queue))
 				try:
@@ -95,6 +107,10 @@ class UIAdapter:
 				raise
 
 	def _dispatch_host_command(self, command: Callable[[], None], fallback: Callable[[], None]) -> None:
+		if not self._running:
+			log.debug("UIAdapter is closed; dispatching native fallback")
+			nvda_ui.queue(fallback)
+			return
 		log.debug("ENQUEUE COMMAND: %s", command)
 		log.debug("QUEUE ID (enqueue): %s", id(self._command_queue))
 		log.debug("UIAdapter dispatching host command; host_state=%s", self._host_lifecycle.state)

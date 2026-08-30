@@ -79,18 +79,6 @@ class ProviderConfigureDialog(wx.Dialog):
 		self._test_task: TaskHandle[tuple[bool, str]] | None = None
 		self._provider_name = provider_name
 		self._config = build_provider_config(provider_id)
-
-	def _report_error(self, error: Exception, operation: str) -> None:
-		error_reporter.report(
-			error,
-			ErrorContext(operation=operation, provider=self._provider_id, origin="provider configuration"),
-			owner=lambda presentation: wx.MessageBox(
-				presentation.message,
-				presentation.title,
-				wx.ICON_ERROR,
-				parent=self,
-			),
-		)
 		self._fields = get_configure_fields(provider_id)
 		#: Per-field LabeledControlHelper keyed by spec.id.
 		self._lch: dict[str, LabeledControlHelper] = {}
@@ -111,6 +99,17 @@ class ProviderConfigureDialog(wx.Dialog):
 		# Ensure initial focus lands on the first enabled text field.
 		self._set_initial_focus()
 
+	def _report_error(self, error: Exception, operation: str) -> None:
+		error_reporter.report(
+			error,
+			ErrorContext(operation=operation, provider=self._provider_id, origin="provider configuration"),
+			owner=lambda presentation: wx.MessageBox(
+				presentation.message,
+				presentation.title,
+				wx.ICON_ERROR,
+				parent=self,
+			),
+		)
 	# ------------------------------------------------------------------
 	# UI construction
 	# ------------------------------------------------------------------

@@ -136,7 +136,7 @@ class BackgroundTaskRunner:
 				log.error("Background UI task failed: %s", error, exc_info=True)
 				context = ErrorContext(operation=name, origin="background task")
 				if on_error is not None and (is_alive is None or is_alive()):
-					dispatch(lambda: on_error(error))
+					dispatch(lambda error=error: on_error(error))
 				else:
 					reporter.report(error, context)
 			else:
