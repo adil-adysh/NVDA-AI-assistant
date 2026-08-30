@@ -10,7 +10,8 @@ Use when unclear which layer should own the behavior.
 ## Workflow
 
 1. Classify: NVDA plugin, use case, context, service, provider, Python UI adapter, Rust host, Web UI, or docs.
-2. Check `docs/architecture.md` for cross-boundary changes.
+2. Check `docs/architecture.md` (and `docs/architecture-current.md` for the
+   implementation-level map) for cross-boundary changes.
 3. Name the owning abstraction first (e.g., `UseCase`, presenter, collector, protocol model, host command handler, Svelte component).
 4. Spanning Python + Rust/Web UI → treat as protocol-backed change.
 5. Host-backed UI → decide: Python presentation intent, Rust window behavior, or Web UI presentation state.

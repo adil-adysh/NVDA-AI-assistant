@@ -30,6 +30,32 @@ User action → WebView event → IPC → Python (interpret)
 ## Build & validate
 - Web UI: `npm --prefix nvda_ui_host run build:webui`
 - Rust: `cargo check --manifest-path nvda_ui_host/Cargo.toml`
-- Python: `python -m ruff check .`
-- Full: `scons`
+- Python setup: `uv sync --locked`
+- Python: `uv run ruff check .` and `uv run pytest`
+- Built-NVDA tier: `uv run pytest -m nvda_integration`
+- Build graph: `uv run scons --dry-run`; full package: `uv run scons`
 - Protocol changes: validate Python + Rust + WebUI together
+
+## Test and package invariants
+- Keep every repository test under top-level `tests/`; never put tests or
+  pytest support inside `addon/`.
+- Reuse `tests/support/bootstrap.py` instead of creating per-file import
+  loaders or broad fake NVDA module trees.
+- Import real NVDA definitions from the sibling revision pinned by
+  `nvda-source.toml`. Substitute only process-owned APIs unavailable outside a
+  live NVDA process.
+- Never weaken the bundle-level test-artifact rejection in
+  `site_scons/site_tools/NVDATool/addon.py`; tests and bytecode must not enter
+  the `.nvda-addon` archive.
+- Full environment and tier instructions are in `docs/development.md`.
+
+## Current runtime rules
+- `plugin/factory.py` is the Python composition root.
+- `ui/adapter.py` owns host-vs-native fallback and presentation coordination.
+- `nvda_ui_host/src/ipc/transport.rs` owns named-pipe transport; `protocol.rs`
+  owns the typed v2 contract; `app.rs` owns activation/focus policy.
+- Optional PyO3 extensions are `llm_client`, `memory_engine`, and
+  `embedding_engine`; each has a Python adapter and a narrower fallback where
+  supported.
+- NVDA object-model work must be marshalled through the NVDA event queue;
+  worker threads must not touch focus/page objects directly.

@@ -26,6 +26,8 @@ Layer-specific rules live in `.github/instructions/` (loaded via `applyTo` patte
 - WebView owns: rendering generic host intents, emitting typed UI events.
 - IPC owns: framing, correlation IDs, acks/errors, typed command/event delivery.
 - Access providers through `LLMService` + `ProviderProxy`, never directly.
+- Local provider readiness and lifecycle belong in `providers/runtime/` and
+  `plugin/background.py`; do not start or stop local servers from use cases.
 - Keep host commands generic and protocol-backed.
 - Express UI behavior through protocol metadata (`interaction_mode`, `controls_visible`, `attention_policy`, `focus_target`).
 - Streaming updates must not change focus. Final answers may request foreground.
@@ -79,10 +81,24 @@ When adding a UI-originated event:
 
 Match validation to the slice you changed:
 
-- Python add-on changes: `python -m ruff check .` and targeted type or runtime checks when available.
+- Python setup: `uv sync --locked`.
+- Python add-on changes: `uv run ruff check .` and targeted `uv run pytest`
+  nodes; run the default suite for shared infrastructure changes.
 - Rust host changes: `cargo check --manifest-path nvda_ui_host/Cargo.toml`.
 - Web UI changes: `npm --prefix nvda_ui_host run build:webui` (TypeScript + Vite build).
 - Cross-boundary protocol changes: validate both Python and Rust/Web UI sides.
+
+## Test and packaging rules
+
+- All tests and pytest support belong under top-level `tests/`. Do not add test
+  modules, fixtures, or pytest configuration below `addon/`.
+- Use `tests/support/bootstrap.py` for add-on module loading. Prefer real NVDA
+  APIs from the sibling checkout pinned in `nvda-source.toml`; fake only
+  process-owned state that cannot be initialized in standalone pytest.
+- The default suite excludes `nvda_integration`; run that marker only against a
+  recursively initialized, built sibling NVDA checkout.
+- Add-on archives must never contain tests, pytest artifacts, fixtures, or
+  bytecode. Preserve the bundle-writer rejection and its packaging test.
 
 ## Supporting Docs
 
@@ -94,23 +110,12 @@ Match validation to the slice you changed:
 
 ---
 
-## 19. Project Constraints
+## Project constraints
 
-- NVDA add-on (accessibility-critical)
-- Must remain responsive
-- Supports:
-  - page summarization
-  - image description
-  - contextual chat
-
-Providers:
-- Ollama (preferred, local-first)
-- Gemini (optional fallback)
-
----
-
-## 20. If Uncertain
-
-- Do NOT guess architecture
-- Ask for clarification
-- Or follow existing similar implementation
+- This is an accessibility-critical NVDA add-on and must remain responsive.
+- Supported feature families include page/structure summaries, proofreading,
+  image description, accessibility-graph capture, and contextual chat.
+- Provider availability is configuration- and registry-driven; do not assume
+  a preferred provider or hardcode a provider list in feature code.
+- If architecture is unclear, inspect the owning abstraction and the current
+  architecture document before introducing a new layer.

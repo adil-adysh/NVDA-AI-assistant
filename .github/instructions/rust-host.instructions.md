@@ -10,7 +10,8 @@ The Rust binary is a host and renderer boundary, not a business-logic layer.
 ## Ownership
 
 - `protocol.rs` defines typed message structures and serialization behavior.
-- `ipc.rs` owns named-pipe transport and connection mechanics only.
+- `ipc/transport.rs` owns named-pipe transport and connection mechanics;
+  `ipc/state.rs` owns shared event-pipe sender state.
 - `app.rs` validates commands and emits `ack` or `error` results.
 - `window.rs` and `webview.rs` own UI-thread dispatch, native window lifecycle, and browser event forwarding.
 
@@ -20,6 +21,8 @@ The Rust binary is a host and renderer boundary, not a business-logic layer.
 - Prefer explicit protocol types over stringly-typed ad-hoc payload handling.
 - Treat command responses and asynchronous UI events as distinct flows.
 - Preserve UI-thread affinity and host lifecycle guarantees.
+- Keep command responses on the command pipe and asynchronous UI events on the
+  event pipe; preserve bounded event buffering and disconnect requeueing.
 - When adding a new command or event, update the protocol deliberately and keep semantics generic enough for reuse.
 - Keep activation behavior policy-driven in `app.rs` and native close/hide behavior in `window.rs`.
 

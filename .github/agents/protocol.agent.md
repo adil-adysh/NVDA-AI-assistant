@@ -21,8 +21,10 @@ Your job is to keep the Python add-on, Rust host, and Web UI in sync whenever th
 
 ## Approach
 
-1. Locate the protocol source of truth first.
+1. Locate the protocol source of truth first: `scripts/protocol.yaml`, then
+   the generated/implemented Python, Rust, and Web UI mirrors.
 2. Update the producer and consumer sides in the same task when practical.
 3. Keep command and event flows distinct.
-4. Validate at least two sides of the contract after editing.
+4. Validate at least two sides of the contract after editing, including the
+   event-pipe path when adding asynchronous UI events.
 5. Call out any migration step that cannot be completed in one change.

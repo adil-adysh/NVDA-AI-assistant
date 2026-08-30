@@ -209,7 +209,8 @@ It should not own UI logic, conversation logic, or provider logic.
 
 ### Rust IPC layer
 
-`nvda_ui_host/src/ipc.rs` should own:
+`nvda_ui_host/src/ipc/transport.rs` should own transport mechanics, with
+`nvda_ui_host/src/ipc/state.rs` owning shared event-sender state:
 
 - named-pipe creation
 - connection acceptance
@@ -326,7 +327,7 @@ The recommended runtime design is:
 
 Current implementation notes:
 
-- the event pipe is active today through `HostPipeTransport.start_event_listener()` and `nvda_ui_host/src/ipc.rs`
+- the event pipe is active today through `HostPipeTransport.start_event_listener()` and `nvda_ui_host/src/ipc/transport.rs`
 - final-answer foreground behavior is policy-driven in Rust rather than inferred from command names alone
 
 This design keeps the host reliable for simple render flows while still scaling to chat, follow-up actions, model selection, and other interactive UI features.

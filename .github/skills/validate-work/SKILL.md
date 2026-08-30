@@ -11,8 +11,20 @@ Use this skill to choose the smallest reliable validation for the slice that cha
 
 ### Python add-on
 
-- `python -m ruff check .`
+- `uv sync --locked` after dependency changes
+- `uv run ruff check .`
+- `uv run pytest` for the default suite, or focused pytest nodes for local work
+- `uv run pytest -m nvda_integration` only with a recursively initialized and
+  built sibling NVDA checkout at the revision in `nvda-source.toml`
 - add targeted Python runtime checks or Pyright validation when the change affects typing, imports, registries, or protocols
+
+### Packaging
+
+- `uv run scons --dry-run` checks the build graph
+- `uv run pytest tests/build/test_addon_packaging.py` verifies the permanent
+  test-artifact exclusion
+- after a full `uv run scons`, inspect the `.nvda-addon` archive when packaging
+  inputs or SCons tools changed
 
 ### Rust host
 
@@ -31,8 +43,11 @@ Use this skill to choose the smallest reliable validation for the slice that cha
 ## Repository Notes
 
 - Python formatting and linting are configured in `pyproject.toml`.
+- Tests belong exclusively under top-level `tests/`; add-on bundles must never
+  contain tests, pytest support, fixtures, or bytecode.
 - The repo targets Windows and NVDA, so prefer Windows-friendly commands and paths.
-- The host build path has Windows-specific behavior in `scripts/build_host.py`; do not assume Unix shell tooling.
+- The host build path has Windows-specific behavior in `scripts/build.py`; do
+  not assume Unix shell tooling.
 - The host UI uses protocol-backed presentation intent (`interaction_mode`, `controls_visible`, `attention_policy`, `focus_target`); validate both producer and renderer when those change.
 
 ## Output Format
