@@ -93,9 +93,17 @@ i18nSources: list[str] = pythonSources + ["buildVars.py"]
 # You can either list every file (using ""/") as a path separator,
 # or use glob expressions.
 excludedFiles: list[str] = [
-	# Exclude test files from the add-on package.
+	# Defence in depth: the bundle writer also rejects test artifacts
+	# unconditionally, so these remain excluded if another packager consumes
+	# this project configuration.
 	# Paths are relative to the addon/ directory.
+	"**/tests/**",
+	"**/test/**",
 	"globalPlugins/AI-assistant/**/test_*.py",
+	"globalPlugins/AI-assistant/**/*_test.py",
+	"**/conftest.py",
+	"**/__pycache__/**",
+	"**/*.py[co]",
 ]
 
 # Base language for the NVDA add-on
