@@ -55,6 +55,7 @@ jobs:
           name: litert-runtime-bundle
           path: dist/litert-lm-*.zip
           if-no-files-found: error
+          retention-days: 1
 
   release:
     runs-on: ubuntu-latest

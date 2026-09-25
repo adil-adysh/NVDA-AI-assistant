@@ -31,4 +31,4 @@ jobs:
         with:
           name: eval-results
           path: ./results
-          retention-days: 30
+          retention-days: 1

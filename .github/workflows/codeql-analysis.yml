@@ -82,6 +82,7 @@ jobs:
         with:
           name: results-excluding-warnings
           path: results/python.sarif
+          retention-days: 1
 
       - name: Warn if analysis fails
         if: failure() && (github.event.pull_request != null || github.event.issue != null)
@@ -160,6 +161,7 @@ jobs:
           name: results-warnings
           path: results/python.sarif
           overwrite: true
+          retention-days: 1
 
       - name: Warn if analysis fails
         if: failure() && (github.event.pull_request != null || github.event.issue != null)

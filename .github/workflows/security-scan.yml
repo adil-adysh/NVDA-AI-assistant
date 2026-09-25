@@ -46,6 +46,7 @@ jobs:
         with:
           name: addon
           path: ${{ steps.findAddon.outputs.addonFileName }}
+          retention-days: 1
 
   virus_total_scan:
     needs: package_addon
@@ -94,6 +95,7 @@ jobs:
         with:
           name: virus-total-results
           path: vt-results.json
+          retention-days: 1
 
   scan:
     needs: package_addon

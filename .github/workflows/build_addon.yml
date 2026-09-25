@@ -47,6 +47,7 @@ jobs:
           path: |
             ./*.nvda-addon
             ./*.pot
+          retention-days: 1
 
   release:
     runs-on: ubuntu-latest

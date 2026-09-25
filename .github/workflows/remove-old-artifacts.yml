@@ -1,0 +1,34 @@
+name: Maintain Actions retention
+
+on:
+  schedule:
+    # Run daily at 00:45 UTC.
+    - cron: '45 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  remove-old-artifacts:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Remove artifacts older than one day
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cutoff_epoch=$(date -u -d '1 day ago' +%s)
+          artifacts_json=$(gh api --paginate --slurp "repos/${GH_REPO}/actions/artifacts?per_page=100")
+
+          printf '%s' "$artifacts_json" | jq -r --argjson cutoff "$cutoff_epoch" '
+            .[].artifacts[]
+            | select((.created_at | fromdateiso8601) < $cutoff)
+            | .id
+          ' | while read -r artifact_id; do
+            [ -z "$artifact_id" ] && continue
+            echo "Deleting artifact $artifact_id"
+            gh api --method DELETE "repos/${GH_REPO}/actions/artifacts/${artifact_id}"
+          done
