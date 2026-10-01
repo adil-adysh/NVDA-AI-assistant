@@ -198,6 +198,10 @@ def _ensure_litert_server_ready_locked(
 ) -> None:
 	supervisor = get_litert_supervisor()
 	healthy = supervisor.is_healthy()
+	if supervisor.is_running and healthy and not supervisor.matches_current_configuration():
+		log.info("LiteRT runtime configuration is stale; restarting before use")
+		supervisor.stop()
+		healthy = False
 	log.debug(
 		"ensure_litert_server_ready: supervisor is_running=%s is_healthy=%s is_installed=%s",
 		supervisor.is_running,

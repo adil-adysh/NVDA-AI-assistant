@@ -737,6 +737,7 @@ def set_timeout_seconds(timeoutSeconds: float) -> None:
 def set_num_ctx(numCtx: int) -> None:
 	_set_value("numCtx", int(numCtx))
 	_notify_litert_server_config_changed()
+	_notify_llama_server_config_changed()
 
 
 def set_keep_alive(keepAlive: str) -> None:

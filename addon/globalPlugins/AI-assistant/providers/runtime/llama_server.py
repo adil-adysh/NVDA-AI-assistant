@@ -8,6 +8,7 @@ the provider layer never needs to know how a GGUF model is launched.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -92,6 +93,7 @@ class LlamaServerSupervisor:
 		self._running_model: str | None = None
 		self._adopted = False
 		self._models_cache: tuple[dict[str, object], ...] | None = None
+		self._startup_identity: tuple[object, ...] | None = None
 		self._lock = threading.RLock()
 
 	@property
@@ -110,6 +112,26 @@ class LlamaServerSupervisor:
 	def running_model(self) -> str | None:
 		return self._running_model
 
+	def matches_startup_configuration(
+		self,
+		model: str,
+		*,
+		model_id: str | None = None,
+		models_preset: str | Path | None = None,
+		threads: int = 0,
+		context: int = 0,
+	) -> bool:
+		"""Whether the owned live process was created from these inputs."""
+		requested = self._build_startup_identity(
+			model,
+			model_id=model_id,
+			models_preset=models_preset,
+			threads=threads,
+			context=context,
+		)
+		with self._lock:
+			return self.is_running and self._startup_identity == requested
+
 	def start(
 		self,
 		model: str,
@@ -120,9 +142,16 @@ class LlamaServerSupervisor:
 		context: int = 0,
 		on_progress: Callable[[str], None] | None = None,
 	) -> None:
+		startup_identity = self._build_startup_identity(
+			model,
+			model_id=model_id,
+			models_preset=models_preset,
+			threads=threads,
+			context=context,
+		)
 		with self._lock:
 			if self.is_running:
-				if self._running_model == (model_id or model):
+				if self._startup_identity == startup_identity:
 					return
 				self.stop()
 			command = [
@@ -148,11 +177,15 @@ class LlamaServerSupervisor:
 					creationflags=_creation_flags(),
 				)
 			except OSError as exc:
+				self._process = None
+				self._running_model = None
+				self._startup_identity = None
 				raise LlamaServerError(
 					f"Could not start llama-server ({self.executable!r}). "
 					"Install llama.cpp and ensure llama-server is on PATH."
 				) from exc
 			self._running_model = model_id or model
+			self._startup_identity = startup_identity
 			self._adopted = False
 			self._models_cache = None
 
@@ -162,6 +195,8 @@ class LlamaServerSupervisor:
 				return
 			self._adopted = True
 			self._running_model = model_id
+			# A handleless server cannot prove which startup arguments created it.
+			self._startup_identity = None
 			self._models_cache = None
 
 	def is_healthy(self, timeout: float = 2.0) -> bool:
@@ -228,6 +263,7 @@ class LlamaServerSupervisor:
 					process.wait(timeout=5)
 			self._process = None
 			self._running_model = None
+			self._startup_identity = None
 			self._adopted = False
 			self._models_cache = None
 
@@ -236,6 +272,33 @@ class LlamaServerSupervisor:
 
 	def shutdown(self) -> None:
 		self.stop()
+
+	def _build_startup_identity(
+		self,
+		model: str,
+		*,
+		model_id: str | None,
+		models_preset: str | Path | None,
+		threads: int,
+		context: int,
+	) -> tuple[object, ...]:
+		"""Snapshot every value that binds when ``llama-server`` starts."""
+		preset_identity: tuple[str, str] | None = None
+		if models_preset is not None:
+			path = Path(models_preset).resolve()
+			try:
+				digest = hashlib.sha256(path.read_bytes()).hexdigest()
+			except OSError:
+				digest = ""
+			preset_identity = (os.path.normcase(str(path)), digest)
+		return (
+			# Router presets own a catalog, so request-time model selection does
+			# not alter the process identity. A direct single-model server does.
+			None if preset_identity is not None else (model_id or model),
+			preset_identity,
+			max(0, int(threads)),
+			max(0, int(context)),
+		)
 
 
 def default_llama_server_executable() -> str:
@@ -253,7 +316,13 @@ def get_llama_supervisor(
 	port: int = DEFAULT_LLAMA_PORT,
 ) -> LlamaServerSupervisor:
 	"""Return the application-owned supervisor for an endpoint."""
-	key = (str(executable), host, port)
+	executable_text = str(executable)
+	resolved_executable = shutil.which(executable_text) or executable_text
+	key = (
+		os.path.normcase(os.path.abspath(os.path.normpath(resolved_executable))),
+		host.casefold(),
+		port,
+	)
 	with _supervisors_lock:
 		if key not in _supervisors:
 			_supervisors[key] = LlamaServerSupervisor(
@@ -268,3 +337,4 @@ def shutdown_llama_servers() -> None:
 	with _supervisors_lock:
 		for supervisor in _supervisors.values():
 			supervisor.shutdown()
+		_supervisors.clear()

@@ -174,3 +174,44 @@ def test_application_terminate_closes_background_runner_first() -> None:
 	]
 	assert "self.background.close" in calls
 	assert calls.index("self.background.close") < calls.index("self._services.provider.close")
+
+
+def test_stale_healthy_litert_runtime_is_replaced_before_use(monkeypatch) -> None:
+	events: list[str] = []
+
+	class Supervisor:
+		is_running = True
+		is_adopted = False
+		is_installed = True
+		base_url = "http://127.0.0.1:9379"
+
+		def is_healthy(self) -> bool:
+			return True
+
+		def matches_current_configuration(self) -> bool:
+			return False
+
+		def stop(self) -> None:
+			events.append("stop-stale")
+			self.is_running = False
+
+		def start(self, *, on_progress=None) -> None:
+			del on_progress
+			events.append("start-current")
+			self.is_running = True
+
+		def wait_until_ready(self, **_kwargs) -> bool:
+			events.append("ready")
+			return True
+
+	supervisor = Supervisor()
+	monkeypatch.setattr(background, "get_litert_supervisor", lambda: supervisor)
+	monkeypatch.setattr(
+		background,
+		"_ensure_model_imported",
+		lambda _supervisor, on_progress=None: events.append("model"),
+	)
+
+	background._ensure_litert_server_ready_locked()
+
+	assert events == ["stop-stale", "start-current", "ready", "model"]

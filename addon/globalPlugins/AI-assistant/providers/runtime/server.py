@@ -330,6 +330,7 @@ class LiteRTServerSupervisor:
 		self._endpoint_provider = endpoint_provider
 		self._process: subprocess.Popen[str] | None = None
 		self._adopted = False
+		self._startup_identity: str | None = None
 		self._lifecycle_lock = threading.RLock()
 		self._download_service = RuntimeDownloadService(
 			url_builder=self._build_download_url,
@@ -382,6 +383,16 @@ class LiteRTServerSupervisor:
 		blocking socket request on the main thread.
 		"""
 		return self._adopted
+
+	def matches_current_configuration(self) -> bool:
+		"""Whether the owned live process matches all current startup inputs."""
+		with self._lifecycle_lock:
+			config = self._server_config_snapshot()
+			host, port = self._effective_host_port()
+			return (
+				self.is_running
+				and self._startup_identity == self._configuration_identity(config, host, port)
+			)
 
 	def install(
 		self,
@@ -453,22 +464,21 @@ class LiteRTServerSupervisor:
 		        the process fails to start.
 		"""
 		with self._lifecycle_lock:
-			if self.is_running:
-				log.debug("LiteRT server is already running")
+			config = self._server_config_snapshot()
+			host, port = self._effective_host_port()
+			startup_identity = self._configuration_identity(config, host, port)
+			if self.is_running and self._startup_identity == startup_identity:
+				log.debug("LiteRT server is already running with matching configuration")
 				return
-
-		python_exe = _resolve_litert_python(self._server_python())
-
-		_, effective_port = self._effective_host_port()
-		self._report(on_progress, f"Starting LiteRT-LM server on port {effective_port}...")
-
-		with self._lifecycle_lock:
 			if self.is_running:
-				return
+				log.info("LiteRT startup configuration changed; replacing stale runtime")
+				self.stop()
+
+			python_exe = _resolve_litert_python(self._server_python())
+			self._report(on_progress, f"Starting LiteRT-LM server on port {port}...")
 			try:
 				self._litert_dir().mkdir(parents=True, exist_ok=True)
-				self._write_server_config()
-				host, port = self._effective_host_port()
+				self._write_server_config(config)
 				serve_args = _build_serve_args(host, port)
 				self._process = _run_litert_cli(
 					python_exe,
@@ -476,12 +486,14 @@ class LiteRTServerSupervisor:
 					env=self._process_environment(),
 				)
 				self._adopted = False
+				self._startup_identity = startup_identity
 			except Exception as exc:
 				# If a post-Popen operation fails, do not orphan the child or
 				# leave a handle that makes future starts incorrectly no-op.
 				process = self._process
 				self._process = None
 				self._adopted = False
+				self._startup_identity = None
 				if process is not None and process.poll() is None:
 					try:
 						process.terminate()
@@ -547,6 +559,7 @@ class LiteRTServerSupervisor:
 			finally:
 				self._process = None
 				self._adopted = False
+				self._startup_identity = None
 		log.info("LiteRT server stopped")
 
 	def adopt(self) -> None:
@@ -562,6 +575,7 @@ class LiteRTServerSupervisor:
 				# A live process handle already exists; nothing to adopt.
 				return
 			self._adopted = True
+			self._startup_identity = None
 		log.info("LiteRT server adopted (no process handle) at %s", self.base_url)
 
 	def sync_config(self) -> None:
@@ -920,7 +934,36 @@ class LiteRTServerSupervisor:
 		env["LITERT_LM_DIR"] = str(cls._litert_dir())
 		return env
 
-	def _write_server_config(self) -> None:
+	def _server_config_snapshot(self) -> dict[str, Any]:
+		raw = (
+			dict(self._config_provider())
+			if self._config_provider is not None
+			else _current_server_config()
+		)
+		# Detach nested model/default mappings from mutable settings objects.
+		# The same immutable value must drive both the fingerprint and file.
+		return json.loads(json.dumps(raw))
+
+	def _configuration_identity(
+		self,
+		config: Mapping[str, Any],
+		host: str,
+		port: int,
+	) -> str:
+		"""Return an immutable fingerprint of process/engine startup inputs."""
+		return json.dumps(
+			{
+				"version": self._version,
+				"python": os.path.normcase(str(self._server_python().resolve())),
+				"host": host.casefold(),
+				"port": port,
+				"config": config,
+			},
+			sort_keys=True,
+			separators=(",", ":"),
+		)
+
+	def _write_server_config(self, config: Mapping[str, Any] | None = None) -> None:
 		"""Write ``config.json`` into ``LITERT_LM_DIR`` for the engine.
 
 		litert-lm's ``serve`` binds engine parameters (``max_num_tokens``,
@@ -937,11 +980,7 @@ class LiteRTServerSupervisor:
 		server-relevant settings change (see the config-change event in
 		plugin/background.py).
 		"""
-		config = (
-			dict(self._config_provider())
-			if self._config_provider is not None
-			else _current_server_config()
-		)
+		config = dict(config) if config is not None else self._server_config_snapshot()
 		config_path = self._litert_dir() / "config.json"
 		if not config:
 			try:

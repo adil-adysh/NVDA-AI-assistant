@@ -162,6 +162,16 @@ class LlamaCppModelManager(ModelManagerProvider):
 			return
 		requested_model = record.model_id
 		preset_path = self._catalog.write_preset()
+		context = int(getattr(self._config, "num_ctx", 0) or 0)
+		if self._supervisor.is_running and not self._supervisor.matches_startup_configuration(
+			record.server_model,
+			model_id=record.model_id,
+			models_preset=preset_path,
+			context=context,
+		):
+			# The endpoint cache key alone is insufficient: context and preset
+			# contents bind at process startup and therefore require replacement.
+			self._supervisor.stop()
 		# Recover a server left behind by a previous NVDA process.  Only adopt
 		# it when the requested model is already exposed by that server; a
 		# handleless process cannot be safely terminated or reconfigured here.
@@ -196,7 +206,7 @@ class LlamaCppModelManager(ModelManagerProvider):
 			record.server_model,
 			model_id=record.model_id,
 			models_preset=preset_path,
-			context=int(getattr(self._config, "num_ctx", 0) or 0),
+			context=context,
 			on_progress=on_progress,
 		)
 		if not self._supervisor.wait_until_ready(on_progress=on_progress):
