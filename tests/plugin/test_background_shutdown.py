@@ -176,6 +176,19 @@ def test_application_terminate_closes_background_runner_first() -> None:
 	assert calls.index("self.background.close") < calls.index("self._services.provider.close")
 
 
+def test_application_initialization_schedules_active_local_provider_start() -> None:
+	application_path = ADDON_ROOT / "plugin" / "application.py"
+	tree = ast.parse(application_path.read_text(encoding="utf-8"))
+	application = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "AIAssistantApplication")
+	initializer = next(node for node in application.body if isinstance(node, ast.FunctionDef) and node.name == "__init__")
+	calls = [
+		ast.unparse(node.func)
+		for node in ast.walk(initializer)
+		if isinstance(node, ast.Call)
+	]
+	assert "self._auto_start_active_local_provider" in calls
+
+
 def test_stale_healthy_litert_runtime_is_replaced_before_use(monkeypatch) -> None:
 	events: list[str] = []
 

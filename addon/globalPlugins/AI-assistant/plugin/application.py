@@ -43,6 +43,7 @@ from ..use_case.types import (
 from .background import BackgroundTaskRunner, ensure_provider_server_ready
 from .factory import build_plugin_services
 from .layer_mode import AssistantLayerController
+from .local_provider_startup import schedule_active_local_provider_start
 from .presenter import UseCasePresenter
 from .types import PluginServices
 
@@ -61,7 +62,7 @@ class AIAssistantApplication:
 		log.debug("Browser Assistant plugin initializing")
 		self._host = host
 		self._services = build_plugin_services()
-		self._auto_start_litert_if_active()
+		self._auto_start_active_local_provider()
 		self._last_provider_state = get_provider_state()
 		self.presenter = UseCasePresenter(
 			chat_coordinator=self._services.chat_coordinator,
@@ -113,7 +114,7 @@ class AIAssistantApplication:
 	def services(self) -> PluginServices:
 		return self._services
 
-	def _auto_start_litert_if_active(self) -> None:
+	def _auto_start_active_local_provider(self) -> None:
 		"""Start the active managed local server in a background thread.
 
 		The check is cheap — only reads config and checks disk paths.
@@ -123,40 +124,31 @@ class AIAssistantApplication:
 		"""
 		try:
 			provider = get_provider()
-			if provider not in {"litert-lm", "llama-cpp-server"}:
-				return
-			if provider == "litert-lm" and not get_litert_start_on_startup():
-				log.debug("LiteRT-LM startup is disabled in settings")
-				return
-			if provider == "llama-cpp-server" and not get_llama_start_on_startup():
-				log.debug("llama-server startup is disabled in settings")
-				return
+			litert_installed = True
 			if provider == "litert-lm":
 				from ..providers.runtime.server import get_litert_supervisor
-				supervisor = get_litert_supervisor()
-				if not supervisor.is_installed or supervisor.is_running:
-					return
 
-			# Delegate health/adopt/start to a daemon thread. The readiness
-			# path adopts a healthy server whose handle was lost after an
-			# NVDA restart, and starts one otherwise — without blocking here.
-			from .background import ensure_provider_server_ready
-			def start_server() -> None:
-				try:
-					ensure_provider_server_ready()
-				except Exception as error:
-					error_reporter.report(
-						error,
-						ErrorContext(operation="provider server startup", provider=provider, origin="application startup"),
-					)
-			threading.Thread(
-				target=start_server,
-				name=f"{provider}ServerAutoStart",
-				daemon=True,
-			).start()
-			log.debug("LiteRT server auto-start scheduled in background")
+				litert_installed = get_litert_supervisor().is_installed
+
+			thread = schedule_active_local_provider_start(
+				provider=provider,
+				litert_enabled=get_litert_start_on_startup(),
+				llama_enabled=get_llama_start_on_startup(),
+				litert_installed=litert_installed,
+				ensure_ready=ensure_provider_server_ready,
+				report_error=lambda error, active_provider: error_reporter.report(
+					error,
+					ErrorContext(
+						operation="provider server startup",
+						provider=active_provider,
+						origin="application startup",
+					),
+				),
+			)
+			if thread is not None:
+				log.debug("%s server auto-start scheduled in background", provider)
 		except Exception:
-			log.exception("Error during LiteRT server auto-start check")
+			log.exception("Error during local-provider auto-start check")
 
 	def terminate(self) -> None:
 		try:
