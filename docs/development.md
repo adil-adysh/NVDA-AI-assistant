@@ -51,6 +51,18 @@ uv run pytest tests/integration/test_nvda_imports.py
 uv run pytest tests/integration/test_nvda_imports.py::test_nvda_api_definitions_come_from_sibling_checkout
 ~~~
 
+Cross-component integration tests live under `tests/integration/`. Controlled
+providers use `threading.Event` barriers so tests decide exactly when a request
+streams, completes, or fails. Race tests should assert the intended ordering at
+the provider, session, persistence, and presentation boundaries and must not use
+arbitrary sleeps. The fakes implement the provider contract and never contact a
+paid or external model API.
+
+Managed llama.cpp and LiteRT-LM process/cache behavior is specified in
+`docs/local-provider-lifecycle.md`. Its integration tests keep the real
+supervisor locking, startup fingerprinting, invalidation, and cleanup code in
+the loop while replacing only the heavyweight OS process and health boundary.
+
 The standalone suite imports real NVDA API definitions. Live process state
 (focus objects, the event loop, GUI objects, speech, and native helper DLLs)
 is still replaced at narrow test boundaries when a running, built NVDA process
