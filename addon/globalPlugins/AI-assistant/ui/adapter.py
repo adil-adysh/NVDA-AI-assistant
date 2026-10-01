@@ -352,6 +352,7 @@ class UIAdapter:
 				text=message_text or None,
 				image_base64=image_base64,
 				progress_callback=assistant_projection.update,
+				expected_conversation_id=conversation_id,
 			)
 			if not coordinator.last_turn_committed():
 				# The conversation was switched/reset while the turn was in flight,

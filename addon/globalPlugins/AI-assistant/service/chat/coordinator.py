@@ -51,6 +51,9 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 		self._session = session_factory()
 		self._session_factory = session_factory
 		self._session_lock = threading.RLock()
+		# UI submissions are dispatched on independent worker threads. Keep a
+		# complete turn atomic so a rapid second submission sees the first turn.
+		self._turn_lock = threading.Lock()
 		self._session_generation = 0
 		self._repository = repository
 		self._conversation_id_factory = conversation_id_factory or (lambda: str(uuid4()))
@@ -76,16 +79,17 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 		tools: list[Tool] | None = None,
 		progress: ProgressHandler | None = None,
 	) -> LLMResponse:
-		if not messages:
-			raise ValueError("ChatCoordinator.send requires at least one message")
-		transaction, generation = self._begin_transaction(tuple(messages))
-		return self._send_transaction(
-			transaction,
-			generation=generation,
-			tools=tools,
-			stream_handler=None,
-			progress=progress,
-		)
+		with self._turn_lock:
+			if not messages:
+				raise ValueError("ChatCoordinator.send requires at least one message")
+			transaction, generation = self._begin_transaction(tuple(messages))
+			return self._send_transaction(
+				transaction,
+				generation=generation,
+				tools=tools,
+				stream_handler=None,
+				progress=progress,
+			)
 
 	def send_message(
 		self,
@@ -94,7 +98,33 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 		progress_callback: Callable[[str, int], None] | None = None,
 		tools: list[dict[str, Any]] | None = None,
 		progress: ProgressHandler | None = None,
+		expected_conversation_id: str | None = None,
 	) -> LLMResponse:
+		with self._turn_lock:
+			return self._send_message_locked(
+				text=text,
+				image_base64=image_base64,
+				progress_callback=progress_callback,
+				tools=tools,
+				progress=progress,
+				expected_conversation_id=expected_conversation_id,
+			)
+
+	def _send_message_locked(
+		self,
+		text: str | None,
+		image_base64: str | None,
+		progress_callback: Callable[[str, int], None] | None,
+		tools: list[dict[str, Any]] | None,
+		progress: ProgressHandler | None,
+		expected_conversation_id: str | None,
+	) -> LLMResponse:
+		if expected_conversation_id is not None:
+			with self._session_lock:
+				if expected_conversation_id != self._active_conversation_id:
+					raise RuntimeError(
+						"Chat submission was discarded because the conversation changed"
+					)
 		user_message = self._build_user_message(text=text, image_base64=image_base64)
 		canonical_tools = self._convert_tool_definitions(tools)
 		transient_context: tuple[Message, ...] = ()
