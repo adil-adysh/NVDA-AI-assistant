@@ -318,5 +318,38 @@ class ProviderStateFlowTests(unittest.TestCase):
 		self.assertEqual(merged["provider_status"]["state"], ProviderReadinessState.READY.value)
 
 
+	def test_unavailable_configured_model_not_injected_into_available_models(self) -> None:
+		config = GeminiConfig(
+			provider="gemini",
+			model_name="deleted-or-missing-model",
+			timeout_seconds=30.0,
+			enable_progress=False,
+			num_ctx=0,
+			max_retries=1,
+			retry_backoff_seconds=0.1,
+			generate_temperature=0.2,
+			generate_top_k=0,
+			generate_top_p=0.9,
+			generate_max_tokens=512,
+			api_key="configured-key",
+			api_token="",
+			base_url="https://generativelanguage.googleapis.com",
+		)
+		_set_active_config(config)
+		readiness = self.readiness_service.evaluate_active()
+
+		session_state = build_session_state(
+			lambda message: message,
+			provider_state=_get_provider_state(),
+			available_models=("gemini-2.5-flash",),
+			readiness=readiness,
+		)
+		# The configured model is preserved in state.model
+		self.assertEqual(session_state.model, "deleted-or-missing-model")
+		# But it must NOT be injected into available_models
+		self.assertEqual(session_state.available_models, ("gemini-2.5-flash",))
+		self.assertNotIn("deleted-or-missing-model", session_state.available_models)
+
+
 if __name__ == "__main__":
 	unittest.main()

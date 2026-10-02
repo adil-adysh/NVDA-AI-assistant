@@ -273,16 +273,13 @@ def build_session_state(
 ) -> UISessionState:
 	active_provider_state = provider_state or get_provider_state()
 	resolved_readiness = readiness or _READINESS_SERVICE.evaluate_active()
-	current_model = active_provider_state.model_name.strip()
-	resolved_available_models = _ordered_unique_models(
-		current_model,
-		*(available_models or ()),
-	)
-	# Filter models to only show enabled ones in the host UI
-	resolved_available_models = _filter_available_models(
-		resolved_available_models,
+	# Available models must strictly reflect discovered, runnable, enabled models.
+	# Never inject an unavailable configured model into available models!
+	filtered_models = _filter_available_models(
+		tuple(available_models or ()),
 		active_provider_state.provider,
 	)
+	resolved_available_models = _ordered_unique_models(*filtered_models)
 	# Build human-readable labels for the model dropdown.
 	# Local providers (e.g. LiteRT-LM) use canonical repo IDs as
 	# identifiers — the label map translates those to user-facing
@@ -366,6 +363,12 @@ def build_provider_status_message(translate: Translator, readiness: ProviderRead
 	if readiness.reason is ProviderReadinessReason.MISSING_CHAT_PATH:
 		# TRANSLATORS: Guidance shown when OpenAI is selected without a chat endpoint path.
 		return translate("OpenAI is selected but the chat endpoint path is not configured.")
+	if readiness.reason is ProviderReadinessReason.MODEL_UNAVAILABLE:
+		# TRANSLATORS: Guidance shown when the configured model is unavailable or uninstalled.
+		return translate("The configured model is not available for {provider}. Choose an available model or download it in Model Manager.").format(provider=provider_label)
+	if readiness.reason is ProviderReadinessReason.MODEL_DISABLED:
+		# TRANSLATORS: Guidance shown when the configured model has been disabled in settings.
+		return translate("The configured model for {provider} is currently disabled. Enable it in Model Manager or choose another model.").format(provider=provider_label)
 	if readiness.reason is ProviderReadinessReason.UNSUPPORTED_MODEL:
 		if readiness.provider == "gemini":
 			# TRANSLATORS: Guidance shown when a Gemini model is selected that only works through Live API or Interactions API workflows.
@@ -380,36 +383,11 @@ def _filter_available_models(
 	available_models: tuple[str, ...],
 	provider: str,
 ) -> tuple[str, ...]:
-	"""Filter models to only those not explicitly disabled by the user.
+	"""Filter models to only those not explicitly disabled by the user."""
+	from ..config.enabled_models import ModelVisibilityStore
 
-	Model readiness (downloaded / imported) is already handled by
-	:meth:`ModelManagerProvider.get_available_model_ids`.
-
-	Models that appear in *available_models* but are not yet tracked
-	in the persistent store are treated as implicitly enabled — the
-	store tracks only models the user has explicitly toggled in the
-	model manager dialog.  This ensures newly downloaded models
-	appear in the WebView dropdown immediately without requiring
-	the user to visit the model manager first.
-	"""
-	from ..config.enabled_models import EnabledModelsStore
-
-	store = EnabledModelsStore()
-	enabled_ids = store.get_enabled(provider)
-	if not enabled_ids:
-		return available_models  # First run — nothing tracked yet
-
-	# Auto-register newly discovered models so they appear in the
-	# dropdown without the user needing to enable them explicitly.
-	# Only models the user has explicitly **disabled** (removed from
-	# the enabled set via the model manager toggle) are filtered out.
-	newly_discovered = [m for m in available_models if m not in enabled_ids]
-	if newly_discovered:
-		for model_id in newly_discovered:
-			store.set_enabled(provider, model_id, True)
-		enabled_ids = store.get_enabled(provider)
-
-	return tuple(m for m in available_models if m in enabled_ids)
+	store = ModelVisibilityStore()
+	return store.get_visible_models(provider, available_models)
 
 
 def _resolve_model_labels(

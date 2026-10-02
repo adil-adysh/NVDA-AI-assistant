@@ -41,7 +41,7 @@ from ..ui import nvda_ui
 from ..ui.session_state import build_session_state, merge_session_metadata
 from ..ui.view_models import ChatWindowViewModel, DisplayResultViewModel, ResultActionViewModel
 from ..utils.markdown import render_markdown_to_html
-from .model_cache import ModelCache
+from ..service.model_cache import model_catalog_cache, ModelCatalogSnapshot
 from .ui_actions import (
 	AddItemToChatAction,
 	ConversationDeleteAction,
@@ -101,16 +101,15 @@ class UseCasePresenter:
 		self._tool_registry = tool_registry
 		self._provider_catalog = provider_catalog or ProviderCatalogService()
 		self._readiness_service = readiness_service or ProviderReadinessService()
-		self._model_cache = ModelCache(
-			provider_catalog=self._provider_catalog,
-			on_models_updated=self._on_models_cached,
-		)
+		self._catalog_unsubscribe = model_catalog_cache.subscribe(self._on_catalog_updated)
 		self._result_action_store = ResultActionStore()
 		ui_adapter.register_result_action_handler(self._handle_result_action)
 		ui_adapter.register_session_metadata_provider(self._build_chat_metadata)
 
 	def close(self) -> None:
-		self._model_cache.close()
+		if self._catalog_unsubscribe is not None:
+			self._catalog_unsubscribe()
+			self._catalog_unsubscribe = None
 		try:
 			ui_adapter.close()
 		# Shutdown must never raise: the host may already be gone.
@@ -239,7 +238,10 @@ class UseCasePresenter:
 		browseable_title = nvda_ui.format_browseable_title(title, get_provider_state())
 		provider_state = get_provider_state()
 		session_state = build_session_state(
-			_, provider_state, available_models=self._get_cached_models(provider_state)
+			_,
+			provider_state,
+			available_models=self._get_cached_models(provider_state),
+			available_model_labels=self._get_cached_model_labels(provider_state),
 		)
 		use_case_id = None
 		prompt_context = getattr(use_case_result, "prompt_context", None)
@@ -342,6 +344,7 @@ class UseCasePresenter:
 			provider_state,
 			conversation_id=self._conversation_service.current_conversation_id(),
 			available_models=self._get_cached_models(provider_state),
+			available_model_labels=self._get_cached_model_labels(provider_state),
 			conversation_summaries=self._build_conversation_summaries(),
 			readiness=self._readiness_service.evaluate_active(),
 		).to_metadata()
@@ -350,31 +353,37 @@ class UseCasePresenter:
 		return self._conversation_service.list_conversation_summaries()
 
 	def _get_cached_models(self, provider_state: ProviderState) -> tuple[str, ...]:
-		return self._model_cache.get(provider_state)
+		return tuple(m.id for m in model_catalog_cache.get_models_or_empty(provider_state.provider))
+
+	def _get_cached_model_labels(self, provider_state: ProviderState) -> dict[str, str]:
+		return {
+			m.id: m.display_name
+			for m in model_catalog_cache.get_models_or_empty(provider_state.provider)
+			if m.display_name
+		}
 
 	def _refresh_available_models_async(self, provider_state: ProviderState) -> None:
-		self._model_cache.refresh_async(provider_state)
+		model_catalog_cache.refresh_async(provider_state.provider)
 
-	def _on_models_cached(self, _provider: str, models: tuple[str, ...]) -> None:
-		# Guard against TOCTOU: the provider may have changed between
-		# the ModelCache stale-check and this callback.  If it did,
-		# discard the stale result — a new refresh will have been
-		# queued for the current provider.
+	def _on_catalog_updated(self, provider: str, snapshot: ModelCatalogSnapshot) -> None:
 		current_state = get_provider_state()
-		if current_state.provider != _provider:
+		if current_state.provider != provider:
 			log.debug(
-				"Discarding stale model cache callback for %s; active provider is %s",
-				_provider,
+				"Discarding stale model catalog callback for %s; active provider is %s",
+				provider,
 				current_state.provider,
 			)
 			return
 
+		models = tuple(m.id for m in snapshot.models)
+		labels = {m.id: m.display_name for m in snapshot.models if m.display_name}
 		ui_adapter.sync_session_state(
 			build_session_state(
 				_,
 				current_state,
 				conversation_id=self._conversation_service.current_conversation_id(),
 				available_models=models,
+				available_model_labels=labels,
 				conversation_summaries=self._build_conversation_summaries(),
 				readiness=self._readiness_service.evaluate_active(),
 			).to_metadata()

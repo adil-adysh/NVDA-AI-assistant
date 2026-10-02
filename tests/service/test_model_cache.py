@@ -16,7 +16,6 @@ MODULE_DIR = ROOT_DIR / "service"
 PACKAGE_NAME = "model_cache_testpkg"
 
 
-
 _register_package(PACKAGE_NAME, ROOT_DIR)
 _register_package(f"{PACKAGE_NAME}.core", ROOT_DIR / "core")
 _register_package(f"{PACKAGE_NAME}.config", ROOT_DIR / "config")
@@ -36,6 +35,8 @@ cache_module = _load(f"{PACKAGE_NAME}.service.model_cache", MODULE_DIR / "model_
 
 ModelCatalogCache = cache_module.ModelCatalogCache
 ModelCapabilityCache = cache_module.ModelCapabilityCache
+CatalogState = cache_module.CatalogState
+ModelCatalogSnapshot = cache_module.ModelCatalogSnapshot
 ProviderModelInfo = interfaces.ProviderModelInfo
 
 PROVIDERS = ("ollama", "gemini", "openai", "litert-lm", "llama-cpp-server")
@@ -59,23 +60,48 @@ class _FakeCatalog:
 
 
 class ModelCacheTests(unittest.TestCase):
-	def test_empty_discovery_result_is_retried(self) -> None:
+	def test_discovery_error_is_retried(self) -> None:
 		calls: list[str] = []
 
 		class _StartsLateCatalog(_FakeCatalog):
 			def list_models(self, config: object):
 				calls.append(config.provider)
 				if len(calls) == 1:
-					return ()
+					raise RuntimeError("server starting up")
 				return (ProviderModelInfo(id="late-model", provider=config.provider),)
 
 		cache = ModelCatalogCache(catalog_factory=lambda: _StartsLateCatalog(calls))
+		# First call encounters error
 		self.assertEqual(cache.get_models("ollama"), ())
+		snapshot = cache.get_snapshot("ollama")
+		self.assertEqual(snapshot.state, CatalogState.ERROR)
+		self.assertIn("server starting up", str(snapshot.error_message))
+
+		# Second call retries synchronously and succeeds
 		self.assertEqual(
 			cache.get_models("ollama"),
 			(ProviderModelInfo(id="late-model", provider="ollama"),),
 		)
 		self.assertEqual(calls, ["ollama", "ollama"])
+		self.assertEqual(cache.get_snapshot("ollama").state, CatalogState.READY)
+
+	def test_legitimate_empty_catalog_is_durable_and_not_retried(self) -> None:
+		calls: list[str] = []
+
+		class _EmptyCatalog(_FakeCatalog):
+			def list_models(self, config: object):
+				calls.append(config.provider)
+				return ()
+
+		cache = ModelCatalogCache(catalog_factory=lambda: _EmptyCatalog(calls))
+		self.assertEqual(cache.get_models("ollama"), ())
+		snapshot = cache.get_snapshot("ollama")
+		self.assertEqual(snapshot.state, CatalogState.EMPTY)
+
+		# Subsequent calls return () without making repeated network fetches
+		self.assertEqual(cache.get_models("ollama"), ())
+		self.assertEqual(calls, ["ollama"])
+		self.assertTrue(cache.has("ollama"))
 
 	def test_each_registered_provider_is_cached_and_invalidated(self) -> None:
 		calls: list[str] = []
@@ -119,6 +145,25 @@ class ModelCacheTests(unittest.TestCase):
 		self.assertEqual(len(results), 8)
 		self.assertEqual(calls, ["gemini"])
 
+	def test_subscribe_receives_catalog_snapshots(self) -> None:
+		calls: list[str] = []
+		cache = ModelCatalogCache(catalog_factory=lambda: _FakeCatalog(calls))
+		received: list[tuple[str, ModelCatalogSnapshot]] = []
+
+		unsub = cache.subscribe(lambda p, s: received.append((p, s)))
+		cache.get_models("ollama")
+
+		self.assertEqual(len(received), 1)
+		self.assertEqual(received[0][0], "ollama")
+		self.assertEqual(received[0][1].state, CatalogState.READY)
+		self.assertEqual(len(received[0][1].models), 1)
+
+		unsub()
+		cache.invalidate("ollama")
+		cache.get_models("ollama")
+		# After unsubscribe, no new notifications
+		self.assertEqual(len(received), 1)
+
 	def test_capability_cache_tracks_catalog_generation(self) -> None:
 		calls: list[str] = []
 		cache = ModelCatalogCache(catalog_factory=lambda: _FakeCatalog(calls))
@@ -132,6 +177,35 @@ class ModelCacheTests(unittest.TestCase):
 		self.assertTrue(second.supports("image_input"))
 		self.assertIsNot(first, second)
 		self.assertEqual(calls.count("openai"), 2)
+
+	def test_capability_cache_does_not_downgrade_on_catalog_error(self) -> None:
+		calls: list[str] = []
+		fail = False
+
+		class _FailingCatalog(_FakeCatalog):
+			def list_models(self, config: object):
+				calls.append(config.provider)
+				if fail:
+					raise RuntimeError("network down")
+				return (ProviderModelInfo(
+					id="gemini-vision",
+					provider="gemini",
+					capabilities=("image_input", "vision"),
+				),)
+
+		cache = ModelCatalogCache(catalog_factory=lambda: _FailingCatalog(calls))
+		capabilities = ModelCapabilityCache(cache)
+
+		# Initial successful query
+		first = capabilities.get("gemini", "gemini-vision")
+		self.assertTrue(first.supports("vision"))
+
+		# Now network goes down
+		fail = True
+		cache.invalidate("gemini")
+		# Subsequent query during error should NOT downgrade to empty capabilities
+		second = capabilities.get("gemini", "gemini-vision")
+		self.assertTrue(second.supports("vision"))
 
 
 if __name__ == "__main__":

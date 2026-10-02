@@ -1,33 +1,28 @@
 # -*- coding: utf-8 -*-
-"""Centralized model catalog cache.
+"""Centralized model catalog cache and capability cache.
 
 Provides a thread-safe, lazily-populated cache of ``ProviderModelInfo``
-lists keyed by provider ID.  The gesture layer, model-manager UI, and
-provider-control service all read from this cache instead of making
-repeated network round-trips.
+lists and ``ModelCatalogSnapshot`` state keyed by provider ID.  The gesture
+layer, model-manager UI, presenter, and provider-control service all read from
+this cache instead of maintaining duplicate caches or making repeated network
+round-trips.
 
-The cache is populated:
-1. On startup — ``preload_all()`` runs in a background thread for all
-   enabled providers.
-2. On first access — if a provider's cache is empty, ``get_models()``
-   blocks briefly on first call and populates it.
-3. On explicit invalidation — ``invalidate()`` clears a provider's
-   entry so the next read triggers a refresh.
+The cache distinguishes between:
+1. ``CatalogState.COLD``: Not yet fetched.
+2. ``CatalogState.LOADING``: Fetch currently in progress (waiters deduplicated).
+3. ``CatalogState.READY``: Successfully discovered >= 1 models.
+4. ``CatalogState.EMPTY``: Successfully discovered 0 models (durable; not retried
+   on every read).
+5. ``CatalogState.ERROR``: Fetch failed (transient network error, credentials,
+   or server offline).
 
-Concurrent fetches for the same provider are **deduplicated**: only one
-HTTP request is in flight at a time; other callers wait on a
-``threading.Event`` and receive the same result.
-
-Usage::
-
-    from ..service.model_cache import model_catalog_cache
-
-    models = model_catalog_cache.get_models("ollama")
-    model_catalog_cache.invalidate("ollama")
+Subscribers can listen for catalog updates via ``subscribe()``.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from enum import Enum
 import threading
 from collections.abc import Callable
 
@@ -37,19 +32,39 @@ from ..providers.interfaces import ProviderModelInfo
 from ..providers.capabilities import ModelCapabilities
 
 
+class CatalogState(str, Enum):
+    COLD = "cold"
+    LOADING = "loading"
+    READY = "ready"
+    EMPTY = "empty"
+    ERROR = "error"
+
+
+@dataclass(frozen=True, slots=True)
+class ModelCatalogSnapshot:
+    """Immutable snapshot of a provider's model catalog state."""
+
+    provider_id: str
+    state: CatalogState
+    models: tuple[ProviderModelInfo, ...] = ()
+    error_message: str | None = None
+    version: int = 0
+
+
 class _FetchGate:
     """Coordinates concurrent fetches for a single provider.
 
-    The first thread to encounter an empty cache entry creates a
+    The first thread to encounter an empty/stale cache entry creates a
     ``_FetchGate``, performs the HTTP fetch, and signals ``event``.
     Subsequent threads wait on ``event`` and read ``result``.
     """
 
-    __slots__ = ("event", "result")
+    __slots__ = ("event", "result", "error")
 
     def __init__(self) -> None:
         self.event = threading.Event()
         self.result: tuple[ProviderModelInfo, ...] = ()
+        self.error: Exception | None = None
 
 
 class ModelCatalogCache:
@@ -67,16 +82,14 @@ class ModelCatalogCache:
         self,
         catalog_factory: Callable[[], object] | None = None,
     ) -> None:
-        """*catalog_factory* is a 0-arg callable that returns a
-        ``ProviderCatalogService`` (lazy import to avoid circular deps).
-        """
         self._lock = threading.RLock()
         # Entry types:
-        #   None / missing  → not yet fetched
-        #   _FetchGate      → fetch in progress (other threads wait)
-        #   tuple[...]      → cached result
-        self._entries: dict[str, tuple[ProviderModelInfo, ...] | _FetchGate] = {}
+        #   None / missing        → not yet fetched (COLD)
+        #   _FetchGate            → fetch in progress (LOADING)
+        #   ModelCatalogSnapshot  → cached snapshot (READY, EMPTY, or ERROR)
+        self._entries: dict[str, ModelCatalogSnapshot | _FetchGate] = {}
         self._generations: dict[str, int] = {}
+        self._subscribers: list[Callable[[str, ModelCatalogSnapshot], None]] = []
         self._catalog_factory = catalog_factory
 
     # ------------------------------------------------------------------
@@ -86,27 +99,25 @@ class ModelCatalogCache:
     def get_models(self, provider_id: str) -> tuple[ProviderModelInfo, ...]:
         """Return cached models for *provider_id*.
 
-        If the cache is empty for this provider, fetches synchronously
+        If the cache is cold or in error for this provider, fetches synchronously
         (blocking).  Once populated, returns instantly.
 
         If another thread is already fetching *provider_id*, this call
         waits for that fetch to complete instead of starting a duplicate
         request.
         """
+        provider_id = self._normalize_id(provider_id)
         with self._lock:
             entry = self._entries.get(provider_id)
-        if isinstance(entry, tuple) and entry:
-            return entry
 
-        # An empty result is not a durable catalog state.  Providers can be
-        # starting up (the local servers are intentionally started after
-        # add-on initialization), and cloud discovery can fail transiently.
-        # Retrying here prevents startup discovery failures from becoming a
-        # permanent "no models" state until the next manual refresh.
-        if isinstance(entry, tuple):
+        if isinstance(entry, ModelCatalogSnapshot):
+            if entry.state is CatalogState.READY:
+                return entry.models
+            if entry.state is CatalogState.EMPTY:
+                return ()
+            # State is ERROR: retry synchronously
             self.invalidate(provider_id)
 
-        # Not cached yet — fetch synchronously (deduplicated).
         return self._fetch_and_cache(provider_id)
 
     def get_models_or_empty(self, provider_id: str) -> tuple[ProviderModelInfo, ...]:
@@ -114,29 +125,68 @@ class ModelCatalogCache:
 
         Never blocks — safe to call from the NVDA main thread.
         """
+        provider_id = self._normalize_id(provider_id)
         with self._lock:
             entry = self._entries.get(provider_id)
-        if isinstance(entry, tuple):
-            return entry
+        if isinstance(entry, ModelCatalogSnapshot) and entry.state is CatalogState.READY:
+            return entry.models
         return ()
 
-    def has(self, provider_id: str) -> bool:
-        """Return ``True`` if models are cached for *provider_id*."""
+    def get_snapshot(self, provider_id: str) -> ModelCatalogSnapshot:
+        """Return an immutable snapshot of catalog state.
+
+        Never blocks — safe to call from the NVDA main thread.
+        """
+        provider_id = self._normalize_id(provider_id)
         with self._lock:
             entry = self._entries.get(provider_id)
-        return isinstance(entry, tuple)
+            version = self._generations.get(provider_id, 0)
+
+        if isinstance(entry, ModelCatalogSnapshot):
+            return entry
+        if isinstance(entry, _FetchGate):
+            return ModelCatalogSnapshot(provider_id, CatalogState.LOADING, version=version)
+        return ModelCatalogSnapshot(provider_id, CatalogState.COLD, version=version)
+
+    def has(self, provider_id: str) -> bool:
+        """Return ``True`` if models are successfully cached (READY or EMPTY)."""
+        provider_id = self._normalize_id(provider_id)
+        with self._lock:
+            entry = self._entries.get(provider_id)
+        return isinstance(entry, ModelCatalogSnapshot) and entry.state in (
+            CatalogState.READY,
+            CatalogState.EMPTY,
+        )
 
     def version(self, provider_id: str) -> int:
         """Return the invalidation version for *provider_id*."""
+        provider_id = self._normalize_id(provider_id)
         with self._lock:
             return self._generations.get(provider_id, 0)
 
-    def preload_all(self) -> None:
-        """Warm the cache for all enabled providers in a background thread.
+    def subscribe(
+        self,
+        callback: Callable[[str, ModelCatalogSnapshot], None],
+    ) -> Callable[[], None]:
+        """Subscribe to catalog updates.
 
-        Safe to call during plugin initialization.  The thread is a
-        daemon so it will not prevent NVDA from shutting down.
+        *callback* is called with ``(provider_id, snapshot)`` whenever a
+        fetch completes.  Returns a 0-arg unsubscription callable.
         """
+        with self._lock:
+            self._subscribers.append(callback)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                try:
+                    self._subscribers.remove(callback)
+                except ValueError:
+                    pass
+
+        return unsubscribe
+
+    def preload_all(self) -> None:
+        """Warm the cache for all enabled providers in a background thread."""
         thread = threading.Thread(
             target=self._preload_background,
             name="ModelCatalogPreload",
@@ -145,15 +195,14 @@ class ModelCatalogCache:
         thread.start()
 
     def preload_async(self, provider_id: str) -> None:
-        """Fetch models for *provider_id* in a background thread.
-
-        Subsequent ``get_models(provider_id)`` calls will see the
-        results once the fetch completes.  If another thread is
-        already fetching *provider_id*, this is a no-op.
-        """
+        """Fetch models for *provider_id* in a background thread if not already cached."""
+        provider_id = self._normalize_id(provider_id)
         with self._lock:
             current = self._entries.get(provider_id)
-            if isinstance(current, tuple):
+            if isinstance(current, ModelCatalogSnapshot) and current.state in (
+                CatalogState.READY,
+                CatalogState.EMPTY,
+            ):
                 return  # Already cached.
             if isinstance(current, _FetchGate):
                 return  # Already fetching.
@@ -169,10 +218,8 @@ class ModelCatalogCache:
         thread.start()
 
     def invalidate(self, provider_id: str) -> None:
-        """Clear the cache for *provider_id*.
-
-        The next ``get_models()`` call will fetch fresh data.
-        """
+        """Clear the cache for *provider_id*."""
+        provider_id = self._normalize_id(provider_id)
         with self._lock:
             self._entries.pop(provider_id, None)
             self._generations[provider_id] = self._generations.get(provider_id, 0) + 1
@@ -187,17 +234,18 @@ class ModelCatalogCache:
         log.debug("ModelCatalogCache: invalidated all caches")
 
     def refresh_async(self, provider_id: str) -> None:
-        """Force a background refresh of *provider_id*.
-
-        Unlike ``preload_async``, this always fetches even if the
-        provider is already cached.
-        """
+        """Force a background refresh of *provider_id*."""
+        provider_id = self._normalize_id(provider_id)
         self.invalidate(provider_id)
         self.preload_async(provider_id)
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_id(provider_id: str) -> str:
+        return str(provider_id or "").strip().lower()
 
     def _get_catalog(self):
         """Lazy-import and construct the ProviderCatalogService."""
@@ -208,63 +256,48 @@ class ModelCatalogCache:
         return ProviderCatalogService()
 
     def _fetch_and_cache(self, provider_id: str) -> tuple[ProviderModelInfo, ...]:
-        """Fetch models synchronously, cache, and return.
-
-        Deduplicates concurrent fetches: only the first caller performs
-        the HTTP request; subsequent callers wait on a ``threading.Event``
-        and receive the same result.
-        """
+        """Fetch models synchronously, cache snapshot, and return."""
         with self._lock:
             entry = self._entries.get(provider_id)
-            if isinstance(entry, tuple):
-                return entry
+            if isinstance(entry, ModelCatalogSnapshot):
+                if entry.state is CatalogState.READY:
+                    return entry.models
+                if entry.state is CatalogState.EMPTY:
+                    return ()
             if isinstance(entry, _FetchGate):
-                # Another thread is already fetching — wait for it.
                 gate = entry
                 is_owner = False
             else:
-                # First caller — create a gate and claim the fetch.
                 gate = _FetchGate()
                 self._entries[provider_id] = gate
                 is_owner = True
 
         if is_owner:
-            # Perform the actual fetch, then signal waiters.
+            models: tuple[ProviderModelInfo, ...] = ()
+            error: Exception | None = None
             try:
                 models = self._perform_fetch(provider_id)
-            except Exception:
+            except Exception as exc:
                 log.exception("ModelCatalogCache: unexpected fetch failure for '%s'", provider_id)
-                models = ()
-            self._finish_fetch(provider_id, gate, models)
+                error = exc
+            self._finish_fetch(provider_id, gate, models, error=error)
             return models
         else:
-            # Wait for the in-flight fetch to complete.
             gate.event.wait()
             with self._lock:
-                # After waiting, the entry should be the final result.
                 final = self._entries.get(provider_id)
-                if isinstance(final, tuple):
-                    return final
-                # Edge case: gate was invalidated during wait — fall
-                # through and let the caller retry by recursing once.
+                if isinstance(final, ModelCatalogSnapshot):
+                    return final.models
                 return self._fetch_and_cache(provider_id)
 
     def _perform_fetch(self, provider_id: str) -> tuple[ProviderModelInfo, ...]:
-        """Actually perform the HTTP fetch (no locking — caller owns the gate)."""
+        """Actually perform the catalog fetch."""
         log.debug("ModelCatalogCache: fetching models for '%s'", provider_id)
-        try:
-            catalog = self._get_catalog()
-            from ..config.settings import build_provider_config
+        catalog = self._get_catalog()
+        from ..config.settings import build_provider_config
 
-            config = build_provider_config(provider_id)
-            models = catalog.list_models(config)
-        except Exception:
-            log.exception(
-                "ModelCatalogCache: failed to fetch models for '%s'",
-                provider_id,
-            )
-            models = ()
-
+        config = build_provider_config(provider_id)
+        models = tuple(catalog.list_models(config) or ())
         log.debug(
             "ModelCatalogCache: cached %d models for '%s'",
             len(models),
@@ -277,22 +310,49 @@ class ModelCatalogCache:
         provider_id: str,
         gate: _FetchGate,
         models: tuple[ProviderModelInfo, ...],
+        error: Exception | None = None,
     ) -> None:
-        """Publish a fetch result and release all waiters."""
+        """Publish a fetch result and notify subscribers."""
         with self._lock:
-            # Never let an invalidated in-flight request replace newer data.
+            version = self._generations.get(provider_id, 0)
+            if error is not None:
+                snapshot = ModelCatalogSnapshot(
+                    provider_id=provider_id,
+                    state=CatalogState.ERROR,
+                    models=(),
+                    error_message=str(error),
+                    version=version,
+                )
+            elif not models:
+                snapshot = ModelCatalogSnapshot(
+                    provider_id=provider_id,
+                    state=CatalogState.EMPTY,
+                    models=(),
+                    version=version,
+                )
+            else:
+                snapshot = ModelCatalogSnapshot(
+                    provider_id=provider_id,
+                    state=CatalogState.READY,
+                    models=models,
+                    version=version,
+                )
+
             if self._entries.get(provider_id) is gate:
-                self._entries[provider_id] = models
+                self._entries[provider_id] = snapshot
+            subscribers = list(self._subscribers)
+
         gate.result = models
+        gate.error = error
         gate.event.set()
 
-    def _preload_background(self) -> None:
-        """Fetch models for all enabled providers (runs in a daemon thread).
+        for subscriber in subscribers:
+            try:
+                subscriber(provider_id, snapshot)
+            except Exception:
+                log.exception("ModelCatalogCache: error in subscriber callback")
 
-        Uses ``_fetch_and_cache`` which handles deduplication — if a
-        user-triggered fetch for the same provider is already in flight,
-        the preload will wait for and reuse its result.
-        """
+    def _preload_background(self) -> None:
         try:
             from ..config.settings import get_enabled_providers
 
@@ -311,27 +371,26 @@ class ModelCatalogCache:
                 )
 
     def _fetch_background(self, provider_id: str, gate: _FetchGate) -> None:
-        """Fetch models in background, store result in cache.
-
-        The ``_FetchGate`` was already registered by ``preload_async``
-        or ``refresh_async``.  It is therefore already owned by this
-        worker; calling ``_fetch_and_cache`` here would mistake the
-        worker's own gate for another thread's gate and wait forever.
-        """
+        models: tuple[ProviderModelInfo, ...] = ()
+        error: Exception | None = None
         try:
             models = self._perform_fetch(provider_id)
-            self._finish_fetch(provider_id, gate, models)
-        except Exception:
+        except Exception as exc:
             log.exception(
                 "ModelCatalogCache: background fetch failed for '%s'",
                 provider_id,
             )
-            # Store empty result so waiters are unblocked even on failure.
-            self._finish_fetch(provider_id, gate, ())
+            error = exc
+
+        self._finish_fetch(provider_id, gate, models, error=error)
 
 
 class ModelCapabilityCache:
-    """Cache normalized capabilities independently from model presentation."""
+    """Cache normalized capabilities independently from model presentation.
+
+    Protects against capability downgrade when catalog fetch fails or is
+    in an error state.
+    """
 
     def __init__(self, catalog_cache: ModelCatalogCache) -> None:
         self._catalog_cache = catalog_cache
@@ -346,7 +405,19 @@ class ModelCapabilityCache:
         if cached is not None and cached[0] == catalog_version:
             return cached[1]
 
-        models = self._catalog_cache.get_models(key[0])
+        snapshot = self._catalog_cache.get_snapshot(key[0])
+        if snapshot.state in (CatalogState.COLD, CatalogState.ERROR):
+            # Synchronous fetch attempt
+            self._catalog_cache.get_models(key[0])
+            snapshot = self._catalog_cache.get_snapshot(key[0])
+
+        # If discovery failed with ERROR, do NOT downgrade capabilities or cache empty flags
+        if snapshot.state is CatalogState.ERROR:
+            if cached is not None:
+                return cached[1]
+            return ModelCapabilities()
+
+        models = snapshot.models
         capabilities = ModelCapabilities()
         for model in models:
             if model.id == key[1]:
@@ -374,6 +445,6 @@ class ModelCapabilityCache:
             self._entries.clear()
 
 
-# Singleton instance for the add-on lifecycle.
+# Singleton instances for the add-on lifecycle.
 model_catalog_cache = ModelCatalogCache()
 model_capability_cache = ModelCapabilityCache(model_catalog_cache)
