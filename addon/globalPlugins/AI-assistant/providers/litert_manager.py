@@ -50,6 +50,14 @@ class LiteRTModelManager(ModelManagerProvider):
 		self._config = config
 		self._download_service = download_service
 
+	def _invalidate_caches(self) -> None:
+		try:
+			from ..service.model_cache import model_catalog_cache, model_capability_cache
+			model_catalog_cache.invalidate(self.provider_id)
+			model_capability_cache.invalidate(self.provider_id)
+		except Exception:
+			pass
+
 	# ------------------------------------------------------------------
 	# ModelManagerProvider protocol
 	# ------------------------------------------------------------------
@@ -193,6 +201,8 @@ class LiteRTModelManager(ModelManagerProvider):
 			log.info("Registered %s as %s", dl_filename, fn)
 		except LiteRTServerError as exc:
 			log.warning("Could not register %s: %s", dl_filename, exc)
+		finally:
+			self._invalidate_caches()
 
 	def import_model(
 		self,
@@ -231,6 +241,7 @@ class LiteRTModelManager(ModelManagerProvider):
 				)
 			except LiteRTServerError as exc:
 				raise LLMProviderError(str(exc)) from exc
+			self._invalidate_caches()
 			return
 
 		svc = self._download_service or ModelDownloadService()
@@ -254,6 +265,7 @@ class LiteRTModelManager(ModelManagerProvider):
 			)
 		except LiteRTServerError as exc:
 			raise LLMProviderError(str(exc)) from exc
+		self._invalidate_caches()
 
 	# ------------------------------------------------------------------
 	# Delete
@@ -293,6 +305,7 @@ class LiteRTModelManager(ModelManagerProvider):
 		if path.exists():
 			path.unlink()
 			log.info("Deleted cache: %s", path)
+		self._invalidate_caches()
 
 	# ------------------------------------------------------------------
 	# Activate

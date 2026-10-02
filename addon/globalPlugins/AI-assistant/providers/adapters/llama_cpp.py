@@ -28,38 +28,66 @@ class LlamaCppServerProvider(OpenAICompatProvider):
 		return record.model_id
 
 	def list_models(self) -> tuple[ProviderModelInfo, ...]:
-		models: list[ProviderModelInfo] = []
-		for item in self._llama_manager.list_server_models():
-			server_id = str(item.get("id", "")).strip()
-			if not server_id:
-				continue
+		models: dict[str, ProviderModelInfo] = {}
+		server_items = {
+			str(item.get("id", "")).strip(): item
+			for item in self._llama_manager.list_server_models()
+			if str(item.get("id", "")).strip()
+		}
+		for record in self._llama_manager._catalog.list_records():
+			server_item = next(
+				(item for sid, item in server_items.items() if record.matches_server_id(sid)),
+				None,
+			)
+			models[record.model_id] = self._model_info(record.model_id, server_item, record=record)
+		for server_id, item in server_items.items():
 			record = self._llama_manager.find_record(server_id)
 			model_id = record.model_id if record is not None else server_id
-			models.append(self._model_info(model_id, item))
-		return tuple(models)
+			if model_id not in models:
+				models[model_id] = self._model_info(model_id, item, record=record)
+		return tuple(sorted(models.values(), key=lambda m: m.display_name.lower()))
 
 	def get_model_info(self, model_name: str | None = None) -> ProviderModelInfo | None:
 		requested = str(model_name or self._config.model_name or "").strip()
-		for item in self._llama_manager.list_server_models():
-			server_id = str(item.get("id", "")).strip()
-			record = self._llama_manager.find_record(server_id)
-			if server_id == requested or (record is not None and record.matches_server_id(requested)):
-				return self._model_info(record.model_id if record is not None else server_id, item)
+		if not requested:
+			return None
+		models = self.list_models()
+		for model in models:
+			if model.id.lower() == requested.lower():
+				return model
+		record = self._llama_manager.find_record(requested)
+		if record is not None:
+			for model in models:
+				if record.matches_server_id(model.id):
+					return model
 		return None
 
 	def supports_image_description(self) -> bool:
 		info = self.get_model_info()
 		return info is not None and info.supports("image_input")
 
-	def _model_info(self, model_id: str, item: dict[str, object]) -> ProviderModelInfo:
+	def _model_info(
+		self,
+		model_id: str,
+		item: dict[str, object] | None = None,
+		record: object | None = None,
+	) -> ProviderModelInfo:
+		item = item or {}
+		context_window = llama_model_context_window(item)
+		if context_window is None and record is not None:
+			context_window = getattr(record, "context_window", None)
+		capabilities = llama_model_capabilities(item) if item else (
+			getattr(record, "capabilities", None)
+			or ("chat", "completion", "streaming", "text_input", "text_output")
+		)
 		return ProviderModelInfo(
 			id=model_id,
 			provider=self.provider_name(),
 			display_name=model_id,
 			owned_by=str(item.get("owned_by", "llamacpp")),
 			created=item.get("created") if isinstance(item.get("created"), int) else None,
-			context_window=llama_model_context_window(item),
-			capabilities=llama_model_capabilities(item),
+			context_window=context_window,
+			capabilities=capabilities,
 			sampling_defaults=SamplingDefaults(temperature=1.0, top_p=1.0),
 			raw=item,
 		)

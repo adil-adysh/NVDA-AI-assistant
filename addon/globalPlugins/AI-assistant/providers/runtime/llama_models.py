@@ -23,6 +23,8 @@ class LlamaModelRecord:
 	artifact: str | None = None
 	variant: str | None = None
 	local_path: str | None = None
+	context_window: int | None = None
+	capabilities: tuple[str, ...] = ("chat", "completion", "streaming", "text_input", "text_output")
 
 	@property
 	def server_model(self) -> str:
@@ -46,7 +48,15 @@ class LlamaModelRecord:
 		return frozenset(value for value in values if value)
 
 	def matches_server_id(self, server_id: str) -> bool:
-		return str(server_id or "").strip() in self.identities
+		server_id_str = str(server_id or "").strip()
+		if not server_id_str:
+			return False
+		server_id_lower = server_id_str.lower()
+		for identity in self.identities:
+			identity_clean = identity.strip()
+			if identity_clean == server_id_str or identity_clean.lower() == server_id_lower:
+				return True
+		return False
 
 
 def llama_model_capabilities(item: dict[str, object]) -> tuple[str, ...]:
@@ -137,13 +147,40 @@ def parse_models_preset(text: str) -> tuple[LlamaModelRecord, ...]:
 	for model_id, values in sections.items():
 		hf_repo = values.get("hf-repo")
 		model_path = values.get("model")
+		ctx_size: int | None = None
+		try:
+			raw_ctx = values.get("ctx-size")
+			if raw_ctx:
+				ctx_size = int(raw_ctx)
+		except (ValueError, TypeError):
+			pass
+		caps = {"chat", "completion", "streaming", "text_input", "text_output"}
+		reasoning = values.get("reasoning", "").lower()
+		reasoning_format = values.get("reasoning-format", "").lower()
+		if reasoning in {"on", "true", "yes", "auto"} or (reasoning_format and reasoning_format not in {"none", "off"}):
+			caps.add("thinking")
+		caps_tuple = tuple(sorted(caps))
 		if hf_repo:
 			repository, _, variant = hf_repo.rpartition(":")
 			if not repository:
 				repository, variant = hf_repo, None
-			records.append(LlamaModelRecord(model_id, repository, ModelSourceKind.HUGGING_FACE.value, variant=variant))
+			records.append(LlamaModelRecord(
+				model_id,
+				repository,
+				ModelSourceKind.HUGGING_FACE.value,
+				variant=variant,
+				context_window=ctx_size,
+				capabilities=caps_tuple,
+			))
 		elif model_path:
-			records.append(LlamaModelRecord(model_id, model_path, ModelSourceKind.LOCAL_FILE.value, local_path=model_path))
+			records.append(LlamaModelRecord(
+				model_id,
+				model_path,
+				ModelSourceKind.LOCAL_FILE.value,
+				local_path=model_path,
+				context_window=ctx_size,
+				capabilities=caps_tuple,
+			))
 	return tuple(records)
 
 
@@ -214,11 +251,18 @@ class LlamaModelCatalog:
 				payload = json.loads(self._manifest_path.read_text(encoding="utf-8"))
 			except (OSError, json.JSONDecodeError):
 				payload = []
-			records = tuple(
-				LlamaModelRecord(**item)
-				for item in payload
-				if isinstance(item, dict) and item.get("model_id")
-			)
+			valid_keys = {
+				"model_id", "source", "kind", "revision", "artifact",
+				"variant", "local_path", "context_window", "capabilities",
+			}
+			records_list: list[LlamaModelRecord] = []
+			for item in payload:
+				if isinstance(item, dict) and item.get("model_id"):
+					kwargs = {k: v for k, v in item.items() if k in valid_keys}
+					if "capabilities" in kwargs and isinstance(kwargs["capabilities"], (list, tuple)):
+						kwargs["capabilities"] = tuple(kwargs["capabilities"])
+					records_list.append(LlamaModelRecord(**kwargs))
+			records = tuple(records_list)
 			if self._preset_path.is_file():
 				known = {record.model_id for record in records}
 				records += tuple(record for record in parse_models_preset(self._preset_path.read_text(encoding="utf-8")) if record.model_id not in known)
@@ -239,9 +283,42 @@ class LlamaModelCatalog:
 
 	def find(self, model_id: str) -> LlamaModelRecord | None:
 		requested = str(model_id or "").strip()
+		if not requested:
+			return None
 		for item in self.list_records():
 			if item.matches_server_id(requested):
 				return item
+		# Fallback: check if requested is an existing local GGUF file path
+		try:
+			path = Path(requested).resolve()
+			if path.is_file() and path.suffix.lower() == ".gguf":
+				record = LlamaModelRecord(
+					model_id=path.stem,
+					source=str(path),
+					kind=ModelSourceKind.LOCAL_FILE.value,
+					local_path=str(path),
+				)
+				self.upsert(record)
+				return record
+		except (OSError, ValueError):
+			pass
+		# Fallback: check if requested is an explicit Hugging Face model reference
+		if requested.startswith("hf://") or ("/" in requested and not requested.startswith(("\\", "."))):
+			try:
+				from ..model_import import parse_model_import_source
+				parsed = parse_model_import_source(requested, None, "llama-cpp-server")
+				record = LlamaModelRecord(
+					model_id=parsed.model_id,
+					source=parsed.source,
+					kind=parsed.kind.value,
+					revision=parsed.revision,
+					artifact=parsed.artifact,
+					variant=parsed.variant,
+				)
+				self.upsert(record)
+				return record
+			except Exception:
+				pass
 		return None
 
 	def write_preset(self) -> Path:

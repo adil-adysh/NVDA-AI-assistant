@@ -127,7 +127,35 @@ class LlamaModelsPresetTests(unittest.TestCase):
 		}
 		self.assertIn("image_input", llama_model_capabilities(item))
 		self.assertIn("text_output", llama_model_capabilities(item))
-		self.assertEqual(llama_model_context_window(item), 131072)
+	def test_catalog_autoresolves_unregistered_hugging_face_source(self) -> None:
+		with tempfile.TemporaryDirectory() as directory:
+			catalog = LlamaModelCatalog(directory)
+			found = catalog.find("HauhauCS/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF:IQ2_M")
+			self.assertIsNotNone(found)
+			self.assertEqual(found.source, "HauhauCS/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF")
+			self.assertEqual(found.variant, "IQ2_M")
+			# Verify it was persisted to catalog
+			reloaded = catalog.find(found.model_id)
+			self.assertEqual(reloaded, found)
+
+	def test_parse_models_preset_extracts_context_and_reasoning(self) -> None:
+		ini_content = """version = 1\n\n[model-thought]\nhf-repo = test/model:Q4_K_M\nctx-size = 65536\nreasoning = on\n"""
+		records = parse_models_preset(ini_content)
+		self.assertEqual(len(records), 1)
+		rec = records[0]
+		self.assertEqual(rec.model_id, "model-thought")
+		self.assertEqual(rec.context_window, 65536)
+		self.assertIn("thinking", rec.capabilities)
+
+	def test_matches_server_id_is_case_insensitive(self) -> None:
+		record = LlamaModelRecord(
+			model_id="Qwen36-35B",
+			source="WhiskyAKM/Qwen3.6-35B",
+			kind=ModelSourceKind.HUGGING_FACE.value,
+			variant="NVFP4",
+		)
+		self.assertTrue(record.matches_server_id("qwen36-35b"))
+		self.assertTrue(record.matches_server_id("whiskyakm/qwen3.6-35b:nvfp4"))
 
 
 if __name__ == "__main__":

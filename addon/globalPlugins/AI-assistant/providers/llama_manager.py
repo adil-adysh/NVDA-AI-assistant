@@ -70,6 +70,14 @@ class LlamaCppModelManager(ModelManagerProvider):
 		value = getattr(self._config, "model_name", "") if self._config else ""
 		return str(value or "").strip() or None
 
+	def _invalidate_caches(self) -> None:
+		try:
+			from ..service.model_cache import model_catalog_cache, model_capability_cache
+			model_catalog_cache.invalidate(self.provider_id)
+			model_capability_cache.invalidate(self.provider_id)
+		except Exception:
+			pass
+
 	def list_managed_models(self) -> list[ManagedModel]:
 		models: dict[str, ManagedModel] = {}
 		server_items = self._supervisor.list_models()
@@ -138,6 +146,7 @@ class LlamaCppModelManager(ModelManagerProvider):
 			local_path=local_path,
 		)
 		self._catalog.upsert(record)
+		self._invalidate_caches()
 		on_progress(f"Model {record.model_id} is ready to start", None, None)
 
 	def download_model(
@@ -149,7 +158,10 @@ class LlamaCppModelManager(ModelManagerProvider):
 		record = self._find_record(model_id)
 		if record is None:
 			raise LLMProviderError(f"Unknown llama.cpp model: {model_id}")
-		self.ensure_running(record, on_progress=lambda message: on_progress(message, None, None), cancel_event=cancel_event)
+		try:
+			self.ensure_running(record, on_progress=lambda message: on_progress(message, None, None), cancel_event=cancel_event)
+		finally:
+			self._invalidate_caches()
 
 	def ensure_running(
 		self,
@@ -221,6 +233,7 @@ class LlamaCppModelManager(ModelManagerProvider):
 			# our manifest entry, never the user's source file.
 			log.info("Keeping user-owned GGUF source %s", record.local_path)
 		self._remove_record(record.model_id)
+		self._invalidate_caches()
 
 	def set_active_model(self, model_id: str) -> None:
 		if self._find_record(model_id) is None and model_id not in {
