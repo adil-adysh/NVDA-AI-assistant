@@ -26,7 +26,7 @@ from ..providers.registry import (
 	provider_display_name,
 )
 from .download_progress import DownloadProgressDialog
-from ..config.enabled_models import EnabledModelsStore
+from ..config.enabled_models import ModelVisibilityStore
 from ..service.model_cache import model_capability_cache, model_catalog_cache
 from ..service.error_reporter import ErrorContext, error_reporter
 from .task_runner import TaskHandle, background_tasks
@@ -60,7 +60,7 @@ class ModelManagerDialog(wx.Dialog):
 		)
 		self._provider = provider
 		self._provider_name = provider_name
-		self._enabled_store = EnabledModelsStore()
+		self._enabled_store = ModelVisibilityStore()
 		self._models: list[ManagedModel] = []
 		self._displayed_models: list[ManagedModel] = []
 		self._pending_downloads: set[str] = set()
@@ -277,7 +277,8 @@ class ModelManagerDialog(wx.Dialog):
 	) -> None:
 		"""Populate the list control from *models* (must be called on main thread)."""
 		self._models = models
-		enabled_ids = self._enabled_store.get_enabled(self._provider.provider_id)
+		# Filter using visibility store
+		disabled_ids = self._enabled_store.get_disabled_models(self._provider.provider_id)
 
 		# Separate by download state + priority
 		recommended_ready: list[ManagedModel] = []
@@ -288,7 +289,7 @@ class ModelManagerDialog(wx.Dialog):
 		show_disabled = self._show_disabled_cb.GetValue()
 
 		for m in self._models:
-			if not show_disabled and m.id not in enabled_ids:
+			if not show_disabled and m.id in disabled_ids:
 				continue
 			rec = m.priority <= _RECOMMENDED_PRIORITY
 			ready = m.state.is_ready()
@@ -310,16 +311,16 @@ class ModelManagerDialog(wx.Dialog):
 
 		if recommended_ready:
 			self._add_section_header(_("── Recommended — Ready to use ──"))
-			self._add_models(recommended_ready, enabled_ids)
+			self._add_models(recommended_ready, disabled_ids)
 		if recommended_download:
 			self._add_section_header(_("── Recommended — Available to download ──"))
-			self._add_models(recommended_download, enabled_ids)
+			self._add_models(recommended_download, disabled_ids)
 		if other_ready:
 			self._add_section_header(_("── Other Models — Ready to use ──"))
-			self._add_models(other_ready, enabled_ids)
+			self._add_models(other_ready, disabled_ids)
 		if other_download:
 			self._add_section_header(_("── Other Models — Available to download ──"))
-			self._add_models(other_download, enabled_ids)
+			self._add_models(other_download, disabled_ids)
 
 		# Restore focus to the previously selected model.
 		if focus_model_id is not None:
@@ -349,13 +350,13 @@ class ModelManagerDialog(wx.Dialog):
 	def _add_models(
 		self,
 		models: list[ManagedModel],
-		enabled_ids: set[str],
+		disabled_ids: set[str],
 	) -> None:
 		for m in models:
 			idx = self._list.InsertItem(self._list.GetItemCount(), "")
 
 			# Column 0: enabled checkbox
-			is_enabled = m.id in enabled_ids
+			is_enabled = m.id not in disabled_ids
 			self._list.SetItem(idx, 0, "☑" if is_enabled else "☐")  # noqa: RUF001
 
 			# Column 1: active marker
@@ -472,7 +473,7 @@ class ModelManagerDialog(wx.Dialog):
 			if idx >= 0:
 				model = self._get_displayed_model_at(idx)
 				if model is not None:
-					is_enabled = self._enabled_store.is_enabled(
+					is_enabled = self._enabled_store.is_model_visible(
 						self._provider.provider_id,
 						model.id,
 					)
@@ -485,7 +486,7 @@ class ModelManagerDialog(wx.Dialog):
 		model = self._get_selected_model()
 		if model is None:
 			return
-		is_enabled = self._enabled_store.is_enabled(
+		is_enabled = self._enabled_store.is_model_visible(
 			self._provider.provider_id,
 			model.id,
 		)
@@ -520,6 +521,8 @@ class ModelManagerDialog(wx.Dialog):
 			)
 
 		def on_done() -> None:
+			model_catalog_cache.invalidate(self._provider.provider_id)
+			model_capability_cache.invalidate(self._provider.provider_id)
 			self._pending_downloads.discard(model_id)
 			self._refresh_model_list()
 
@@ -560,6 +563,8 @@ class ModelManagerDialog(wx.Dialog):
 
 	def _finish_mutation(self) -> None:
 		self._mutation_task = None
+		model_catalog_cache.invalidate(self._provider.provider_id)
+		model_capability_cache.invalidate(self._provider.provider_id)
 		if not self._is_destroyed:
 			self._refresh_model_list()
 
@@ -689,7 +694,7 @@ class ModelManagerDialog(wx.Dialog):
 	# ------------------------------------------------------------------
 
 	def _toggle_enabled(self, model: ManagedModel, enabled: bool) -> None:
-		self._enabled_store.set_enabled(
+		self._enabled_store.set_model_visible(
 			self._provider.provider_id,
 			model.id,
 			enabled,

@@ -28,10 +28,10 @@ from ..config.settings import (
 	set_progress_enabled, set_provider, set_request_metrics_log_path, set_request_metrics_logging_enabled,
 	set_streaming_enabled, set_streaming_tone_enabled, set_timeout_seconds,
 )
-from ..config.enabled_models import EnabledModelsStore
+from ..config.enabled_models import ModelVisibilityStore
 from ..embeddings.manager import embedding_model_service
 from ..providers.registry import (
-	PROVIDER_IDS, ProviderLifecycleState, build_model_manager, get_provider_capabilities, get_provider_info,
+	PROVIDER_IDS, ProviderLifecycleState, build_model_manager, get_provider_info,
 	provider_display_name, provider_state_label,
 )
 from ..service.model_cache import model_capability_cache, model_catalog_cache
@@ -163,17 +163,19 @@ class AIAssistantGeneralPanel(_SettingsTab):
 
 	def _model_choices_for(self, provider_id: str) -> list[str]:
 		choices: list[str] = []
-		caps = get_provider_capabilities(provider_id)
-		if caps.has_install_step:
+		try:
+			manager = build_model_manager(provider_id, model_cache=model_catalog_cache, capability_cache=model_capability_cache)
+			choices.extend(model.id for model in manager.list_managed_models())
+		except Exception:
+			pass
+		if not choices:
 			try:
-				manager = build_model_manager(provider_id, model_cache=model_catalog_cache, capability_cache=model_capability_cache)
-				choices.extend(model.id for model in manager.list_managed_models())
+				choices.extend(m.id for m in model_catalog_cache.get_models_or_empty(provider_id))
 			except Exception:
 				pass
 		try:
-			for model_id in EnabledModelsStore().get_enabled(provider_id):
-				if model_id not in choices:
-					choices.append(model_id)
+			visibility = ModelVisibilityStore()
+			choices = [m for m in choices if visibility.is_model_visible(provider_id, m)]
 		except Exception:
 			pass
 		current = self._current_model_name(provider_id)
@@ -245,12 +247,11 @@ class AIAssistantGeneralPanel(_SettingsTab):
 		model_name = self.model_combo.GetValue().strip()
 		if not model_name:
 			raise _InvalidSetting(_("Active model name cannot be empty."), self.model_combo, self)
-		if get_provider_capabilities(provider_id).has_install_step:
-			try:
-				manager = build_model_manager(provider_id, model_cache=model_catalog_cache, capability_cache=model_capability_cache)
-				model_name = manager.resolve_model_identity(model_name)
-			except Exception:
-				pass
+		try:
+			manager = build_model_manager(provider_id, model_cache=model_catalog_cache, capability_cache=model_capability_cache)
+			model_name = manager.resolve_model_identity(model_name)
+		except Exception:
+			pass
 		values.update(provider=provider_id, model_name=model_name)
 
 

@@ -57,6 +57,29 @@ class SettingsPanelContractTests(unittest.TestCase):
 		self.assertIn("def onApply", self.source)
 		self.assertIn("def open_settings_dialog", self.source)
 
+	def test_model_choices_queries_managed_models_without_install_step_gate(self) -> None:
+		classes = {
+			node.name: node
+			for node in self.tree.body
+			if isinstance(node, ast.ClassDef)
+		}
+		general_panel = classes["AIAssistantGeneralPanel"]
+		methods = {
+			node.name: node
+			for node in general_panel.body
+			if isinstance(node, ast.FunctionDef)
+		}
+		self.assertIn("_model_choices_for", methods)
+		method_source = ast.unparse(methods["_model_choices_for"])
+		self.assertIn("build_model_manager(provider_id", method_source)
+		self.assertIn("manager.list_managed_models()", method_source)
+		self.assertNotIn("has_install_step", method_source)
+
+		self.assertIn("collect", methods)
+		collect_source = ast.unparse(methods["collect"])
+		self.assertIn("manager.resolve_model_identity", collect_source)
+		self.assertNotIn("has_install_step", collect_source)
+
 	def test_settings_menu_item_is_present(self) -> None:
 		source = CONTROLLER_SOURCE.read_text(encoding="utf-8")
 		self.assertIn('_("&Settings...")', source)

@@ -120,26 +120,16 @@ class ProviderControlService:
 	) -> tuple[ProviderModelInfo, ...]:
 		"""Return models visible to the user for *provider_id*.
 
-		Filters to only user-enabled models.  When *auto_register_new*
-		is ``True`` (default), newly discovered models are registered
-		as enabled; only models the user has explicitly disabled are
-		hidden.
+		Filters to only user-enabled models.  Newly discovered models are
+		visible by default; only models the user has explicitly disabled
+		are hidden.
 		"""
 		provider_id = self._normalize_provider_id(provider_id)
 		models = self.list_models(provider_id)
 		if not models:
 			return ()
 		store = self._get_enabled_store()
-		enabled_ids = store.get_enabled(provider_id)
-		if auto_register_new and enabled_ids:
-			for m in models:
-				if m.id not in enabled_ids:
-					store.set_enabled(provider_id, m.id, True)
-			enabled_ids = store.get_enabled(provider_id)
-		elif not enabled_ids:
-			# No stored preferences — show all models.
-			return models
-		return tuple(m for m in models if m.id in enabled_ids)
+		return tuple(m for m in models if store.is_model_visible(provider_id, m.id))
 
 	def get_model_display_name(
 		self,
