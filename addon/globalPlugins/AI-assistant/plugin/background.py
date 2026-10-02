@@ -44,10 +44,8 @@ _NON_LLM_USE_CASES = frozenset(
 )
 
 
-_litert_readiness_lock = threading.Lock()
-_llama_readiness_lock = threading.Lock()
-_litert_restart_lock = threading.Lock()
-_litert_restart_pending = False
+# Managed runtime lifecycle is centralized in native RuntimeSupervisor (Rust/PyO3).
+# _litert_readiness_lock, _litert_restart_lock, _litert_restart_pending, and _llama_readiness_lock are removed.
 
 
 def _on_litert_server_config_changed() -> None:
@@ -59,10 +57,10 @@ def _on_litert_server_config_changed() -> None:
 	deferred to a daemon worker so the dialog that saved the setting
 	never blocks on a server restart.
 	"""
-	global _litert_restart_pending  # pylint: disable=global-statement
 	supervisor = get_litert_supervisor()
-	if not supervisor.is_running:
-		if supervisor.is_adopted:
+	status = supervisor.status()
+	if not status.is_running:
+		if status.is_adopted:
 			# An adopted server has no process handle we can stop, so it
 			# cannot be restarted here. Regenerate config.json so the next
 			# start uses the new settings and surface the limitation.
@@ -78,10 +76,7 @@ def _on_litert_server_config_changed() -> None:
 				"(no process handle). Stop the server or restart NVDA to apply."
 			)
 		return
-	with _litert_restart_lock:
-		if _litert_restart_pending:
-			return
-		_litert_restart_pending = True
+
 	threading.Thread(
 		target=_restart_litert_server_worker,
 		name="litert-restart-on-config-change",
@@ -91,33 +86,13 @@ def _on_litert_server_config_changed() -> None:
 
 def _restart_litert_server_worker() -> None:
 	"""Worker thread body performing the deferred LiteRT server restart."""
-	global _litert_restart_pending  # pylint: disable=global-statement
 	try:
-		# Serialize with the readiness path so a restart never races a
-		# concurrent start/import triggered by opening chat.
-		with _litert_readiness_lock:
-			_restart_litert_server_locked()
+		supervisor = get_litert_supervisor()
+		log.info("LiteRT engine settings changed; restarting server to apply")
+		supervisor.restart(timeout=60.0)
 	except Exception as error:
 		error_reporter.report(
 			error,
-			ErrorContext(operation="restart LiteRT server", provider="litert-lm", origin="server configuration"),
-		)
-	finally:
-		with _litert_restart_lock:
-			_litert_restart_pending = False
-
-
-def _restart_litert_server_locked() -> None:
-	"""Stop and restart the running LiteRT server (caller holds the readiness lock)."""
-	supervisor = get_litert_supervisor()
-	if not supervisor.is_running:
-		return
-	log.info("LiteRT engine settings changed; restarting server to apply")
-	supervisor.restart()
-	if not supervisor.wait_until_ready(timeout=60.0):
-		log.error("LiteRT server did not become ready after config-change restart")
-		error_reporter.report(
-			LiteRTServerError("LiteRT-LM server did not become ready after configuration changed."),
 			ErrorContext(operation="restart LiteRT server", provider="litert-lm", origin="server configuration"),
 		)
 
@@ -159,10 +134,30 @@ def ensure_litert_server_ready(on_progress: Callable[[str], None] | None = None)
 		log.debug("ensure_litert_server_ready: skipping — not litert-lm")
 		return
 
-	# Preload and chat can start at the same time. Serialize the blocking
-	# health/start/import sequence, but only on worker threads.
-	with _litert_readiness_lock:
-		_ensure_litert_server_ready_locked(on_progress=on_progress)
+	_ensure_litert_server_ready_core(on_progress=on_progress)
+
+
+def _ensure_litert_server_ready_core(
+	on_progress: Callable[[str], None] | None = None,
+) -> None:
+	supervisor = get_litert_supervisor()
+	if not supervisor.is_installed:
+		log.warning("ensure_litert_server_ready: runtime not installed")
+		raise LiteRTServerError(
+			"LiteRT-LM runtime is not installed. Please download it from the AI Assistant settings panel."
+		)
+
+	if hasattr(supervisor, "ensure_ready"):
+		supervisor.ensure_ready(timeout=60.0, on_progress=on_progress)
+	else:
+		if not supervisor.is_running or not supervisor.matches_current_configuration():
+			if supervisor.is_running:
+				supervisor.stop()
+			supervisor.start(on_progress=on_progress)
+		supervisor.wait_until_ready(timeout=60.0, on_progress=on_progress)
+
+	# Ensure the configured model is registered with the server.
+	_ensure_model_imported(supervisor, on_progress=on_progress)
 
 
 def ensure_provider_server_ready(on_progress: Callable[[str], None] | None = None) -> None:
@@ -181,91 +176,37 @@ def ensure_provider_server_ready(on_progress: Callable[[str], None] | None = Non
 		return
 	from ..config.settings import get_active_provider_config
 
-	with _llama_readiness_lock:
-		config = get_active_provider_config()
-		manager = LlamaCppModelManager(config=config)
-		record = manager.find_record(str(config.model_name or "").strip())
-		if record is None:
+	config = get_active_provider_config()
+	manager = LlamaCppModelManager(config=config)
+	model_name = str(config.model_name or "").strip()
+	record = manager.find_record(model_name) if model_name else None
+	if record is None:
+		available_records = manager._catalog.list_records()
+		if available_records:
+			record = available_records[0]
+			log.info(
+				"Configured llama.cpp model %r not found; starting server with %r from preset catalog",
+				model_name,
+				record.model_id,
+			)
+			try:
+				from ..config.settings import set_model_name
+				set_model_name(record.model_id)
+			except Exception:
+				pass
+		else:
 			raise LLMProviderError(f"Unknown llama.cpp model: {config.model_name}")
-		manager.ensure_running(record, on_progress=on_progress)
-		from ..service.model_cache import model_catalog_cache
+	manager.ensure_running(record, on_progress=on_progress)
+	from ..service.model_cache import model_catalog_cache
 
-		model_catalog_cache.refresh_async(provider)
+	model_catalog_cache.refresh_async(provider)
 
 
 def _ensure_litert_server_ready_locked(
 	on_progress: Callable[[str], None] | None = None,
 ) -> None:
-	supervisor = get_litert_supervisor()
-	healthy = supervisor.is_healthy()
-	if supervisor.is_running and healthy and not supervisor.matches_current_configuration():
-		log.info("LiteRT runtime configuration is stale; restarting before use")
-		supervisor.stop()
-		healthy = False
-	log.debug(
-		"ensure_litert_server_ready: supervisor is_running=%s is_healthy=%s is_installed=%s",
-		supervisor.is_running,
-		healthy,
-		supervisor.is_installed,
-	)
-
-	if supervisor.is_running and healthy:
-		log.debug("ensure_litert_server_ready: server already healthy")
-		# Engine-setting changes (backend, cache, cpu threads, num_ctx,
-		# model) restart the server via the config-change event, not here;
-		# this path only re-validates the model registry.
-		_ensure_model_imported(supervisor, on_progress=on_progress)
-		return
-
-	# After an NVDA restart we lose the process handle but the server may
-	# still be alive on the port.  Treat a reachable healthy server as ready
-	# even when we do not own the process — a new bind would fail anyway.
-	if healthy:
-		log.debug(
-			"ensure_litert_server_ready: server is healthy at %s "
-			"(process handle lost after restart); reusing",
-			supervisor.base_url,
-		)
-		supervisor.adopt()
-		_ensure_model_imported(supervisor, on_progress=on_progress)
-		return
-
-	# A live process that is not responding is hung/zombie.  start() would
-	# no-op on the stale is_running handle, so stop it first to allow a
-	# fresh process to be spawned.
-	if supervisor.is_running:
-		log.warning(
-			"ensure_litert_server_ready: process alive but unhealthy; "
-			"stopping before restart"
-		)
-		supervisor.stop()
-
-	if not supervisor.is_installed:
-		log.warning("ensure_litert_server_ready: runtime not installed")
-		raise LiteRTServerError(
-			"LiteRT-LM runtime is not installed. Please download it from the AI Assistant settings panel."
-		)
-
-	log.debug("ensure_litert_server_ready: starting LiteRT server...")
-	supervisor.start(
-		on_progress=on_progress,
-	)
-	log.debug("ensure_litert_server_ready: server process started, waiting for ready...")
-
-	ready = supervisor.wait_until_ready(
-		timeout=60.0,
-		on_progress=on_progress,
-	)
-	if ready:
-		log.debug("ensure_litert_server_ready: server is ready at %s", supervisor.base_url)
-	else:
-		log.error("ensure_litert_server_ready: server did not become ready within timeout")
-		raise LiteRTServerError(
-			"LiteRT-LM server did not become ready in time. Check the server logs for details."
-		)
-
-	# Ensure the configured model is registered with the server.
-	_ensure_model_imported(supervisor, on_progress=on_progress)
+	"""Deprecated alias preserved for test double compatibility."""
+	_ensure_litert_server_ready_core(on_progress=on_progress)
 
 
 def _ensure_model_imported(

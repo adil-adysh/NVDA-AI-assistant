@@ -45,6 +45,7 @@ norecursedirs = [
 	"dist",
 	"embedding_engine",
 	"memory_engine",
+	"runtime_supervisor",
 ]
 
 [tool.ruff]
@@ -330,4 +331,4 @@ extension-pkg-allow-list = [
 ]
 # pywintypes.error is defined inside the C extension at import time, so it
 # is missed even with the allow-list; generated-members suppresses it.
-generated-members = ["LANCZOS", "OpenAiClient", "pywintypes.error"]
+generated-members = ["LANCZOS", "OpenAiClient", "RuntimeStatus", "RuntimeSupervisor", "pywintypes.error"]

@@ -1,0 +1,21 @@
+[package]
+name = "runtime_supervisor"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "runtime_supervisor"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module"] }
+ureq = { version = "2", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+strip = "symbols"
+panic = "abort"

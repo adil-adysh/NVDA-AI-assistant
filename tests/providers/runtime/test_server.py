@@ -628,28 +628,42 @@ class AdoptStateTests(unittest.TestCase):
 	"""Tests for the adopted-server state consumed by readiness evaluation."""
 
 	def test_not_adopted_initially(self) -> None:
-		supervisor = LiteRTServerSupervisor()
+		mock_native = mock.MagicMock()
+		mock_native.status.return_value = types.SimpleNamespace(
+			state="stopped", is_ready=False, is_running=False, is_adopted=False, pid=None, generation=0,
+		)
+		supervisor = LiteRTServerSupervisor(native_supervisor=mock_native)
 		self.assertFalse(supervisor.is_adopted)
 		self.assertFalse(supervisor.is_running)
 
 	def test_adopt_marks_adopted_without_handle(self) -> None:
-		supervisor = LiteRTServerSupervisor()
+		mock_native = mock.MagicMock()
+		mock_native.status.return_value = types.SimpleNamespace(
+			state="ready_adopted", is_ready=True, is_running=False, is_adopted=True, pid=None,
+		)
+		supervisor = LiteRTServerSupervisor(native_supervisor=mock_native)
 		supervisor.adopt()
+		mock_native.adopt.assert_called_once()
 		self.assertTrue(supervisor.is_adopted)
 		self.assertFalse(supervisor.is_running)
 
 	def test_adopt_ignored_when_process_running(self) -> None:
-		supervisor = LiteRTServerSupervisor()
-		supervisor._process = mock.MagicMock(  # pylint: disable=protected-access
-			pid=123, poll=lambda: None
+		mock_native = mock.MagicMock()
+		mock_native.status.return_value = types.SimpleNamespace(
+			state="ready_owned", is_ready=True, is_running=True, is_adopted=False, pid=123,
 		)
+		supervisor = LiteRTServerSupervisor(native_supervisor=mock_native)
 		supervisor.adopt()
+		mock_native.adopt.assert_called_once()
 		self.assertFalse(supervisor.is_adopted)
 		self.assertTrue(supervisor.is_running)
 
 	def test_start_clears_adopted_state(self) -> None:
-		supervisor = LiteRTServerSupervisor()
-		supervisor._adopted = True  # pylint: disable=protected-access
+		mock_native = mock.MagicMock()
+		mock_native.status.return_value = types.SimpleNamespace(
+			state="ready_owned", is_ready=True, is_running=True, is_adopted=False, pid=123,
+		)
+		supervisor = LiteRTServerSupervisor(native_supervisor=mock_native)
 		supervisor._server_dir = mock.MagicMock(  # pylint: disable=protected-access
 			return_value=Path("/fake/runtime"),
 		)
@@ -660,9 +674,6 @@ class AdoptStateTests(unittest.TestCase):
 			server_module, "_resolve_litert_python",
 			return_value=Path("/fake/runtime/python.exe"),
 		), mock.patch.object(
-			server_module, "_run_litert_cli",
-			return_value=mock.MagicMock(pid=123, poll=lambda: None),
-		), mock.patch.object(
 			server_module, "_current_server_config", return_value={},
 		), mock.patch.object(
 			server_module, "_default_litert_dir",
@@ -670,19 +681,18 @@ class AdoptStateTests(unittest.TestCase):
 		):
 			supervisor.start()
 
+		mock_native.ensure_ready.assert_called_once()
 		self.assertTrue(supervisor.is_running)
 		self.assertFalse(supervisor.is_adopted)
 
 	def test_stop_clears_adopted_state(self) -> None:
-		supervisor = LiteRTServerSupervisor()
-		process = mock.MagicMock(pid=123)
-		process.poll.return_value = None
-		process.wait.return_value = 0
-		supervisor._process = process  # pylint: disable=protected-access
-		supervisor._adopted = True  # pylint: disable=protected-access
-
+		mock_native = mock.MagicMock()
+		mock_native.status.return_value = types.SimpleNamespace(
+			state="stopped", is_ready=False, is_running=False, is_adopted=False, pid=None,
+		)
+		supervisor = LiteRTServerSupervisor(native_supervisor=mock_native)
 		supervisor.stop()
-
+		mock_native.stop.assert_called_once()
 		self.assertFalse(supervisor.is_adopted)
 		self.assertFalse(supervisor.is_running)
 

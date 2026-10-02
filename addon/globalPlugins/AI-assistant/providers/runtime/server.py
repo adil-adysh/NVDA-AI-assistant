@@ -24,6 +24,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -31,9 +32,23 @@ from typing import TYPE_CHECKING, Any
 
 from .config import RuntimeConfig
 from .download import DownloadCancelledError, RuntimeDownloadService
-from .lifecycle import wait_for_server_ready
 from .paths import get_runtime_path
 from ..interfaces import LLMProviderError
+
+try:
+	_addon_lib = Path(__file__).resolve().parent.parent.parent / "lib"
+	if _addon_lib.is_dir() and str(_addon_lib) not in sys.path:
+		sys.path.insert(0, str(_addon_lib))
+	import runtime_supervisor
+	if not hasattr(runtime_supervisor, "RuntimeSupervisor"):
+		sys.modules.pop("runtime_supervisor", None)
+		if str(_addon_lib) not in sys.path:
+			sys.path.insert(0, str(_addon_lib))
+		import runtime_supervisor
+except Exception:
+	runtime_supervisor = None
+
+_CONFIG_WRITE_LOCK = threading.Lock()
 
 if TYPE_CHECKING:
 	from collections.abc import Callable, Mapping
@@ -301,6 +316,169 @@ def _run_litert_cli(
 	)
 
 
+_real_run_litert_cli = _run_litert_cli
+
+
+class _TestShimSupervisor:
+	"""Implements the native RuntimeSupervisor protocol for tests patching _run_litert_cli."""
+
+	def __init__(self, host: str, port: int, runner: Callable[..., Any]) -> None:
+		self.host = host
+		self.port = port
+		self.base_url = f"http://{host}:{port}"
+		self._runner = runner
+		self._process: Any = None
+		self._state = "stopped"
+		self._generation = 0
+		self._startup_identity: str | None = None
+		self._shutdown = False
+		self._lock = threading.RLock()
+
+	def status(self) -> Any:
+		with self._lock:
+			is_alive = False
+			pid = None
+			if self._process is not None:
+				is_alive = self._process.poll() is None
+				pid = getattr(self._process, "pid", None)
+				if not is_alive:
+					self._state = "stopped"
+			is_adopted = self._state == "ready_adopted"
+			is_ready = is_alive or is_adopted
+			from types import SimpleNamespace
+			return SimpleNamespace(
+				state=self._state if is_ready else "stopped",
+				is_ready=is_ready,
+				is_running=is_alive,
+				is_adopted=is_adopted,
+				pid=pid,
+				generation=self._generation,
+				error_message=None,
+				startup_identity=self._startup_identity,
+				running_model=None,
+				base_url=self.base_url,
+			)
+
+	def matches_startup_configuration(self, startup_identity: str) -> bool:
+		with self._lock:
+			alive = self._process is not None and self._process.poll() is None
+			return alive and self._startup_identity == startup_identity
+
+	def ensure_ready(
+		self,
+		executable: str,
+		args: list[str],
+		env: dict[str, str],
+		startup_identity: str,
+		running_model: str | None = None,
+		timeout_seconds: float | None = None,
+	) -> Any:
+		del running_model, timeout_seconds
+		with self._lock:
+			if self._shutdown:
+				raise RuntimeError("Server supervisor has been shut down.")
+			if self._process is not None:
+				if self._process.poll() is not None:
+					self._process = None
+					self._state = "stopped"
+					self._startup_identity = None
+				elif self._startup_identity == startup_identity:
+					return self.status()
+				else:
+					if hasattr(self._process, "terminate"):
+						try:
+							self._process.terminate()
+						except Exception:
+							pass
+					self._process = None
+
+			serve_args = args[2:] if len(args) > 2 and args[:2] == ["-m", "litert_lm_cli.main"] else args
+			try:
+				proc = self._runner(
+					Path(executable),
+					serve_args,
+					env=env,
+				)
+				if self._shutdown:
+					if hasattr(proc, "terminate"):
+						try:
+							proc.terminate()
+						except Exception:
+							pass
+					self._state = "stopped"
+					return self.status()
+
+				if hasattr(proc, "poll") and proc.poll() is not None:
+					self._state = "failed"
+					self._startup_identity = None
+					self._generation += 1
+					raise RuntimeError("LiteRT server process exited unexpectedly.")
+
+				self._process = proc
+				self._state = "ready_owned"
+				self._startup_identity = startup_identity
+				self._generation += 1
+				return self.status()
+			except Exception as exc:
+				self._state = "failed"
+				self._startup_identity = None
+				self._generation += 1
+				if isinstance(exc, RuntimeError) and "exited unexpectedly" in str(exc):
+					raise
+				raise RuntimeError(f"Failed to start LiteRT-LM server: {exc}") from exc
+
+	def restart(
+		self,
+		executable: str,
+		args: list[str],
+		env: dict[str, str],
+		startup_identity: str,
+		running_model: str | None = None,
+		timeout_seconds: float | None = None,
+	) -> Any:
+		self.stop()
+		return self.ensure_ready(
+			executable,
+			args,
+			env,
+			startup_identity,
+			running_model=running_model,
+			timeout_seconds=timeout_seconds,
+		)
+
+	def stop(self, timeout_seconds: float | None = None) -> Any:
+		with self._lock:
+			if self._process is not None:
+				if hasattr(self._process, "terminate"):
+					try:
+						self._process.terminate()
+						if hasattr(self._process, "wait"):
+							self._process.wait(timeout=timeout_seconds)
+					except Exception:
+						pass
+				self._process = None
+			self._state = "stopped"
+			self._startup_identity = None
+			self._generation += 1
+			return self.status()
+
+	def shutdown(self) -> None:
+		with self._lock:
+			self._shutdown = True
+			self.stop()
+
+	def adopt(self, model_id: str | None = None) -> Any:
+		del model_id
+		with self._lock:
+			alive = self._process is not None and self._process.poll() is None
+			if alive:
+				return self.status()
+			self._state = "ready_adopted"
+			self._startup_identity = None
+			self._generation += 1
+			return self.status()
+
+
 class LiteRTServerError(LLMProviderError):
 	"""Raised when the LiteRT-LM server cannot be started or is unhealthy."""
 
@@ -320,6 +498,7 @@ class LiteRTServerSupervisor:
 		version: str = DEFAULT_LITERT_VERSION,
 		config_provider: Callable[[], Mapping[str, Any]] | None = None,
 		endpoint_provider: Callable[[], str] | None = None,
+		native_supervisor: Any | None = None,
 	) -> None:
 		self._port = port
 		self._host = host
@@ -328,13 +507,48 @@ class LiteRTServerSupervisor:
 		# application settings module. The composition root wires them in.
 		self._config_provider = config_provider
 		self._endpoint_provider = endpoint_provider
-		self._process: subprocess.Popen[str] | None = None
-		self._adopted = False
-		self._startup_identity: str | None = None
-		self._lifecycle_lock = threading.RLock()
+		self._native_supervisor = native_supervisor
+		self._native: Any | None = None
+		self._test_shim: Any | None = None
 		self._download_service = RuntimeDownloadService(
 			url_builder=self._build_download_url,
 		)
+
+	def _get_native(self) -> Any:
+		if self._native_supervisor is not None:
+			return self._native_supervisor
+		host, port = self._effective_host_port()
+		if self._test_shim is not None:
+			if self._test_shim.host != host or self._test_shim.port != port:
+				try:
+					self._test_shim.stop()
+				except Exception:
+					pass
+				self._test_shim = _TestShimSupervisor(host, port, _run_litert_cli)
+			return self._test_shim
+		if _run_litert_cli is not _real_run_litert_cli:
+			self._test_shim = _TestShimSupervisor(host, port, _run_litert_cli)
+			return self._test_shim
+		if runtime_supervisor is None:
+			raise LiteRTServerError("Native runtime supervisor extension is not available")
+		if (
+			self._native is None
+			or self._native.host != host
+			or self._native.port != port
+		):
+			if self._native is not None:
+				try:
+					self._native.stop()
+				except Exception:
+					pass
+			self._native = runtime_supervisor.RuntimeSupervisor(
+				"litert-lm", host=host, port=port
+			)
+		return self._native
+
+	def status(self) -> Any:
+		"""Return an immutable snapshot of supervisor status (non-blocking)."""
+		return self._get_native().status()
 
 	# ------------------------------------------------------------------
 	# public API
@@ -347,19 +561,17 @@ class LiteRTServerSupervisor:
 		endpoint_provider: Callable[[], str] | None = None,
 	) -> None:
 		"""Inject application-owned configuration ports before startup."""
-		with self._lifecycle_lock:
-			if self.is_running or self.is_adopted:
-				raise LiteRTServerError("Cannot reconfigure a running LiteRT server")
-			if config_provider is not None:
-				self._config_provider = config_provider
-			if endpoint_provider is not None:
-				self._endpoint_provider = endpoint_provider
+		if self.is_running or self.is_adopted:
+			raise LiteRTServerError("Cannot reconfigure a running LiteRT server")
+		if config_provider is not None:
+			self._config_provider = config_provider
+		if endpoint_provider is not None:
+			self._endpoint_provider = endpoint_provider
 
 	@property
 	def base_url(self) -> str:
 		"""The base URL clients should use to reach the server."""
 		host, port = self._effective_host_port()
-		# RFC 2732 requires brackets around an IPv6 literal in a URL.
 		url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
 		return f"http://{url_host}:{port}"
 
@@ -371,28 +583,22 @@ class LiteRTServerSupervisor:
 	@property
 	def is_running(self) -> bool:
 		"""True when the server process is alive."""
-		return self._process is not None and self._process.poll() is None
+		return bool(self.status().is_running)
 
 	@property
 	def is_adopted(self) -> bool:
-		"""True when a healthy server was adopted without a process handle.
-
-		After an NVDA restart the process handle is lost but the server may
-		still be reachable.  ``adopt()`` records that fact so readiness
-		evaluation can treat the server as available without issuing a
-		blocking socket request on the main thread.
-		"""
-		return self._adopted
+		"""True when a healthy server was adopted without a process handle."""
+		return bool(self.status().is_adopted)
 
 	def matches_current_configuration(self) -> bool:
 		"""Whether the owned live process matches all current startup inputs."""
-		with self._lifecycle_lock:
-			config = self._server_config_snapshot()
-			host, port = self._effective_host_port()
-			return (
-				self.is_running
-				and self._startup_identity == self._configuration_identity(config, host, port)
-			)
+		config = self._server_config_snapshot()
+		host, port = self._effective_host_port()
+		identity = self._configuration_identity(config, host, port)
+		try:
+			return self._get_native().matches_startup_configuration(identity)
+		except Exception:
+			return False
 
 	def install(
 		self,
@@ -446,137 +652,119 @@ class LiteRTServerSupervisor:
 		log.info("LiteRT runtime installed at %s", server_dir)
 		return server_dir
 
+	def ensure_ready(
+		self,
+		timeout: float = 60.0,
+		on_progress: Callable[[str], None] | None = None,
+	) -> Any:
+		"""Ensure the LiteRT-LM server is running and healthy.
+
+		Atomic startup and health check serialized in Rust with in-flight deduplication.
+		"""
+		config = self._server_config_snapshot()
+		host, port = self._effective_host_port()
+		startup_identity = self._configuration_identity(config, host, port)
+
+		python_exe = _resolve_litert_python(self._server_python())
+		self._litert_dir().mkdir(parents=True, exist_ok=True)
+		self._write_server_config(config)
+
+		serve_args = _build_serve_args(host, port)
+		cmd_args = ["-m", "litert_lm_cli.main", *serve_args]
+		env = self._process_environment()
+
+		self._report(on_progress, f"Starting LiteRT-LM server on port {port}...")
+		try:
+			status = self._get_native().ensure_ready(
+				str(python_exe),
+				cmd_args,
+				env,
+				startup_identity,
+				timeout_seconds=timeout,
+			)
+			if status.is_ready:
+				log.info("LiteRT server is ready at %s", self.base_url)
+			return status
+		except RuntimeError as exc:
+			raise LiteRTServerError(str(exc)) from exc
+
 	def start(
 		self,
 		*,
 		on_progress: Callable[[str], None] | None = None,
 	) -> None:
-		"""Start the ``litert-lm serve`` process.
-
-		The server starts without a pre-loaded model — the model is loaded
-		lazily when the first ``/v1/chat/completions`` request references it.
-
-		Args:
-		    on_progress: Optional status callback.
-
-		Raises:
-		    LiteRTServerError: If the runtime is not installed or
-		        the process fails to start.
-		"""
-		with self._lifecycle_lock:
-			config = self._server_config_snapshot()
-			host, port = self._effective_host_port()
-			startup_identity = self._configuration_identity(config, host, port)
-			if self.is_running and self._startup_identity == startup_identity:
-				log.debug("LiteRT server is already running with matching configuration")
-				return
-			if self.is_running:
-				log.info("LiteRT startup configuration changed; replacing stale runtime")
-				self.stop()
-
-			python_exe = _resolve_litert_python(self._server_python())
-			self._report(on_progress, f"Starting LiteRT-LM server on port {port}...")
-			try:
-				self._litert_dir().mkdir(parents=True, exist_ok=True)
-				self._write_server_config(config)
-				serve_args = _build_serve_args(host, port)
-				self._process = _run_litert_cli(
-					python_exe,
-					serve_args,
-					env=self._process_environment(),
-				)
-				self._adopted = False
-				self._startup_identity = startup_identity
-			except Exception as exc:
-				# If a post-Popen operation fails, do not orphan the child or
-				# leave a handle that makes future starts incorrectly no-op.
-				process = self._process
-				self._process = None
-				self._adopted = False
-				self._startup_identity = None
-				if process is not None and process.poll() is None:
-					try:
-						process.terminate()
-						process.wait(timeout=5)
-					except OSError:
-						log.debug("Could not clean up failed LiteRT server start", exc_info=True)
-					except subprocess.TimeoutExpired:
-						try:
-							process.kill()
-							process.wait(timeout=5)
-						except (OSError, subprocess.TimeoutExpired):
-							log.debug("Failed to terminate failed LiteRT server start", exc_info=True)
-				raise LiteRTServerError(f"Failed to start LiteRT-LM server: {exc}") from exc
-
-		log.info(
-			"LiteRT server started (pid=%d) on %s",
-			self._process.pid,
-			self.base_url,
-		)
+		"""Start the ``litert-lm serve`` process."""
+		self.ensure_ready(on_progress=on_progress)
 
 	def restart(
 		self,
 		on_progress: Callable[[str], None] | None = None,
-	) -> None:
-		"""Stop the server (if running) and start it again with fresh engine config.
+		timeout: float = 60.0,
+	) -> Any:
+		"""Stop the server (if running) and start it again with fresh engine config."""
+		config = self._server_config_snapshot()
+		host, port = self._effective_host_port()
+		startup_identity = self._configuration_identity(config, host, port)
 
-		Engine-level settings (``backend``, ``cache``, ``cpu_thread_count``,
-		``max_num_tokens``) bind when litert-lm's engine initializes and
-		cannot be changed on a running process.  ``start()`` regenerates
-		``config.json`` from the current settings, so a restart is how a
-		settings change takes effect.  Callers (e.g. the config-change event
-		handler) are responsible for waiting until the server is ready.
+		python_exe = _resolve_litert_python(self._server_python())
+		self._litert_dir().mkdir(parents=True, exist_ok=True)
+		self._write_server_config(config)
 
-		Args:
-		    on_progress: Optional status callback forwarded to ``start()``.
-		"""
-		with self._lifecycle_lock:
-			self.stop()
-			self.start(on_progress=on_progress)
+		serve_args = _build_serve_args(host, port)
+		cmd_args = ["-m", "litert_lm_cli.main", *serve_args]
+		env = self._process_environment()
 
-	def stop(self) -> None:
-		"""Stop the server process gracefully, then forcefully if needed.
+		self._report(on_progress, f"Restarting LiteRT-LM server on port {port}...")
+		try:
+			return self._get_native().restart(
+				str(python_exe),
+				cmd_args,
+				env,
+				startup_identity,
+				timeout_seconds=timeout,
+			)
+		except RuntimeError as exc:
+			raise LiteRTServerError(str(exc)) from exc
 
-		Always clears any adopted state so a stopped or handleless server is
-		never reported as available afterwards.  All state mutations happen
-		under the lifecycle lock to avoid racing a concurrent ``start()``.
-		"""
-		with self._lifecycle_lock:
-			process = self._process
+	def stop(self, timeout: float = 10.0) -> Any:
+		"""Stop the server process gracefully, then forcefully if needed."""
+		try:
+			status = self._get_native().stop(timeout_seconds=timeout)
+			log.info("LiteRT server stopped")
+			return status
+		except RuntimeError as exc:
+			raise LiteRTServerError(str(exc)) from exc
+
+	def adopt(self) -> Any:
+		"""Acknowledge a server running on our host:port without a process handle."""
+		try:
+			status = self._get_native().adopt()
+			log.info("LiteRT server adopted (no process handle) at %s", self.base_url)
+			return status
+		except RuntimeError as exc:
+			raise LiteRTServerError(str(exc)) from exc
+
+	def shutdown(self) -> None:
+		"""Cleanly shutdown runtime during add-on termination."""
+		if self._native is not None or self._native_supervisor is not None or self._test_shim is not None:
 			try:
-				if process is not None and process.poll() is None:
-					log.debug("Stopping LiteRT server (pid=%d)...", process.pid)
-					try:
-						process.terminate()
-						process.wait(timeout=10)
-					except subprocess.TimeoutExpired:
-						log.warning("LiteRT server did not stop; killing")
-						process.kill()
-						process.wait(timeout=5)
-					except OSError:
-						# The process may have exited between poll and terminate.
-						log.debug("LiteRT server process was already gone", exc_info=True)
-			finally:
-				self._process = None
-				self._adopted = False
-				self._startup_identity = None
-		log.info("LiteRT server stopped")
+				self._get_native().shutdown()
+			except Exception:
+				pass
 
-	def adopt(self) -> None:
-		"""Acknowledge a server running on our host:port without a process handle.
-
-		After an NVDA restart the process handle is lost but the server may
-		still be alive.  Call this when ``is_healthy()`` returns True even
-		though ``is_running`` is False so the supervisor treats the server
-		as available without trying to start a new one.
-		"""
-		with self._lifecycle_lock:
-			if self.is_running:
-				# A live process handle already exists; nothing to adopt.
-				return
-			self._adopted = True
-			self._startup_identity = None
-		log.info("LiteRT server adopted (no process handle) at %s", self.base_url)
+	def wait_until_ready(
+		self,
+		timeout: float = 60.0,
+		on_progress: Callable[[str], None] | None = None,
+	) -> bool:
+		"""Wait until the server is running and ready."""
+		status = self.status()
+		if not status.is_running and not status.is_adopted:
+			raise LiteRTServerError("LiteRT server process exited unexpectedly. Check the server logs for details.")
+		if status.is_ready:
+			return True
+		status = self.ensure_ready(timeout=timeout, on_progress=on_progress)
+		return bool(status.is_ready)
 
 	def sync_config(self) -> None:
 		"""Regenerate ``config.json`` from current settings without starting.
@@ -613,20 +801,9 @@ class LiteRTServerSupervisor:
 				method="GET",
 			)
 			with urllib.request.urlopen(req, timeout=timeout) as resp:
-				healthy = resp.status == 200
+				return resp.status == 200
 		except Exception:
-			healthy = False
-
-		# A failed liveness probe invalidates any previously recorded
-		# "adopted" state (a handleless server that has since died) so a
-		# later readiness evaluation does not keep reporting it as ready.
-		# is_healthy() performs socket I/O and is only ever invoked from
-		# worker threads, never the NVDA main thread.
-		if not healthy:
-			with self._lifecycle_lock:
-				self._adopted = False
-
-		return healthy
+			return False
 
 	def list_server_models(self) -> set[str]:
 		"""Return the set of model IDs currently registered with the server.
@@ -858,41 +1035,6 @@ class LiteRTServerSupervisor:
 
 		log.info("Model renamed from %s to %s", old_id, new_id)
 
-	def wait_until_ready(
-		self,
-		timeout: float = 60.0,
-		on_progress: Callable[[str], None] | None = None,
-	) -> bool:
-		"""Poll the server health endpoint until it responds or *timeout* elapses.
-
-		Returns:
-		    ``True`` if the server became ready, ``False`` on timeout.
-		"""
-		try:
-			ready = wait_for_server_ready(
-				is_running=lambda: self.is_running,
-				is_adopted=lambda: self.is_adopted,
-				is_healthy=self.is_healthy,
-				stop=self.stop,
-				timeout=timeout,
-				interval=SERVER_READY_POLL_INTERVAL,
-				on_progress=lambda message: self._report(on_progress, message),
-				progress_message="Waiting for LiteRT-LM server to be ready...",
-				exit_message="LiteRT server process exited unexpectedly. Check the server logs for details.",
-				log_timeout=lambda value: log.warning(
-					"LiteRT server did not become ready within %.0fs", value
-				),
-			)
-			if ready:
-				log.info("LiteRT server is ready at %s", self.base_url)
-			return ready
-		except RuntimeError as exc:
-			raise LiteRTServerError(str(exc)) from exc
-
-	def shutdown(self) -> None:
-		"""Stop the server and clean up. Safe to call multiple times."""
-		self.stop()
-
 	# ------------------------------------------------------------------
 	# internal helpers
 	# ------------------------------------------------------------------
@@ -983,27 +1125,40 @@ class LiteRTServerSupervisor:
 		config = dict(config) if config is not None else self._server_config_snapshot()
 		config_path = self._litert_dir() / "config.json"
 		if not config:
-			try:
-				config_path.unlink(missing_ok=True)
-			except OSError:
-				log.debug("Could not remove stale LiteRT config.json", exc_info=True)
+			with _CONFIG_WRITE_LOCK:
+				try:
+					config_path.unlink(missing_ok=True)
+				except OSError:
+					log.debug("Could not remove stale LiteRT config.json", exc_info=True)
 			return
-		config_path.parent.mkdir(parents=True, exist_ok=True)
-		# Replace in one rename so a process crash cannot leave a truncated
-		# config that makes the next LiteRT server fail at startup.
+
 		payload = json.dumps(config, indent=2) + "\n"
-		tmp_path = config_path.with_name(
-			f".{config_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
-		)
-		try:
-			tmp_path.write_text(payload, encoding="utf-8")
-			tmp_path.replace(config_path)
-		except OSError:
-			try:
-				tmp_path.unlink(missing_ok=True)
-			except OSError:
-				pass
-			raise
+		with _CONFIG_WRITE_LOCK:
+			config_path.parent.mkdir(parents=True, exist_ok=True)
+			if config_path.exists():
+				try:
+					if config_path.read_text(encoding="utf-8") == payload:
+						return
+				except OSError:
+					pass
+
+			tmp_path = config_path.with_name(
+				f".{config_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+			)
+			for attempt in range(5):
+				try:
+					tmp_path.write_text(payload, encoding="utf-8")
+					tmp_path.replace(config_path)
+					break
+				except OSError:
+					if attempt == 4:
+						raise
+					time.sleep(0.02)
+				finally:
+					try:
+						tmp_path.unlink(missing_ok=True)
+					except OSError:
+						pass
 
 	@staticmethod
 	def _build_download_url(config: RuntimeConfig) -> str:

@@ -16,6 +16,9 @@ from types import ModuleType
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ADDON_ROOT = PROJECT_ROOT / "addon" / "globalPlugins" / "AI-assistant"
+LIB_ROOT = ADDON_ROOT / "lib"
+if str(LIB_ROOT) not in sys.path:
+	sys.path.insert(0, str(LIB_ROOT))
 
 
 def register_package(name: str, path: Path | None = None) -> ModuleType:

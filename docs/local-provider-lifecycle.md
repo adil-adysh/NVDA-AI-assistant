@@ -32,29 +32,28 @@ A live process whose snapshot differs is stopped and replaced before use.
 The configuration is snapshotted once and the exact snapshot is written before
 spawn, preventing mutable settings from changing the meaning of a cache entry.
 
-## State transitions
+## State transitions and runtime supervisor ownership
 
-Both supervisors implement these observable states without persisting a state
-enum:
+Both `LiteRTServerSupervisor` and `LlamaServerSupervisor` delegate process
+spawning, monitoring, adoption, health polling, and teardown to the native
+Rust/PyO3 `runtime_supervisor` extension (`RuntimeSupervisor`).
+
+The supervisor core implements an atomic state machine with explicit lifecycle states:
 
 ```text
-STOPPED -> STARTING -> RUNNING -> READY
-              |          |         |
-              +-> FAILED +-> DEAD  +-> STOPPED
+Stopped -> Starting -> ReadyOwned -> Stopping -> Stopped
+   |          |              |
+   |          +-> Failed     +-> Restarting -> Starting
+   |
+   +-> ReadyAdopted -> Stopping -> Stopped
 ```
 
-The lifecycle lock serializes startup and shutdown. A failed spawn never
-publishes a process or startup identity. A readiness timeout stops an owned
-process. An exited process fails `is_running` and cannot satisfy the next
-startup. Shutdown clears process handles, adoption state, and startup identity.
-Persisted provider/model configuration is therefore never equivalent to a live
-runtime cache.
-
-Request cancellation is checked before managed startup begins. Once process
-startup is in progress it is shared lifecycle work rather than request-owned
-work, so cancelling one waiter does not tear down the runtime needed by a later
-request. The lifecycle lock and failure cleanup ensure that cancellation cannot
-leave a half-published `STARTING` entry.
+- **Immutable snapshots**: `supervisor.status()` returns a frozen `RuntimeStatus` snapshot (`state`, `is_ready`, `is_running`, `is_adopted`, `pid`, `generation`, `error_message`, `startup_identity`, `running_model`, `base_url`). Queries are non-blocking and safe to call on any thread (including NVDA's main thread).
+- **Concurrency & in-flight deduplication**: Concurrent `ensure_ready` calls block on a condition variable and converge on a single startup/health-check attempt without spawning duplicate processes or leaking ports.
+- **Generation fencing**: A monotonic generation counter increments on every lifecycle transition, preventing late or stale operation completions from overwriting newer states.
+- **Child-exit detection**: Premature process exits during startup or polling are caught deterministically, transitioning the supervisor to `Failed` or `Stopped` and returning actionable error messages.
+- **Non-blocking GIL**: Long-running process, network, and health operations in Rust release Python's GIL via `py.allow_threads`.
+- **Eliminated Python complexity**: Python-level lifecycle locks (`_litert_readiness_lock`, `_litert_restart_lock`, `_llama_readiness_lock`, `self._lifecycle_lock`) and restart flags (`_litert_restart_pending`) are removed. Python retains high-level policy, configuration interpretation, and async dispatch off the NVDA thread.
 
 ## Configuration classification
 

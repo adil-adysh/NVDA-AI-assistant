@@ -15,6 +15,7 @@ HOST_DESTINATION = ROOT_DIR / "addon" / "globalPlugins" / "AI-assistant" / "ui_h
 MEMORY_ENGINE_DIR = ROOT_DIR / "memory_engine"
 LLM_CLIENT_DIR = ROOT_DIR / "llm_client"
 EMBEDDING_ENGINE_DIR = ROOT_DIR / "embedding_engine"
+RUNTIME_SUPERVISOR_DIR = ROOT_DIR / "runtime_supervisor"
 ADDON_LIB_DIR = ROOT_DIR / "addon" / "globalPlugins" / "AI-assistant" / "lib"
 NPM_EXECUTABLE = "npm.cmd" if os.name == "nt" else "npm"
 
@@ -316,6 +317,69 @@ def install_llm_client_extension(*, release: bool, allow_existing_install: bool 
 	print(f"Copied llm_client extension to {destination_path}")
 
 
+def build_runtime_supervisor(*, release: bool = True) -> None:
+	args = _cargo_build_args(manifest_path=RUNTIME_SUPERVISOR_DIR / "Cargo.toml", release=release)
+
+	print("Building runtime_supervisor:", " ".join(args))
+	env = _filtered_rust_environment()
+	env.setdefault("PYO3_PYTHON", sys.executable)
+	env["PYO3_USE_ABI3_FORWARD_COMPATIBILITY"] = "1"
+	subprocess.run(args, cwd=ROOT_DIR, env=env, check=True)
+
+
+def _compiled_runtime_supervisor_path(*, release: bool) -> Path:
+	profile_dir = "release" if release else "debug"
+	if os.name == "nt":
+		pattern = f"target/**/{profile_dir}/runtime_supervisor.dll"
+	elif sys.platform == "darwin":
+		pattern = f"target/**/{profile_dir}/libruntime_supervisor.dylib"
+	else:
+		pattern = f"target/**/{profile_dir}/libruntime_supervisor.so"
+	candidates = sorted(
+		RUNTIME_SUPERVISOR_DIR.glob(pattern),
+		key=lambda path: path.stat().st_mtime,
+		reverse=True,
+	)
+	if not candidates:
+		raise FileNotFoundError(
+			f"Compiled runtime_supervisor library not found under {RUNTIME_SUPERVISOR_DIR / 'target'} for profile {profile_dir}."
+		)
+	return candidates[0]
+
+
+def _find_existing_runtime_supervisor_extension() -> Path | None:
+	for suffix in EXTENSION_SUFFIXES:
+		matches = list(ADDON_LIB_DIR.glob(f"runtime_supervisor*{suffix}"))
+		if matches:
+			return matches[0]
+	return None
+
+
+def install_runtime_supervisor_extension(*, release: bool, allow_existing_install: bool = False) -> None:
+	try:
+		built_extension = _compiled_runtime_supervisor_path(release=release)
+	except FileNotFoundError:
+		if allow_existing_install:
+			existing_extension = _find_existing_runtime_supervisor_extension()
+			if existing_extension is not None:
+				print(f"Using existing installed runtime_supervisor extension at {existing_extension}")
+				return
+		raise
+
+	ADDON_LIB_DIR.mkdir(parents=True, exist_ok=True)
+	for suffix in EXTENSION_SUFFIXES:
+		for stale_extension in ADDON_LIB_DIR.glob(f"runtime_supervisor*{suffix}"):
+			stale_extension.unlink(missing_ok=True)
+
+	if os.name == "nt":
+		destination_name = "runtime_supervisor.pyd"
+	else:
+		destination_name = built_extension.name.removeprefix("lib")
+	destination_path = ADDON_LIB_DIR / destination_name
+	shutil.copy2(built_extension, destination_path)
+	print(f"Copied runtime_supervisor extension to {destination_path}")
+
+
 def main() -> int:
 	parser = argparse.ArgumentParser(description="Build and install Rust artifacts for the NVDA AI Assistant add-on.")
 	parser.add_argument("--debug", action="store_true", help="Build Rust artifacts using debug mode.")
@@ -329,16 +393,19 @@ def main() -> int:
 			build_memory_engine(release=not args.debug)
 			build_llm_client(release=not args.debug)
 			build_embedding_engine(release=not args.debug)
+			build_runtime_supervisor(release=not args.debug)
 		install_host_binary(allow_existing_install=args.install_only)
 		install_host_assets()
 		install_memory_engine_extension(release=not args.debug, allow_existing_install=args.install_only)
 		install_llm_client_extension(release=not args.debug, allow_existing_install=args.install_only)
 		install_embedding_engine_extension(release=not args.debug, allow_existing_install=args.install_only)
+		install_runtime_supervisor_extension(release=not args.debug, allow_existing_install=args.install_only)
 	except Exception as error:
 		print(f"Rust artifact build failed: {error}")
 		return 1
 
 	return 0
+
 
 if __name__ == "__main__":
 	raise SystemExit(main())

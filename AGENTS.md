@@ -26,6 +26,9 @@ extensions, a Rust/WebView2 UI host, and a Svelte 5 Web UI.
   keep network, model, download, and persistence work off that thread.
 - Protocol changes must keep Python `ui/host_protocol.py`, Rust
   `nvda_ui_host/src/protocol.rs`, and Web UI `protocol-types.ts` aligned.
+- Managed local-runtime lifecycle (`LiteRT-LM` and `llama-server`) is owned
+  authoritatively by the native Rust `runtime_supervisor` PyO3 extension; Python
+  owns high-level model catalog, import policies, and application settings.
 
 ## Validation
 
@@ -44,6 +47,7 @@ extensions, a Rust/WebView2 UI host, and a Svelte 5 Web UI.
   `site_scons/site_tools/NVDATool/addon.py`. An `.nvda-addon` must never contain
   tests, pytest files, fixtures, or Python bytecode.
 - Rust host: `cargo check --manifest-path nvda_ui_host/Cargo.toml`.
+- Rust supervisor: `cargo test --manifest-path runtime_supervisor/Cargo.toml`.
 - Web UI: `npm --prefix nvda_ui_host run build:webui`.
 - Cross-boundary changes: validate the producer and consumer sides together.
 - Build graph: `uv run scons --dry-run`; full package: `uv run scons`.
