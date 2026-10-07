@@ -50,6 +50,10 @@ except (ImportError, ValueError):
 
 from .ipc.security import build_user_only_security_attributes
 from .ipc.transport import NamedPipeServer, PipeDisconnectedError
+from .executors.model_download_job import (
+	execute_model_download_job,
+	execute_runtime_download_job,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +255,7 @@ class WorkerServer:
 					"job.echo",
 					"job.trivial_compute",
 					"job.model_download",
+					"job.runtime_download",
 					"job.inference",
 					"session.ocr",
 					"session.transcription",
@@ -319,6 +324,16 @@ class WorkerServer:
 				self._execute_echo(spec, token)
 			elif spec.job_type == "trivial_compute":
 				self._execute_trivial_compute(spec, token)
+			elif spec.job_type == "model_download":
+				res = execute_model_download_job(
+					spec, token, lambda p: self._emit_event(p.to_dict())
+				)
+				self._emit_event(res.to_dict())
+			elif spec.job_type == "runtime_download":
+				res = execute_runtime_download_job(
+					spec, token, lambda p: self._emit_event(p.to_dict())
+				)
+				self._emit_event(res.to_dict())
 			else:
 				res = JobResult(
 					job_id=spec.job_id,

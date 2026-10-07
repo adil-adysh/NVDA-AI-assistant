@@ -61,8 +61,10 @@ class RuntimeDownloadService:
 	def __init__(
 		self,
 		url_builder: Callable[[RuntimeConfig], str] | None = None,
+		worker_client: Any | None = None,
 	) -> None:
 		self._url_builder = url_builder or _default_url_builder
+		self._worker_client = worker_client
 
 	def is_downloaded(self, runtime: str, version: str) -> bool:
 		"""Check if the runtime is already present and valid."""
@@ -118,6 +120,37 @@ class RuntimeDownloadService:
 			on_progress(f"Downloading {runtime} {version}...")
 
 		download_url = url or self._url_builder(config)
+
+		client = self._worker_client
+		if client is None:
+			try:
+				from ...plugin.worker_supervisor import get_worker_client
+				client = get_worker_client()
+			except Exception:
+				pass
+
+		if client is not None:
+			try:
+				from .download_client import WorkerDownloadClient
+				dl_client = WorkerDownloadClient(client)
+
+				def _on_job_prog(prog: Any) -> None:
+					if on_progress:
+						on_progress(prog.status_message)
+
+				return dl_client.download_runtime(
+					url=download_url,
+					dest_dir=runtime_path,
+					runtime=runtime,
+					version=version,
+					on_progress=_on_job_prog,
+					on_bytes_progress=on_bytes_progress,
+					cancel_event=cancel_event,
+				)
+			except (DownloadCancelledError, RuntimeDownloadError):
+				raise
+			except Exception as exc:
+				log.warning('Worker runtime download failed; falling back to direct download: %s', exc)
 
 		# Download to a temporary file with byte-level progress
 		try:

@@ -10,15 +10,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
+from pathlib import Path
 import threading
+from typing import Any
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from pathlib import Path
 from urllib.parse import quote
-
-import logging
 
 from ..interfaces import ProgressCallback
 from .download import DownloadCancelledError, _download_url_resume
@@ -40,13 +40,16 @@ class ModelDownloadService:
 	Parameters:
 	    cache_dir: Root directory for cached models.  Defaults to
 	        ``%APPDATA%/nvda/AIAssistant/models/litert-lm/``.
+	    worker_client: Optional JobClient for offloading downloads to the Worker.
 	"""
 
 	def __init__(
 		self,
 		cache_dir: str | Path | None = None,
+		worker_client: Any | None = None,
 	) -> None:
 		self._cache_dir = Path(cache_dir) if cache_dir else _default_model_dir()
+		self._worker_client = worker_client
 
 	# ── Public API ──────────────────────────────────────────────────
 
@@ -99,6 +102,39 @@ class ModelDownloadService:
 		if dest.exists():
 			log.info("Model %s already cached at %s", model_name, dest)
 			return dest
+
+		# Try delegating to Worker process if client available
+		client = self._worker_client
+		if client is None:
+			try:
+				from ...plugin.worker_supervisor import get_worker_client
+
+				client = get_worker_client()
+			except Exception:
+				pass
+
+		if client is not None:
+			try:
+				from .download_client import WorkerDownloadClient
+
+				def _on_job_progress(prog: Any) -> None:
+					if on_progress:
+						on_progress(prog.status_message)
+
+				dl_client = WorkerDownloadClient(client)
+				return dl_client.download_model(
+					url=url,
+					dest_path=dest,
+					model_name=model_name,
+					expected_sha256=expected_sha256,
+					on_progress=_on_job_progress,
+					on_bytes_progress=on_bytes_progress,
+					cancel_event=cancel_event,
+				)
+			except (DownloadCancelledError, ModelDownloadError):
+				raise
+			except Exception as exc:
+				log.warning("Worker download failed; attempting direct download fallback: %s", exc)
 
 		dest.parent.mkdir(parents=True, exist_ok=True)
 		part_path = dest.parent / f"{dest.name}.part"
