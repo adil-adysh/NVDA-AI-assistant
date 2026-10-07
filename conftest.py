@@ -16,6 +16,8 @@ import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+	sys.path.insert(0, str(PROJECT_ROOT))
 NVDA_ROOT = PROJECT_ROOT.parent / "nvda"
 NVDA_SOURCE = NVDA_ROOT / "source"
 NVDA_MISC_DEPS = NVDA_ROOT / "miscDeps" / "python"
