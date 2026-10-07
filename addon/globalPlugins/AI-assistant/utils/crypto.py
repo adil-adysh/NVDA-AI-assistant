@@ -16,8 +16,9 @@ import base64
 import ctypes
 import ctypes.wintypes
 from typing import Optional
+import logging
 
-from logHandler import log
+log = logging.getLogger(__name__)
 
 ENCRYPTED_PREFIX = "!!enc:"
 _CRYPTPROTECT_UI_FORBIDDEN = 0x1

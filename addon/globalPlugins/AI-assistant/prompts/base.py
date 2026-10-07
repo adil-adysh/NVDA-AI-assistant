@@ -3,14 +3,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-try:
-	from logHandler import log
-except Exception:
-	import logging
-
-	log = logging.getLogger(__name__)
-
 import jinja2
+import logging
+
+log = logging.getLogger(__name__)
 
 
 TEMPLATE_DIR = Path(__file__).with_name("templates")

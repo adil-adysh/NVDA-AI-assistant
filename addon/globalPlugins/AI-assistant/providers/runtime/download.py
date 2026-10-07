@@ -24,11 +24,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from logHandler import log
+import logging
 
 from ..interfaces import DownloadCancelledError, ProgressCallback
 from .config import RuntimeConfig
 from .paths import get_runtime_path
+
+log = logging.getLogger(__name__)
 
 
 class RuntimeDownloadError(RuntimeError):

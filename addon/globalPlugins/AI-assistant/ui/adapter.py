@@ -5,9 +5,8 @@ import queue
 import threading
 from collections.abc import Callable
 from typing import Any
+import logging
 from uuid import uuid4
-
-from logHandler import log
 
 from ..config.settings import get_image_mime_type
 from ..service.error_presentation import ErrorPresentation, present_error
@@ -21,6 +20,8 @@ from .attachment_context import extract_attachment_context
 from .view_models import ChatWindowViewModel, DisplayResultViewModel
 from .stream_projection import StreamProjection
 from ..utils.markdown import render_markdown_to_html
+
+log = logging.getLogger(__name__)
 
 
 _STOP_WORKER = object()

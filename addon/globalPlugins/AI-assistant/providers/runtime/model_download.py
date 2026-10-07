@@ -18,10 +18,12 @@ from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import quote
 
-from logHandler import log
+import logging
 
 from ..interfaces import ProgressCallback
 from .download import DownloadCancelledError, _download_url_resume
+
+log = logging.getLogger(__name__)
 
 
 class ModelDownloadError(RuntimeError):

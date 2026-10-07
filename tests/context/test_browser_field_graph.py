@@ -6,7 +6,11 @@ import sys
 import types
 import unittest
 
+import pytest
+
 from tests.support import ADDON_ROOT, load_module, register_package
+
+pytestmark = pytest.mark.nvda_integration
 
 ROOT = ADDON_ROOT / "context"
 PACKAGE = "browser_graph_testpkg"
@@ -15,8 +19,11 @@ register_package(f"{PACKAGE}.extractors", ROOT / "extractors")
 
 
 load_module(f"{PACKAGE}.types", ROOT / "types.py")
-parser_module = load_module(f"{PACKAGE}.extractors.browser_field_parser", ROOT / "extractors" / "browser_field_parser.py")
-BrowserFieldParser = parser_module.BrowserFieldParser
+try:
+	parser_module = load_module(f"{PACKAGE}.extractors.browser_field_parser", ROOT / "extractors" / "browser_field_parser.py")
+	BrowserFieldParser = parser_module.BrowserFieldParser
+except ImportError:
+	BrowserFieldParser = None
 navigation_module = load_module(f"{PACKAGE}.navigation", ROOT / "navigation.py")
 types_module = sys.modules[f"{PACKAGE}.types"]
 

@@ -3,15 +3,21 @@ from __future__ import annotations
 
 import unittest
 
-import controlTypes
+import pytest
 
 from tests.support import ADDON_ROOT, load_module, register_package
 
+pytestmark = pytest.mark.nvda_integration
+
+try:
+	import controlTypes
+	Role = controlTypes.Role
+except ImportError:
+	controlTypes = None
+	Role = None
+
 
 MODULE_PATH = ADDON_ROOT / "context" / "extractors" / "browser_field_parser.py"
-
-
-Role = controlTypes.Role
 
 
 def _load_parser():

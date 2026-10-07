@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any, TYPE_CHECKING
 
-import languageHandler
 from . import defaults
 from .state import (
 	ProviderState,
@@ -19,6 +19,19 @@ from .provider_specs import get_provider_config_spec, get_provider_ids
 
 if TYPE_CHECKING:
 	from ..providers.config import OpenAICompatConfig, ProviderConfig
+
+
+_language_resolver: Callable[[], str] | None = None
+
+
+def register_language_resolver(resolver: Callable[[], str] | None) -> None:
+	"""Register a callback returning the current UI language.
+
+	In NVDA, this is wired to languageHandler.getLanguage during plugin startup.
+	In standalone pure-Python environments, a custom callback or None can be used.
+	"""
+	global _language_resolver
+	_language_resolver = resolver
 
 
 _config_store = YamlConfigStore()
@@ -193,11 +206,17 @@ def get_language() -> str:
 def get_effective_language() -> str:
 	"""Return the effective prompt language to use for prompt generation.
 
-	If the stored setting is unset or set to the auto default, use NVDA's current UI language.
+	If the stored setting is unset or set to the auto default, query the registered
+	language resolver, falling back to 'en'.
 	"""
 	language_value = get_language()
 	if not language_value or language_value == defaults.DEFAULT_LANGUAGE:
-		language_value = languageHandler.getLanguage() or "en"
+		if _language_resolver is not None:
+			try:
+				return _language_resolver() or "en"
+			except Exception:
+				return "en"
+		return "en"
 	return language_value
 
 

@@ -7,9 +7,11 @@ from dataclasses import dataclass
 import threading
 import uuid
 
-from logHandler import log
+import logging
 
 from .error_presentation import ErrorPresentation, Translator, present_error
+
+log = logging.getLogger(__name__)
 
 try:
 	_ = builtins._

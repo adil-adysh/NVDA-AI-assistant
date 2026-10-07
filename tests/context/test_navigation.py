@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import unittest
 
+import pytest
+
 from tests.support import ADDON_ROOT, load_module, register_package
 
 
@@ -104,6 +106,7 @@ class NavigationTests(unittest.TestCase):
 		self.assertEqual(len(inventory), 2)
 		self.assertTrue(any(target.kind == "section" for target in inventory))
 
+	@pytest.mark.nvda_integration
 	def test_resolution_uses_duplicate_occurrence(self) -> None:
 		items = [_FakeItem("Add to cart"), _FakeItem("Add to cart")]
 		target = next(

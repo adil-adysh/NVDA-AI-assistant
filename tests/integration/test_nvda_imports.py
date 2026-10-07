@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from conftest import NVDA_ROOT, NVDA_SOURCE, PROJECT_ROOT, REAL_NVDA_MODULES
+
+pytestmark = pytest.mark.nvda_integration
 
 
 def _is_below(path: str, root: Path) -> bool:

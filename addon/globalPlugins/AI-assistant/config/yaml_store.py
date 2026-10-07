@@ -6,12 +6,14 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import logging
 import yaml
-from logHandler import log
 
 from ..utils.crypto import decrypt_value, encrypt_value, is_encrypted, is_sensitive_key
 from .defaults import DEFAULT_CONFIG_PATH
 from .store import ConfigStore
+
+log = logging.getLogger(__name__)
 
 
 class YamlConfigStore(ConfigStore):

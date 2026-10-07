@@ -4,7 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from logHandler import log
+import logging
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)

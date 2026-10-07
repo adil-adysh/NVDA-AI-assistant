@@ -4,13 +4,15 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 
-from logHandler import log
+import logging
 
 from ..config.state import ProviderState, subscribe_provider_state_change, unsubscribe_provider_state_change
 from ..core.canonical import Message, Tool
 from ..core.messages import LLMResponse, SummaryResponse
 from .interfaces import LLMProvider, PartialCallback, ProgressCallback, ProviderModelInfo
 from ._provider_runtime import ProviderRuntime
+
+log = logging.getLogger(__name__)
 
 
 class ProviderProxy(LLMProvider):

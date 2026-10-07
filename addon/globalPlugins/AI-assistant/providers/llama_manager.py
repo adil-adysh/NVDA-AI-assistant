@@ -7,7 +7,7 @@ import threading
 import urllib.parse
 from pathlib import Path
 
-from logHandler import log
+import logging
 
 from .interfaces import LLMProviderError
 from .model_import import (
@@ -28,6 +28,8 @@ from .runtime.llama_server import (
 	get_llama_supervisor,
 )
 from .runtime.llama_models import LlamaModelCatalog, LlamaModelRecord, llama_model_capabilities
+
+log = logging.getLogger(__name__)
 
 
 class LlamaCppModelManager(ModelManagerProvider):

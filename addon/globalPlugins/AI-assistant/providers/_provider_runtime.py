@@ -4,13 +4,15 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 
-from logHandler import log
+import logging
 
 from ..config.settings import get_active_provider_config
 from ..core.canonical import Message, Tool
 from ..core.messages import LLMResponse, SummaryResponse
 from .config import ProviderConfig
 from .interfaces import LLMProvider, PartialCallback, ProgressCallback, ProviderModelInfo
+
+log = logging.getLogger(__name__)
 
 
 ProviderResolver = Callable[[], ProviderConfig]

@@ -6,7 +6,7 @@ import threading
 from typing import Any
 from uuid import uuid4
 
-from logHandler import log
+import logging
 
 from ..base import BaseCoordinator
 from ...core.canonical import Message, Tool
@@ -26,6 +26,8 @@ from .projector import project_chat_history, project_chat_history_transport
 from .repository import ConversationRepository, ConversationSummary
 from .session import ConversationSession
 from .transaction import ChatTurnTransaction
+
+log = logging.getLogger(__name__)
 
 
 # ChatCoordinator drives chat synchronously through send()/send_message() and

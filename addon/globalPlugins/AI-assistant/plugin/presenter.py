@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import builtins
 from collections.abc import Callable
+import logging
 from typing import Any, cast
-
-from logHandler import log
 
 from ..config.state import ProviderState
 from ..core.canonical import Message
@@ -51,6 +50,8 @@ from .ui_actions import (
 	NavigateToTargetAction,
 	parse_ui_action,
 )
+
+log = logging.getLogger(__name__)
 
 
 def _translate(message: str) -> str:

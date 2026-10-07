@@ -59,6 +59,16 @@ class AIAssistantApplication:
 	def __init__(self, host: Any) -> None:
 		super().__init__()
 		addonHandler.initTranslation()
+		from ..utils.logger import attach_nvda_log_bridge
+
+		attach_nvda_log_bridge()
+		try:
+			import languageHandler
+			from ..config.settings import register_language_resolver
+
+			register_language_resolver(languageHandler.getLanguage)
+		except Exception:
+			pass
 		log.debug("Browser Assistant plugin initializing")
 		self._host = host
 		self._services = build_plugin_services()
@@ -171,6 +181,12 @@ class AIAssistantApplication:
 			stop_host()
 		except Exception:
 			log.exception("Error stopping UI host during terminate")
+		try:
+			from ..config.settings import register_language_resolver
+
+			register_language_resolver(None)
+		except Exception:
+			log.exception("Error unregistering language resolver during terminate")
 		try:
 			from ..providers.runtime.server import get_litert_supervisor
 			# Process termination may wait for a slow/inference-busy server.

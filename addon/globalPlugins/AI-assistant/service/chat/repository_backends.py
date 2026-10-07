@@ -10,12 +10,14 @@ import tempfile
 import time
 from typing import Any
 
-from logHandler import log
+import logging
 
 from ...config.defaults import DEFAULT_CONFIG_PATH
 from ...core.canonical import Message, Part
 from .repository import ConversationRepository, ConversationSummary
 from .session import ConversationSession
+
+log = logging.getLogger(__name__)
 
 
 def _default_memory_engine_path() -> Path:

@@ -129,6 +129,7 @@ impl SupervisorCore {
                 match process.poll() {
                     Ok(Some(exit_code)) => {
                         state.process = None;
+                        state.generation += 1;
                         if exit_code != 0 {
                             state.state = LifecycleState::Failed;
                             state.last_error = Some(format!(
@@ -164,10 +165,51 @@ impl SupervisorCore {
         timeout: Duration,
     ) -> Result<RuntimeStatus, String> {
         let start_time = Instant::now();
+        const MAX_ATTEMPTS: usize = 5;
+        let mut attempt: usize = 0;
 
         'outer: loop {
+            attempt += 1;
+            if attempt > MAX_ATTEMPTS {
+                return Err(format!(
+                    "{} server exceeded maximum startup retry attempts ({})",
+                    self.runtime_name, MAX_ATTEMPTS
+                ));
+            }
+
             let mut state = self.state.lock().unwrap();
             self.refresh_process_state_locked(&mut state);
+
+            // 0. Stopping or Restarting: wait until supervisor finishes teardown (RS-02, RS-03)
+            if state.state == LifecycleState::Stopping || state.state == LifecycleState::Restarting {
+                let my_gen = state.generation;
+                let remaining = timeout.saturating_sub(start_time.elapsed());
+                if remaining.is_zero() {
+                    return Err(format!(
+                        "Timed out waiting for {} server to finish {}",
+                        self.runtime_name,
+                        if state.state == LifecycleState::Stopping { "stopping" } else { "restarting" }
+                    ));
+                }
+                let (new_state, wait_res) = self
+                    .condvar
+                    .wait_timeout_while(state, remaining, |s| {
+                        (s.state == LifecycleState::Stopping || s.state == LifecycleState::Restarting)
+                            && s.generation == my_gen
+                    })
+                    .unwrap();
+                state = new_state;
+                if wait_res.timed_out()
+                    && (state.state == LifecycleState::Stopping || state.state == LifecycleState::Restarting)
+                {
+                    return Err(format!(
+                        "Timed out waiting for {} server to complete {}",
+                        self.runtime_name,
+                        if state.state == LifecycleState::Stopping { "teardown" } else { "restart" }
+                    ));
+                }
+                continue 'outer;
+            }
 
             // 1. ReadyOwned matching current configuration
             if state.state == LifecycleState::ReadyOwned {
@@ -220,52 +262,59 @@ impl SupervisorCore {
                 continue 'outer;
             }
 
-            // 3. In-flight Starting: deduplicate if matching, supersede if changed
+            // 3. In-flight Starting: wait on condvar regardless of config to eliminate livelock (RS-04)
             if state.state == LifecycleState::Starting {
-                if let Some(ref active) = state.active_config {
-                    if active.startup_identity == startup_identity {
-                        // Same config is already starting; wait on condvar
-                        let my_gen = state.generation;
-                        let remaining = timeout.saturating_sub(start_time.elapsed());
-                        if remaining.is_zero() {
-                            return Err(format!(
-                                "{} server readiness timed out",
-                                self.runtime_name
-                            ));
-                        }
-                        let (new_state, _) = self
-                            .condvar
-                            .wait_timeout_while(state, remaining, |s| {
-                                s.state == LifecycleState::Starting && s.generation == my_gen
-                            })
-                            .unwrap();
-                        state = new_state;
-                        if state.state == LifecycleState::ReadyOwned
-                            || state.state == LifecycleState::ReadyAdopted
-                        {
-                            let pid = state.process.as_ref().map(|p| p.pid());
-                            return Ok(RuntimeStatus::new(
-                                state.state,
-                                pid,
-                                state.generation,
-                                state.last_error.clone(),
-                                state.startup_identity.clone(),
-                                state.running_model.clone(),
-                                self.base_url.clone(),
-                            ));
-                        } else if state.state == LifecycleState::Failed {
-                            return Err(state.last_error.clone().unwrap_or_else(|| {
-                                format!("{} server failed to start", self.runtime_name)
-                            }));
-                        }
-                        continue 'outer;
+                let my_gen = state.generation;
+                let is_same_config = state
+                    .active_config
+                    .as_ref()
+                    .map(|active| active.startup_identity == startup_identity)
+                    .unwrap_or(false);
+
+                let remaining = timeout.saturating_sub(start_time.elapsed());
+                if remaining.is_zero() {
+                    return Err(format!(
+                        "{} server readiness timed out waiting for in-flight startup",
+                        self.runtime_name
+                    ));
+                }
+                let (new_state, wait_res) = self
+                    .condvar
+                    .wait_timeout_while(state, remaining, |s| {
+                        s.state == LifecycleState::Starting && s.generation == my_gen
+                    })
+                    .unwrap();
+                state = new_state;
+
+                if wait_res.timed_out() && state.state == LifecycleState::Starting {
+                    return Err(format!(
+                        "{} server readiness timed out waiting for in-flight startup",
+                        self.runtime_name
+                    ));
+                }
+
+                if is_same_config {
+                    if state.state == LifecycleState::ReadyOwned
+                        || state.state == LifecycleState::ReadyAdopted
+                    {
+                        let pid = state.process.as_ref().map(|p| p.pid());
+                        return Ok(RuntimeStatus::new(
+                            state.state,
+                            pid,
+                            state.generation,
+                            state.last_error.clone(),
+                            state.startup_identity.clone(),
+                            state.running_model.clone(),
+                            self.base_url.clone(),
+                        ));
+                    } else if state.state == LifecycleState::Failed {
+                        return Err(state.last_error.clone().unwrap_or_else(|| {
+                            format!("{} server failed to start", self.runtime_name)
+                        }));
                     }
                 }
-                // Config differs while starting: supersede current startup
-                state.generation += 1;
-                if let Some(mut old_proc) = state.process.take() {
-                    let _ = old_proc.terminate();
-                }
+                // Differing config or cancelled startup: re-evaluate on next iteration
+                continue 'outer;
             }
 
             // 4. Stopped or Failed: begin transition to Starting under lock
@@ -321,11 +370,15 @@ impl SupervisorCore {
                 {
                     return Err(format!("{} server startup was stopped", self.runtime_name));
                 }
+                drop(state);
+                let backoff = Duration::from_millis(50 * (1 << (attempt - 1).min(4)) as u64);
+                std::thread::sleep(backoff);
                 continue 'outer;
             }
 
             match spawn_result {
                 Err(err) => {
+                    state.generation += 1; // RS-01: Advance epoch on spawn error
                     state.state = LifecycleState::Failed;
                     state.last_error = Some(err.clone());
                     self.condvar.notify_all();
@@ -358,6 +411,7 @@ impl SupervisorCore {
                     if let Some(ref mut proc) = s.process {
                         if let Ok(Some(code)) = proc.poll() {
                             s.process = None;
+                            s.generation += 1; // RS-01: Advance epoch on poll crash
                             s.state = LifecycleState::Failed;
                             let err_msg = format!(
                                 "{} server process exited unexpectedly with code {}",
@@ -405,6 +459,7 @@ impl SupervisorCore {
             // Readiness timeout expired - check exit one last time before declaring timeout
             let mut s = self.state.lock().unwrap();
             if s.generation == my_gen {
+                s.generation += 1; // RS-01: Advance epoch on startup timeout
                 if let Some(mut proc) = s.process.take() {
                     if let Ok(Some(code)) = proc.poll() {
                         s.state = LifecycleState::Failed;
@@ -445,16 +500,95 @@ impl SupervisorCore {
         running_model: Option<&str>,
         timeout: Duration,
     ) -> Result<RuntimeStatus, String> {
-        let mut state = self.state.lock().unwrap();
-        state.generation += 1;
-        state.state = LifecycleState::Restarting;
-        if let Some(mut proc) = state.process.take() {
+        let start_time = Instant::now();
+
+        // 1. Enter Restarting state under lock
+        let old_proc = {
+            let mut state = self.state.lock().unwrap();
+            state.generation += 1;
+            state.state = LifecycleState::Restarting;
+            state.startup_identity = None;
+            state.running_model = None;
+            state.active_config = None;
+            state.last_error = None;
+            let proc = state.process.take();
+            self.condvar.notify_all();
+            proc
+        };
+
+        // 2. Await previous process termination outside lock
+        if let Some(mut proc) = old_proc {
             let _ = proc.terminate();
+            let drain_timeout =
+                Duration::from_secs(5).min(timeout.saturating_sub(start_time.elapsed()));
+            match proc.wait_timeout(drain_timeout) {
+                Ok(Some(_exit_code)) => {
+                    // Process terminated cleanly
+                }
+                Ok(None) => {
+                    let mut state = self.state.lock().unwrap();
+                    state.generation += 1;
+                    state.state = LifecycleState::Failed;
+                    let err_msg = format!(
+                        "Existing {} server process failed to terminate within {:?}",
+                        self.runtime_name, drain_timeout
+                    );
+                    state.last_error = Some(err_msg.clone());
+                    self.condvar.notify_all();
+                    return Err(err_msg);
+                }
+                Err(e) => {
+                    let mut state = self.state.lock().unwrap();
+                    state.generation += 1;
+                    state.state = LifecycleState::Failed;
+                    let err_msg = format!(
+                        "Error awaiting termination of {} server process: {}",
+                        self.runtime_name, e
+                    );
+                    state.last_error = Some(err_msg.clone());
+                    self.condvar.notify_all();
+                    return Err(err_msg);
+                }
+            }
         }
-        state.startup_identity = None;
-        state.running_model = None;
-        self.condvar.notify_all();
-        drop(state);
+
+        // 3. Port Quiescence: verify endpoint is released before spawning replacement
+        let remaining_before_quiesce = timeout.saturating_sub(start_time.elapsed());
+        let quiescence_limit = Duration::from_millis(200).min(remaining_before_quiesce / 4);
+        let quiescence_deadline = Instant::now() + quiescence_limit;
+
+        while Instant::now() < quiescence_deadline {
+            if !self
+                .health_checker
+                .check_health(&self.base_url, Duration::from_millis(50))
+            {
+                // Port is released and quiescent
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+
+        // 4. Transition to Stopped under lock and notify condvar
+        {
+            let mut state = self.state.lock().unwrap();
+            state.state = LifecycleState::Stopped;
+            self.condvar.notify_all();
+        }
+
+        // 5. Calculate remaining budget and launch replacement
+        let remaining_timeout = timeout.saturating_sub(start_time.elapsed());
+        if remaining_timeout.is_zero() {
+            let mut state = self.state.lock().unwrap();
+            state.generation += 1;
+            state.state = LifecycleState::Failed;
+            let err_msg = format!(
+                "{} server restart timed out during teardown and port quiescence",
+                self.runtime_name
+            );
+            state.last_error = Some(err_msg.clone());
+            self.condvar.notify_all();
+            return Err(err_msg);
+        }
 
         self.ensure_ready(
             executable,
@@ -462,7 +596,7 @@ impl SupervisorCore {
             env,
             startup_identity,
             running_model,
-            timeout,
+            remaining_timeout,
         )
     }
 
@@ -470,10 +604,12 @@ impl SupervisorCore {
     pub fn stop(&self, timeout: Duration) -> Result<RuntimeStatus, String> {
         let mut state = self.state.lock().unwrap();
         state.generation += 1;
+        let my_gen = state.generation;
         state.state = LifecycleState::Stopping;
         let mut proc_opt = state.process.take();
         state.startup_identity = None;
         state.running_model = None;
+        state.active_config = None;
         self.condvar.notify_all();
         drop(state);
 
@@ -483,12 +619,15 @@ impl SupervisorCore {
         }
 
         let mut state = self.state.lock().unwrap();
-        state.state = LifecycleState::Stopped;
-        self.condvar.notify_all();
+        if state.generation == my_gen {
+            state.state = LifecycleState::Stopped;
+            self.condvar.notify_all();
+        }
 
+        let pid = state.process.as_ref().map(|p| p.pid());
         Ok(RuntimeStatus::new(
             state.state,
-            None,
+            pid,
             state.generation,
             state.last_error.clone(),
             None,

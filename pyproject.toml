@@ -70,6 +70,7 @@ include = [
 exclude = [
 	".git",
 	"__pycache__",
+	".agents",
 ]
 
 [tool.ruff.format]
@@ -79,10 +80,33 @@ indent-style = "tab"
 max-complexity = 15
 
 [tool.ruff.lint]
+extend-select = [
+	"TID251",  # flake8-tidy-imports: banned-api
+]
 ignore = [
 	# indentation contains tabs
 	"W191",
 ]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"logHandler".msg = "Use standard library 'logging.getLogger(__name__)' instead of NVDA logHandler."
+"languageHandler".msg = "Access language via injected LanguageResolver port."
+"api".msg = "NVDA api access is forbidden outside Layer 0 adapter surfaces."
+"textInfos".msg = "textInfos is forbidden outside Layer 0 adapter surfaces."
+"controlTypes".msg = "controlTypes is forbidden outside Layer 0 adapter surfaces."
+"globalPluginHandler".msg = "globalPluginHandler is forbidden outside plugin/controller.py."
+"scriptHandler".msg = "scriptHandler is forbidden outside plugin/controller.py."
+"queueHandler".msg = "queueHandler is forbidden outside ui/nvda_ui.py and ui/host_renderer.py."
+"gui".msg = "gui is forbidden outside ui/ dialogs."
+"wx".msg = "wx is forbidden outside ui/ dialogs."
+"speech".msg = "speech is forbidden outside ui/nvda_ui.py."
+"tones".msg = "tones is forbidden outside ui/nvda_ui.py."
+"addonHandler".msg = "addonHandler is forbidden outside Layer 0 plugin/controller.py and ui/ panels."
+"globalVars".msg = "globalVars is forbidden outside Layer 0 adapter surfaces."
+"winUser".msg = "winUser is forbidden outside Layer 0 adapter surfaces."
+"locationHelper".msg = "locationHelper is forbidden outside Layer 0 adapter surfaces."
+"treeInterceptorHandler".msg = "treeInterceptorHandler is forbidden outside Layer 0 extractors."
+"nvwave".msg = "nvwave is forbidden outside Layer 0 audio adapter surfaces."
 
 [tool.ruff.lint.per-file-ignores]
 # sconstruct contains many inbuilt functions not recognised by the lint,
@@ -93,6 +117,17 @@ ignore = [
 # init) before importing plugin modules, so imports can't be at the top.
 "addon/globalPlugins/AI-assistant/__init__.py" = ["E402"]
 "addon/globalPlugins/AI-assistant/plugin/__init__.py" = ["E402"]
+
+# Layer 0 adapter surfaces legitimately importing NVDA / wx / host APIs
+"addon/globalPlugins/AI-assistant/ui/**" = ["TID251"]
+"addon/globalPlugins/AI-assistant/image/**" = ["TID251"]
+"addon/globalPlugins/AI-assistant/context/extractors/**" = ["TID251"]
+"addon/globalPlugins/AI-assistant/context/navigation.py" = ["TID251"]
+"addon/globalPlugins/AI-assistant/plugin/**" = ["TID251"]
+"addon/globalPlugins/AI-assistant/utils/clipboard.py" = ["TID251"]
+"addon/globalPlugins/AI-assistant/utils/logger.py" = ["TID251"]
+"tests/**" = ["TID251"]
+"conftest.py" = ["TID251"]
 
 [tool.pyright]
 pythonPlatform = "Windows"

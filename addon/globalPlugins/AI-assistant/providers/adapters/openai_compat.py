@@ -17,10 +17,9 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import time
 from typing import Any
-
-from logHandler import log
 
 from ...core.canonical import Message, Tool
 from ...core.messages import LLMResponse, SummaryResponse
@@ -45,6 +44,8 @@ try:
 	import llm_client  # type: ignore[import-untyped]
 except ImportError:
 	llm_client = None  # type: ignore[assignment]
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Capability inference helpers

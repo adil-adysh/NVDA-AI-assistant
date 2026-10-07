@@ -14,7 +14,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import languageHandler
 import pytest
 
 from tests.support import ADDON_ROOT, load_module as _load_file, register_package as _register_package
@@ -37,11 +36,6 @@ _register_package(f"{PACKAGE_NAME}.ui_host", [])
 _register_package(f"{PACKAGE_NAME}.service", [])
 _register_package(f"{PACKAGE_NAME}.service.chat", [])
 _register_package(f"{PACKAGE_NAME}.context", [])
-
-
-@pytest.fixture(autouse=True)
-def _stable_language(monkeypatch):
-	monkeypatch.setattr(languageHandler, "getLanguage", lambda: "en")
 
 # ── Stub config submodules ───────────────────────────────────────
 class _FakeYamlStore:
@@ -127,6 +121,13 @@ settings_module = _load_file(
 	f"{PACKAGE_NAME}.config.settings",
 	ROOT_DIR / "config" / "settings.py",
 )
+
+
+@pytest.fixture(autouse=True)
+def _stable_language():
+	settings_module.register_language_resolver(lambda: "en")
+	yield
+	settings_module.register_language_resolver(None)
 litert_models_module = _load_file(
 	f"{PACKAGE_NAME}.providers.litert_models",
 	ROOT_DIR / "providers" / "litert_models.py",

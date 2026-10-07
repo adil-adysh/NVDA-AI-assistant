@@ -9,12 +9,14 @@ from __future__ import annotations
 from pathlib import Path
 from types import ModuleType
 
-from logHandler import log
+import logging
 
 from .config import RuntimeConfig
 from .download import RuntimeDownloadError, RuntimeDownloadService
 from .loader import RuntimeImportError, RuntimeLoadError, RuntimeLoader
 from .paths import get_runtime_path
+
+log = logging.getLogger(__name__)
 
 
 class RuntimeManagerError(RuntimeError):

@@ -4,11 +4,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from logHandler import log
+import logging
 
 from .metrics import RequestMetrics
 from .events import DiagnosticEvent
 from ..config.settings import get_request_metrics_log_path, get_request_metrics_logging_enabled
+
+log = logging.getLogger(__name__)
 
 
 class MetricsReporter:

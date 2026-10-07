@@ -13,10 +13,12 @@ import time
 from typing import Generic, TypeVar
 import uuid
 
+import logging
 import wx
-from logHandler import log
 
 from ..service.error_reporter import ErrorContext, ErrorReporter, error_reporter
+
+log = logging.getLogger(__name__)
 
 T = TypeVar("T")
 

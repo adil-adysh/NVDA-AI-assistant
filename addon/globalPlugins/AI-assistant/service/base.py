@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from logHandler import log
+import logging
 
 from ..config.settings import (
 	is_progress_enabled,
@@ -16,6 +16,8 @@ from ..observability.metrics import RequestMetrics
 from ..observability.reporter import FileMetricsReporter, MetricsReporter
 from ..providers.interfaces import LLMProviderError
 from ..service.error_presentation import present_error
+
+log = logging.getLogger(__name__)
 
 
 class _NullUiPort:

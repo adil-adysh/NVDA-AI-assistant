@@ -5,9 +5,8 @@ from __future__ import annotations
 import builtins
 import threading
 from collections.abc import Callable
+import logging
 from typing import Any, TYPE_CHECKING, cast
-
-from logHandler import log
 
 from ..providers.interfaces import LLMProviderError, ProviderConfigurationError
 from ..providers.runtime.server import LiteRTServerError, get_litert_supervisor
@@ -34,6 +33,8 @@ from ..use_case.types import (
 
 if TYPE_CHECKING:
 	from ..providers.runtime.server import LiteRTServerSupervisor
+
+log = logging.getLogger(__name__)
 
 
 # Use cases that open a chat workspace without touching the LLM.  They must

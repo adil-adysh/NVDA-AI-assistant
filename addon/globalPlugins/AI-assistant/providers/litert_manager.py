@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import threading
 
-from logHandler import log
+import logging
 
 from ..config.settings import (
 	get_litert_model_name,
@@ -35,6 +35,8 @@ from .model_manager import (
 )
 from .runtime.model_download import ModelDownloadService
 from .runtime.server import LiteRTServerError, get_litert_supervisor
+
+log = logging.getLogger(__name__)
 
 
 class LiteRTModelManager(ModelManagerProvider):

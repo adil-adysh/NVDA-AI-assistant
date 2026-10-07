@@ -8,7 +8,9 @@ used throughout the NVDA source (``globalCommands.py``, ``MathCAT.py``).
 
 from __future__ import annotations
 
-from logHandler import log
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def safe_read_clipboard() -> str | None:

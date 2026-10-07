@@ -26,10 +26,12 @@ from enum import Enum
 import threading
 from collections.abc import Callable
 
-from logHandler import log
+import logging
 
 from ..providers.interfaces import ProviderModelInfo
 from ..providers.capabilities import ModelCapabilities
+
+log = logging.getLogger(__name__)
 
 
 class CatalogState(str, Enum):

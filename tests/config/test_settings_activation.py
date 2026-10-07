@@ -10,7 +10,6 @@ import sys
 import types
 import unittest
 
-import languageHandler
 import pytest
 
 from tests.support import ADDON_ROOT, load_module as _load_module, register_package as _register_package
@@ -23,11 +22,6 @@ PACKAGE_NAME = "settings_activation_testpkg"
 _register_package(PACKAGE_NAME, ROOT_DIR)
 _register_package(f"{PACKAGE_NAME}.config", ROOT_DIR / "config")
 _register_package(f"{PACKAGE_NAME}.providers", ROOT_DIR / "providers")
-
-
-@pytest.fixture(autouse=True)
-def _stable_language(monkeypatch):
-	monkeypatch.setattr(languageHandler, "getLanguage", lambda: "en")
 
 
 class _NoOpStore:
@@ -43,6 +37,15 @@ settings_module = _load_module(
 	f"{PACKAGE_NAME}.config.settings",
 	ROOT_DIR / "config" / "settings.py",
 )
+
+
+@pytest.fixture(autouse=True)
+def _stable_language():
+	settings_module.register_language_resolver(lambda: "en")
+	yield
+	settings_module.register_language_resolver(None)
+
+
 config_module = _load_module(
 	f"{PACKAGE_NAME}.providers.config",
 	ROOT_DIR / "providers" / "config.py",
