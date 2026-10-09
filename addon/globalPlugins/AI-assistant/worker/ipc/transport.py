@@ -353,6 +353,7 @@ class NamedPipeClient:
 		self._is_connected = False
 		self._closed = False
 		self._lock = threading.Lock()
+		self._unblock_event = threading.Event()
 		self._read_buffer = bytearray()
 
 	@property
@@ -395,6 +396,7 @@ class NamedPipeClient:
 				)
 				self._is_connected = True
 				self._closed = False
+				self._unblock_event.clear()
 				logger.debug("NamedPipeClient connected to %s", self.pipe_name)
 				return
 			except Exception as exc:
@@ -410,10 +412,60 @@ class NamedPipeClient:
 			f"Timed out connecting to named pipe {self.pipe_name} after {timeout_seconds}s"
 		)
 
-	def read_raw_chunk(self, max_bytes: int = 65536) -> bytes:
-		"""Read raw bytes from the pipe. Raises PipeDisconnectedError on broken pipe."""
+	def read_raw_chunk(
+		self, max_bytes: int = 65536, timeout_seconds: float | None = None
+	) -> bytes:
+		"""Read raw bytes from the pipe. Raises PipeDisconnectedError on broken pipe.
+
+		If timeout_seconds is provided, waits at most timeout_seconds for data;
+		raises TimeoutError if no data is received before the timeout expires.
+		"""
 		if not self.is_connected or not self._handle:
 			raise PipeDisconnectedError("Client pipe is not connected")
+
+		if timeout_seconds is not None:
+			deadline = time.monotonic() + timeout_seconds
+			while time.monotonic() < deadline:
+				if self._closed or not self._is_connected or not self._handle:
+					raise PipeDisconnectedError("Client pipe is not connected")
+
+				try:
+					import win32pipe
+
+					_data, avail, _left = win32pipe.PeekNamedPipe(self._handle, 0)
+					if avail > 0:
+						import win32file
+
+						_hr, data = win32file.ReadFile(
+							self._handle, min(max_bytes, avail)
+						)
+						raw = bytes(data)
+						if not raw:
+							self._is_connected = False
+							raise PipeDisconnectedError("Peer closed connection (EOF)")
+						return raw
+				except Exception as exc:
+					winerror = getattr(exc, "winerror", None)
+					if winerror in (
+						ERROR_BROKEN_PIPE,
+						ERROR_NO_DATA,
+						ERROR_PIPE_NOT_CONNECTED,
+						ERROR_OPERATION_ABORTED,
+					):
+						self._is_connected = False
+						raise PipeDisconnectedError(f"Pipe broken: {exc}") from exc
+					if isinstance(exc, PipeDisconnectedError):
+						raise
+					raise PipeDisconnectedError(f"Read error: {exc}") from exc
+
+				remaining = deadline - time.monotonic()
+				if remaining <= 0:
+					break
+				self._unblock_event.wait(timeout=min(0.005, remaining))
+
+			raise TimeoutError(
+				f"Timed out reading from pipe {self.pipe_name} after {timeout_seconds}s"
+			)
 
 		try:
 			import win32file
@@ -437,10 +489,20 @@ class NamedPipeClient:
 				raise
 			raise PipeDisconnectedError(f"Read error: {exc}") from exc
 
-	def read_raw_line(self) -> bytes:
+	def read_raw_line(self, timeout_seconds: float | None = None) -> bytes:
 		"""Read a complete newline-terminated line from the pipe."""
+		deadline = (
+			time.monotonic() + timeout_seconds if timeout_seconds is not None else None
+		)
 		while b"\n" not in self._read_buffer:
-			chunk = self.read_raw_chunk(self._buffer_size)
+			remaining = None
+			if deadline is not None:
+				remaining = deadline - time.monotonic()
+				if remaining <= 0:
+					raise TimeoutError(
+						f"Timed out waiting for newline from pipe {self.pipe_name} after {timeout_seconds}s"
+					)
+			chunk = self.read_raw_chunk(self._buffer_size, timeout_seconds=remaining)
 			self._read_buffer.extend(chunk)
 
 		idx = self._read_buffer.index(b"\n")
@@ -448,10 +510,28 @@ class NamedPipeClient:
 		del self._read_buffer[: idx + 1]
 		return line
 
-	def read_frame(self) -> dict[str, Any]:
+	def read_frame(self, timeout_seconds: float | None = None) -> dict[str, Any]:
 		"""Read and decode a single NDJSON frame."""
-		line = self.read_raw_line()
+		line = self.read_raw_line(timeout_seconds=timeout_seconds)
 		return decode_ndjson_frame(line)
+
+	def flush_input(self) -> None:
+		"""Discard any unread bytes buffered locally or pending in the pipe."""
+		self._read_buffer.clear()
+		if not self.is_connected or not self._handle or self._closed:
+			return
+		try:
+			import win32file
+			import win32pipe
+
+			while True:
+				_data, avail, _left = win32pipe.PeekNamedPipe(self._handle, 0)
+				if avail > 0:
+					win32file.ReadFile(self._handle, avail)
+				else:
+					break
+		except Exception:
+			pass
 
 	def write_raw(self, data: bytes) -> None:
 		"""Write raw bytes to the pipe."""
@@ -485,6 +565,7 @@ class NamedPipeClient:
 			return
 		self._closed = True
 		self._is_connected = False
+		self._unblock_event.set()
 		self._read_buffer.clear()
 
 		if self._handle:

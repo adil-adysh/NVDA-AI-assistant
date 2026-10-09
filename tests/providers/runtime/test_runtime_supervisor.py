@@ -203,9 +203,85 @@ def test_litert_server_supervisor_ensure_ready_wraps_errors(tmp_path: Path) -> N
 		supervisor.ensure_ready(timeout=1.0)
 
 
-def test_llama_server_supervisor_status_delegates_to_native() -> None:
-	"""LlamaServerSupervisor delegates status and properties to native supervisor."""
+def test_llama_server_supervisor_ensure_ready_wraps_errors() -> None:
+	"""LlamaServerSupervisor.ensure_ready raises LlamaServerError when worker process is unavailable."""
 	supervisor = LlamaServerSupervisor(port=8089)
+	with pytest.raises(LlamaServerError, match="Worker process is not available"):
+		supervisor.ensure_ready("mock-model", timeout=1.0)
+
+
+def test_llama_runtime_status_fields() -> None:
+	"""RuntimeStatus snapshot provides frozen, typed properties for llama-server."""
+	supervisor = RuntimeSupervisor("llama-server", "127.0.0.1", 8089)
+	status = supervisor.status()
+
+	assert isinstance(status, RuntimeStatus)
+	assert status.state == "stopped"
+	assert status.is_ready is False
+	assert status.is_running is False
+	assert status.is_adopted is False
+	assert status.pid is None
+	assert status.generation == 0
+	assert status.error_message is None
+	assert status.startup_identity is None
+	assert status.running_model is None
+	assert status.base_url == "http://127.0.0.1:8089"
+	assert "RuntimeStatus" in repr(status)
+
+
+def test_llama_supervisor_adopt_tracks_running_model(mock_compatible_port: int) -> None:
+	"""RuntimeSupervisor.adopt records the adopted running model ID for llama-server."""
+	supervisor = RuntimeSupervisor("llama-server", "127.0.0.1", mock_compatible_port)
+	status = supervisor.adopt(model_id="qwen-2.5-coder")
+
+	assert status.state == "ready_adopted"
+	assert status.is_ready is True
+	assert status.is_running is False
+	assert status.is_adopted is True
+	assert status.running_model == "qwen-2.5-coder"
+	assert status.generation == 1
+
+	# Non-blocking query returns identical status
+	queried = supervisor.status()
+	assert queried.is_adopted is True
+	assert queried.running_model == "qwen-2.5-coder"
+
+	# Cleanup
+	stopped = supervisor.stop()
+	assert stopped.state == "stopped"
+	assert stopped.is_ready is False
+	assert stopped.is_adopted is False
+	assert stopped.running_model is None
+
+
+def test_llama_supervisor_matches_startup_configuration(mock_compatible_port: int) -> None:
+	"""matches_startup_configuration returns False when stopped or identity differs."""
+	supervisor = RuntimeSupervisor("llama-server", "127.0.0.1", mock_compatible_port)
+	assert not supervisor.matches_startup_configuration("ident-1")
+
+	supervisor.adopt(model_id="qwen-2.5-coder")
+	assert not supervisor.matches_startup_configuration("ident-1")
+
+
+def test_llama_multiple_endpoints_isolated(mock_compatible_port: int) -> None:
+	"""Multiple native RuntimeSupervisor instances on distinct ports maintain separate lifecycle state."""
+	sup1 = RuntimeSupervisor("llama-server", "127.0.0.1", mock_compatible_port)
+	sup2 = RuntimeSupervisor("llama-server", "127.0.0.1", 8099)
+
+	sup1.adopt("model-1")
+	assert sup1.status().is_adopted is True
+	assert sup1.status().running_model == "model-1"
+
+	assert sup2.status().is_adopted is False
+	assert sup2.status().running_model is None
+
+	sup1.stop()
+
+
+def test_llama_server_supervisor_delegates_to_injected_native() -> None:
+	"""LlamaServerSupervisor delegates to native supervisor when explicitly injected."""
+	native = RuntimeSupervisor("llama-server", "127.0.0.1", 8089)
+	supervisor = LlamaServerSupervisor(port=8089, native_supervisor=native)
 	status = supervisor.status()
 
 	assert isinstance(status, RuntimeStatus)
@@ -214,44 +290,4 @@ def test_llama_server_supervisor_status_delegates_to_native() -> None:
 	assert supervisor.is_adopted is False
 	assert supervisor.running_model is None
 	assert supervisor.base_url == "http://127.0.0.1:8089"
-
-
-def test_llama_server_supervisor_adopt_tracks_running_model(mock_compatible_port: int) -> None:
-	"""LlamaServerSupervisor.adopt records the adopted running model ID."""
-	supervisor = LlamaServerSupervisor(port=mock_compatible_port)
-	status = supervisor.adopt(model_id="qwen-2.5-coder")
-
-	assert status.is_adopted is True
-	assert status.running_model == "qwen-2.5-coder"
-	assert supervisor.is_adopted is True
-	assert supervisor.running_model == "qwen-2.5-coder"
-
-	# Cleanup
-	supervisor.stop()
-	assert supervisor.is_adopted is False
-	assert supervisor.running_model is None
-
-
-def test_llama_server_supervisor_matches_startup_configuration(tmp_path: Path) -> None:
-	"""matches_startup_configuration respects model presets and flags."""
-	preset = tmp_path / "models.ini"
-	preset.write_text("version = 1\n[model-a]\nmodel = a.gguf\n", encoding="utf-8")
-
-	supervisor = LlamaServerSupervisor(port=8091)
-	assert not supervisor.matches_startup_configuration("model-a", models_preset=preset)
-
-
-def test_llama_server_multiple_endpoints_isolated(mock_compatible_port: int) -> None:
-	"""Multiple LlamaServerSupervisor instances on distinct ports maintain separate lifecycle state."""
-	sup1 = LlamaServerSupervisor(port=mock_compatible_port)
-	sup2 = LlamaServerSupervisor(port=8099)
-
-	sup1.adopt("model-1")
-	assert sup1.is_adopted is True
-	assert sup1.running_model == "model-1"
-
-	assert sup2.is_adopted is False
-	assert sup2.running_model is None
-
-	sup1.stop()
 

@@ -14,28 +14,15 @@ import logging
 import os
 import shutil
 import subprocess
-import sys
 import threading
 import time
+import types
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
 from ..interfaces import LLMProviderError
-
-try:
-	_addon_lib = Path(__file__).resolve().parent.parent.parent / "lib"
-	if _addon_lib.is_dir() and str(_addon_lib) not in sys.path:
-		sys.path.insert(0, str(_addon_lib))
-	import runtime_supervisor
-	if not hasattr(runtime_supervisor, "RuntimeSupervisor"):
-		sys.modules.pop("runtime_supervisor", None)
-		if str(_addon_lib) not in sys.path:
-			sys.path.insert(0, str(_addon_lib))
-		import runtime_supervisor
-except Exception:
-	runtime_supervisor = None
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +81,11 @@ class _LlamaTestShimSupervisor:
 	def __init__(self, host: str, port: int, runner: Callable[..., Any]) -> None:
 		self.host = host
 		self.port = port
-		self.base_url = f"http://{host}:{port}"
+		self.base_url = (
+			f"http://[{self.host}]:{self.port}"
+			if ":" in str(self.host) and not str(self.host).startswith("[")
+			else f"http://{self.host}:{self.port}"
+		)
 		self._runner = runner
 		self._process: Any = None
 		self._state = "stopped"
@@ -256,6 +247,39 @@ class _LlamaTestShimSupervisor:
 			return self.status()
 
 
+def _status_dict_to_namespace(data: dict[str, Any]) -> types.SimpleNamespace:
+	return types.SimpleNamespace(
+		state=str(data.get("state", "stopped")),
+		is_ready=bool(data.get("is_ready", False)),
+		is_running=bool(data.get("is_running", False)),
+		is_adopted=bool(data.get("is_adopted", False)),
+		pid=data.get("pid"),
+		generation=int(data.get("generation", 0)),
+		error_code=data.get("error_code"),
+		error_message=data.get("error_message"),
+		startup_identity=data.get("startup_identity"),
+		running_model=data.get("running_model"),
+		base_url=str(data.get("base_url", "")),
+	)
+
+
+def _idle_runtime_status(host: str, port: int) -> types.SimpleNamespace:
+	url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+	return types.SimpleNamespace(
+		state="stopped",
+		is_ready=False,
+		is_running=False,
+		is_adopted=False,
+		pid=None,
+		generation=0,
+		error_code=None,
+		error_message=None,
+		startup_identity=None,
+		running_model=None,
+		base_url=f"http://{url_host}:{port}",
+	)
+
+
 class LlamaServerSupervisor:
 	"""Thread-safe lifecycle manager for one llama-server endpoint."""
 
@@ -267,16 +291,40 @@ class LlamaServerSupervisor:
 		port: int = DEFAULT_LLAMA_PORT,
 		process_factory: Callable[..., subprocess.Popen[str]] | None = None,
 		native_supervisor: Any | None = None,
+		worker_client: Any | None = None,
 	) -> None:
 		self.executable = str(executable)
 		self.host = host
 		self.port = port
 		self._process_factory = process_factory
 		self._native_supervisor = native_supervisor
-		self._native: Any | None = None
+		self._worker_client = worker_client
 		self._test_shim: Any | None = None
 		self._models_cache: tuple[dict[str, object], ...] | None = None
 		self._models_cache_lock = threading.Lock()
+
+	def _get_worker_client(self) -> Any | None:
+		if self._worker_client is not None:
+			try:
+				conn = getattr(self._worker_client, "is_connected", False)
+				is_connected = conn() if callable(conn) else bool(conn)
+				if is_connected:
+					return self._worker_client
+			except Exception:
+				pass
+			return None
+		try:
+			from ...plugin.worker_supervisor import get_worker_client
+
+			client = get_worker_client()
+			if client is not None:
+				conn = getattr(client, "is_connected", False)
+				is_connected = conn() if callable(conn) else bool(conn)
+				if is_connected:
+					return client
+		except Exception:
+			pass
+		return None
 
 	def _get_native(self) -> Any:
 		if self._native_supervisor is not None:
@@ -285,21 +333,46 @@ class LlamaServerSupervisor:
 			if self._test_shim is None:
 				self._test_shim = _LlamaTestShimSupervisor(self.host, self.port, self._process_factory)
 			return self._test_shim
-		if runtime_supervisor is None:
-			raise LlamaServerError("Native runtime supervisor extension is not available")
-		if self._native is None:
-			self._native = runtime_supervisor.RuntimeSupervisor(
-				"llama-server", host=self.host, port=self.port
-			)
-		return self._native
+		return None
 
 	def status(self) -> Any:
 		"""Return an immutable snapshot of supervisor status (non-blocking)."""
-		return self._get_native().status()
+		native = self._get_native()
+		if native is not None:
+			return native.status()
+		client = self._get_worker_client()
+		if client is not None:
+			try:
+				resp = client.send_command(
+					{"type": "llama_get_status", "command": "llama_get_status"},
+					timeout=5.0,
+				)
+				if resp.get("status"):
+					return _status_dict_to_namespace(resp["status"])
+				if resp.get("success") is False or resp.get("type") == "error":
+					err_code = resp.get("error_code")
+					err_msg = resp.get("error_message") or err_code
+					return types.SimpleNamespace(
+						state="failed",
+						is_ready=False,
+						is_running=False,
+						is_adopted=False,
+						pid=None,
+						generation=int(resp.get("generation", 0)),
+						error_code=err_code,
+						error_message=err_msg,
+						startup_identity=None,
+						running_model=None,
+						base_url=self.base_url,
+					)
+			except Exception as exc:
+				log.debug("Worker llama_get_status query failed: %s", exc)
+		return _idle_runtime_status(self.host, self.port)
 
 	@property
 	def base_url(self) -> str:
-		return f"http://{self.host}:{self.port}"
+		url_host = f"[{self.host}]" if ":" in self.host and not self.host.startswith("[") else self.host
+		return f"http://{url_host}:{self.port}"
 
 	@property
 	def is_running(self) -> bool:
@@ -330,10 +403,15 @@ class LlamaServerSupervisor:
 			threads=threads,
 			context=context,
 		)
-		try:
-			return self._get_native().matches_startup_configuration(startup_identity)
-		except Exception:
-			return False
+		native = self._get_native()
+		if native is not None:
+			try:
+				return native.matches_startup_configuration(startup_identity)
+			except Exception:
+				return False
+		status = self.status()
+		alive = bool(status.is_running)
+		return alive and getattr(status, "startup_identity", None) == startup_identity
 
 	def ensure_ready(
 		self,
@@ -366,28 +444,136 @@ class LlamaServerSupervisor:
 			threads=threads,
 			context=context,
 		)
-		env = dict(os.environ)
 		if on_progress:
 			on_progress(f"Starting llama-server for {model_id or model}...")
-		try:
-			status = self._get_native().ensure_ready(
-				self.executable,
-				args,
-				env,
-				startup_identity,
-				running_model=model_id or model,
-				timeout_seconds=timeout,
-			)
-			with self._models_cache_lock:
-				self._models_cache = None
-			return status
-		except RuntimeError as exc:
-			if "exited before becoming ready" in str(exc) or "exited unexpectedly" in str(exc):
-				raise LlamaServerError("llama-server exited before becoming ready") from exc
-			raise LlamaServerError(
-				f"Could not start llama-server ({self.executable!r}). "
-				"Install llama.cpp and ensure llama-server is on PATH."
-			) from exc
+
+		native = self._get_native()
+		if native is not None:
+			env = dict(os.environ)
+			try:
+				status = native.ensure_ready(
+					self.executable,
+					args,
+					env,
+					startup_identity,
+					running_model=model_id or model,
+					timeout_seconds=timeout,
+				)
+				with self._models_cache_lock:
+					self._models_cache = None
+				return status
+			except RuntimeError as exc:
+				if "exited before becoming ready" in str(exc) or "exited unexpectedly" in str(exc):
+					raise LlamaServerError("llama-server exited before becoming ready") from exc
+				raise LlamaServerError(
+					f"Could not start llama-server ({self.executable!r}). "
+					"Install llama.cpp and ensure llama-server is on PATH."
+				) from exc
+
+		client = self._get_worker_client()
+		if client is None:
+			raise LlamaServerError("Worker process is not available")
+
+		cmd = {
+			"type": "llama_ensure_ready",
+			"command": "llama_ensure_ready",
+			"model": model,
+			"model_id": model_id,
+			"models_preset": str(models_preset) if models_preset is not None else None,
+			"threads": threads,
+			"context": context,
+			"timeout_seconds": timeout,
+			"host": self.host,
+			"port": self.port,
+			"executable": self.executable,
+			"startup_identity": startup_identity,
+		}
+		resp = client.send_command(cmd, timeout=timeout + 5.0)
+		if not resp.get("success", False) or resp.get("type") == "error":
+			err_msg = resp.get("error_message") or "Failed to start llama-server"
+			if "exited before becoming ready" in err_msg or "exited unexpectedly" in err_msg:
+				raise LlamaServerError("llama-server exited before becoming ready")
+			raise LlamaServerError(err_msg)
+
+		with self._models_cache_lock:
+			self._models_cache = None
+		return _status_dict_to_namespace(resp.get("status", {}))
+
+	def restart(
+		self,
+		model: str,
+		*,
+		model_id: str | None = None,
+		models_preset: str | Path | None = None,
+		threads: int = 0,
+		context: int = 0,
+		on_progress: Callable[[str], None] | None = None,
+		timeout: float = 60.0,
+	) -> Any:
+		"""Restart the llama-server with fresh configuration."""
+		startup_identity = self._build_startup_identity(
+			model,
+			model_id=model_id,
+			models_preset=models_preset,
+			threads=threads,
+			context=context,
+		)
+		args = build_llama_server_args(
+			model,
+			host=self.host,
+			port=self.port,
+			models_preset=models_preset,
+			alias=model_id if models_preset is None else None,
+			threads=threads,
+			context=context,
+		)
+		if on_progress:
+			on_progress(f"Restarting llama-server for {model_id or model}...")
+
+		native = self._get_native()
+		if native is not None:
+			env = dict(os.environ)
+			try:
+				status = native.restart(
+					self.executable,
+					args,
+					env,
+					startup_identity,
+					running_model=model_id or model,
+					timeout_seconds=timeout,
+				)
+				with self._models_cache_lock:
+					self._models_cache = None
+				return status
+			except RuntimeError as exc:
+				raise LlamaServerError(str(exc)) from exc
+
+		client = self._get_worker_client()
+		if client is None:
+			raise LlamaServerError("Worker process is not available")
+
+		cmd = {
+			"type": "llama_restart",
+			"command": "llama_restart",
+			"model": model,
+			"model_id": model_id,
+			"models_preset": str(models_preset) if models_preset is not None else None,
+			"threads": threads,
+			"context": context,
+			"timeout_seconds": timeout,
+			"host": self.host,
+			"port": self.port,
+			"executable": self.executable,
+			"startup_identity": startup_identity,
+		}
+		resp = client.send_command(cmd, timeout=timeout + 5.0)
+		if not resp.get("success", False) or resp.get("type") == "error":
+			err_msg = resp.get("error_message") or "Failed to restart llama-server"
+			raise LlamaServerError(err_msg)
+
+		with self._models_cache_lock:
+			self._models_cache = None
+		return _status_dict_to_namespace(resp.get("status", {}))
 
 	def start(
 		self,
@@ -409,13 +595,32 @@ class LlamaServerSupervisor:
 		)
 
 	def adopt(self, model_id: str | None = None) -> Any:
-		try:
-			status = self._get_native().adopt(model_id)
-			with self._models_cache_lock:
-				self._models_cache = None
-			return status
-		except RuntimeError as exc:
-			raise LlamaServerError(str(exc)) from exc
+		native = self._get_native()
+		if native is not None:
+			try:
+				status = native.adopt(model_id)
+				with self._models_cache_lock:
+					self._models_cache = None
+				return status
+			except RuntimeError as exc:
+				raise LlamaServerError(str(exc)) from exc
+
+		client = self._get_worker_client()
+		if client is None:
+			raise LlamaServerError("Worker process is not available")
+
+		cmd = {
+			"type": "llama_adopt",
+			"command": "llama_adopt",
+			"model_id": model_id,
+		}
+		resp = client.send_command(cmd, timeout=5.0)
+		if not resp.get("success", False) or resp.get("type") == "error":
+			raise LlamaServerError(resp.get("error_message") or "Failed to adopt llama-server")
+
+		with self._models_cache_lock:
+			self._models_cache = None
+		return _status_dict_to_namespace(resp.get("status", {}))
 
 	def is_healthy(self, timeout: float = 2.0) -> bool:
 		try:
@@ -476,10 +681,22 @@ class LlamaServerSupervisor:
 		return ()
 
 	def stop(self) -> None:
-		try:
-			self._get_native().stop()
-		except Exception:
-			pass
+		native = self._get_native()
+		if native is not None:
+			try:
+				native.stop()
+			except Exception:
+				pass
+		else:
+			client = self._get_worker_client()
+			if client is not None:
+				try:
+					client.send_command(
+						{"type": "llama_stop", "command": "llama_stop", "timeout_seconds": 10.0},
+						timeout=15.0,
+					)
+				except Exception:
+					pass
 		with self._models_cache_lock:
 			self._models_cache = None
 
@@ -488,7 +705,7 @@ class LlamaServerSupervisor:
 
 	def shutdown(self) -> None:
 		try:
-			self._get_native().shutdown()
+			self.stop()
 		except Exception:
 			pass
 		with self._models_cache_lock:
@@ -534,8 +751,16 @@ def get_llama_supervisor(
 	executable: str | Path = DEFAULT_LLAMA_SERVER,
 	host: str = DEFAULT_LLAMA_HOST,
 	port: int = DEFAULT_LLAMA_PORT,
+	worker_client: Any | None = None,
 ) -> LlamaServerSupervisor:
 	"""Return the application-owned supervisor for an endpoint."""
+	if worker_client is not None:
+		return LlamaServerSupervisor(
+			executable=executable,
+			host=host,
+			port=port,
+			worker_client=worker_client,
+		)
 	executable_text = str(executable)
 	resolved_executable = shutil.which(executable_text) or executable_text
 	key = (

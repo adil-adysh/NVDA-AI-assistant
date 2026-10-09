@@ -265,6 +265,18 @@ class NamedPipeJobClient(JobClient):
 		self._running = False
 
 
+if not hasattr(WorkerClient, "send_command"):
+	def _abstract_send_command(
+		self: WorkerClient,
+		cmd: dict[str, Any],
+		timeout: float = 10.0,
+	) -> dict[str, Any]:
+		"""Send a JSON command frame over the command pipe, read the single JSON response frame, and return it."""
+		raise NotImplementedError
+
+	WorkerClient.send_command = _abstract_send_command  # type: ignore[attr-defined]
+
+
 class NamedPipeWorkerClient(WorkerClient):
 	"""WorkerClient implementation over Named Pipe endpoints."""
 
@@ -273,16 +285,32 @@ class NamedPipeWorkerClient(WorkerClient):
 		cmd_pipe_name: str = r"\\.\pipe\nvda_ai_worker_cmd",
 		evt_pipe_name: str = r"\\.\pipe\nvda_ai_worker_evt",
 		connect_timeout_seconds: float = 5.0,
+		cmd_client: NamedPipeClient | None = None,
+		evt_client: NamedPipeClient | None = None,
+		handshake_response: HandshakeResponse | None = None,
+		cmd_lock: threading.Lock | None = None,
 	) -> None:
 		self.cmd_pipe_name = cmd_pipe_name
 		self.evt_pipe_name = evt_pipe_name
 		self.connect_timeout_seconds = connect_timeout_seconds
 
-		self._cmd_client = NamedPipeClient(self.cmd_pipe_name)
-		self._evt_client = NamedPipeClient(self.evt_pipe_name)
-		self._cmd_lock = threading.Lock()
+		self._cmd_client = cmd_client if cmd_client is not None else NamedPipeClient(self.cmd_pipe_name)
+		self._evt_client = evt_client if evt_client is not None else NamedPipeClient(self.evt_pipe_name)
+		self._cmd_lock = cmd_lock if cmd_lock is not None else threading.Lock()
 		self._job_client: NamedPipeJobClient | None = None
-		self._handshake_response: HandshakeResponse | None = None
+		self._handshake_response: HandshakeResponse | None = handshake_response
+		self._needs_cmd_reconnect = False
+		if handshake_response is not None and handshake_response.accepted:
+			self._job_client = NamedPipeJobClient(
+				self._cmd_client,
+				self._evt_client,
+				self._cmd_lock,
+			)
+
+	@property
+	def cmd_lock(self) -> threading.Lock:
+		"""Return the shared lock synchronizing command pipe RPC transactions."""
+		return self._cmd_lock
 
 	def connect(self) -> HandshakeResponse:
 		"""Connect to worker named pipes and exchange versioned handshake."""
@@ -316,9 +344,18 @@ class NamedPipeWorkerClient(WorkerClient):
 
 	def disconnect(self) -> None:
 		"""Gracefully disconnect pipe clients."""
+		self._needs_cmd_reconnect = False
 		if self._job_client:
 			self._job_client.close()
 			self._job_client = None
+
+		for client in (self._evt_client, self._cmd_client):
+			if client and getattr(client, "_handle", None):
+				try:
+					import ctypes
+					ctypes.windll.kernel32.CancelIoEx(int(client._handle), None)
+				except Exception:
+					pass
 
 		self._cmd_client.close()
 		self._evt_client.close()
@@ -327,19 +364,78 @@ class NamedPipeWorkerClient(WorkerClient):
 	def is_connected(self) -> bool:
 		"""Return True if both command and event pipes are connected."""
 		return (
-			self._cmd_client.is_connected
+			(self._cmd_client.is_connected or self._needs_cmd_reconnect)
 			and self._evt_client.is_connected
 			and self._handshake_response is not None
 			and self._handshake_response.accepted
 		)
 
+	def _reconnect_cmd(self, timeout: float = 5.0) -> None:
+		"""Reconnect command pipe client after a stream desynchronization timeout."""
+		if self._cmd_client:
+			try:
+				self._cmd_client.close()
+			except Exception:
+				pass
+		self._cmd_client = NamedPipeClient(self.cmd_pipe_name)
+		self._cmd_client.connect(timeout_seconds=timeout)
+		if self._job_client:
+			self._job_client._cmd_client = self._cmd_client
+		self._needs_cmd_reconnect = False
+
 	def poll_health(self) -> WorkerHealth:
 		"""Request worker health snapshot."""
 		with self._cmd_lock:
+			if self._needs_cmd_reconnect:
+				self._reconnect_cmd(timeout=5.0)
 			self._cmd_client.write_frame({"type": "worker_health_ping"})
 			resp = self._cmd_client.read_frame()
 
 		return WorkerHealth.from_dict(resp)
+
+	def send_command(
+		self,
+		cmd: dict[str, Any],
+		timeout: float = 10.0,
+	) -> dict[str, Any]:
+		"""Send a JSON command frame over the command pipe, read the single JSON response frame, and return it."""
+		deadline = time.monotonic() + timeout
+		acquired = self._cmd_lock.acquire(timeout=max(0.0, timeout))
+		if not acquired:
+			raise TimeoutError(
+				f"Timed out waiting for command lock after {timeout}s"
+			)
+		try:
+			remaining = max(0.001, deadline - time.monotonic())
+			if self._needs_cmd_reconnect:
+				self._reconnect_cmd(timeout=remaining)
+				remaining = max(0.001, deadline - time.monotonic())
+			elif not self._cmd_client.is_connected:
+				raise RuntimeError("WorkerClient command pipe is not connected")
+
+			self._cmd_client.write_frame(cmd)
+			try:
+				return self._cmd_client.read_frame(timeout_seconds=remaining)
+			except TypeError:
+				return self._cmd_client.read_frame()
+		except TimeoutError:
+			try:
+				import ctypes
+
+				if getattr(self._cmd_client, "_handle", None):
+					ctypes.windll.kernel32.CancelIoEx(
+						int(self._cmd_client._handle), None
+					)
+			except Exception:
+				pass
+			try:
+				self._cmd_client.close()
+			except Exception:
+				pass
+			self._needs_cmd_reconnect = True
+			raise
+		finally:
+			self._cmd_lock.release()
 
 	def get_job_client(self) -> JobClient:
 		"""Return active JobClient instance."""
@@ -348,3 +444,20 @@ class NamedPipeWorkerClient(WorkerClient):
 				"WorkerClient is not connected. Call connect() first."
 			)
 		return self._job_client
+
+	# Duck-typed JobClient delegations for backwards compatibility
+	def submit_job(self, spec: Any) -> str:
+		return self.get_job_client().submit_job(spec)
+
+	def cancel_job(self, job_id: str, reason: str = "user_cancelled") -> bool:
+		return self.get_job_client().cancel_job(job_id, reason=reason)
+
+	def get_job_snapshot(self, job_id: str) -> Any:
+		return self.get_job_client().get_job_snapshot(job_id)
+
+	def list_active_jobs(self) -> Any:
+		return self.get_job_client().list_active_jobs()
+
+	def wait_for_job(self, job_id: str, timeout_seconds: float | None = None) -> Any:
+		return self.get_job_client().wait_for_job(job_id, timeout_seconds=timeout_seconds)
+

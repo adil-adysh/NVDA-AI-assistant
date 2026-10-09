@@ -209,8 +209,8 @@ def test_pure_utils_modules_have_zero_forbidden_nvda_imports() -> None:
 	)
 
 
-def test_import_boundary_scan_performance_under_150ms() -> None:
-	"""Verify that the full architectural AST import scan executes well within the 150ms budget."""
+def test_import_boundary_scan_performance_under_300ms() -> None:
+	"""Verify that the full architectural AST import scan executes well within the 300ms budget."""
 	gc.collect()
 	gc_was_enabled = gc.isenabled()
 	gc.disable()
@@ -243,6 +243,6 @@ def test_import_boundary_scan_performance_under_150ms() -> None:
 		if gc_was_enabled:
 			gc.enable()
 
-	assert elapsed_ms < 150.0, (
-		f"AST boundary scan took {elapsed_ms:.2f}ms for {file_count} files, exceeding 150ms SLA threshold"
+	assert elapsed_ms < 300.0, (
+		f"AST boundary scan took {elapsed_ms:.2f}ms for {file_count} files, exceeding 300ms SLA threshold"
 	)

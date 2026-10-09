@@ -338,5 +338,26 @@ class DeleteModelCoordinationTests(unittest.TestCase):
 		self.mock_supervisor.delete_model.assert_not_called()
 
 
+class TestLiteRTModelManagerSupervisorInjection(unittest.TestCase):
+	"""Verify dependency injection of supervisor and worker_client."""
+
+	def test_injected_supervisor_bypasses_getter(self) -> None:
+		mock_sup = mock.MagicMock()
+		with mock.patch.object(litert_manager_module, "get_litert_supervisor") as mock_getter:
+			mgr = LiteRTModelManager(supervisor=mock_sup)
+			sup = mgr._get_supervisor()
+			self.assertIs(sup, mock_sup)
+			mock_getter.assert_not_called()
+
+	def test_injected_worker_client_passed_to_getter(self) -> None:
+		mock_client = mock.MagicMock()
+		with mock.patch.object(litert_manager_module, "get_litert_supervisor") as mock_getter:
+			mgr = LiteRTModelManager(worker_client=mock_client)
+			sup = mgr._get_supervisor()
+			mock_getter.assert_called_once_with(worker_client=mock_client)
+			self.assertIs(sup, mock_getter.return_value)
+
+
 if __name__ == "__main__":
 	unittest.main()
+

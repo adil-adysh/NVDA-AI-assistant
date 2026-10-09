@@ -9,6 +9,7 @@ sent to the server as the model ID, used in the UI, and matched against
 from __future__ import annotations
 
 import threading
+from typing import Any
 
 import logging
 
@@ -48,9 +49,21 @@ class LiteRTModelManager(ModelManagerProvider):
 		self,
 		config: OpenAICompatConfig | None = None,
 		download_service: ModelDownloadService | None = None,
+		worker_client: Any | None = None,
+		supervisor: Any | None = None,
 	) -> None:
 		self._config = config
 		self._download_service = download_service
+		self._worker_client = worker_client
+		self._supervisor = supervisor
+
+	def _get_supervisor(self) -> Any:
+		if self._supervisor is not None:
+			return self._supervisor
+		if self._worker_client is not None:
+			return get_litert_supervisor(worker_client=self._worker_client)
+		return get_litert_supervisor()
+
 
 	def _invalidate_caches(self) -> None:
 		try:
@@ -80,7 +93,7 @@ class LiteRTModelManager(ModelManagerProvider):
 		server registration ID exactly.
 		"""
 		svc = self._download_service or ModelDownloadService()
-		supervisor = get_litert_supervisor()
+		supervisor = self._get_supervisor()
 		models = recommended_models()
 		server_ids_lower: set[str] = {s.lower() for s in supervisor.list_server_models()}
 
@@ -197,7 +210,7 @@ class LiteRTModelManager(ModelManagerProvider):
 		)
 
 		# Auto-register under the friendly_name.
-		supervisor = get_litert_supervisor()
+		supervisor = self._get_supervisor()
 		try:
 			supervisor.import_model(svc.model_path(dl_filename), fn)
 			log.info("Registered %s as %s", dl_filename, fn)
@@ -233,7 +246,7 @@ class LiteRTModelManager(ModelManagerProvider):
 					"LiteRT Hugging Face imports require an explicit artifact: "
 					"repo#file=model.litertlm"
 				)
-			supervisor = get_litert_supervisor()
+			supervisor = self._get_supervisor()
 			try:
 				supervisor.import_huggingface_model(
 					parsed.source,
@@ -257,7 +270,7 @@ class LiteRTModelManager(ModelManagerProvider):
 		else:
 			raise LLMProviderError("Unsupported LiteRT import source")
 
-		supervisor = get_litert_supervisor()
+		supervisor = self._get_supervisor()
 		try:
 			supervisor.import_model(
 				model_path,
@@ -280,7 +293,7 @@ class LiteRTModelManager(ModelManagerProvider):
 			raise LLMProviderError(f"Unknown model: {model_id}")
 
 		model_def, _ = parsed
-		supervisor = get_litert_supervisor()
+		supervisor = self._get_supervisor()
 		svc = self._download_service or ModelDownloadService()
 
 		# Collect all friendly_names belonging to this model.
@@ -328,7 +341,7 @@ class LiteRTModelManager(ModelManagerProvider):
 		model_def, variant = parsed
 		fn = variant.friendly_name if variant else model_def.friendly_name
 		dl_filename = variant.filename if variant else model_def.filename
-		supervisor = get_litert_supervisor()
+		supervisor = self._get_supervisor()
 		server_ids_lower = {s.lower() for s in supervisor.list_server_models()}
 
 		# Already registered under the right name.
@@ -362,7 +375,7 @@ class LiteRTModelManager(ModelManagerProvider):
 		"""Return friendly_names for all registered or downloaded models."""
 		models = recommended_models()
 		svc = self._download_service or ModelDownloadService()
-		supervisor = get_litert_supervisor()
+		supervisor = self._get_supervisor()
 		server_ids_lower = {s.lower() for s in supervisor.list_server_models()}
 
 		available: list[str] = []

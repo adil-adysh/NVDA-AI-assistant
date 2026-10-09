@@ -3,11 +3,11 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import urllib.parse
 from pathlib import Path
-
-import logging
+from typing import Any
 
 from .interfaces import LLMProviderError
 from .model_import import (
@@ -43,8 +43,10 @@ class LlamaCppModelManager(ModelManagerProvider):
 		*,
 		supervisor: LlamaServerSupervisor | None = None,
 		cache_dir: str | Path | None = None,
+		worker_client: Any | None = None,
 	) -> None:
 		self._config = config
+		self._worker_client = worker_client
 		self._catalog = LlamaModelCatalog(
 			cache_dir,
 			preset_path=str(getattr(config, "models_preset", "") or "").strip() or None,
@@ -60,6 +62,7 @@ class LlamaCppModelManager(ModelManagerProvider):
 				),
 				host=host,
 				port=port,
+				worker_client=worker_client,
 			)
 		self._lock = threading.RLock()
 
@@ -177,6 +180,37 @@ class LlamaCppModelManager(ModelManagerProvider):
 		requested_model = record.model_id
 		preset_path = self._catalog.write_preset()
 		context = int(getattr(self._config, "num_ctx", 0) or 0)
+
+		worker_client = self._worker_client or getattr(self._supervisor, "_get_worker_client", lambda: None)()
+		if worker_client is not None:
+			try:
+				records_dicts = [
+					{
+						"model_id": r.model_id,
+						"source": r.source,
+						"kind": r.kind,
+						"revision": r.revision,
+						"artifact": r.artifact,
+						"variant": r.variant,
+						"local_path": r.local_path,
+						"context_window": r.context_window,
+						"capabilities": list(r.capabilities),
+					}
+					for r in self._catalog.list_records()
+				]
+				worker_client.send_command(
+					{
+						"type": "llama_configure_preset",
+						"command": "llama_configure_preset",
+						"models": records_dicts,
+						"default_model": requested_model,
+						"preset_path": str(preset_path),
+					},
+					timeout=10.0,
+				)
+			except Exception as exc:
+				log.debug("Worker preset configuration sync skipped: %s", exc)
+
 		if self._supervisor.is_running and not self._supervisor.matches_startup_configuration(
 			record.server_model,
 			model_id=record.model_id,

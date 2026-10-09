@@ -22,6 +22,7 @@ import time
 from typing import Any, Callable
 
 try:
+	from ..core.job.client import WorkerClient
 	from ..core.job.dto import (
 		HandshakeRequest,
 		HandshakeResponse,
@@ -31,6 +32,7 @@ try:
 	from ..worker.ipc.transport import NamedPipeClient, PipeDisconnectedError
 	from ..worker.job_object import JobObject, create_worker_job_object
 except (ImportError, ValueError):
+	from core.job.client import WorkerClient  # type: ignore[no-redef]
 	from core.job.dto import (  # type: ignore[no-redef]
 		HandshakeRequest,
 		HandshakeResponse,
@@ -45,6 +47,7 @@ except (ImportError, ValueError):
 		JobObject,
 		create_worker_job_object,
 	)
+
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +148,7 @@ class WorkerSupervisor:
 		self._job_object: JobObject | None = None
 		self._cmd_client: NamedPipeClient | None = None
 		self._evt_client: NamedPipeClient | None = None
+		self._worker_client: WorkerClient | None = None
 		self.stderr_buffer = StderrRingBuffer(max_bytes=65536)
 
 		self._cmd_lock = threading.Lock()
@@ -186,6 +190,7 @@ class WorkerSupervisor:
 			self._spawn_worker_process()
 			if auto_connect_pipes:
 				self._connect_and_handshake()
+			set_worker_supervisor(self)
 			return True
 		except Exception as exc:
 			logger.error("Failed to start worker process: %s", exc)
@@ -287,10 +292,24 @@ class WorkerSupervisor:
 		if not resp.accepted:
 			raise ValueError(f"Worker rejected handshake: {resp.error_message}")
 
+		try:
+			from ..service.worker_client import NamedPipeWorkerClient
+		except (ImportError, ValueError):
+			from service.worker_client import NamedPipeWorkerClient  # type: ignore[no-redef]
+		self._worker_client = NamedPipeWorkerClient(
+			cmd_pipe_name=self.cmd_pipe_name,
+			evt_pipe_name=self.evt_pipe_name,
+			cmd_client=self._cmd_client,
+			evt_client=self._evt_client,
+			handshake_response=resp,
+			cmd_lock=self._cmd_lock,
+		)
+
 		with self._state_lock:
 			self.state = SupervisorState.RUNNING
 			self._last_pong_monotonic = time.monotonic()
 			self._restart_attempts = 0  # reset backoff on successful handshake
+
 
 		# Start heartbeat loop
 		self._heartbeat_thread = threading.Thread(
@@ -474,10 +493,19 @@ class WorkerSupervisor:
 
 		# 2. Wait up to 1.0s for clean exit
 		self._teardown_process_handles(force_kill=False)
+		if get_worker_supervisor() is self:
+			set_worker_supervisor(None)
 		logger.info("WorkerSupervisor stopped cleanly")
 
 	def _teardown_process_handles(self, force_kill: bool = False) -> None:
 		"""Terminate or kill worker process and close pipe handles."""
+		if self._worker_client:
+			try:
+				self._worker_client.disconnect()
+			except Exception:
+				pass
+			self._worker_client = None
+
 		if self._cmd_client:
 			self._cmd_client.close()
 			self._cmd_client = None
@@ -518,3 +546,40 @@ class WorkerSupervisor:
 	def get_evt_client(self) -> NamedPipeClient | None:
 		"""Return connected event pipe client."""
 		return self._evt_client
+
+	def get_worker_client(self) -> WorkerClient | None:
+		"""Return connected worker client instance."""
+		return self._worker_client
+
+
+_active_supervisor: WorkerSupervisor | None = None
+_active_client: WorkerClient | None = None
+
+
+def get_worker_supervisor() -> WorkerSupervisor | None:
+	"""Return the active global WorkerSupervisor instance."""
+	global _active_supervisor
+	return _active_supervisor
+
+
+def set_worker_supervisor(supervisor: WorkerSupervisor | None) -> None:
+	"""Set the active global WorkerSupervisor instance."""
+	global _active_supervisor
+	_active_supervisor = supervisor
+
+
+def get_worker_client() -> WorkerClient | None:
+	"""Return the active WorkerClient instance."""
+	global _active_client, _active_supervisor
+	if _active_client is not None:
+		return _active_client
+	if _active_supervisor is not None:
+		return _active_supervisor.get_worker_client()
+	return None
+
+
+def set_worker_client(client: WorkerClient | None) -> None:
+	"""Set the active WorkerClient instance (e.g. for testing)."""
+	global _active_client
+	_active_client = client
+
