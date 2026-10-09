@@ -34,7 +34,6 @@ llama_server_mod = load_addon_module("providers.runtime.llama_server")
 LlamaWorkerExecutor = llama_exec_mod.LlamaWorkerExecutor
 merge_models_preset = llama_exec_mod.merge_models_preset
 build_models_preset = llama_exec_mod.build_models_preset
-_LlamaTestShimSupervisor = llama_server_mod._LlamaTestShimSupervisor
 LlamaServerSupervisor = llama_server_mod.LlamaServerSupervisor
 LlamaServerError = llama_server_mod.LlamaServerError
 
@@ -271,9 +270,6 @@ class TestIPv6HostFormatting(unittest.TestCase):
 
 	def test_ipv6_formatting_in_test_shim_supervisor(self) -> None:
 		"""IPv6 addresses are cleanly formatted in RFC 3986 bracketed URLs."""
-		def mock_runner(*_args: object, **_kwargs: object) -> None:
-			return None
-
 		cases = [
 			("127.0.0.1", 8080, "http://127.0.0.1:8080"),
 			("localhost", 8080, "http://localhost:8080"),
@@ -289,9 +285,9 @@ class TestIPv6HostFormatting(unittest.TestCase):
 			("[fe80::1%lo0]", 8080, "http://[fe80::1%lo0]:8080"),
 		]
 		for host, port, expected in cases:
-			shim = _LlamaTestShimSupervisor(host, port, mock_runner)
-			self.assertEqual(shim.base_url, expected)
-			st = shim.status()
+			sup = LlamaServerSupervisor(host=host, port=port)
+			self.assertEqual(sup.base_url, expected)
+			st = sup.status()
 			self.assertEqual(st.base_url, expected)
 
 	def test_ipv6_formatting_in_worker_executor_get_status(self) -> None:

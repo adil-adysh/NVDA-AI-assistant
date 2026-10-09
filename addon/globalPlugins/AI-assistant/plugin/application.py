@@ -25,7 +25,6 @@ from ..service.error_reporter import ErrorContext, error_reporter
 from ..service.model_cache import model_catalog_cache
 from ..ui.host_process import stop_host
 from ..ui.adapter import ui_adapter
-from ..providers.runtime.llama_server import shutdown_llama_servers
 from ..ui import nvda_ui
 from ..ui.session_state import build_provider_status_message
 from ..utils.clipboard import safe_read_clipboard
@@ -187,25 +186,6 @@ class AIAssistantApplication:
 			register_language_resolver(None)
 		except Exception:
 			log.exception("Error unregistering language resolver during terminate")
-		try:
-			from ..providers.runtime.server import get_litert_supervisor
-			# Process termination may wait for a slow/inference-busy server.
-			# Never hold up NVDA shutdown on that wait.
-			threading.Thread(
-				target=get_litert_supervisor().stop,
-				name="LiteRTServerShutdown",
-				daemon=True,
-			).start()
-		except Exception:
-			log.exception("Error stopping LiteRT server during terminate")
-		try:
-			threading.Thread(
-				target=shutdown_llama_servers,
-				name="LlamaServerShutdown",
-				daemon=True,
-			).start()
-		except Exception:
-			log.exception("Error stopping llama-server instances during terminate")
 
 	def _on_provider_state_change(self, provider_state: ProviderState) -> None:
 		"""Handle provider state changes off the main thread.

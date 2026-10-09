@@ -620,3 +620,46 @@ def effective_capabilities_for(
 		caps.append("mtp")
 
 	return tuple(sorted(caps))
+
+
+def build_import_candidates(definition: LiteRTModelDef | object | None) -> list[str]:
+	"""Return an ordered list of filenames to try for import.
+
+	GPU variants come first on GPU-capable hardware, then CPU variants,
+	then the primary file.  This ensures the best available variant is
+	imported automatically.
+	"""
+	if definition is None or not hasattr(definition, "has_variants"):
+		primary = getattr(definition, "filename", "") if definition is not None else ""
+		return [primary] if primary else []
+
+	primary = getattr(definition, "filename", "")
+	variants: tuple[ModelVariant, ...] = getattr(definition, "variants", ())
+	if not variants:
+		return [primary] if primary else []
+
+	gpu_files: list[str] = []
+	cpu_files: list[str] = []
+
+	for v in variants:
+		fn = getattr(v, "filename", "")
+		if not fn:
+			continue
+		pf: str = getattr(v, "platform_hint", "cpu")
+		if pf == "gpu":
+			gpu_files.append(fn)
+		else:
+			cpu_files.append(fn)
+
+	if has_gpu():
+		result = gpu_files + cpu_files
+	else:
+		result = cpu_files + gpu_files
+
+	if primary and primary not in result:
+		result.append(primary)
+	return result if result else ([primary] if primary else [])
+
+
+_build_import_candidates = build_import_candidates
+

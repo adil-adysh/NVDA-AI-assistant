@@ -10,16 +10,11 @@ from typing import Any, TYPE_CHECKING, cast
 
 from ..providers.interfaces import LLMProviderError, ProviderConfigurationError
 from ..providers.runtime.server import LiteRTServerError, get_litert_supervisor
-from ..providers.runtime.llama_server import shutdown_llama_servers
 from ..providers.llama_manager import LlamaCppModelManager
 from ..service.error_reporter import ErrorContext, error_reporter
 from ..service.llm import LLMService
 from ..service.provider_readiness import ProviderReadinessService, get_provider_display_name
 from ..config.settings import get_provider, get_model_name
-from ..config.state import (
-	subscribe_litert_server_config_change,
-	subscribe_llama_server_config_change,
-)
 from ..ui import nvda_ui
 from ..ui.session_state import build_provider_status_message
 from ..use_case.engine import UseCaseEngine
@@ -47,70 +42,6 @@ _NON_LLM_USE_CASES = frozenset(
 
 # Managed runtime lifecycle is centralized in native RuntimeSupervisor (Rust/PyO3).
 # _litert_readiness_lock, _litert_restart_lock, _litert_restart_pending, and _llama_readiness_lock are removed.
-
-
-def _on_litert_server_config_changed() -> None:
-	"""Queue a LiteRT server restart when engine settings changed.
-
-	Fired from the config layer (NVDA main thread) whenever a
-	server-relevant setting — backend, cache, cpu thread count, num_ctx
-	or the active model — is persisted.  The actual stop/start is
-	deferred to a daemon worker so the dialog that saved the setting
-	never blocks on a server restart.
-	"""
-	supervisor = get_litert_supervisor()
-	status = supervisor.status()
-	if not status.is_running:
-		if status.is_adopted:
-			# An adopted server has no process handle we can stop, so it
-			# cannot be restarted here. Regenerate config.json so the next
-			# start uses the new settings and surface the limitation.
-			try:
-				supervisor.sync_config()
-			except Exception as error:
-				error_reporter.report(
-					error,
-					ErrorContext(operation="regenerate LiteRT configuration", provider="litert-lm", origin="server configuration"),
-				)
-			log.warning(
-				"LiteRT engine settings changed but the server was adopted "
-				"(no process handle). Stop the server or restart NVDA to apply."
-			)
-		return
-
-	threading.Thread(
-		target=_restart_litert_server_worker,
-		name="litert-restart-on-config-change",
-		daemon=True,
-	).start()
-
-
-def _restart_litert_server_worker() -> None:
-	"""Worker thread body performing the deferred LiteRT server restart."""
-	try:
-		supervisor = get_litert_supervisor()
-		log.info("LiteRT engine settings changed; restarting server to apply")
-		supervisor.restart(timeout=60.0)
-	except Exception as error:
-		error_reporter.report(
-			error,
-			ErrorContext(operation="restart LiteRT server", provider="litert-lm", origin="server configuration"),
-		)
-
-
-subscribe_litert_server_config_change(_on_litert_server_config_changed)
-
-
-def _on_llama_server_config_changed() -> None:
-	"""Stop stale llama-server instances after endpoint/config changes."""
-	threading.Thread(
-		target=shutdown_llama_servers,
-		name="llama-shutdown-on-config-change",
-		daemon=True,
-	).start()
-
-
-subscribe_llama_server_config_change(_on_llama_server_config_changed)
 
 
 def ensure_litert_server_ready(on_progress: Callable[[str], None] | None = None) -> None:
@@ -182,32 +113,11 @@ def ensure_provider_server_ready(on_progress: Callable[[str], None] | None = Non
 	model_name = str(config.model_name or "").strip()
 	record = manager.find_record(model_name) if model_name else None
 	if record is None:
-		available_records = manager._catalog.list_records()
-		if available_records:
-			record = available_records[0]
-			log.info(
-				"Configured llama.cpp model %r not found; starting server with %r from preset catalog",
-				model_name,
-				record.model_id,
-			)
-			try:
-				from ..config.settings import set_model_name
-				set_model_name(record.model_id)
-			except Exception:
-				pass
-		else:
-			raise LLMProviderError(f"Unknown llama.cpp model: {config.model_name}")
+		raise LLMProviderError(f"Unknown llama.cpp model: {config.model_name}")
 	manager.ensure_running(record, on_progress=on_progress)
 	from ..service.model_cache import model_catalog_cache
 
 	model_catalog_cache.refresh_async(provider)
-
-
-def _ensure_litert_server_ready_locked(
-	on_progress: Callable[[str], None] | None = None,
-) -> None:
-	"""Deprecated alias preserved for test double compatibility."""
-	_ensure_litert_server_ready_core(on_progress=on_progress)
 
 
 def _ensure_model_imported(
@@ -228,6 +138,7 @@ def _ensure_model_imported(
 	"""
 	from ..providers.litert_models import resolve_identity as _resolve
 	from ..providers.litert_models import lookup_model as _lookup
+	from ..providers.litert_models import build_import_candidates
 	from ..providers.runtime.model_download import ModelDownloadService
 
 	raw_model_name = get_model_name()
@@ -278,7 +189,7 @@ def _ensure_model_imported(
 
 	# Build a priority-ordered list of filenames to try: recommended
 	# variant first, then other variants, then the primary file.
-	candidate_filenames = _build_import_candidates(definition)
+	candidate_filenames = build_import_candidates(definition)
 
 	for filename in candidate_filenames:
 		if svc.is_downloaded(filename):
@@ -307,45 +218,6 @@ def _ensure_model_imported(
 		"to download it."
 	)
 
-
-def _build_import_candidates(definition: object | None) -> list[str]:
-	"""Return an ordered list of filenames to try for import.
-
-	GPU variants come first on GPU-capable hardware, then CPU variants,
-	then the primary file.  This ensures the best available variant is
-	imported automatically.
-	"""
-	if definition is None or not hasattr(definition, "has_variants"):
-		return [definition.filename] if definition is not None else []
-
-	primary = getattr(definition, "filename", "")
-	variants: tuple = getattr(definition, "variants", ())
-	if not variants:
-		return [primary] if primary else []
-
-	from ..providers.litert_models import has_gpu
-
-	gpu_files: list[str] = []
-	cpu_files: list[str] = []
-
-	for v in variants:
-		fn = getattr(v, "filename", "")
-		if not fn:
-			continue
-		pf: str = getattr(v, "platform_hint", "cpu")
-		if pf == "gpu":
-			gpu_files.append(fn)
-		else:
-			cpu_files.append(fn)
-
-	if has_gpu():
-		result = gpu_files + cpu_files
-	else:
-		result = cpu_files + gpu_files
-
-	if primary and primary not in result:
-		result.append(primary)
-	return result if result else ([primary] if primary else [])
 
 
 def _translate(message: str) -> str:

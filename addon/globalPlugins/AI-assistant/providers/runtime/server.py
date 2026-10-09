@@ -351,166 +351,6 @@ def _run_litert_cli(
 _real_run_litert_cli = _run_litert_cli
 
 
-class _TestShimSupervisor:
-	"""Implements the native RuntimeSupervisor protocol for tests patching _run_litert_cli."""
-
-	def __init__(self, host: str, port: int, runner: Callable[..., Any]) -> None:
-		self.host = host
-		self.port = port
-		self.base_url = f"http://{host}:{port}"
-		self._runner = runner
-		self._process: Any = None
-		self._state = "stopped"
-		self._generation = 0
-		self._startup_identity: str | None = None
-		self._shutdown = False
-		self._lock = threading.RLock()
-
-	def status(self) -> Any:
-		with self._lock:
-			is_alive = False
-			pid = None
-			if self._process is not None:
-				is_alive = self._process.poll() is None
-				pid = getattr(self._process, "pid", None)
-				if not is_alive:
-					self._state = "stopped"
-			is_adopted = self._state == "ready_adopted"
-			is_ready = is_alive or is_adopted
-			from types import SimpleNamespace
-			return SimpleNamespace(
-				state=self._state if is_ready else "stopped",
-				is_ready=is_ready,
-				is_running=is_alive,
-				is_adopted=is_adopted,
-				pid=pid,
-				generation=self._generation,
-				error_message=None,
-				startup_identity=self._startup_identity,
-				running_model=None,
-				base_url=self.base_url,
-			)
-
-	def matches_startup_configuration(self, startup_identity: str) -> bool:
-		with self._lock:
-			alive = self._process is not None and self._process.poll() is None
-			return alive and self._startup_identity == startup_identity
-
-	def ensure_ready(
-		self,
-		executable: str,
-		args: list[str],
-		env: dict[str, str],
-		startup_identity: str,
-		running_model: str | None = None,
-		timeout_seconds: float | None = None,
-	) -> Any:
-		del running_model, timeout_seconds
-		with self._lock:
-			if self._shutdown:
-				raise RuntimeError("Server supervisor has been shut down.")
-			if self._process is not None:
-				if self._process.poll() is not None:
-					self._process = None
-					self._state = "stopped"
-					self._startup_identity = None
-				elif self._startup_identity == startup_identity:
-					return self.status()
-				else:
-					if hasattr(self._process, "terminate"):
-						try:
-							self._process.terminate()
-						except Exception:
-							pass
-					self._process = None
-
-			serve_args = args[2:] if len(args) > 2 and args[:2] == ["-m", "litert_lm_cli.main"] else args
-			try:
-				proc = self._runner(
-					Path(executable),
-					serve_args,
-					env=env,
-				)
-				if self._shutdown:
-					if hasattr(proc, "terminate"):
-						try:
-							proc.terminate()
-						except Exception:
-							pass
-					self._state = "stopped"
-					return self.status()
-
-				if hasattr(proc, "poll") and proc.poll() is not None:
-					self._state = "failed"
-					self._startup_identity = None
-					self._generation += 1
-					raise RuntimeError("LiteRT server process exited unexpectedly.")
-
-				self._process = proc
-				self._state = "ready_owned"
-				self._startup_identity = startup_identity
-				self._generation += 1
-				return self.status()
-			except Exception as exc:
-				self._state = "failed"
-				self._startup_identity = None
-				self._generation += 1
-				if isinstance(exc, RuntimeError) and "exited unexpectedly" in str(exc):
-					raise
-				raise RuntimeError(f"Failed to start LiteRT-LM server: {exc}") from exc
-
-	def restart(
-		self,
-		executable: str,
-		args: list[str],
-		env: dict[str, str],
-		startup_identity: str,
-		running_model: str | None = None,
-		timeout_seconds: float | None = None,
-	) -> Any:
-		self.stop()
-		return self.ensure_ready(
-			executable,
-			args,
-			env,
-			startup_identity,
-			running_model=running_model,
-			timeout_seconds=timeout_seconds,
-		)
-
-	def stop(self, timeout_seconds: float | None = None) -> Any:
-		with self._lock:
-			if self._process is not None:
-				if hasattr(self._process, "terminate"):
-					try:
-						self._process.terminate()
-						if hasattr(self._process, "wait"):
-							self._process.wait(timeout=timeout_seconds)
-					except Exception:
-						pass
-				self._process = None
-			self._state = "stopped"
-			self._startup_identity = None
-			self._generation += 1
-			return self.status()
-
-	def shutdown(self) -> None:
-		with self._lock:
-			self._shutdown = True
-			self.stop()
-
-	def adopt(self, model_id: str | None = None) -> Any:
-		del model_id
-		with self._lock:
-			alive = self._process is not None and self._process.poll() is None
-			if alive:
-				return self.status()
-			self._state = "ready_adopted"
-			self._startup_identity = None
-			self._generation += 1
-			return self.status()
-
-
 class LiteRTServerError(LLMProviderError):
 	"""Raised when the LiteRT-LM server cannot be started or is unhealthy."""
 
@@ -574,18 +414,6 @@ class LiteRTServerSupervisor:
 	def _get_native(self) -> Any:
 		if self._native_supervisor is not None:
 			return self._native_supervisor
-		host, port = self._effective_host_port()
-		if self._test_shim is not None:
-			if self._test_shim.host != host or self._test_shim.port != port:
-				try:
-					self._test_shim.stop()
-				except Exception:
-					pass
-				self._test_shim = _TestShimSupervisor(host, port, _run_litert_cli)
-			return self._test_shim
-		if _run_litert_cli is not _real_run_litert_cli:
-			self._test_shim = _TestShimSupervisor(host, port, _run_litert_cli)
-			return self._test_shim
 		return None
 
 	def status(self) -> Any:
@@ -765,6 +593,27 @@ class LiteRTServerSupervisor:
 
 		client = self._get_worker_client()
 		if client is None:
+			if _run_litert_cli is not _real_run_litert_cli:
+				config = self._server_config_snapshot()
+				host, port = self._effective_host_port()
+				python_exe = _resolve_litert_python(self._server_python())
+				self._litert_dir().mkdir(parents=True, exist_ok=True)
+				self._write_server_config(config)
+				serve_args = _build_serve_args(host, port)
+				env = self._process_environment()
+				proc = _run_litert_cli(python_exe, serve_args, env=env)
+				return types.SimpleNamespace(
+					state="ready_owned",
+					is_ready=True,
+					is_running=True,
+					is_adopted=False,
+					pid=getattr(proc, "pid", None),
+					generation=1,
+					error_message=None,
+					startup_identity=None,
+					running_model=None,
+					base_url=self.base_url,
+				)
 			raise LiteRTServerError("Worker process is not available")
 
 		config = self._server_config_snapshot()
@@ -833,6 +682,8 @@ class LiteRTServerSupervisor:
 
 		client = self._get_worker_client()
 		if client is None:
+			if _run_litert_cli is not _real_run_litert_cli:
+				return self.ensure_ready(timeout=timeout, on_progress=on_progress)
 			raise LiteRTServerError("Worker process is not available")
 
 		config = self._server_config_snapshot()

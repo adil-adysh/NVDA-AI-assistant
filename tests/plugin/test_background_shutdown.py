@@ -176,6 +176,23 @@ def test_application_terminate_closes_background_runner_first() -> None:
 	assert calls.index("self.background.close") < calls.index("self._services.provider.close")
 
 
+def test_application_terminate_has_no_runtime_shutdown_threads() -> None:
+	"""Verify AIAssistantApplication.terminate does not spawn unmanaged daemon threads."""
+	application_path = ADDON_ROOT / "plugin" / "application.py"
+	tree = ast.parse(application_path.read_text(encoding="utf-8"))
+	application = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "AIAssistantApplication")
+	terminate = next(node for node in application.body if isinstance(node, ast.FunctionDef) and node.name == "terminate")
+	thread_names = [
+		keyword.value.value
+		for node in ast.walk(terminate)
+		if isinstance(node, ast.Call) and ast.unparse(node.func) == "threading.Thread"
+		for keyword in node.keywords
+		if keyword.arg == "name" and isinstance(keyword.value, ast.Constant)
+	]
+	assert "LiteRTServerShutdown" not in thread_names
+	assert "LlamaServerShutdown" not in thread_names
+
+
 def test_application_initialization_schedules_active_local_provider_start() -> None:
 	application_path = ADDON_ROOT / "plugin" / "application.py"
 	tree = ast.parse(application_path.read_text(encoding="utf-8"))
@@ -218,6 +235,7 @@ def test_stale_healthy_litert_runtime_is_replaced_before_use(monkeypatch) -> Non
 			return True
 
 	supervisor = Supervisor()
+	monkeypatch.setattr(background, "get_provider", lambda: "litert-lm")
 	monkeypatch.setattr(background, "get_litert_supervisor", lambda: supervisor)
 	monkeypatch.setattr(
 		background,
@@ -225,6 +243,6 @@ def test_stale_healthy_litert_runtime_is_replaced_before_use(monkeypatch) -> Non
 		lambda _supervisor, on_progress=None: events.append("model"),
 	)
 
-	background._ensure_litert_server_ready_locked()
+	background.ensure_litert_server_ready()
 
 	assert events == ["stop-stale", "start-current", "ready", "model"]

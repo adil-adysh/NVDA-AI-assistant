@@ -99,7 +99,8 @@ class EnsureProviderServerReadyTests(unittest.TestCase):
 			# Should return immediately without error
 			background.ensure_provider_server_ready()
 
-	def test_falls_back_to_catalog_when_configured_model_is_unknown(self) -> None:
+	def test_fails_closed_when_configured_model_is_unknown(self) -> None:
+		"""Invariant A14: Unknown configured llama model raises LLMProviderError without silent fallback."""
 		config = SimpleNamespace(
 			provider="llama-cpp-server",
 			model_name="unknown-model",
@@ -110,8 +111,30 @@ class EnsureProviderServerReadyTests(unittest.TestCase):
 		mock_manager._catalog.list_records.return_value = [preset_record]
 
 		set_model_calls: list[str] = []
-		refreshed: list[str] = []
+		settings_mod = sys.modules[f"{NAMESPACE}.config.settings"]
 
+		with patch.object(background, "get_provider", return_value="llama-cpp-server"), \
+			 patch.object(settings_mod, "get_active_provider_config", return_value=config), \
+			 patch.object(settings_mod, "set_model_name", side_effect=set_model_calls.append), \
+			 patch.object(background, "LlamaCppModelManager", return_value=mock_manager):
+			with self.assertRaises(background.LLMProviderError) as ctx:
+				background.ensure_provider_server_ready()
+
+			self.assertEqual(str(ctx.exception), "Unknown llama.cpp model: unknown-model")
+			mock_manager.ensure_running.assert_not_called()
+			self.assertEqual(set_model_calls, [])
+
+	def test_starts_server_when_configured_model_is_known(self) -> None:
+		"""Starts server and refreshes catalog when configured model is valid in catalog."""
+		config = SimpleNamespace(
+			provider="llama-cpp-server",
+			model_name="known-model",
+		)
+		record = SimpleNamespace(model_id="known-model")
+		mock_manager = MagicMock()
+		mock_manager.find_record.return_value = record
+
+		refreshed: list[str] = []
 		mock_cache = SimpleNamespace(refresh_async=refreshed.append)
 
 		settings_mod = sys.modules[f"{NAMESPACE}.config.settings"]
@@ -119,14 +142,11 @@ class EnsureProviderServerReadyTests(unittest.TestCase):
 
 		with patch.object(background, "get_provider", return_value="llama-cpp-server"), \
 			 patch.object(settings_mod, "get_active_provider_config", return_value=config), \
-			 patch.object(settings_mod, "set_model_name", side_effect=set_model_calls.append), \
 			 patch.object(background, "LlamaCppModelManager", return_value=mock_manager), \
 			 patch.object(model_cache_mod, "model_catalog_cache", mock_cache):
 			background.ensure_provider_server_ready()
 
-			# Verified fallback occurred
-			mock_manager.ensure_running.assert_called_once_with(preset_record, on_progress=None)
-			self.assertEqual(set_model_calls, ["preset-qwen"])
+			mock_manager.ensure_running.assert_called_once_with(record, on_progress=None)
 			self.assertEqual(refreshed, ["llama-cpp-server"])
 
 	def test_raises_when_catalog_has_no_records_for_unknown_model(self) -> None:

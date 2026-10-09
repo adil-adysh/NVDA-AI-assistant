@@ -45,16 +45,17 @@ class LlamaServerTests(unittest.TestCase):
 		)
 
 	def test_start_uses_argument_list_and_can_stop_process(self) -> None:
-		process = Mock()
-		process.poll.return_value = None
-		factory = Mock(return_value=process)
-		supervisor = MODULE.LlamaServerSupervisor(process_factory=factory)
+		mock_native = Mock()
+		mock_status = Mock(is_ready=True, is_running=True)
+		mock_native.ensure_ready.return_value = mock_status
+		supervisor = MODULE.LlamaServerSupervisor(native_supervisor=mock_native)
 		supervisor.start("C:/models/model.gguf", model_id="model")
-		command = factory.call_args.args[0]
-		self.assertEqual(command[-4:], ["-m", "C:/models/model.gguf", "--alias", "model"])
-		self.assertIn("--host", command)
+		self.assertTrue(mock_native.ensure_ready.called)
+		args = mock_native.ensure_ready.call_args.args[1]
+		self.assertEqual(args[-4:], ["-m", "C:/models/model.gguf", "--alias", "model"])
+		self.assertIn("--host", args)
 		supervisor.stop()
-		process.terminate.assert_called_once()
+		mock_native.stop.assert_called_once()
 
 
 if __name__ == "__main__":
