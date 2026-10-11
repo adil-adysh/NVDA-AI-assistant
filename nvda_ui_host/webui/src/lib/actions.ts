@@ -13,7 +13,6 @@ import {
 } from './content';
 import {
 	clearCurrentView,
-	setActiveConversationId,
 } from './operations/view-ops';
 import {
 	appState,
@@ -150,7 +149,10 @@ export function submitChatMessage(fileInputElement: HTMLInputElement | null = nu
 		request_id: requestId,
 	});
 
-	if (!sent) return;
+	if (!sent) {
+		setStatus(t('send_failed_status', 'Unable to send request. The host connection is unavailable.'), true);
+		return;
+	}
 
 	appState.chat.composerText = '';
 	appState.chat.processing = true;
@@ -158,7 +160,12 @@ export function submitChatMessage(fileInputElement: HTMLInputElement | null = nu
 	appState.chat.latestRequestId = requestId;
 	appState.chat.stopping = false;
 	clearPendingAttachments(fileInputElement);
-	setStatus(t('submitted_status', 'Message sent. Processing.'), true);
+	setStatus(t('submitted_status', 'Message sent. Generating response.'), true);
+}
+
+export function activateChatPrimaryAction(fileInputElement: HTMLInputElement | null = null): void {
+	if (appState.chat.processing) stopChatResponse();
+	else submitChatMessage(fileInputElement);
 }
 
 export function stopChatResponse(): void {
@@ -245,7 +252,7 @@ export function openConversation(conversationId: string): void {
 		action_id: 'conversation_open',
 		payload: { conversation_id: conversationId },
 	})) {
-		setActiveConversationId(conversationId);
+		// The authoritative open command switches selection and restores its draft.
 	} else {
 		setStatus(t('send_failed_status', 'Unable to send request. The host connection is unavailable.'), true);
 	}

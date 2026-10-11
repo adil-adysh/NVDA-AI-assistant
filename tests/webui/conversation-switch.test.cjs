@@ -40,11 +40,12 @@ function loadFlow() {
 		'./_events': { emitUiEvent() {} }, 'svelte': { tick: () => Promise.resolve() },
 		'../operations/control-ops': { getMetadata: payload => payload.metadata || {}, readPresentationValue: (payload, key, fallback) => payload[key] ?? payload.metadata?.[key] ?? fallback },
 	});
+	const feedback = load('commands/chat-feedback.ts', { '../state.svelte': stateModule, './_shared': shared });
 	const streams = load('commands/chat-streaming.ts', {
-		'../state.svelte': stateModule, '../content': { summarizeForAnnouncement: () => 'partial' }, './_shared': shared,
+		'../state.svelte': stateModule, '../content': { summarizeForAnnouncement: () => 'partial' }, './_shared': shared, './chat-feedback': feedback,
 	});
 	const history = load('commands/chat-history.ts', {
-		'../state.svelte': stateModule, '../operations/view-ops': views, './_shared': shared,
+		'../state.svelte': stateModule, '../operations/view-ops': views, './_shared': shared, './chat-feedback': feedback,
 	});
 	const opening = load('commands/open-chat.ts', {
 		'../state.svelte': stateModule, '../operations/view-ops': views, './_shared': shared,
@@ -52,6 +53,25 @@ function loadFlow() {
 	});
 	return { state, views, streams, history, opening };
 }
+
+test('switching away and back restores per-conversation draft and attachments', () => {
+	const { state, opening } = loadFlow();
+	state.chat.composerText = 'B draft'; state.chat.attachments = [{ id: 'B-image' }];
+	opening.openChat('A', { conversation_id: 'A' });
+	state.chat.composerText = 'A draft';
+	opening.openChat('B', { conversation_id: 'B' });
+	assert.equal(state.chat.composerText, 'B draft');
+	assert.equal(state.chat.attachments[0].id, 'B-image');
+});
+
+test('delayed user acknowledgement and errors cannot erase a newer draft', () => {
+	const { state, history } = loadFlow();
+	state.chat.composerText = 'next question';
+	history.appendChatMessage('ack', { conversation_id: 'B', message: { id: 'user', role: 'user', content: [] } });
+	assert.equal(state.chat.composerText, 'next question');
+	history.appendChatMessage('error', { conversation_id: 'B', message: { id: 'error', role: 'assistant', content: [] }, metadata: { restore_text: 'old question' } });
+	assert.equal(state.chat.composerText, 'next question');
+});
 
 test('reopening hidden chat preserves its unsent draft and active request', () => {
 	const { state, opening } = loadFlow();
@@ -74,6 +94,23 @@ test('completed answer requests content keyboard focus', () => {
 	streams.endChatStream('end-B', { conversation_id: 'B', message_id: 'assistant-B', stream_id: 'stream-B', metadata: { focus_target: 'content' } });
 	assert.equal(state.view.pendingFocus, 'content');
 	assert.equal(state.chat.processing, false);
+	assert.equal(state.chat.latestCompletedMessageId, 'assistant-B');
+	assert.equal(state.announcement, 'Response ready.');
+});
+
+test('muted status feedback completes silently without losing focus intent', () => {
+	const { state, streams } = loadFlow();
+	state.chat.statusAnnouncements = false;
+	streams.endChatStream('end', { conversation_id: 'B', message_id: 'assistant-B', stream_id: 'stream-B', metadata: { focus_target: 'content' } });
+	assert.equal(state.announcement, undefined);
+	assert.equal(state.view.pendingFocus, 'content');
+});
+
+test('completed response carries auto-read separately from completion status', () => {
+	const { state, streams } = loadFlow();
+	streams.endChatStream('end', { conversation_id: 'B', message_id: 'assistant-B', stream_id: 'stream-B', metadata: { focus_target: 'content', announcement_text: 'Full answer' } });
+	assert.equal(state.view.pendingAnnouncement.text, 'Full answer');
+	assert.equal(state.announcement, undefined);
 });
 
 test('stopped answer keeps its partial content without requesting focus', () => {

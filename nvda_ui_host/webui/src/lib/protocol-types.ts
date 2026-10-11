@@ -61,6 +61,9 @@ export interface PresentationMetadata {
 	think_enabled?: boolean;
 	think_supported?: boolean;
 	chat_enabled?: boolean;
+	chat_auto_read?: boolean;
+	chat_status_announcements?: boolean;
+	announcement_text?: string;
 	display_presentation?: DisplayPresentation;
 	attention_policy?: string;
 }

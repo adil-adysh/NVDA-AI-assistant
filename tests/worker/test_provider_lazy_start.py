@@ -14,6 +14,15 @@ model_downloads = load_addon_module("providers.runtime.model_download", namespac
 
 
 @pytest.mark.parametrize("supervisor", [litert.LiteRTServerSupervisor, llama.LlamaServerSupervisor])
+def test_startup_preserves_worker_import_failure(supervisor, monkeypatch):
+	def fail():
+		raise RuntimeError("worker import failed: invalid installation")
+	monkeypatch.setattr(worker, "ensure_worker_client", fail)
+	with pytest.raises(RuntimeError, match="worker import failed: invalid installation"):
+		supervisor()._get_worker_client(start=True)
+
+
+@pytest.mark.parametrize("supervisor", [litert.LiteRTServerSupervisor, llama.LlamaServerSupervisor])
 def test_lookup_is_passive_but_operation_connects(supervisor, monkeypatch):
 	calls = []
 	class Client:

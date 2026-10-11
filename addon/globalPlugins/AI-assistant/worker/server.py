@@ -21,6 +21,7 @@ from typing import Any
 
 try:
 	from ..core.job.cancellation import CancellationToken
+	from ..core.readiness_progress import run_with_readiness_progress
 	from ..core.job.dto import (
 		HandshakeRequest,
 		JobProgress,
@@ -35,6 +36,7 @@ try:
 	)
 except (ImportError, ValueError):
 	from core.job.cancellation import CancellationToken  # type: ignore[no-redef]
+	from core.readiness_progress import run_with_readiness_progress
 	from core.job.dto import (  # type: ignore[no-redef]
 		HandshakeRequest,
 		JobProgress,
@@ -346,7 +348,7 @@ class WorkerServer:
 				host = frame.get("host")
 				raw_port = frame.get("port")
 				port = int(raw_port) if raw_port is not None else None
-				status = executor.ensure_ready(
+				status = run_with_readiness_progress(lambda: executor.ensure_ready(
 					config=config,
 					timeout_seconds=timeout,
 					python_exe=python_exe,
@@ -354,6 +356,9 @@ class WorkerServer:
 					version=version,
 					host=host,
 					port=port,
+				), (lambda _text: None) if frame.get("report_readiness_progress") else None,
+					executor.get_status,
+					on_stage=lambda stage: self._cmd_server.write_frame({"type": "runtime_progress", "stage": stage}),
 				)
 				self._cmd_server.write_frame(
 					{
@@ -685,7 +690,7 @@ class WorkerServer:
 				context = int(frame.get("context") or 0)
 				alias = frame.get("alias")
 				startup_identity = frame.get("startup_identity")
-				status = executor.ensure_ready(
+				status = run_with_readiness_progress(lambda: executor.ensure_ready(
 					config=config,
 					model_id=model_id,
 					timeout_seconds=timeout,
@@ -698,6 +703,9 @@ class WorkerServer:
 					context=context,
 					alias=alias,
 					startup_identity=startup_identity,
+				), (lambda _text: None) if frame.get("report_readiness_progress") else None,
+					executor.get_status,
+					on_stage=lambda stage: self._cmd_server.write_frame({"type": "runtime_progress", "stage": stage}),
 				)
 				self._cmd_server.write_frame(
 					{

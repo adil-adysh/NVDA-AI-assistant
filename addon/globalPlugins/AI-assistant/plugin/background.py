@@ -378,9 +378,20 @@ class BackgroundTaskRunner:
 			try:
 				check_cancelled()
 				if use_case_id not in _NON_LLM_USE_CASES:
-					ensure_provider_server_ready(
-						on_progress=lambda message: self._queue_delivery(token, nvda_ui.message, message)
-					)
+					preparing = threading.Event()
+					preparing.set()
+					def report_preparation(message: str) -> None:
+						def deliver() -> None:
+							if not preparing.is_set():
+								return
+							from ..config.settings import get_one_shot_output_mode
+							if get_one_shot_output_mode() != "display_only":
+								nvda_ui.message(message)
+						self._queue_delivery(token, deliver)
+					try:
+						ensure_provider_server_ready(on_progress=report_preparation)
+					finally:
+						preparing.clear()
 				check_cancelled()
 				result = self._use_case_engine.execute(
 					use_case_id,

@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::io::Read;
+use std::sync::{Arc, Mutex};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -70,6 +72,23 @@ mod win32 {
     }
 }
 
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_legacy_preset_option_before_spawn() {
+        let error = validate_preset("[*]\nload-on-startup=false\n[laguna]\nmlock = true\n").unwrap_err();
+        assert!(error.contains("laguna"));
+        assert!(error.contains("load-mode"));
+    }
+
+    #[test]
+    fn preserves_unknown_options_for_server_validation() {
+        assert!(validate_preset("[*]\nfuture-option=yes\n[model]\nload-mode=mlock\n").is_ok());
+    }
+}
+
 #[cfg(windows)]
 pub struct JobHandle(win32::HANDLE);
 
@@ -137,6 +156,7 @@ impl Drop for JobHandle {
 }
 
 pub trait ProcessHandle: Send + Sync {
+    fn diagnostics(&self) -> String { String::new() }
     fn pid(&self) -> u32;
     fn poll(&mut self) -> Result<Option<i32>, String>;
     fn terminate(&mut self) -> Result<(), String>;
@@ -154,6 +174,24 @@ pub trait ProcessDriver: Send + Sync {
 
 pub struct OsProcessDriver;
 
+fn validate_preset(text: &str) -> Result<(), String> {
+    let mut section = "*";
+    for (index, raw) in text.lines().enumerate() {
+        let line = raw.trim().trim_start_matches('\u{feff}');
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') { continue; }
+        if line.starts_with('[') && line.ends_with(']') {
+            section = &line[1..line.len()-1];
+        } else if let Some((key, _)) = line.split_once('=') {
+            if key.trim() == "mlock" {
+                return Err(format!("Invalid llama-server preset [{}], line {}: 'mlock' is not a preset option; use 'load-mode=mlock' instead", section, index+1));
+            }
+        } else {
+            return Err(format!("Invalid llama-server preset syntax at line {}", index+1));
+        }
+    }
+    Ok(())
+}
+
 impl ProcessDriver for OsProcessDriver {
     fn spawn(
         &self,
@@ -161,6 +199,11 @@ impl ProcessDriver for OsProcessDriver {
         args: &[String],
         env: &HashMap<String, String>,
     ) -> Result<Box<dyn ProcessHandle>, String> {
+        if let Some(index) = args.iter().position(|arg| arg == "--models-preset") {
+            let path = args.get(index+1).ok_or("Missing --models-preset path")?;
+            let text = std::fs::read_to_string(path).map_err(|error| format!("Cannot read llama-server preset '{}': {}", path, error))?;
+            validate_preset(&text)?;
+        }
         let mut cmd = Command::new(executable);
         cmd.args(args);
         for (k, v) in env {
@@ -170,7 +213,7 @@ impl ProcessDriver for OsProcessDriver {
         cmd.creation_flags(CREATE_NO_WINDOW);
 
         cmd.stdout(Stdio::null());
-        cmd.stderr(Stdio::null());
+        cmd.stderr(Stdio::piped());
 
         let mut child = cmd
             .spawn()
@@ -196,7 +239,22 @@ impl ProcessDriver for OsProcessDriver {
             }
         };
 
+        let diagnostics = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let captured = diagnostics.clone();
+        let mut pipe = child.stderr.take().ok_or("Missing server stderr pipe")?;
+        let reader = std::thread::spawn(move || {
+            let mut chunk = [0u8; 4096];
+            while let Ok(count) = pipe.read(&mut chunk) {
+                if count == 0 { break; }
+                let mut buffer = captured.lock().unwrap();
+                buffer.extend_from_slice(&chunk[..count]);
+                let excess = buffer.len().saturating_sub(65536);
+                buffer.drain(..excess);
+            }
+        });
         Ok(Box::new(OsProcessHandle {
+            diagnostics,
+            reader: Some(reader),
             pid: child.id(),
             child,
             #[cfg(windows)]
@@ -206,6 +264,8 @@ impl ProcessDriver for OsProcessDriver {
 }
 
 pub struct OsProcessHandle {
+    diagnostics: Arc<Mutex<Vec<u8>>>,
+    reader: Option<std::thread::JoinHandle<()>>,
     pid: u32,
     child: Child,
     #[cfg(windows)]
@@ -213,13 +273,28 @@ pub struct OsProcessHandle {
 }
 
 impl ProcessHandle for OsProcessHandle {
+    fn diagnostics(&self) -> String {
+        let buffer = self.diagnostics.lock().unwrap();
+        let start = buffer.len().saturating_sub(4096);
+        String::from_utf8_lossy(&buffer[start..]).trim().to_string()
+    }
     fn pid(&self) -> u32 {
         self.pid
     }
 
     fn poll(&mut self) -> Result<Option<i32>, String> {
         match self.child.try_wait() {
-            Ok(Some(status)) => Ok(Some(status.code().unwrap_or(-1))),
+            Ok(Some(status)) => {
+                let deadline = Instant::now() + Duration::from_millis(50);
+                while self.reader.as_ref().is_some_and(|reader| !reader.is_finished()) && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                // Join only an already-finished drain; inherited handles must not block lifecycle.
+                if self.reader.as_ref().is_some_and(|reader| reader.is_finished()) {
+                    let _ = self.reader.take().unwrap().join();
+                }
+                Ok(Some(status.code().unwrap_or(-1)))
+            },
             Ok(None) => Ok(None),
             Err(e) => Err(format!("Failed to poll process {}: {}", self.pid, e)),
         }

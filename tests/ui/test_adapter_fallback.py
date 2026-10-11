@@ -57,7 +57,7 @@ class _Renderer:
 		self.closed = True
 
 
-_stub("config.settings", get_image_mime_type=lambda: "image/png")
+_stub("config.settings", get_image_mime_type=lambda: "image/png", get_chat_auto_read=lambda: False, get_chat_status_announcements=lambda: True)
 _stub("service.error_presentation", ErrorPresentation=object, present_error=lambda error: error)
 _stub("service.provider_controls", provider_control_service=SimpleNamespace())
 _stub("ui.host_lifecycle", HostLifecycleService=_Lifecycle, HostLifecycleState=_LifecycleState)
@@ -363,6 +363,19 @@ def test_submission_is_registered_before_thread_start(monkeypatch) -> None:
 		assert started[0]["args"][-1].cancelled
 	finally:
 		adapter.close()
+
+
+@pytest.mark.parametrize("auto_read", [False, True])
+def test_chat_completion_speech_is_selected_by_python_setting(monkeypatch, auto_read) -> None:
+	adapter = adapter_module.UIAdapter.__new__(adapter_module.UIAdapter)
+	adapter._final_answer_metadata = lambda metadata: dict(metadata, focus_target="content")
+	monkeypatch.setattr(adapter_module, "get_chat_auto_read", lambda: auto_read)
+	monkeypatch.setattr(adapter_module, "render_markdown_to_html", lambda text: f"<p>{text}</p>")
+	monkeypatch.setattr(adapter_module, "strip_html_for_announcement", lambda html: html[3:-4])
+	metadata = adapter._chat_completion_metadata("request", "Completed answer")
+	assert metadata["announcement_text"] == ("Completed answer" if auto_read else "")
+	assert metadata["request_id"] == "request"
+	assert metadata["focus_target"] == "content"
 
 
 @pytest.mark.parametrize("alive", [False, True])

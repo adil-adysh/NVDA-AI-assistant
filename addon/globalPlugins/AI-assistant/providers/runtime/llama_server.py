@@ -24,6 +24,7 @@ from typing import Any, Callable
 
 from ..interfaces import LLMProviderError
 from ...core.translation import _
+from ...core.readiness_progress import run_with_readiness_progress
 
 log = logging.getLogger(__name__)
 
@@ -151,8 +152,10 @@ class LlamaServerSupervisor:
 				is_connected = conn() if callable(conn) else bool(conn)
 				if is_connected:
 					return client
-		except Exception:
-			pass
+		except Exception as exc:
+			if start:
+				raise LlamaServerError(_("Could not start local AI worker: {details}").format(details=exc)) from exc
+			log.debug("Passive worker lookup failed", exc_info=True)
 		return None
 
 	def _get_native(self) -> Any:
@@ -269,30 +272,26 @@ class LlamaServerSupervisor:
 			threads=threads,
 			context=context,
 		)
-		if on_progress:
-			on_progress(_("Checking llama-server readiness for {model}...").format(model=model_id or model))
+		log.debug("Checking llama-server readiness for %s", model_id or model)
 
 		native = self._get_native()
 		if native is not None:
 			env = dict(os.environ)
 			try:
-				status = native.ensure_ready(
+				status = run_with_readiness_progress(lambda: native.ensure_ready(
 					self.executable,
 					args,
 					env,
 					startup_identity,
 					running_model=model_id or model,
 					timeout_seconds=timeout,
-				)
+				), on_progress, native.status)
 				with self._models_cache_lock:
 					self._models_cache = None
 				return status
 			except RuntimeError as exc:
-				if "exited before becoming ready" in str(exc) or "exited unexpectedly" in str(exc):
-					raise LlamaServerError("llama-server exited before becoming ready") from exc
 				raise LlamaServerError(
-					f"Could not start llama-server ({self.executable!r}). "
-					"Install llama.cpp and ensure llama-server is on PATH."
+					_("Could not prepare llama-server: {details}").format(details=exc)
 				) from exc
 
 		client = self._get_worker_client(start=True)
@@ -313,11 +312,10 @@ class LlamaServerSupervisor:
 			"executable": self.executable,
 			"startup_identity": startup_identity,
 		}
-		resp = client.send_command(cmd, timeout=timeout + 5.0)
+		cmd["report_readiness_progress"] = on_progress is not None
+		resp = client.send_command(cmd, timeout=timeout + 5.0, **({"on_progress": on_progress} if on_progress else {}))
 		if not resp.get("success", False) or resp.get("type") == "error":
 			err_msg = resp.get("error_message") or "Failed to start llama-server"
-			if "exited before becoming ready" in err_msg or "exited unexpectedly" in err_msg:
-				raise LlamaServerError("llama-server exited before becoming ready")
 			raise LlamaServerError(err_msg)
 
 		with self._models_cache_lock:

@@ -29,6 +29,12 @@ MODULE = _load_module()
 
 
 class LlamaServerTests(unittest.TestCase):
+	def test_native_failure_preserves_preset_diagnostic(self) -> None:
+		native = Mock()
+		native.ensure_ready.side_effect = RuntimeError("llama server process exited unexpectedly with code 1: option 'mlock' not recognized")
+		supervisor = MODULE.LlamaServerSupervisor(native_supervisor=native)
+		with self.assertRaisesRegex(MODULE.LlamaServerError, "mlock"):
+			supervisor.ensure_ready("hf://org/model")
 	def test_builds_hugging_face_variant_command_without_shell(self) -> None:
 		self.assertEqual(
 			MODULE.build_llama_server_args(
@@ -52,7 +58,7 @@ class LlamaServerTests(unittest.TestCase):
 		progress = []
 		for _ in range(2):
 			supervisor.start("C:/models/model.gguf", model_id="model", on_progress=progress.append)
-		self.assertEqual(progress, ["Checking llama-server readiness for model..."] * 2)
+		self.assertEqual(progress, [])
 		self.assertTrue(mock_native.ensure_ready.called)
 		args = mock_native.ensure_ready.call_args.args[1]
 		self.assertEqual(args[-4:], ["-m", "C:/models/model.gguf", "--alias", "model"])

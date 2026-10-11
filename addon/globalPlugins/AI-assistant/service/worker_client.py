@@ -86,17 +86,47 @@ class NamedPipeJobClient(JobClient):
 		while self._running:
 			try:
 				if not self._evt_client.is_connected:
-					time.sleep(0.05)
-					continue
+					self._fail_pending_jobs()
+					break
 				frame = self._evt_client.read_frame()
 				self._handle_event_frame(frame)
 			except PipeDisconnectedError:
 				logger.debug("Event pipe disconnected in JobClient")
+				self._fail_pending_jobs()
 				break
 			except Exception as exc:
 				if not self._running:
 					break
 				logger.error("Error in JobClient event listener: %s", exc)
+
+	def _fail_pending_jobs(self) -> None:
+		"""Release waiters and notify subscribers exactly once when transport dies."""
+		from ..core.translation import _
+		callbacks = []
+		with self._lock:
+			self._running = False
+			for job_id, snapshot in self._snapshots.items():
+				if snapshot.state.is_terminal or job_id in self._results:
+					continue
+				result = JobResult(
+					job_id=job_id, status=JobStatus.FAILED,
+					error_code="WORKER_DISCONNECTED",
+					error_message=_("The local AI worker disconnected. Please try again."),
+					retriable=True, generation=snapshot.spec.generation,
+				)
+				self._results[job_id] = result
+				self._snapshots[job_id] = JobSnapshot(
+					spec=snapshot.spec, state=result.status, progress=snapshot.progress,
+					result=result, created_at_epoch_ms=snapshot.created_at_epoch_ms,
+					updated_at_epoch_ms=int(time.time() * 1000),
+				)
+				self._result_events[job_id].set()
+				callbacks.extend((callback, result) for callback in self._result_callbacks.get(job_id, []))
+		for callback, result in callbacks:
+			try:
+				callback(result)
+			except Exception:
+				logger.exception("Error reporting disconnected worker job")
 
 	def _handle_event_frame(self, frame: dict[str, Any]) -> None:
 		"""Process an incoming event frame (JobUpdate or JobResult)."""
@@ -128,6 +158,8 @@ class NamedPipeJobClient(JobClient):
 			result = JobResult.from_dict(frame)
 			job_id = result.job_id
 			with self._lock:
+				if job_id in self._results:
+					return
 				self._results[job_id] = result
 				snap = self._snapshots.get(job_id)
 				if snap:
@@ -153,6 +185,8 @@ class NamedPipeJobClient(JobClient):
 	def submit_job(self, spec: JobSpec) -> str:
 		"""Submit a job specification over the command pipe."""
 		with self._lock:
+			if not self._running:
+				raise RuntimeError("Local AI worker is disconnected")
 			self._snapshots[spec.job_id] = JobSnapshot(
 				spec=spec,
 				state=JobStatus.SUBMITTED,
@@ -262,7 +296,7 @@ class NamedPipeJobClient(JobClient):
 
 	def close(self) -> None:
 		"""Stop event listener thread and clear callbacks."""
-		self._running = False
+		self._fail_pending_jobs()
 
 
 if not hasattr(WorkerClient, "send_command"):
@@ -271,7 +305,11 @@ if not hasattr(WorkerClient, "send_command"):
 		cmd: dict[str, Any],
 		timeout: float = 10.0,
 	) -> dict[str, Any]:
-		"""Send a JSON command frame over the command pipe, read the single JSON response frame, and return it."""
+		"""Consume optional readiness stages followed by the final RPC response.
+
+		The command lock remains held for the complete transaction. Callback
+		failures must not leave the final response unread for the next RPC.
+		"""
 		raise NotImplementedError
 
 	WorkerClient.send_command = _abstract_send_command  # type: ignore[attr-defined]
@@ -397,6 +435,7 @@ class NamedPipeWorkerClient(WorkerClient):
 		self,
 		cmd: dict[str, Any],
 		timeout: float = 10.0,
+		on_progress: Callable[[str], None] | None = None,
 	) -> dict[str, Any]:
 		"""Send a JSON command frame over the command pipe, read the single JSON response frame, and return it."""
 		deadline = time.monotonic() + timeout
@@ -414,10 +453,24 @@ class NamedPipeWorkerClient(WorkerClient):
 				raise RuntimeError("WorkerClient command pipe is not connected")
 
 			self._cmd_client.write_frame(cmd)
-			try:
-				return self._cmd_client.read_frame(timeout_seconds=remaining)
-			except TypeError:
-				return self._cmd_client.read_frame()
+			while True:
+				remaining = deadline - time.monotonic()
+				if remaining <= 0:
+					raise TimeoutError("Timed out waiting for worker response")
+				try:
+					response = self._cmd_client.read_frame(timeout_seconds=remaining)
+				except TypeError:
+					response = self._cmd_client.read_frame()
+				if response.get("type") != "runtime_progress":
+					return response
+				if on_progress is not None:
+					from ..core.readiness_progress import render_readiness_stage
+					message = render_readiness_stage(str(response.get("stage", "")))
+					if message:
+						try:
+							on_progress(message)
+						except Exception:
+							logger.exception("Readiness progress callback failed")
 		except TimeoutError:
 			try:
 				import ctypes

@@ -81,6 +81,19 @@ def test_runtime_status_fields() -> None:
 	assert "RuntimeStatus" in repr(status)
 
 
+def test_preset_preflight_fails_before_executable_launch(tmp_path) -> None:
+	preset = tmp_path / "invalid.ini"
+	preset.write_text("[*]\nload-on-startup=false\n[laguna]\nmlock=true\n", encoding="utf-8")
+	supervisor = RuntimeSupervisor("llama-cpp", "127.0.0.1", 0)
+	with pytest.raises(RuntimeError, match="load-mode=mlock"):
+		supervisor.ensure_ready(
+			str(tmp_path / "must-not-launch.exe"),
+			["--models-preset", str(preset)], {}, "invalid-preset",
+			timeout_seconds=1,
+		)
+	assert "laguna" in supervisor.status().error_message
+
+
 def test_supervisor_adopt_fails_without_server() -> None:
 	"""Adopt raises RuntimeError when no compatible server responds on endpoint."""
 	supervisor = RuntimeSupervisor("litert-lm", "127.0.0.1", 9380)
@@ -203,9 +216,10 @@ def test_litert_server_supervisor_ensure_ready_wraps_errors(tmp_path: Path) -> N
 		supervisor.ensure_ready(timeout=1.0)
 
 
-def test_llama_server_supervisor_ensure_ready_wraps_errors() -> None:
+def test_llama_server_supervisor_ensure_ready_wraps_errors(monkeypatch) -> None:
 	"""LlamaServerSupervisor.ensure_ready raises LlamaServerError when worker process is unavailable."""
 	supervisor = LlamaServerSupervisor(port=8089)
+	monkeypatch.setattr(supervisor, "_get_worker_client", lambda **kwargs: None)
 	with pytest.raises(LlamaServerError, match="Worker process is not available"):
 		supervisor.ensure_ready("mock-model", timeout=1.0)
 

@@ -500,6 +500,22 @@ def set_streaming_tone_enabled(value: bool) -> None:
 ONE_SHOT_OUTPUT_MODES = ("speak_then_display", "display_only", "speak_only")
 
 
+def get_chat_auto_read() -> bool:
+	return _read_bool("chatAutoRead", False)
+
+
+def set_chat_auto_read(enabled: bool) -> None:
+	_set_value("chatAutoRead", bool(enabled))
+
+
+def get_chat_status_announcements() -> bool:
+	return _read_bool("chatStatusAnnouncements", True)
+
+
+def set_chat_status_announcements(enabled: bool) -> None:
+	_set_value("chatStatusAnnouncements", bool(enabled))
+
+
 def get_one_shot_output_mode() -> str:
 	value = _read_string("oneShotOutputMode", defaults.DEFAULT_ONE_SHOT_OUTPUT_MODE)
 	return value if value in ONE_SHOT_OUTPUT_MODES else defaults.DEFAULT_ONE_SHOT_OUTPUT_MODE

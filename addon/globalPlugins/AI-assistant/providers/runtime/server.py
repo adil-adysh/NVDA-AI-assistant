@@ -36,6 +36,7 @@ from .download import DownloadCancelledError, RuntimeDownloadService
 from .paths import get_runtime_path
 from ..interfaces import LLMProviderError
 from ...core.translation import _
+from ...core.readiness_progress import run_with_readiness_progress
 
 try:
 	_addon_lib = Path(__file__).resolve().parent.parent.parent / "lib"
@@ -408,8 +409,10 @@ class LiteRTServerSupervisor:
 				is_connected = conn() if callable(conn) else bool(conn)
 				if is_connected:
 					return client
-		except Exception:
-			pass
+		except Exception as exc:
+			if start:
+				raise LiteRTServerError(_("Could not start local AI worker: {details}").format(details=exc)) from exc
+			log.debug("Passive worker lookup failed", exc_info=True)
 		return None
 
 	def _get_native(self) -> Any:
@@ -577,15 +580,15 @@ class LiteRTServerSupervisor:
 			cmd_args = ["-m", "litert_lm_cli.main", *serve_args]
 			env = self._process_environment()
 
-			self._report(on_progress, _("Checking LiteRT-LM server readiness on port {port}...").format(port=port))
+			log.debug("Checking LiteRT-LM server readiness on port %s", port)
 			try:
-				status = native.ensure_ready(
+				status = run_with_readiness_progress(lambda: native.ensure_ready(
 					str(python_exe),
 					cmd_args,
 					env,
 					startup_identity,
 					timeout_seconds=timeout,
-				)
+				), on_progress, native.status)
 				if status.is_ready:
 					log.info("LiteRT server is ready at %s", self.base_url)
 				return status
@@ -619,7 +622,7 @@ class LiteRTServerSupervisor:
 
 		config = self._server_config_snapshot()
 		host, port = self._effective_host_port()
-		self._report(on_progress, _("Checking LiteRT-LM server readiness on port {port}...").format(port=port))
+		log.debug("Checking LiteRT-LM server readiness on port %s", port)
 
 		cmd = {
 			"type": "litert_ensure_ready",
@@ -631,7 +634,8 @@ class LiteRTServerSupervisor:
 			"port": port,
 			"version": self._version,
 		}
-		resp = client.send_command(cmd, timeout=timeout + 5.0)
+		cmd["report_readiness_progress"] = on_progress is not None
+		resp = client.send_command(cmd, timeout=timeout + 5.0, **({"on_progress": on_progress} if on_progress else {}))
 		if not resp.get("success", False) or resp.get("type") == "error":
 			err_msg = resp.get("error_message") or "Failed to start LiteRT server"
 			raise LiteRTServerError(err_msg)

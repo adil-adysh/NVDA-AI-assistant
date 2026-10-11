@@ -81,6 +81,34 @@ background = load_module(
 )
 
 
+def test_one_shot_preparation_feedback_obeys_output_mode(monkeypatch) -> None:
+	settings = sys.modules[f"{NAMESPACE}.config.settings"]
+	spoken = []
+	monkeypatch.setattr(background.nvda_ui, "message", spoken.append)
+	monkeypatch.setattr(background, "ensure_provider_server_ready", lambda on_progress: on_progress("Starting local AI server…"))
+	runner = background.BackgroundTaskRunner(object(), SimpleNamespace(execute=lambda *_args, **_kwargs: None), lambda _event: None)
+	monkeypatch.setattr(runner, "_start_worker", lambda **kwargs: kwargs["target"]())
+	monkeypatch.setattr(runner, "_queue_delivery", lambda _token, callback, *args: callback(*args))
+	for mode in ("display_only", "speak_only", "speak_then_display"):
+		monkeypatch.setattr(settings, "get_one_shot_output_mode", lambda: mode, raising=False)
+		spoken.clear()
+		runner.run_use_case_in_background("summary", "Summary", lambda _result: None)
+		assert spoken == ([] if mode == "display_only" else ["Starting local AI server…"])
+
+
+def test_queued_preparation_notice_is_discarded_after_readiness_finishes(monkeypatch) -> None:
+	queued, spoken = [], []
+	monkeypatch.setattr(background.nvda_ui, "message", spoken.append)
+	monkeypatch.setattr(background, "ensure_provider_server_ready", lambda on_progress: on_progress("Still preparing local AI. Please wait."))
+	runner = background.BackgroundTaskRunner(object(), SimpleNamespace(execute=lambda *_args, **_kwargs: None), lambda _event: None)
+	monkeypatch.setattr(runner, "_start_worker", lambda **kwargs: kwargs["target"]())
+	monkeypatch.setattr(runner, "_queue_delivery", lambda _token, callback, *args: queued.append(lambda: callback(*args)))
+	runner.run_use_case_in_background("summary", "Summary", lambda _result: None)
+	for deliver in queued:
+		deliver()
+	assert spoken == []
+
+
 class _BlockingEngine:
 	def __init__(self) -> None:
 		self.started = threading.Event()

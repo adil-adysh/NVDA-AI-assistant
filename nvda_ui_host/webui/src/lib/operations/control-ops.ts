@@ -37,6 +37,10 @@ export function updateControlState(payload: Record<string, unknown>): void {
 	const thinkEnabled = readPresentationValue<boolean>(payload, 'think_enabled');
 	const thinkSupported = readPresentationValue<boolean>(payload, 'think_supported');
 	const chatEnabled = readPresentationValue<boolean>(payload, 'chat_enabled');
+	const autoRead = readPresentationValue<boolean>(payload, 'chat_auto_read');
+	const statusAnnouncements = readPresentationValue<boolean>(payload, 'chat_status_announcements');
+	if (typeof autoRead === 'boolean') appState.chat.autoRead = autoRead;
+	if (typeof statusAnnouncements === 'boolean') appState.chat.statusAnnouncements = statusAnnouncements;
 
 	console.log(`[control-ops] updateControlState: availProviders=${availableProviders?.length ?? 'undefined'} availModels=${availableModels?.length ?? 'undefined'} provider=${(providerState as any)?.provider ?? 'undefined'} think=${thinkEnabled} chat=${chatEnabled}`);
 

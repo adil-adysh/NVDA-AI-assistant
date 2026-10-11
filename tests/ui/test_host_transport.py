@@ -46,6 +46,15 @@ class HostPipeTransportTests(unittest.TestCase):
 		with self.assertRaises(TimeoutError):
 			transport._read_line(None, object(), FakePipe(), timeout_seconds=0.01)
 
+	def test_coalesced_event_frames_are_not_discarded(self) -> None:
+		class FakeFile:
+			def ReadFile(self, _handle, _size):
+				return 0, b'first\nchat_submitted\n'
+
+		transport = HostPipeTransport(r"\\.\pipe\cmd")
+		self.assertEqual(transport._read_line(1, FakeFile(), None, 1), b"first")
+		self.assertEqual(transport._read_line(1, object(), None, 1), b"chat_submitted")
+
 
 if __name__ == "__main__":
 	unittest.main()

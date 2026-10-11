@@ -101,6 +101,7 @@ export async function handleFileSelection(fileList: FileList | null): Promise<vo
 	if (!fileList || fileList.length === 0) return;
 
 	const files = Array.from(fileList);
+	const conversationId = appState.chat.conversationId;
 	const attachments: Attachment[] = [];
 
 	for (const file of files) {
@@ -117,6 +118,7 @@ export async function handleFileSelection(fileList: FileList | null): Promise<vo
 	}
 
 	if (attachments.length > 0) {
+		if (conversationId !== appState.chat.conversationId) return;
 		appState.chat.attachments = [...appState.chat.attachments, ...attachments];
 		setStatus(
 			t('attachments_added_status', '{count} attachment(s) added.').replace('{count}', String(attachments.length)),

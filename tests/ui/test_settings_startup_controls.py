@@ -37,6 +37,22 @@ def test_startup_choices_collect_separate_policies_and_expose_help(settings_ui, 
 		panel.collect({})
 
 
+def test_chat_settings_collect_without_saving(settings_ui, monkeypatch):
+	module, frame = settings_ui
+	monkeypatch.setattr(module, 'get_chat_auto_read', lambda: False)
+	monkeypatch.setattr(module, 'get_chat_status_announcements', lambda: True)
+	panel = module.AIAssistantBehaviorOutputPanel(frame, dialog=None)
+	assert not panel.chat_auto_read.GetValue()
+	assert panel.chat_status_announcements.GetValue()
+	panel.chat_auto_read.SetValue(True)
+	panel.chat_status_announcements.SetValue(False)
+	values = {}
+	panel.collect(values)
+	assert values['chat_auto_read'] is True
+	assert values['chat_status_announcements'] is False
+	assert module.get_chat_auto_read() is False
+
+
 @pytest.mark.parametrize('mode', ['speak_then_display', 'display_only', 'speak_only'])
 def test_output_choice_loads_and_collects_without_changing_configuration(settings_ui, monkeypatch, mode):
 	module, frame = settings_ui

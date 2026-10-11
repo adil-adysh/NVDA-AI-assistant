@@ -107,8 +107,9 @@ class TestCrashRecoveryAndCircuitBreaker(unittest.TestCase):
 			supervisor._process.kill()
 
 		# Calling wait_for_job with short timeout should unblock or raise TimeoutError / error cleanly
-		with self.assertRaises((TimeoutError, Exception)):
-			job_client.wait_for_job(job_id, timeout_seconds=0.5)
+		result = job_client.wait_for_job(job_id, timeout_seconds=0.5)
+		self.assertEqual(result.error_code, "WORKER_DISCONNECTED")
+		self.assertTrue(result.retriable)
 
 		elapsed_ms = (time.perf_counter() - t0) * 1000.0
 		# Confirm caller thread never hung indefinitely (< 1000ms SLA)
@@ -140,6 +141,7 @@ class TestCrashRecoveryAndCircuitBreaker(unittest.TestCase):
 
 		# Induce 3 consecutive crashes
 		for crash_idx in range(1, 4):
+			supervisor.state = SupervisorState.RUNNING  # A distinct recovered process fails.
 			supervisor._handle_crash(reason=f"SIMULATED_CRASH_{crash_idx}")
 
 		# Circuit breaker must be TRIPPED

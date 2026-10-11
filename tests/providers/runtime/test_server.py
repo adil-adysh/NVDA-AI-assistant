@@ -302,7 +302,7 @@ class SupervisorDeleteModelTests(unittest.TestCase):
 		self.mock_run_cli = self._run_cli_patcher.start()
 
 		# Create supervisor with fake internals
-		self.supervisor = LiteRTServerSupervisor()
+		self.supervisor = LiteRTServerSupervisor(worker_client=mock.Mock(is_connected=False))
 		# Replace server dir/path resolution with a fixed path
 		self.supervisor._server_dir = mock.MagicMock(  # pylint: disable=protected-access
 			return_value=Path("/fake/runtime")
@@ -453,7 +453,7 @@ class SupervisorStartConfigTests(unittest.TestCase):
 		self._litert_dir_patcher.start()
 		self.addCleanup(self._litert_dir_patcher.stop)
 
-		self.supervisor = LiteRTServerSupervisor()
+		self.supervisor = LiteRTServerSupervisor(worker_client=mock.Mock(is_connected=False))
 		self.supervisor._server_dir = mock.MagicMock(  # pylint: disable=protected-access
 			return_value=Path("/fake/runtime"),
 		)
@@ -559,7 +559,7 @@ class SupervisorRestartTests(unittest.TestCase):
 		self._litert_dir_patcher.start()
 		self.addCleanup(self._litert_dir_patcher.stop)
 
-		self.supervisor = LiteRTServerSupervisor()
+		self.supervisor = LiteRTServerSupervisor(worker_client=mock.Mock(is_connected=False))
 		self.supervisor._server_dir = mock.MagicMock(  # pylint: disable=protected-access
 			return_value=Path("/fake/runtime"),
 		)
@@ -597,7 +597,7 @@ class SupervisorHostPortTests(unittest.TestCase):
 	"""Tests for _effective_host_port resolving the configured server URL."""
 
 	def setUp(self) -> None:
-		self.supervisor = LiteRTServerSupervisor()
+		self.supervisor = LiteRTServerSupervisor(worker_client=mock.Mock(is_connected=False))
 
 	def test_uses_configured_url_host_and_port(self) -> None:
 		"""A configured URL with a port drives the bind address."""

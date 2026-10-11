@@ -921,3 +921,12 @@ fn test_os_process_handle_job_object_containment() {
     // Clean up
     let _ = handle.terminate();
 }
+
+#[cfg(windows)]
+#[test]
+fn test_real_child_stderr_survives_startup_failure() {
+    let driver = crate::process::OsProcessDriver;
+    let mut process = driver.spawn("cmd.exe", &["/C".into(), "echo invalid preset option mlock 1>&2 & exit /b 42".into()], &HashMap::new()).unwrap();
+    assert_eq!(process.wait_timeout(Duration::from_secs(3)).unwrap(), Some(42));
+    assert!(process.diagnostics().contains("invalid preset option mlock"));
+}

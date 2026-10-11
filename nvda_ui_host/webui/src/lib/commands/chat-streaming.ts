@@ -4,8 +4,8 @@ import type {
 	ChatStreamEndPayload,
 	ChatStreamAbortPayload,
 } from '../protocol-types';
-import { announceResponse, appState, setViewMode, setPendingFocus, setStatus, t } from '../state.svelte';
-import { summarizeForAnnouncement } from '../content';
+import { appState, setViewMode, setPendingFocus, setStatus, t } from '../state.svelte';
+import { completeChatTurn } from './chat-feedback';
 import { isCurrentChatEvent, readPresentationValue, resolvePresentationFocusTarget, reportUiApplied, updateChatEnvelope } from './_shared';
 
 // ---------------------------------------------------------------------------
@@ -35,6 +35,7 @@ export function beginChatStream(commandId: string, payload: ChatStreamBeginPaylo
 
 	const existing = appState.chat.transcript.findById(messageId);
 	if (!existing) {
+		setStatus(t('generating_response_status', 'Generating response...'), false);
 		appState.chat.transcript.beginStream(
 			messageId,
 			streamId,
@@ -101,20 +102,10 @@ export function endChatStream(commandId: string, payload: ChatStreamEndPayload):
 
 	const ended = appState.chat.transcript.endStream(messageId, streamId, finalContent);
 	if (ended) {
-		appState.chat.processing = false;
-		appState.chat.requestId = null;
-		appState.chat.stopping = false;
+		completeChatTurn(messageId, payload as Record<string, unknown>);
 		const cancelled = readPresentationValue(payload, 'cancelled') === true;
 		const focusTarget = cancelled ? null : resolvePresentationFocusTarget(payload);
 		if (focusTarget) setPendingFocus(focusTarget);
-		const message = appState.chat.transcript.findById(messageId);
-		const summary = summarizeForAnnouncement(message?.content);
-		announceResponse(
-			cancelled ? t('response_stopped_status', 'Response stopped.') : summary
-				? `${t('response_complete', 'Response complete')}: ${summary}`
-				: t('response_complete', 'Response complete.'),
-		);
-		setStatus(cancelled ? t('response_stopped_status', 'Response stopped.') : t('response_ready_status', 'Response ready.'), false);
 	}
 	reportUiApplied(commandId);
 }

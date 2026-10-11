@@ -454,8 +454,9 @@ class AIAssistantApplication:
 				# Managed providers become authoritative only after their server
 				# has been started/adopted.  Refresh the shared catalog here so a
 				# startup-time empty cache cannot produce a false empty menu.
-				if provider_id in {"litert-lm", "llama-cpp-server"}:
+				if provider_id == "litert-lm":
 					ensure_provider_server_ready()
+				if provider_id in {"litert-lm", "llama-cpp-server"}:
 					provider_control_service.refresh_models(provider_id)
 				models = provider_control_service.list_enabled_models(provider_id)
 			except Exception as error:
@@ -464,8 +465,6 @@ class AIAssistantApplication:
 				ErrorContext(operation="select model", provider=get_provider(), origin="model selector"),
 				)
 				def _announce_error() -> None:
-					# TRANSLATORS: Message spoken when model listing fails.
-					nvda_ui.message(_("Could not list models for the current provider."))
 					layer.finish()
 				nvda_ui.call(_announce_error)
 				return

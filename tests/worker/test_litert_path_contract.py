@@ -50,7 +50,7 @@ def test_adapter_sends_installed_runtime_paths_to_worker(tmp_path, monkeypatch, 
 	monkeypatch.setattr(supervisor, '_get_worker_client', lambda **kwargs: Client())
 	getattr(supervisor, operation)(on_progress=progress.append)
 	if operation == 'ensure_ready':
-		assert progress == ['Checking LiteRT-LM server readiness on port 9379...']
+		assert progress == []
 	assert Path(commands[0]['python_exe']) == python
 	assert Path(commands[0]['litert_dir']) == supervisor._litert_dir()
 	assert commands[0]['version'] == 'custom-version'
@@ -61,13 +61,15 @@ def test_adapter_sends_installed_runtime_paths_to_worker(tmp_path, monkeypatch, 
 def test_native_ready_server_does_not_announce_start(tmp_path, monkeypatch):
 	monkeypatch.setenv('APPDATA', str(tmp_path))
 	class Native:
+		def status(self):
+			return type('Status', (), {'state': 'ready_owned'})()
 		def ensure_ready(self, *args, **kwargs):
 			return type('Status', (), {'is_ready': True})()
 	supervisor = adapter.LiteRTServerSupervisor(native_supervisor=Native())
 	monkeypatch.setattr(adapter, '_resolve_litert_python', lambda path: path)
 	progress = []
 	assert supervisor.ensure_ready(on_progress=progress.append).is_ready
-	assert progress == ['Checking LiteRT-LM server readiness on port 9379...']
+	assert progress == []
 
 
 def test_server_progress_translates_template_before_formatting(tmp_path, monkeypatch):
@@ -75,10 +77,14 @@ def test_server_progress_translates_template_before_formatting(tmp_path, monkeyp
 	monkeypatch.setenv('APPDATA', str(tmp_path))
 	monkeypatch.setattr(builtins, '_', lambda text: 'translated: ' + text, raising=False)
 	class Native:
+		def status(self):
+			return type('Status', (), {'state': 'ready_owned'})()
 		def ensure_ready(self, *args, **kwargs):
 			return type('Status', (), {'is_ready': True})()
 	supervisor = adapter.LiteRTServerSupervisor(native_supervisor=Native())
 	monkeypatch.setattr(adapter, '_resolve_litert_python', lambda path: path)
 	progress = []
 	supervisor.ensure_ready(on_progress=progress.append)
-	assert progress == ['translated: Checking LiteRT-LM server readiness on port 9379...']
+	assert progress == []
+	progress_module = load_addon_module('core.readiness_progress', namespace='litert_translation_contract')
+	assert progress_module.render_readiness_stage('starting') == 'translated: Starting local AI server…'

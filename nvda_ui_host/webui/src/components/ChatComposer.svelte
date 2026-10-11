@@ -1,5 +1,5 @@
 <script>
-    import { focusChatComposer, stopChatResponse, submitChatMessage } from '../lib/actions';
+    import { focusChatComposer, activateChatPrimaryAction, submitChatMessage } from '../lib/actions';
     import { handleFileSelection } from '../lib/attachments';
     import { appState, t } from '../lib/state.svelte';
     import AttachmentStrip from './AttachmentStrip.svelte';
@@ -52,18 +52,14 @@
                     aria-keyshortcuts="Alt+I, Shift+Enter"
                     onkeydown={handleKeydown}
                     onfocus={focusChatComposer}
-                    disabled={chatDisabled}
                 ></textarea>
             </label>
 
             <div class="composer-toolbar">
-                <button id="attach-files" type="button" aria-keyshortcuts="Alt+A" onclick={() => fileInputElement?.click()} disabled={chatDisabled}>{t('attach_button', 'Upload image')}</button>
+                <button id="attach-files" type="button" aria-keyshortcuts="Alt+A" onclick={() => fileInputElement?.click()}>{t('attach_button', 'Upload image')}</button>
             </div>
 
-            <button id="chat-send" type="button" aria-keyshortcuts="Enter,Alt+S" aria-busy={appState.chat.processing} onclick={() => submitChatMessage(fileInputElement)} disabled={chatDisabled}>{appState.chat.processing ? t('processing_button', 'Processing…') : t('send_button', 'Send')}</button>
-			{#if appState.chat.processing}
-				<button id="chat-stop" type="button" onclick={stopChatResponse} disabled={appState.chat.stopping}>{appState.chat.stopping ? t('stopping_status', 'Stopping response...') : t('stop_response', 'Stop response')}</button>
-			{/if}
+            <button id="chat-send" type="button" aria-keyshortcuts="Alt+S" onclick={() => activateChatPrimaryAction(fileInputElement)} disabled={appState.chat.processing ? appState.chat.stopping : chatDisabled}>{appState.chat.processing ? (appState.chat.stopping ? t('stopping_status', 'Stopping response...') : t('stop_response', 'Stop response')) : t('send_button', 'Send')}</button>
         </div>
     </section>
 {/if}

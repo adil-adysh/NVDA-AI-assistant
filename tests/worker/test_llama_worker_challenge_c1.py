@@ -924,7 +924,7 @@ class TestLlamaFailClosedInvariants(unittest.TestCase):
 				with self.assertRaises(LlamaServerError) as ctx:
 					sup.ensure_ready("test_model", timeout=1.0)
 
-				self.assertIn("Worker process is not available", str(ctx.exception))
+				self.assertRegex(str(ctx.exception), "Worker process is not available|Could not start local AI worker: AI Assistant worker lifecycle has not been configured")
 				self.assertEqual(self.mock_popen.call_count, 0, f"subprocess.Popen was called for variant {label}!")
 				self.assertEqual(self.mock_run.call_count, 0, f"subprocess.run was called for variant {label}!")
 				self.assertEqual(self.mock_call.call_count, 0, f"subprocess.call was called for variant {label}!")
@@ -939,7 +939,7 @@ class TestLlamaFailClosedInvariants(unittest.TestCase):
 				with self.assertRaises(LlamaServerError) as ctx:
 					sup.restart("test_model", timeout=1.0)
 
-				self.assertIn("Worker process is not available", str(ctx.exception))
+				self.assertRegex(str(ctx.exception), "Worker process is not available|Could not start local AI worker: AI Assistant worker lifecycle has not been configured")
 				self.assertEqual(self.mock_popen.call_count, 0, f"subprocess.Popen was called for variant {label}!")
 				self.assertEqual(self.mock_run.call_count, 0, f"subprocess.run was called for variant {label}!")
 				self.assertEqual(self.mock_call.call_count, 0, f"subprocess.call was called for variant {label}!")
@@ -954,7 +954,7 @@ class TestLlamaFailClosedInvariants(unittest.TestCase):
 				with self.assertRaises(LlamaServerError) as ctx:
 					sup.adopt("test_model")
 
-				self.assertIn("Worker process is not available", str(ctx.exception))
+				self.assertRegex(str(ctx.exception), "Worker process is not available|Could not start local AI worker: AI Assistant worker lifecycle has not been configured")
 				self.assertEqual(self.mock_popen.call_count, 0, f"subprocess.Popen was called for variant {label}!")
 				self.assertEqual(self.mock_run.call_count, 0, f"subprocess.run was called for variant {label}!")
 				self.assertEqual(self.mock_call.call_count, 0, f"subprocess.call was called for variant {label}!")
@@ -964,7 +964,7 @@ class TestLlamaFailClosedInvariants(unittest.TestCase):
 		sup = LlamaServerSupervisor(port=8080)
 		with self.assertRaises(LlamaServerError) as ctx:
 			sup.start("test_model")
-		self.assertIn("Worker process is not available", str(ctx.exception))
+		self.assertRegex(str(ctx.exception), "Worker process is not available|Could not start local AI worker: AI Assistant worker lifecycle has not been configured")
 		self.assertEqual(self.mock_popen.call_count, 0)
 
 	def test_status_cleanly_returns_idle_status_without_hanging_or_raising(self) -> None:

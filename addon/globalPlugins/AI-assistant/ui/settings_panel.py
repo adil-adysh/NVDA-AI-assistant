@@ -28,6 +28,7 @@ from ..config.settings import (
 	set_progress_enabled, set_provider, set_request_metrics_log_path, set_request_metrics_logging_enabled,
 	set_streaming_enabled, set_streaming_tone_enabled, set_timeout_seconds,
 	get_one_shot_output_mode, set_one_shot_output_mode, ONE_SHOT_OUTPUT_MODES,
+	get_chat_auto_read, set_chat_auto_read, get_chat_status_announcements, set_chat_status_announcements,
 )
 from ..config.enabled_models import ModelVisibilityStore
 from ..embeddings.manager import embedding_model_service
@@ -58,6 +59,8 @@ class _SettingsValues:
 	progress: bool
 	streaming_tone: bool
 	one_shot_output_mode: str
+	chat_auto_read: bool
+	chat_status_announcements: bool
 	language: str
 	image_max_side: int
 	image_format: str
@@ -329,6 +332,13 @@ class AIAssistantBehaviorOutputPanel(_SettingsTab):
 		help_text = _("Applies to summaries, image descriptions, and other one-shot responses, not chat. Speak only keeps focus in the current application. Show last result opens the latest answer in any mode.")
 		self.one_shot_output.SetName(_("One-shot response output. ") + help_text)
 		self.one_shot_output.SetToolTip(help_text)
+		helper = self.add_group(_("Chat responses"))
+		self.chat_auto_read = helper.addItem(wx.CheckBox(self, label=_("Automatically read completed chat responses")))
+		self.chat_auto_read.SetValue(get_chat_auto_read())
+		self.chat_auto_read.SetToolTip(_("Reads the completed answer aloud after it is displayed. Stopping speech does not cancel the request."))
+		self.chat_status_announcements = helper.addItem(wx.CheckBox(self, label=_("Announce chat status changes")))
+		self.chat_status_announcements.SetValue(get_chat_status_announcements())
+		self.chat_status_announcements.SetToolTip(_("Announces message sent, generating response, response ready, stopped, and failures without reading the answer."))
 		helper = self.add_group(_("Language & Image"))
 		self.language_options = self._get_language_options()
 		self.language = self.add_labeled_combo(helper, _("Prompt language:"), [label for _, label in self.language_options], self._language_label(get_language()))
@@ -363,6 +373,7 @@ class AIAssistantBehaviorOutputPanel(_SettingsTab):
 		values.update(
 			streaming=self.streaming.GetValue(), progress=self.progress.GetValue(), streaming_tone=self.streaming_tone.GetValue(), language=language,
 			one_shot_output_mode=ONE_SHOT_OUTPUT_MODES[output_index],
+			chat_auto_read=self.chat_auto_read.GetValue(), chat_status_announcements=self.chat_status_announcements.GetValue(),
 			image_max_side=self.parse_int(self.image_max_side, _("Image max side length must be an integer of at least 128."), 128),
 			image_format=["PNG", "JPEG"][index], image_quality=quality,
 		)
@@ -494,6 +505,8 @@ class AIAssistantSettingsDialog(SettingsDialog):
 		set_streaming_tone_enabled(values.streaming_tone)
 		set_progress_enabled(values.progress)
 		set_one_shot_output_mode(values.one_shot_output_mode)
+		set_chat_auto_read(values.chat_auto_read)
+		set_chat_status_announcements(values.chat_status_announcements)
 		set_timeout_seconds(values.timeout_seconds)
 		set_local_startup_mode("litert-lm", values.litert_startup)
 		set_local_startup_mode("llama-cpp-server", values.llama_startup)

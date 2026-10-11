@@ -417,6 +417,7 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
                                 w!(r#"
                                     window.__sendHostEvent = payload => {
                                         window.chrome.webview.postMessage(JSON.stringify(payload));
+                                        return true;
                                     };
                                     // Listen for incoming host commands sent via PostWebMessageAsString.
                                     // The bridge also registers its own listener, but this one runs early

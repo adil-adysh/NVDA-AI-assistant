@@ -1,5 +1,7 @@
 """A fast job can finish on the event pipe before its command acknowledgement."""
 
+import threading
+
 from tests.support import load_addon_module
 
 module = load_addon_module("service.worker_client", namespace="job_completion_race_tests")
@@ -7,8 +9,12 @@ dto = load_addon_module("core.job.dto", namespace="job_completion_race_tests")
 
 
 def test_submission_ack_preserves_completed_snapshot():
+	closed = threading.Event()
 	class EventPipe:
-		is_connected = False
+		is_connected = True
+		def read_frame(self):
+			closed.wait()
+			raise module.PipeDisconnectedError("closed")
 
 	class CommandPipe:
 		def write_frame(self, frame):
@@ -29,3 +35,5 @@ def test_submission_ack_preserves_completed_snapshot():
 		assert jobs.list_active_jobs() == ()
 	finally:
 		jobs.close()
+		closed.set()
+		jobs._evt_listener_thread.join(timeout=1)

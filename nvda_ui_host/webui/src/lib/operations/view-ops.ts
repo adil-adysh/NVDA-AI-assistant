@@ -53,6 +53,24 @@ export function resetChatState(): void {
 	appState.chat.transcript.clear();
 	appState.chat.attachments = [];
 	appState.chat.composerText = '';
+	appState.chat.latestCompletedMessageId = null;
+}
+
+const drafts = new Map<string, { text: string; attachments: typeof appState.chat.attachments }>();
+
+export function saveChatDraft(): void {
+	const id = appState.chat.conversationId;
+	if (!id) return;
+	if (!appState.chat.composerText && !appState.chat.attachments?.length) drafts.delete(id);
+	else drafts.set(id, { text: appState.chat.composerText, attachments: [...appState.chat.attachments] });
+}
+
+export function restoreChatDraft(): void {
+	const draft = drafts.get(appState.chat.conversationId || '');
+	if (draft) {
+		appState.chat.composerText = draft.text;
+		appState.chat.attachments = [...draft.attachments];
+	}
 }
 
 export function resetDisplayState(): void {

@@ -51,6 +51,9 @@ class UISessionMetadata(TypedDict, total=False):
 	think_enabled: bool
 	think_supported: bool
 	chat_enabled: bool
+	chat_auto_read: bool
+	chat_status_announcements: bool
+	announcement_text: str
 	status_message: str
 	interaction_mode: InteractionMode
 	controls_visible: bool

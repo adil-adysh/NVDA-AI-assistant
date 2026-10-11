@@ -60,6 +60,8 @@ settings_module = types.ModuleType(f"{PACKAGE_NAME}.config.settings")
 settings_module.get_active_provider_config = _get_active_provider_config
 settings_module.get_provider_state = _get_provider_state
 settings_module.get_think = lambda _provider, _model: False
+settings_module.get_chat_auto_read = lambda: False
+settings_module.get_chat_status_announcements = lambda: True
 sys.modules[settings_module.__name__] = settings_module
 
 state_module = types.ModuleType(f"{PACKAGE_NAME}.config.state")

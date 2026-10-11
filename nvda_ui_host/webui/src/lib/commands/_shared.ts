@@ -11,23 +11,55 @@ import {
 	appState,
 	setControlsVisible,
 	setInteractionMode,
+	announceResponse,
 } from '../state.svelte';
 import { emitUiEvent } from './_events';
 import { readPresentationValue, getMetadata } from '../operations/control-ops';
 import { tick } from 'svelte';
 
 let focusGeneration = 0;
+let cancelAnnouncement: (() => void) | null = null;
 
 export function invalidatePresentationFocus(): void {
 	focusGeneration++;
+	cancelAnnouncement?.();
+	appState.view.pendingAnnouncement = null;
 	appState.view.pendingFocus = null;
 }
 
-export async function focusPresentationElement(element: HTMLElement): Promise<void> {
+/** Wait for keyboard focus, including native WebView focus, before reading. */
+export function announceAfterKeyboardFocus(text: string, element: HTMLElement): void {
+	cancelAnnouncement?.();
+	const generation = focusGeneration;
+	let frame = 0;
+	let done = false;
+	const cleanup = () => {
+		done = true;
+		window.removeEventListener('focus', schedule, true);
+		cancelAnimationFrame(frame);
+	};
+	const deliver = () => {
+		if (done || generation !== focusGeneration || !element.isConnected) { cleanup(); return; }
+		if (!document.hasFocus() || document.activeElement !== element) return;
+		cleanup();
+		announceResponse(text);
+	};
+	function schedule() {
+		cancelAnimationFrame(frame);
+		frame = requestAnimationFrame(() => { frame = requestAnimationFrame(deliver); });
+	}
+	cancelAnnouncement = cleanup;
+	window.addEventListener('focus', schedule, true);
+	schedule();
+}
+
+export async function focusPresentationElement(element: HTMLElement): Promise<boolean> {
+	cancelAnnouncement?.();
 	const generation = ++focusGeneration;
 	await tick();
-	if (generation !== focusGeneration || !element.isConnected) return;
+	if (generation !== focusGeneration || !element.isConnected) return false;
 	element.focus({ preventScroll: false });
+	return true;
 }
 
 // Re-export for convenience

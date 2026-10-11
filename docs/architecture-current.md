@@ -2,6 +2,8 @@
 
 This document describes the implementation in this repository as of August 2026. It is organized around runtime ownership and package boundaries; the protocol documents describe individual message schemas in more detail.
 
+Managed-runtime preparation feedback is request-scoped. `core/readiness_progress.py` observes native lifecycle snapshots and emits startup, restart, and one delayed-preparation stage. Readiness RPCs opt in with `report_readiness_progress`; the worker sends `runtime_progress` frames with a `stage` of `starting`, `restarting`, or `delayed`, followed by the final response. `NamedPipeWorkerClient` consumes the complete transaction under its command lock and translates stages in the NVDA process. No stages are sent to clients that do not opt in. Presentation checks cancellation, current chat identity, preparation lifetime, and output settings before speaking. Model loading is not inferred from elapsed time.
+
 ## 1. Runtime topology
 
 ~~~mermaid
@@ -302,6 +304,8 @@ provider selection/startup -> BackgroundTaskRunner
 Python serializes usable context/output items as generic actions. The Web UI emits ui_action_invoked; host_renderer.py forwards it; presenter.py maps it to adding context to current chat, opening a new chat, retrying, or navigating to a target. Provider and use-case semantics stay in Python.
 
 ## 9. Packaging and failure boundaries
+
+The native process driver validates preset readability, INI line structure, and known incompatible preset options before spawning. It continuously drains server stderr into a bounded 64 KB buffer and attaches the final 4 KB to exit errors. Unknown options remain the installed server's responsibility; this avoids maintaining a second CLI implementation. Python preserves native diagnostics across readiness RPCs. Worker event-pipe loss completes pending jobs with a retryable `WORKER_DISCONNECTED` result, releases waiters, and invokes completion subscribers once. Worker failure speech is queued on the NVDA event thread on the first failure in a recovery episode. The llama model selector refreshes its local catalog without requiring server startup.
 
 SConstruct packages Python sources, bundled libraries, native extensions, the Rust host, the isolated private CPython worker runtime, and localized documentation. By default the worker starts on the first model operation and model servers start on inference. Per-provider runtime settings can instead prepare the worker or start the local server at NVDA startup; only the active provider's choice applies. Application termination fences lazy launches and automatic recovery before asynchronous worker teardown. Host failure is isolated by UIAdapter and falls back to native NVDA UI. Missing optional extensions have narrower fallbacks: JSON conversations replace memory_engine, and context reduction can use deterministic behavior when embeddings are disabled/unavailable. Provider/runtime errors are converted by the service error-presentation layer before reaching users.
 

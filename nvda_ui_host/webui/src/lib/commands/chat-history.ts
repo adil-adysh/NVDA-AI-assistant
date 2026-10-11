@@ -2,8 +2,6 @@ import type { ChatSetHistoryPayload, ChatAppendPayload, ChatUpdatePayload } from
 import {
 	appState,
 	setViewMode,
-	setStatus,
-	t,
 } from '../state.svelte';
 import {
 	reportUiApplied,
@@ -11,6 +9,7 @@ import {
 	resolvePresentationFocusTarget,
 	updateChatEnvelope,
 } from './_shared';
+import { completeChatTurn } from './chat-feedback';
 
 // ---------------------------------------------------------------------------
 // chat_set_history
@@ -45,26 +44,17 @@ export function appendChatMessage(commandId: string, payload: ChatAppendPayload)
 	for (const msg of messages) {
 		appState.chat.transcript.upsert(msg as any);
 	}
-	if (messages.some((message) => message.role === 'assistant' && !message.streaming)) {
-		appState.chat.processing = false;
-		appState.chat.requestId = null;
-		appState.chat.stopping = false;
-		if (payload.metadata?.cancelled === true) {
-			setStatus(t('response_stopped_status', 'Response stopped.'), false);
-		}
+	for (const message of messages) {
+		if (message.role === 'assistant' && !message.streaming) completeChatTurn(message.id, payload as Record<string, unknown>);
 	}
 
 	console.log(`[chat-history] transcript after upsert: ${appState.chat.transcript.count}`);
 
-	const hasUserMessage = messages.some((m) => m.role === 'user');
-	if (hasUserMessage) {
-		appState.chat.composerText = '';
-	}
-
 	// Restore user's message in composer from error metadata so they can retry
 	const meta = payload.metadata as Record<string, unknown> | undefined;
-	if (typeof meta?.restore_text === 'string') {
+	if (typeof meta?.restore_text === 'string' && !appState.chat.composerText) {
 		appState.chat.composerText = meta.restore_text;
+		if (!appState.chat.attachments?.length && Array.isArray(meta.restore_attachments)) appState.chat.attachments = meta.restore_attachments as typeof appState.chat.attachments;
 	}
 
 	setViewMode('chat', resolvePresentationFocusTarget(payload as Record<string, unknown>));

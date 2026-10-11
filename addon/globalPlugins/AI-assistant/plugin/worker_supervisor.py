@@ -406,6 +406,7 @@ class WorkerSupervisor:
 			if self.state in (
 				SupervisorState.STOPPED,
 				SupervisorState.FAILED_TRIPPED,
+				SupervisorState.CRASHED,
 			):
 				return
 			self.state = SupervisorState.CRASHED
@@ -414,6 +415,13 @@ class WorkerSupervisor:
 
 		# Capture exit diagnostics
 		self._teardown_process_handles(force_kill=True)
+		# Report the first failure in a recovery episode, not only the circuit breaker.
+		if not self._crash_timestamps or time.monotonic() - self._crash_timestamps[-1] > self.crash_window_seconds:
+			try:
+				from ..ui import nvda_ui
+				nvda_ui.queue(nvda_ui.message, _("The local AI worker stopped unexpectedly. The current request may have failed. Please try again."))
+			except Exception:
+				logger.debug("Unable to queue worker failure feedback", exc_info=True)
 
 		# Circuit breaker sliding window check
 		now = time.monotonic()
@@ -477,7 +485,7 @@ class WorkerSupervisor:
 
 	def _notify_presenter_circuit_breaker_tripped(self) -> None:
 		"""Marshal non-blocking notification to UI/Presenter."""
-		msg = (
+		msg = _(
 			"AI Assistant local worker stopped responding. Background model features "
 			"unavailable. Open Settings to view diagnostics or restart."
 		)
@@ -493,7 +501,7 @@ class WorkerSupervisor:
 		try:
 			from ..ui import nvda_ui
 
-			nvda_ui.message(msg)
+			nvda_ui.queue(nvda_ui.message, msg)
 		except Exception:
 			pass
 
@@ -634,7 +642,7 @@ class LazyWorkerOwner:
 			self._starting = True
 		try:
 			if not self.supervisor.start():
-				details = getattr(self.supervisor, "last_startup_error", None) or self.supervisor.stderr_buffer.get_text()[-1000:]
+				details = self.supervisor.stderr_buffer.get_text()[-1000:] or getattr(self.supervisor, "last_startup_error", None)
 				raise RuntimeError(_("Could not start AI Assistant worker. {details}").format(details=details))
 			client = self.supervisor.get_worker_client()
 			if client is None:

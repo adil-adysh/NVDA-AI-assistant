@@ -9,15 +9,38 @@ function loadFocusHelpers() {
 	const exports = {};
 	const ticks = [];
 	const events = [];
+	const frames = [];
+	const announcements = [];
+	const listeners = new Set();
+	const document = { hasFocus: () => false, activeElement: null };
 	const state = { view: { pendingFocus: 'composer' } };
 	const source = fs.readFileSync(path.join(__dirname, '../../nvda_ui_host/webui/src/lib/commands/_shared.ts'), 'utf8');
 	vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, {
 		exports, require: name => name === 'svelte' ? { tick: () => new Promise(resolve => ticks.push(resolve)) }
-			: name === '../state.svelte' ? { appState: state }
+			: name === '../state.svelte' ? { appState: state, announceResponse: text => announcements.push(text) }
 			: name === './_events' ? { emitUiEvent: (...args) => events.push(args) } : {},
+		document, window: { addEventListener: (_name, fn) => listeners.add(fn), removeEventListener: (_name, fn) => listeners.delete(fn) },
+		requestAnimationFrame: fn => { frames.push(fn); return frames.length; }, cancelAnimationFrame() {},
 	});
-	return { ...exports, ticks, events, state };
+	return { ...exports, ticks, events, state, frames, announcements, listeners, document };
 }
+
+test('auto-read waits for actual keyboard focus and dismissal cancels it', () => {
+	const h = loadFocusHelpers();
+	const element = { isConnected: true };
+	h.announceAfterKeyboardFocus('answer', element);
+	h.frames.shift()(); h.frames.shift()();
+	assert.equal(h.announcements.length, 0);
+	h.document.hasFocus = () => true; h.document.activeElement = element;
+	for (const listener of h.listeners) listener();
+	h.frames.shift()(); h.frames.shift()();
+	assert.deepEqual(h.announcements, ['answer']);
+	h.announceAfterKeyboardFocus('stale', element);
+	h.invalidatePresentationFocus();
+	h.frames.shift()(); h.frames.shift()();
+	assert.deepEqual(h.announcements, ['answer']);
+	assert.equal(h.listeners.size, 0);
+});
 
 test('applied acknowledgement waits for DOM and focus flushes', async () => {
 	const helpers = loadFocusHelpers();

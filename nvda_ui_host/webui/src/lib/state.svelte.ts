@@ -57,6 +57,9 @@ export const appState = $state({
 	localizedStrings: {} as Record<string, string>,
 
 	chat: {
+		autoRead: false,
+		statusAnnouncements: true,
+		latestCompletedMessageId: null as string | null,
 		requestId: null as string | null,
 		latestRequestId: null as string | null,
 		stopping: false,
@@ -80,6 +83,7 @@ export const appState = $state({
 	},
 
 	view: {
+		pendingAnnouncement: null as { text: string; messageId: string } | null,
 		mode: 'display' as 'display' | 'chat',
 		pendingFocus: null as string | null,
 		interactionMode: 'display' as string,
@@ -110,7 +114,7 @@ export function mergeLocalizedStrings(strings: Record<string, string>): void {
 export function setStatus(message: string, announce = false): void {
 	appState.statusMessage = message;
 	if (announce) {
-		publishAnnouncement('statusAnnouncement', message);
+		if (!appState.chat.active || appState.chat.statusAnnouncements) publishAnnouncement('statusAnnouncement', message);
 	}
 }
 

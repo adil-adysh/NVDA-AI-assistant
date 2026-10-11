@@ -115,6 +115,10 @@ The preset section ID is used as the canonical request model ID because it is st
 
 ## Diagnostics
 
+Before an owned server is launched, the native supervisor checks that the preset is readable and has valid INI lines. Known incompatible options produce a section and line number: for example, use `load-mode = mlock` rather than `mlock = true`. Unknown options are checked by the installed llama-server itself. Startup exit errors include bounded server stderr, so an invalid option or model-loading error is retained through the worker RPC rather than replaced with a generic startup failure.
+
+Model selection remains available from the local catalog when the server is offline. Selecting a model does not prove that the server can load it; inference still checks runtime availability. If the worker disconnects, pending jobs fail promptly with a retryable error instead of waiting indefinitely for a result. Worker failure announcements run on NVDA's event thread.
+
 Inspect the server catalog directly:
 
 ```powershell

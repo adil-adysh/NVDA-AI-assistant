@@ -152,6 +152,7 @@ class HostRenderer(UIHostRenderer):
 		self._host_closed_handler = handler
 
 	def _on_host_event(self, event: HostEvent) -> None:
+		logger.debug("HostRenderer received host event: %s", event.event)
 		handler = self._event_handlers.get(event.event)
 		if handler is None:
 			logger.debug("HostRenderer received unsupported host event: %s", event.event)

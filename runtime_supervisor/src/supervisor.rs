@@ -128,13 +128,14 @@ impl SupervisorCore {
             if let Some(ref mut process) = state.process {
                 match process.poll() {
                     Ok(Some(exit_code)) => {
+                        let diagnostics = process.diagnostics();
                         state.process = None;
                         state.generation += 1;
                         if exit_code != 0 {
                             state.state = LifecycleState::Failed;
                             state.last_error = Some(format!(
-                                "{} server process exited unexpectedly with code {}",
-                                self.runtime_name, exit_code
+                                "{} server process exited unexpectedly with code {}: {}",
+                                self.runtime_name, exit_code, diagnostics
                             ));
                         } else {
                             state.state = LifecycleState::Stopped;
@@ -410,12 +411,13 @@ impl SupervisorCore {
                     }
                     if let Some(ref mut proc) = s.process {
                         if let Ok(Some(code)) = proc.poll() {
+                            let diagnostics = proc.diagnostics();
                             s.process = None;
                             s.generation += 1; // RS-01: Advance epoch on poll crash
                             s.state = LifecycleState::Failed;
                             let err_msg = format!(
-                                "{} server process exited unexpectedly with code {}",
-                                self.runtime_name, code
+                                "{} server process exited unexpectedly with code {}: {}",
+                                self.runtime_name, code, diagnostics
                             );
                             s.last_error = Some(err_msg.clone());
                             self.condvar.notify_all();
@@ -464,8 +466,8 @@ impl SupervisorCore {
                     if let Ok(Some(code)) = proc.poll() {
                         s.state = LifecycleState::Failed;
                         let err_msg = format!(
-                            "{} server process exited unexpectedly with code {}",
-                            self.runtime_name, code
+                            "{} server process exited unexpectedly with code {}: {}",
+                            self.runtime_name, code, proc.diagnostics()
                         );
                         s.last_error = Some(err_msg.clone());
                         self.condvar.notify_all();

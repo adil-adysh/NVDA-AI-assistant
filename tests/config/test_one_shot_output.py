@@ -27,3 +27,15 @@ def test_output_choice_survives_yaml_reload(tmp_path, monkeypatch, mode):
 	with pytest.raises(ValueError):
 		settings.set_one_shot_output_mode('invalid')
 	assert settings.get_one_shot_output_mode() == mode
+
+
+def test_chat_preferences_have_independent_defaults_and_persist(tmp_path, monkeypatch):
+	path = tmp_path / 'chat.yaml'
+	monkeypatch.setattr(settings, '_config_store', store.YamlConfigStore(path=path))
+	assert settings.get_chat_auto_read() is False
+	assert settings.get_chat_status_announcements() is True
+	settings.set_chat_auto_read(True)
+	settings.set_chat_status_announcements(False)
+	monkeypatch.setattr(settings, '_config_store', store.YamlConfigStore(path=path))
+	assert settings.get_chat_auto_read() is True
+	assert settings.get_chat_status_announcements() is False

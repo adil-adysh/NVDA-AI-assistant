@@ -8,14 +8,15 @@ from typing import Any
 import logging
 from uuid import uuid4
 
-from ..config.settings import get_image_mime_type
+from ..config.settings import get_image_mime_type, get_chat_auto_read, get_chat_status_announcements
 from ..core.cancellation import CancellationToken, cancellation_scope, check_cancelled, current_cancellation_token
+from ..core.translation import _
 from ..service.error_presentation import ErrorPresentation, present_error
 from ..service.provider_controls import provider_control_service
 from .host_lifecycle import HostLifecycleService, HostLifecycleState
 from .intent import ATTENTION_POLICY_ACTIVATE_AND_FOCUS, ATTENTION_POLICY_NONE, FOCUS_TARGET_CONTENT, merge_presentation_intent
 from . import nvda_ui
-from .accessibility import coerce_announcement_text, queue_response_announcement, strip_html_for_announcement
+from .accessibility import coerce_announcement_text, strip_html_for_announcement
 from .host_renderer import HostRenderer, HostUnavailableError
 from .attachment_context import extract_attachment_context
 from .view_models import ChatWindowViewModel, DisplayResultViewModel
@@ -444,14 +445,19 @@ class UIAdapter:
 		try:
 			if self._litert_ready_handler is None:
 				raise RuntimeError("LiteRT readiness handler is not configured")
+			preparing = threading.Event()
+			preparing.set()
 			def announce_readiness(message: str) -> None:
 				def deliver() -> None:
-					if self._running and not token.cancelled:
+					if preparing.is_set() and self._is_current_chat_request(request_id, conversation_id) and not token.cancelled and get_chat_status_announcements():
 						nvda_ui.message(message)
 				nvda_ui.queue(deliver)
 			try:
 				check_cancelled()
-				self._litert_ready_handler(announce_readiness)
+				try:
+					self._litert_ready_handler(announce_readiness)
+				finally:
+					preparing.clear()
 				check_cancelled()
 			except Exception:
 				if not token.cancelled:
@@ -491,6 +497,8 @@ class UIAdapter:
 					)
 				return
 			assistant_text = getattr(response, "text", None)
+			if not isinstance(assistant_text, str) or not assistant_text.strip():
+				raise RuntimeError(_("The provider returned an empty response. Try again."))
 			thinking_trace = self._extract_thinking_trace(response)
 			if not self._is_current_chat_request(request_id, conversation_id):
 				assistant_projection.abort(reason="request_superseded")
@@ -501,6 +509,8 @@ class UIAdapter:
 				assistant_projection.final_metadata_factory = lambda: {
 					"request_id": request_id, "cancelled": True, "attention_policy": ATTENTION_POLICY_NONE,
 				}
+			else:
+				assistant_projection.final_metadata_factory = lambda: self._chat_completion_metadata(request_id, assistant_text or "")
 			if isinstance(assistant_text, str) and assistant_text.strip():
 				assistant_content = self._build_assistant_content_blocks(
 					assistant_text,
@@ -508,10 +518,6 @@ class UIAdapter:
 					thinking_trace=thinking_trace if isinstance(thinking_trace, str) else None,
 				)
 				assistant_projection.finish(assistant_content)
-				if stopped:
-					nvda_ui.queue(nvda_ui.message, localized_strings.get("stopped_status", "Stopped."))
-				else:
-					queue_response_announcement(nvda_ui.queue, nvda_ui.message, assistant_text)
 		except Exception as error:
 			if not self._is_current_chat_request(request_id, conversation_id):
 				assistant_projection.abort(reason="request_superseded")
@@ -524,8 +530,8 @@ class UIAdapter:
 			#     the user's message in the composer for retry.
 			error_content = self._build_error_content_blocks(presentation, localized_strings)
 			error_metadata = dict(assistant_projection.final_metadata_factory())
-			if message_text:
-				error_metadata["restore_text"] = message_text
+			error_metadata.update(failed=True, announcement_text="", restore_text=message)
+			error_metadata["restore_attachments"] = list((event_payload or {}).get("attachments") or [])
 			self._host_renderer.chat_append(
 				use_case_id,
 				conversation_id or "",
@@ -536,7 +542,11 @@ class UIAdapter:
 				},
 				metadata=error_metadata,
 			)
-			nvda_ui.queue(nvda_ui.message, presentation.message)
+
+	def _chat_completion_metadata(self, request_id: str, answer: str) -> dict[str, object]:
+		metadata = self._final_answer_metadata({"request_id": request_id})
+		metadata["announcement_text"] = strip_html_for_announcement(render_markdown_to_html(answer)) if get_chat_auto_read() else ""
+		return metadata
 
 	def _build_user_content(
 		self,

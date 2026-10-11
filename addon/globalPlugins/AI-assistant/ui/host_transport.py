@@ -28,6 +28,7 @@ class HostPipeTransport:
 		self._stop_event = threading.Event()
 		self._event_listener_started = False
 		self._event_listener_lock = threading.Lock()
+		self._read_buffers: dict[int, bytes] = {}
 
 	def send(self, message: bytes) -> bytes:
 		return self.send_and_receive(message)
@@ -154,8 +155,14 @@ class HostPipeTransport:
 		timeout_seconds: float | None,
 	) -> bytes:
 		deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
-		buffer = b""
+		buffer_key = id(handle)
+		buffer = self._read_buffers.pop(buffer_key, b"")
 		while deadline is None or time.monotonic() < deadline:
+			if b"\n" in buffer:
+				line, remaining = buffer.split(b"\n", 1)
+				if remaining:
+					self._read_buffers[buffer_key] = remaining
+				return line
 			available = self._peek_available_bytes(handle, win32pipe_module)
 			if available == 0:
 				time.sleep(0.01)
@@ -176,9 +183,6 @@ class HostPipeTransport:
 				raise RuntimeError(
 					f"Host pipe frame exceeds the maximum size of {MAX_FRAME_BYTES} bytes"
 				)
-			if b"\n" in buffer:
-				line, _ = buffer.split(b"\n", 1)
-				return line
 
 		timeout_label = "without timeout" if timeout_seconds is None else f"after {timeout_seconds} seconds"
 		raise TimeoutError(f"Timed out waiting for host response on pipe {self._pipe_name} {timeout_label}")
@@ -203,6 +207,7 @@ class HostPipeTransport:
 		return None
 
 	def _close_handle(self, handle: Any, win32file_module: Any) -> None:
+		self._read_buffers.pop(id(handle), None)
 		try:
 			win32file_module.CloseHandle(handle)
 		except Exception as error:

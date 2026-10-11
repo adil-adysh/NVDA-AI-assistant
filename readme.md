@@ -335,7 +335,7 @@ The following shortcuts are available inside the chat window:
 | -------- | ------ |
 | `Escape` | Hide the chat window (streaming continues in the background) |
 | `Alt+I` | Focus the message input box |
-| `Alt+S` | Send the current message |
+| `Alt+S` | Send the current message, or stop the response being generated |
 | `Shift+Enter` | Insert a new line in the message input |
 | `Alt+T` | Copy response text to clipboard |
 | `Alt+K` | Copy response as formatted markdown |
@@ -344,6 +344,14 @@ The following shortcuts are available inside the chat window:
 | `Alt+P` | Focus the provider selector |
 | `Alt+M` | Focus the model selector |
 | `Alt+A` | Attach an image file |
+
+The Send button becomes Stop response while an answer is being generated. You can prepare your next message during generation; pressing Enter will not send a second request until the current response finishes. Stop keeps the partial answer, marked stopped. Unsent drafts and attachments are retained when switching conversations during the current UI session.
+
+After sending, the status confirms “Message sent. Generating response.” Completion, cancellation, and failures also update the status. Failed sends preserve your draft and attachments for retry.
+
+Under **Behavior & Output → Chat responses**, **Announce chat status changes** is enabled by default and controls spoken status feedback. **Automatically read completed chat responses** is disabled by default; when enabled, the completed answer is read after it is displayed and receives keyboard focus. Stopping speech does not cancel generation. These settings are independent of one-shot output preferences.
+
+Routine local-server readiness checks are silent. Observable startup or restart is announced once; preparation lasting 10 seconds produces one “Still preparing local AI” notice. Preparation feedback follows chat status announcements, and is silent for display-only one-shot output. Model loading is not inferred from a slow request: runtimes without loading telemetry receive generic preparation feedback.
 
 ---
 

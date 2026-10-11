@@ -9,6 +9,23 @@ from tests.support import PROJECT_ROOT, load_addon_module
 supervisor_module = load_addon_module("plugin.worker_supervisor", namespace="supervisor_launch_tests")
 
 
+def test_first_worker_crash_queues_feedback_once(monkeypatch):
+	import sys
+	import types
+	ui = types.ModuleType("supervisor_launch_tests.ui.nvda_ui")
+	ui.message = lambda text: None
+	queued = []
+	ui.queue = lambda *args: queued.append(args)
+	monkeypatch.setitem(sys.modules, ui.__name__, ui)
+	supervisor = supervisor_module.WorkerSupervisor(auto_restart=False)
+	supervisor.state = supervisor_module.SupervisorState.RUNNING
+	monkeypatch.setattr(supervisor, "_teardown_process_handles", lambda **kwargs: None)
+	supervisor._handle_crash("PIPE_BROKEN")
+	supervisor._handle_crash("PIPE_BROKEN")
+	assert len(queued) == 1
+	assert "worker" in queued[0][1]
+
+
 def test_default_entrypoint_is_independent_of_working_directory(tmp_path, monkeypatch):
 	monkeypatch.chdir(tmp_path)
 	supervisor = supervisor_module.WorkerSupervisor(auto_restart=False)

@@ -30,3 +30,13 @@ test('successful event preserves the protocol envelope', () => {
 	assert.equal(received.correlation_id, 'command');
 	assert.equal(received.event.payload.model, 'model');
 });
+
+test('native document-created bridge reports successful posting to WebUI actions', () => {
+	const nativeSource = fs.readFileSync(require('node:path').join(__dirname, '../../nvda_ui_host/src/webview.rs'), 'utf8');
+	const bridgeScript = nativeSource.match(/window\.__sendHostEvent = payload => \{[\s\S]*?\};/)[0];
+	const posted = [];
+	const context = { window: { chrome: { webview: { postMessage: message => posted.push(message) } } } };
+	vm.runInNewContext(bridgeScript, context);
+	assert.equal(emitter(context.window.__sendHostEvent)('chat_submitted', 'command', { message: 'hello' }), true);
+	assert.equal(JSON.parse(posted[0]).event.name, 'chat_submitted');
+});

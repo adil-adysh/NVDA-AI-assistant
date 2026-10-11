@@ -8,6 +8,7 @@ from ..config.state import ProviderState
 from ..config.settings import (
 	get_provider_state,
 	get_think,
+	get_chat_auto_read, get_chat_status_announcements,
 )
 from ..service.provider_readiness import (
 	ProviderReadiness,
@@ -56,6 +57,8 @@ class UISessionState:
 			"think_enabled": self.think_enabled,
 			"think_supported": self.think_supported,
 			"chat_enabled": self.chat_enabled,
+			"chat_auto_read": get_chat_auto_read(),
+			"chat_status_announcements": get_chat_status_announcements(),
 		}
 		if self.conversation_id:
 			metadata["conversation_id"] = self.conversation_id
@@ -204,10 +207,12 @@ def build_localized_strings(translate: Translator) -> dict[str, str]:
 		# TRANSLATORS: Alt text for attached images when no specific alt text is provided.
 		"image_attachment_alt": translate("Attached image"),
 		# TRANSLATORS: Status text shown after a chat message is submitted.
-		"submitted_status": translate("Message submitted."),
+		"submitted_status": translate("Message sent. Generating response."),
 		# TRANSLATORS: Chat action and status while cancelling the current response.
 		"stop_response": translate("Stop response"),
 		"stopping_status": translate("Stopping response..."),
+		"response_failed_status": translate("Response failed. Review the error and retry."),
+		"generating_response_status": translate("Generating response..."),
 		"response_stopped_status": translate("Response stopped."),
 		"stopped_status": translate("Stopped."),
 		# TRANSLATORS: Status text shown when attachment upload fails.

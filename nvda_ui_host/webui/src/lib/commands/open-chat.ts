@@ -5,6 +5,7 @@ import {
 	setConversationSummaries,
 	resetChatState,
 	resetDisplayState,
+	saveChatDraft, restoreChatDraft,
 } from '../operations/view-ops';
 import {
 	appState,
@@ -24,19 +25,21 @@ export function openChat(commandId: string, payload: OpenChatPayload): void {
 		!!(payload.preserve_conversation
 		?? (payload.metadata as Record<string, unknown>)?.preserve_conversation);
 	if (!preserveConversation) {
+		saveChatDraft();
 		resetChatState();
 	}
 	resetDisplayState();
 	appState.chat.active = true;
 	appState.chat.commandId = commandId;
 	setActiveConversationId(payload.conversation_id || null);
+	if (!preserveConversation) restoreChatDraft();
 
 	const summaries = readPresentationValue(payload, 'conversation_summaries');
 	if (Array.isArray(summaries)) setConversationSummaries(summaries);
 
 	addInitialImageAttachment(payload.initial_image_base64);
 
-	if (!preserveConversation || (typeof payload.initial_text === 'string' && payload.initial_text.length > 0)) {
+	if (typeof payload.initial_text === 'string' && payload.initial_text.length > 0) {
 		appState.chat.composerText =
 			typeof payload.initial_text === 'string' ? payload.initial_text : '';
 	}

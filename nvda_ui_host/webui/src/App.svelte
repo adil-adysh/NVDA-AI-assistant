@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount } from 'svelte';
-    import { focusPresentationElement } from './lib/commands/_shared';
+    import { focusPresentationElement, announceAfterKeyboardFocus } from './lib/commands/_shared';
     import AccessibilityAnnouncer from './components/AccessibilityAnnouncer.svelte';
     import ChatComposer from './components/ChatComposer.svelte';
     import ControlPanel from './components/ControlPanel.svelte';
@@ -17,7 +17,7 @@
         focusModelSelect,
         focusProviderSelect,
         requestCloseHost,
-        submitChatMessage,
+        activateChatPrimaryAction,
     } from './lib/actions';
     import { initializeWebViewBridge } from './lib/bridge';
     import { registerGlobalShortcuts } from './lib/shortcuts';
@@ -42,7 +42,7 @@
                 onFocusProvider: focusProviderSelect,
                 onFocusModel: focusModelSelect,
                 onAttachFile: () => fileInputElement?.click(),
-                onSubmit: submitChatMessage,
+                onSubmit: activateChatPrimaryAction,
             },
             () => fileInputElement,
         );
@@ -71,12 +71,20 @@
         } else if (target === 'primary_action') {
             element = firstResultActionElement;
         } else if (target === 'content') {
-            element = contentElement;
+            element = appState.view.mode === 'chat' && appState.chat.latestCompletedMessageId
+                ? document.getElementById(`message-${appState.chat.latestCompletedMessageId}`) ?? contentElement
+                : contentElement;
         }
 
         if (!element) return;
 
-        void focusPresentationElement(element);
+        const announcement = appState.view.pendingAnnouncement;
+        appState.view.pendingAnnouncement = null;
+        void focusPresentationElement(element).then((focused) => {
+            if (focused && announcement && appState.chat.latestCompletedMessageId === announcement.messageId) {
+                announceAfterKeyboardFocus(announcement.text, element!);
+            }
+        });
         appState.view.pendingFocus = null;
     });
 </script>

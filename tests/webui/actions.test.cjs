@@ -31,6 +31,37 @@ function loadActions(sent = false) {
 	return { actions: exports, state, events, status, context };
 }
 
+test('primary chat action sends then stops the same request without sending the draft', () => {
+	const { actions, state, events } = loadActions(true);
+	state.control.chatEnabled = true;
+	actions.activateChatPrimaryAction();
+	state.chat.composerText = 'next question';
+	actions.activateChatPrimaryAction();
+	assert.equal(events[0][0], 'chat_submitted');
+	assert.equal(events[1][2].action_id, 'chat_stop');
+	assert.equal(state.chat.composerText, 'next question');
+	assert.equal(state.chat.stopping, true);
+});
+
+test('successful chat send provides explicit sent and generating feedback', () => {
+	const { actions, state, status } = loadActions(true);
+	state.control.chatEnabled = true;
+	actions.submitChatMessage();
+	assert.equal(status.at(-1), 'Message sent. Generating response.');
+	assert.equal(state.chat.processing, true);
+});
+
+test('failed chat send reports the failure and preserves the draft and attachments', () => {
+	const { actions, state, status } = loadActions(false);
+	state.control.chatEnabled = true;
+	state.chat.attachments = [{ name: 'image.png' }];
+	actions.submitChatMessage();
+	assert.match(status.at(-1), /Unable to send request/);
+	assert.equal(state.chat.composerText, 'hello');
+	assert.equal(state.chat.attachments[0].name, 'image.png');
+	assert.equal(state.chat.processing, false);
+});
+
 for (const [action, value] of [['submitProviderSelection', 'new'], ['submitModelSelection', 'other'], ['submitThinkModeToggle', true]]) {
 	test(`${action}: failed send keeps controls usable`, () => {
 		const { actions, state, status } = loadActions();
