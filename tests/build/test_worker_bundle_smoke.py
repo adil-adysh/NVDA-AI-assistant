@@ -46,7 +46,7 @@ def test_packaged_worker_runs_outside_checkout(tmp_path, monkeypatch, artifact):
 	assert probe.returncode == 0, probe.stderr.decode(errors="replace")
 	token = uuid.uuid4().hex
 	supervisor = supervisors.WorkerSupervisor(
-		worker_script_path=addon / "worker_host" / "ai_assistant_worker.py",
+		worker_script_path=addon / "worker" / "__main__.py",
 		cmd_pipe_name=rf"\\.\pipe\bundle_cmd_{token}",
 		evt_pipe_name=rf"\\.\pipe\bundle_evt_{token}", auto_restart=False,
 	)

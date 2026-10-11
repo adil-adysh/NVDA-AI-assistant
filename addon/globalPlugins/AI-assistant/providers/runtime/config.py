@@ -7,6 +7,8 @@ from dataclasses import dataclass, fields
 from enum import Enum
 from typing import Any
 
+from ...core.litert_contract import DEFAULT_LITERT_VERSION
+
 
 class RuntimeType(str, Enum):
 	"""Known runtime backend identifiers."""
@@ -115,4 +117,4 @@ class DefaultRuntimeConfig:
 	Stored in config.yaml so users can override per-runtime version.
 	"""
 
-	litert_lm: str = "0.15.0"
+	litert_lm: str = DEFAULT_LITERT_VERSION

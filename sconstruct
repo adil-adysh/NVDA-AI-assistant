@@ -120,7 +120,7 @@ rust_build_stamp = Path(".scons-rust-build.stamp")
 rust_build_sources = [
 	Path("scripts/build.py"),
 	Path("scripts/build_worker_bundle.py"),
-	Path("ai_assistant_worker.py"),
+	Path("addon/globalPlugins/AI-assistant/worker/__main__.py"),
 	Path("uv.lock"),
 	Path("pyproject.toml"),
 	Path(".python-version"),

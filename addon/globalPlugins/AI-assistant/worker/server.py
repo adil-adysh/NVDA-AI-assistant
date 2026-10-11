@@ -20,6 +20,7 @@ import time
 from typing import Any
 
 try:
+	from ..core.litert_contract import DEFAULT_LITERT_VERSION
 	from ..core.job.cancellation import CancellationToken
 	from ..core.readiness_progress import run_with_readiness_progress
 	from ..core.job.dto import (
@@ -35,6 +36,7 @@ try:
 		validate_handshake,
 	)
 except (ImportError, ValueError):
+	from core.litert_contract import DEFAULT_LITERT_VERSION
 	from core.job.cancellation import CancellationToken  # type: ignore[no-redef]
 	from core.readiness_progress import run_with_readiness_progress
 	from core.job.dto import (  # type: ignore[no-redef]
@@ -344,7 +346,7 @@ class WorkerServer:
 				timeout = float(frame.get("timeout_seconds", 60.0))
 				python_exe = frame.get("python_exe") or frame.get("executable")
 				litert_dir = frame.get("litert_dir")
-				version = str(frame.get("version", "0.15.0"))
+				version = str(frame.get("version", DEFAULT_LITERT_VERSION))
 				host = frame.get("host")
 				raw_port = frame.get("port")
 				port = int(raw_port) if raw_port is not None else None
@@ -412,7 +414,7 @@ class WorkerServer:
 				timeout = float(frame.get("timeout_seconds", 60.0))
 				python_exe = frame.get("python_exe") or frame.get("executable")
 				litert_dir = frame.get("litert_dir")
-				version = str(frame.get("version", "0.15.0"))
+				version = str(frame.get("version", DEFAULT_LITERT_VERSION))
 				host = frame.get("host")
 				raw_port = frame.get("port")
 				port = int(raw_port) if raw_port is not None else None
@@ -502,7 +504,7 @@ class WorkerServer:
 				timeout = float(frame.get("timeout_seconds", 120.0))
 				python_exe = frame.get("python_exe")
 				litert_dir = frame.get("litert_dir")
-				version = str(frame.get("version", "0.15.0"))
+				version = str(frame.get("version", DEFAULT_LITERT_VERSION))
 				res = executor.import_model(
 					model_path=model_path,
 					model_id=model_id,
@@ -543,7 +545,7 @@ class WorkerServer:
 				timeout = float(frame.get("timeout_seconds", 600.0))
 				python_exe = frame.get("python_exe")
 				litert_dir = frame.get("litert_dir")
-				version = str(frame.get("version", "0.15.0"))
+				version = str(frame.get("version", DEFAULT_LITERT_VERSION))
 				res = executor.import_huggingface_model(
 					repository=repository,
 					artifact=artifact,
@@ -581,7 +583,7 @@ class WorkerServer:
 				timeout = float(frame.get("timeout_seconds", 60.0))
 				python_exe = frame.get("python_exe")
 				litert_dir = frame.get("litert_dir")
-				version = str(frame.get("version", "0.15.0"))
+				version = str(frame.get("version", DEFAULT_LITERT_VERSION))
 				executor.delete_model(
 					model_id=model_id,
 					timeout_seconds=timeout,
@@ -617,7 +619,7 @@ class WorkerServer:
 				timeout = float(frame.get("timeout_seconds", 30.0))
 				python_exe = frame.get("python_exe")
 				litert_dir = frame.get("litert_dir")
-				version = str(frame.get("version", "0.15.0"))
+				version = str(frame.get("version", DEFAULT_LITERT_VERSION))
 				executor.rename_model(
 					old_id=old_id,
 					new_id=new_id,

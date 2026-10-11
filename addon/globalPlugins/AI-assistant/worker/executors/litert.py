@@ -35,11 +35,16 @@ try:
 except Exception:
 	runtime_supervisor = None
 
+try:
+	from ...core.litert_contract import DEFAULT_LITERT_VERSION, validate_litert_artifact
+except ImportError:
+	from core.litert_contract import DEFAULT_LITERT_VERSION, validate_litert_artifact
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_LITERT_PORT = 9379
 DEFAULT_LITERT_HOST = "127.0.0.1"
-DEFAULT_LITERT_VERSION = "0.15.0"
+
 
 
 def default_litert_dir() -> Path:
@@ -319,6 +324,7 @@ class LiteRTWorkerExecutor:
 		version: str = DEFAULT_LITERT_VERSION,
 	) -> dict[str, Any]:
 		"""Import a local model file into the LiteRT model registry."""
+		validate_litert_artifact(model_path, local=True)
 		src_path = Path(model_path)
 		if not src_path.is_file():
 			raise FileNotFoundError(f"Source model file does not exist: {src_path}")
@@ -371,6 +377,7 @@ class LiteRTWorkerExecutor:
 		if not repository or not artifact:
 			raise ValueError("Repository and artifact are required for Hugging Face import")
 
+		artifact = validate_litert_artifact(artifact)
 		cli_args = ["import", "--from-huggingface-repo", repository, artifact, clean_id]
 		if token:
 			cli_args.extend(["--huggingface-token", token])

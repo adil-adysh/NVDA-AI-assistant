@@ -151,6 +151,8 @@ LiteRT-LM is a self-contained local inference runtime. The add-on downloads it o
 
 Recommended LiteRT-LM models include Gemma 4 E2B/E4B and Qwen3 1.7B/4B/8B.
 
+LiteRT-LM uses runtime **0.18.0**. Model imports accept one self-contained `.litertlm` file, either a local file or an explicit Hugging Face artifact such as `owner/repository#file=model.litertlm`. Directories, raw `.tflite`/tokenizer components, and split or sharded models are unsupported. Multiple independent `.litertlm` variants in a repository are allowed: select the single variant to import. Hugging Face imports currently use the `main` revision.
+
 ---
 
 ## llama.cpp server (local inference)

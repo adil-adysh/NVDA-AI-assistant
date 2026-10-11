@@ -27,7 +27,7 @@ The application uses these process roles at runtime:
 2. The Python add-on, which owns application behavior, provider calls, configuration, context extraction, persistence, and presentation intent.
 3. nvda_ui_host.exe, which owns the native window, WebView2 controller, WebView event loop, and Svelte rendering. It does not choose prompts, providers, or use cases.
 4. The private CPython worker, which runs local-runtime commands and jobs and hosts
-   the native supervisor. Managed model servers run as its owned child processes.
+   the native supervisor. Its entry point is `worker/__main__.py`, launched with `python -B -m worker` from the add-on directory. Managed model servers run as its owned child processes.
 
 Python and the host use two Windows named pipes:
 

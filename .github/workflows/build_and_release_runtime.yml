@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "LiteRT-LM version to bundle (e.g. 0.15.0)"
+        description: "LiteRT-LM version to bundle (e.g. 0.18.0)"
         required: true
         type: string
-        default: "0.15.0"
+        default: "0.18.0"
       create_release:
         description: "Create a GitHub Release with the built ZIP?"
         required: false
@@ -38,7 +38,7 @@ jobs:
           if [ -n "${DISPATCH_VERSION}" ]; then
             echo "VERSION=${DISPATCH_VERSION}" >> "$GITHUB_OUTPUT"
           else
-            # Extract version from tag: litert-runtime-v0.15.0 -> 0.15.0
+            # Extract version from tag: litert-runtime-v0.18.0 -> 0.18.0
             TAG="${GITHUB_REF#refs/tags/}"
             VERSION="${TAG#litert-runtime-v}"
             echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"

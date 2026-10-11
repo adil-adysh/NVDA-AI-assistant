@@ -29,15 +29,14 @@ def test_first_worker_crash_queues_feedback_once(monkeypatch):
 def test_default_entrypoint_is_independent_of_working_directory(tmp_path, monkeypatch):
 	monkeypatch.chdir(tmp_path)
 	supervisor = supervisor_module.WorkerSupervisor(auto_restart=False)
-	bundle = PROJECT_ROOT / "addon/globalPlugins/AI-assistant/worker_host"
-	expected = bundle / "ai_assistant_worker.py" if (bundle / "python.exe").exists() else PROJECT_ROOT / "ai_assistant_worker.py"
+	expected = PROJECT_ROOT / "addon/globalPlugins/AI-assistant/worker/__main__.py"
 	assert supervisor.worker_script_path == expected
 	assert supervisor.worker_script_path.is_file()
 
 
 def test_nvda_executable_is_never_used_as_python(monkeypatch):
 	monkeypatch.setattr(supervisor_module.sys, "executable", "C:/NVDA/nvda.exe")
-	supervisor = supervisor_module.WorkerSupervisor(worker_script_path=PROJECT_ROOT / "ai_assistant_worker.py", auto_restart=False)
+	supervisor = supervisor_module.WorkerSupervisor(worker_script_path=PROJECT_ROOT / "addon/globalPlugins/AI-assistant/worker/__main__.py", auto_restart=False)
 	with pytest.raises(RuntimeError, match="NVDA"):
 		supervisor._spawn_worker_process()
 
@@ -47,7 +46,7 @@ def test_restarted_worker_reports_current_generation():
 	supervisor = supervisor_module.WorkerSupervisor(
 		cmd_pipe_name=rf"\\.\pipe\generation_cmd_{token}",
 		evt_pipe_name=rf"\\.\pipe\generation_evt_{token}",
-		worker_script_path=PROJECT_ROOT / "ai_assistant_worker.py",
+		worker_script_path=PROJECT_ROOT / "addon/globalPlugins/AI-assistant/worker/__main__.py",
 		ping_interval_seconds=0.05,
 		liveness_timeout_seconds=0.5,
 		auto_restart=False,

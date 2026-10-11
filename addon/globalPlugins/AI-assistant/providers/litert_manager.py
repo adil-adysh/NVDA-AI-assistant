@@ -9,9 +9,13 @@ sent to the server as the model ID, used in the UI, and matched against
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 from typing import Any
 
 import logging
+
+from ..core.litert_contract import validate_litert_artifact
+from ..core.translation import _
 
 from ..config.settings import (
 	get_litert_model_name,
@@ -233,19 +237,26 @@ class LiteRTModelManager(ModelManagerProvider):
 		"""
 		try:
 			parsed = parse_model_import_source(request.source, request.model_id, self.provider_id)
+			if parsed.kind is ModelSourceKind.HUGGING_FACE:
+				parsed = replace(parsed, artifact=request.artifact or parsed.artifact,
+					revision=request.revision if request.revision != "main" else parsed.revision)
 		except ModelImportError as exc:
 			raise LLMProviderError(str(exc)) from exc
 		if parsed.file_suffix == ".gguf":
 			raise LLMProviderError("GGUF files require a llama.cpp-compatible provider")
+		if parsed.kind is ModelSourceKind.HUGGING_FACE and not parsed.artifact:
+			raise LLMProviderError(_("Select a single LiteRT-LM artifact using repo#file=model.litertlm."))
+
+		try:
+			validate_litert_artifact(parsed.source if parsed.is_local_file else parsed.artifact or "", local=parsed.is_local_file)
+		except ValueError as exc:
+			raise LLMProviderError(str(exc)) from exc
+		if not parsed.is_local_file and parsed.revision != "main":
+			raise LLMProviderError(_("LiteRT-LM imports currently support the main Hugging Face revision only."))
 
 		# LiteRT-LM owns Hugging Face repository resolution and its registry.
 		# Do not duplicate that logic with a generic "first .litertlm" download.
 		if parsed.kind is ModelSourceKind.HUGGING_FACE:
-			if not parsed.artifact:
-				raise LLMProviderError(
-					"LiteRT Hugging Face imports require an explicit artifact: "
-					"repo#file=model.litertlm"
-				)
 			supervisor = self._get_supervisor()
 			try:
 				supervisor.import_huggingface_model(

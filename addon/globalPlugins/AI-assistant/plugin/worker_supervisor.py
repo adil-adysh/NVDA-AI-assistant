@@ -131,9 +131,7 @@ class WorkerSupervisor:
 			bundle = Path(__file__).resolve().parents[1] / "worker_host"
 			if (bundle / "python.exe").is_file():
 				self.worker_python_path = bundle / "python.exe"
-				self.worker_script_path = bundle / "ai_assistant_worker.py"
-			else:
-				self.worker_script_path = Path(__file__).resolve().parents[4] / "ai_assistant_worker.py"
+			self.worker_script_path = bundle.parent / "worker" / "__main__.py"
 		else:
 			self.worker_script_path = Path(worker_script_path).resolve()
 
@@ -222,10 +220,12 @@ class WorkerSupervisor:
 			raise RuntimeError(_("Private worker Python is missing; cannot launch worker with NVDA's executable"))
 		self._job_object = create_worker_job_object()
 
+		module_launch = self.worker_script_path.name == "__main__.py" and self.worker_script_path.parent.name == "worker"
+		entrypoint = ["-m", "worker"] if module_launch else [str(self.worker_script_path)]
 		cmd = [
 			str(self.worker_python_path),
 			"-B",
-			str(self.worker_script_path),
+			*entrypoint,
 			"--cmd-pipe",
 			self.cmd_pipe_name,
 			"--evt-pipe",
@@ -252,6 +252,7 @@ class WorkerSupervisor:
 		self.stderr_buffer.clear()
 		self._process = subprocess.Popen(
 			cmd,
+			cwd=str(self.worker_script_path.parent.parent) if module_launch else None,
 			stdin=subprocess.DEVNULL,
 			stdout=subprocess.DEVNULL,
 			stderr=subprocess.PIPE,

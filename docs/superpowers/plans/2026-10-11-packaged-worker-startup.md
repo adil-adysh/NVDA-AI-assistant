@@ -49,7 +49,7 @@
 
 ### Task 3: Reproducible private runtime bundle
 
-**Files:** scripts/build_worker_bundle.py, scripts/build.py, ai_assistant_worker.py, sconstruct, tests/build/test_worker_bundle.py and test_worker_bundle_smoke.py.
+**Files:** scripts/build_worker_bundle.py, scripts/build.py, addon/globalPlugins/AI-assistant/worker/__main__.py, sconstruct, tests/build/test_worker_bundle.py and test_worker_bundle_smoke.py.
 
 **Interfaces:** `build_worker_bundle(*, allow_existing: bool = False)` creates worker_host; `validate_bundle(path)` rejects incomplete/forbidden artifacts.
 

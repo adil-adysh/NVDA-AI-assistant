@@ -35,6 +35,7 @@ from .config import RuntimeConfig
 from .download import DownloadCancelledError, RuntimeDownloadService
 from .paths import get_runtime_path
 from ..interfaces import LLMProviderError
+from ...core.litert_contract import DEFAULT_LITERT_VERSION, validate_litert_artifact
 from ...core.translation import _
 from ...core.readiness_progress import run_with_readiness_progress
 
@@ -60,7 +61,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_LITERT_PORT = 9379
 DEFAULT_LITERT_HOST = "127.0.0.1"
-DEFAULT_LITERT_VERSION = "0.15.0"
+
 SERVER_READY_POLL_INTERVAL = 0.5  # seconds
 
 # GitHub release URL template for the self-contained runtime ZIP.
@@ -878,6 +879,10 @@ class LiteRTServerSupervisor:
 		delete_source: bool = True,
 	) -> None:
 		"""Import a local ``.litertlm`` file into the server's model catalog."""
+		try:
+			validate_litert_artifact(model_path, local=True)
+		except ValueError as exc:
+			raise LiteRTServerError(str(exc)) from exc
 		model_path = Path(model_path)
 		if not model_path.is_file():
 			raise LiteRTServerError(f"Model file does not exist: {model_path}")
@@ -964,7 +969,10 @@ class LiteRTServerSupervisor:
 			or "\x00" in repository
 		):
 			raise LiteRTServerError("A repository and explicit LiteRT-LM artifact are required")
-		artifact = _validate_huggingface_artifact(artifact)
+		try:
+			artifact = validate_litert_artifact(_validate_huggingface_artifact(artifact))
+		except ValueError as exc:
+			raise LiteRTServerError(str(exc)) from exc
 		model_id = _validate_model_id(model_id)
 
 		if _run_litert_cli is not _real_run_litert_cli:

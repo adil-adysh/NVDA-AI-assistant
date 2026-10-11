@@ -11,18 +11,9 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-from pathlib import Path
 import sys
 
-# Configure sys.path so worker and core packages can be imported
-_REPO_ROOT = Path(__file__).resolve().parent
-_ADDON_ROOT = _REPO_ROOT / "addon" / "globalPlugins" / "AI-assistant"
-if not _ADDON_ROOT.is_dir():
-	_ADDON_ROOT = _REPO_ROOT.parent
-if str(_ADDON_ROOT) not in sys.path:
-	sys.path.insert(0, str(_ADDON_ROOT))
-
-from worker.server import WorkerServer  # noqa: E402
+from .server import WorkerServer
 
 
 def setup_worker_logging(log_file: str | None, log_level: str) -> None:

@@ -26,7 +26,7 @@ REQUIRED = (
 	"python.exe", "python313.dll", "python313.zip", "python313._pth",
 	"python3.dll", "vcruntime140.dll", "vcruntime140_1.dll",
 	"_ssl.pyd", "_socket.pyd", "_hashlib.pyd", "_ctypes.pyd", "select.pyd",
-	"ai_assistant_worker.py", "runtime_supervisor.pyd", "pywintypes313.dll",
+	"runtime_supervisor.pyd", "pywintypes313.dll",
 	"pywintypes.py", "win32con.py", "ntsecuritycon.py", "bundle-manifest.json",
 	*(f"{name}.pyd" for name in WIN32_MODULES),
 )
@@ -127,7 +127,6 @@ def build_worker_bundle(*, allow_existing: bool = False) -> None:
 		shutil.copy2(site / "pywin32_system32" / "pywintypes313.dll", bundle)
 		shutil.copy2(ROOT / "scripts" / "licenses" / "pywin32-311.txt", bundle / "PYWIN32-LICENSE.txt")
 		shutil.copy2(ADDON_ROOT / "lib" / "runtime_supervisor.pyd", bundle)
-		shutil.copy2(ROOT / "ai_assistant_worker.py", bundle)
 		(bundle / "python313._pth").write_text("python313.zip\n.\n..\n", encoding="utf-8")
 		manifest = {
 			"python": PYTHON_VERSION, "pywin32": PYWIN32_VERSION,

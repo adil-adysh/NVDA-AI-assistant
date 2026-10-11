@@ -19,7 +19,7 @@ inside NVDA, and the build does not package a worker executable.
    `addon/globalPlugins/AI-assistant/worker_host/`. Use the official CPython
    3.13 embeddable distribution, matching the locked development interpreter,
    with a version and checksum pinned by the builder. Launch its `python.exe`
-   with `-B` and the bundled `ai_assistant_worker.py`, with no console window.
+   with `-B -m worker` and the packaged `worker/__main__.py`, with no console window.
    Do not use PyInstaller. Vendor only required dependencies from the locked
    development environment, including named-pipe support and the native
    `runtime_supervisor` extension. No system Python or end-user pip is needed.

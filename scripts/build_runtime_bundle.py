@@ -8,10 +8,10 @@ without any system Python dependency.
 Usage::
 
     # Dev — build into the versioned runtime directory for local testing
-    python scripts/build_runtime_bundle.py 0.15.0
+    python scripts/build_runtime_bundle.py 0.18.0
 
     # Release — build a distributable ZIP in dist/
-    python scripts/build_runtime_bundle.py 0.15.0 --release
+    python scripts/build_runtime_bundle.py 0.18.0 --release
 """
 
 from __future__ import annotations
@@ -323,8 +323,8 @@ def main() -> None:
 	parser.add_argument(
 		"version",
 		nargs="?",
-		default="0.15.0",
-		help="Runtime version (default: 0.15.0)",
+		default="0.18.0",
+		help="Runtime version (default: 0.18.0)",
 	)
 	parser.add_argument(
 		"--output-dir",
