@@ -17,7 +17,7 @@ from uuid import uuid4
 if TYPE_CHECKING:
 	from collections.abc import Callable
 
-from ...core.job.client import JobClient
+from ...core.job.client import JobClient, WorkerClient
 from ...core.job.dto import (
 	JobProgress,
 	JobResult,
@@ -34,18 +34,21 @@ logger = logging.getLogger(__name__)
 class WorkerDownloadClient:
 	"""Client for executing model and runtime downloads via the Worker process."""
 
-	def __init__(self, job_client: JobClient | None = None) -> None:
+	def __init__(self, job_client: JobClient | WorkerClient | None = None) -> None:
 		self._job_client = job_client
 
 	def _get_client(self) -> JobClient:
 		if self._job_client is not None:
+			get_jobs = getattr(self._job_client, "get_job_client", None)
+			if callable(get_jobs):
+				return get_jobs()
 			return self._job_client
 		try:
-			from ...plugin.worker_supervisor import get_worker_client
+			from ...plugin.worker_supervisor import ensure_worker_client
 
-			client = get_worker_client()
+			client = ensure_worker_client()
 			if client is not None:
-				return client
+				return client.get_job_client()
 		except Exception as exc:
 			logger.debug("Could not resolve worker client from supervisor: %s", exc)
 

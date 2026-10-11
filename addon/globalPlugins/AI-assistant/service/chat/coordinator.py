@@ -9,6 +9,8 @@ from uuid import uuid4
 import logging
 
 from ..base import BaseCoordinator
+from ...core.cancellation import CancellationToken, RequestCancelled, cancellation_scope, check_cancelled
+from ...core.translation import _
 from ...core.canonical import Message, Tool
 from ...core.message_transforms import build_user_message
 from ...context.budget import (
@@ -25,6 +27,7 @@ from ...observability.reporter import MetricsReporter
 from .projector import project_chat_history, project_chat_history_transport
 from .repository import ConversationRepository, ConversationSummary
 from .session import ConversationSession
+from .types import ConversationTurnResult
 from .transaction import ChatTurnTransaction
 
 log = logging.getLogger(__name__)
@@ -101,8 +104,9 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 		tools: list[dict[str, Any]] | None = None,
 		progress: ProgressHandler | None = None,
 		expected_conversation_id: str | None = None,
+		cancellation_token: CancellationToken | None = None,
 	) -> LLMResponse:
-		with self._turn_lock:
+		with self._turn_lock, cancellation_scope(cancellation_token):
 			return self._send_message_locked(
 				text=text,
 				image_base64=image_base64,
@@ -148,7 +152,8 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 				if isinstance(context_text, str) and context_text.strip():
 					transient_context = (build_user_message(text=context_text),)
 		transaction, generation = self._begin_transaction(
-			(user_message,), transient_context_messages=transient_context
+			(user_message,), transient_context_messages=transient_context,
+			expected_conversation_id=expected_conversation_id,
 		)
 		log.debug(
 			"ChatCoordinator.send_message starting: text=%r image_attached=%s tools=%s",
@@ -298,8 +303,11 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 		self,
 		staged_messages: tuple[Message, ...],
 		transient_context_messages: tuple[Message, ...] = (),
+		expected_conversation_id: str | None = None,
 	) -> tuple[ChatTurnTransaction, int]:
 		with self._session_lock:
+			if expected_conversation_id is not None and expected_conversation_id != self._active_conversation_id:
+				raise RuntimeError("Chat submission was discarded because the conversation changed")
 			generation = self._session_generation
 			prior_messages = tuple(self._session.snapshot())
 			return ChatTurnTransaction(
@@ -321,14 +329,19 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 				"ChatCoordinator.send called on main thread; should be invoked from a background worker"
 			)
 
-		self._validate_transaction_budget(transaction)
+		try:
+			check_cancelled()
+			self._validate_transaction_budget(transaction)
+			turn_result = self._llm_service.generate_with_transcript(
+				messages=transaction.request_messages(),
+				tools=tools,
+				stream_handler=stream_handler,
+				progress=progress,
+			)
+			check_cancelled()
+		except RequestCancelled as error:
+			turn_result = self._stopped_result(error.partial_text)
 
-		turn_result = self._llm_service.generate_with_transcript(
-			messages=transaction.request_messages(),
-			tools=tools,
-			stream_handler=stream_handler,
-			progress=progress,
-		)
 		with self._session_lock:
 			if generation == self._session_generation:
 				self._session.extend(transaction.committed_messages(turn_result.messages))
@@ -338,6 +351,34 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 				log.debug("Discarding stale chat turn after session reset")
 				self._last_turn_committed = False
 		return turn_result.response
+
+	@staticmethod
+	def _stopped_result(partial_text: str) -> ConversationTurnResult:
+		from ...core.canonical import Part
+		stopped = _("[Stopped]")
+		text = f"{partial_text}\n\n{stopped}" if partial_text else stopped
+		return ConversationTurnResult(
+			response=LLMResponse(text=text, raw={"cancelled": True}),
+			messages=(Message(role="assistant", parts=(Part(type="text", text=text),)),),
+		)
+
+	def record_stopped_turn(
+		self,
+		text: str | None,
+		image_base64: str | None,
+		partial_text: str = "",
+		expected_conversation_id: str | None = None,
+	) -> LLMResponse:
+		"""Save a request stopped before provider readiness completed."""
+		with self._turn_lock, self._session_lock:
+			if expected_conversation_id is not None and expected_conversation_id != self._active_conversation_id:
+				raise RuntimeError("Chat submission was discarded because the conversation changed")
+			user_message = self._build_user_message(text, image_base64)
+			turn = self._stopped_result(partial_text)
+			self._session.extend((user_message, *turn.messages))
+			self._persist_locked()
+			self._last_turn_committed = True
+			return turn.response
 
 	def _validate_transaction_budget(self, transaction: ChatTurnTransaction) -> None:
 		budget = self._build_context_budget()

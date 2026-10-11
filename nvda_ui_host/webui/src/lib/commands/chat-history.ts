@@ -1,14 +1,13 @@
 import type { ChatSetHistoryPayload, ChatAppendPayload, ChatUpdatePayload } from '../protocol-types';
 import {
-	setActiveConversationId,
-	setConversationSummaries,
-} from '../operations/view-ops';
-import {
 	appState,
 	setViewMode,
+	setStatus,
+	t,
 } from '../state.svelte';
 import {
 	reportUiApplied,
+	isCurrentChatEvent,
 	resolvePresentationFocusTarget,
 	updateChatEnvelope,
 } from './_shared';
@@ -32,6 +31,7 @@ export function setChatHistory(commandId: string, payload: ChatSetHistoryPayload
 // ---------------------------------------------------------------------------
 
 export function appendChatMessage(commandId: string, payload: ChatAppendPayload): void {
+	if (!isCurrentChatEvent(payload as Record<string, unknown>)) { reportUiApplied(commandId); return; }
 	updateChatEnvelope(payload as Record<string, unknown>);
 
 	const messages = Array.isArray(payload.messages)
@@ -47,6 +47,11 @@ export function appendChatMessage(commandId: string, payload: ChatAppendPayload)
 	}
 	if (messages.some((message) => message.role === 'assistant' && !message.streaming)) {
 		appState.chat.processing = false;
+		appState.chat.requestId = null;
+		appState.chat.stopping = false;
+		if (payload.metadata?.cancelled === true) {
+			setStatus(t('response_stopped_status', 'Response stopped.'), false);
+		}
 	}
 
 	console.log(`[chat-history] transcript after upsert: ${appState.chat.transcript.count}`);
@@ -71,6 +76,7 @@ export function appendChatMessage(commandId: string, payload: ChatAppendPayload)
 // ---------------------------------------------------------------------------
 
 export function updateChatMessage(commandId: string, payload: ChatUpdatePayload): void {
+	if (!isCurrentChatEvent(payload as Record<string, unknown>)) { reportUiApplied(commandId); return; }
 	updateChatEnvelope(payload);
 	const updated = appState.chat.transcript.updateMessage(payload.message_id, (message) => ({
 		...message,

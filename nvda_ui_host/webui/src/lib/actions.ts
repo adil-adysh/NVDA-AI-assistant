@@ -1,5 +1,6 @@
 import { clearPendingAttachments } from './attachments';
 import { emitUiEvent } from './commands/_events';
+import { invalidatePresentationFocus } from './commands/_shared';
 import {
 	extractMarkdownFromBlocks,
 	extractTextFromBlocks,
@@ -27,6 +28,7 @@ import {
 // ---------------------------------------------------------------------------
 
 function fallbackCopyText(text: string): boolean {
+	const previousFocus = document.activeElement as HTMLElement | null;
 	const element = document.createElement('textarea');
 	element.value = text;
 	element.setAttribute('readonly', 'true');
@@ -41,6 +43,7 @@ function fallbackCopyText(text: string): boolean {
 		return document.execCommand('copy');
 	} finally {
 		document.body.removeChild(element);
+		if (previousFocus?.isConnected) previousFocus.focus();
 	}
 }
 
@@ -127,6 +130,7 @@ export function clearDisplayedContent(): void {
 }
 
 export function requestCloseHost(): void {
+	invalidatePresentationFocus();
 	emitUiEvent('close_host', null);
 }
 
@@ -137,29 +141,53 @@ export function submitChatMessage(fileInputElement: HTMLInputElement | null = nu
 	const attachments = Array.isArray(appState.chat.attachments) ? appState.chat.attachments : [];
 
 	if (!message && attachments.length === 0) return;
+	const requestId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 	const sent = emitUiEvent('chat_submitted', appState.chat.commandId, {
 		conversation_id: appState.chat.conversationId,
 		message,
 		attachments,
+		request_id: requestId,
 	});
 
 	if (!sent) return;
 
 	appState.chat.composerText = '';
 	appState.chat.processing = true;
+	appState.chat.requestId = requestId;
+	appState.chat.latestRequestId = requestId;
+	appState.chat.stopping = false;
 	clearPendingAttachments(fileInputElement);
 	setStatus(t('submitted_status', 'Message sent. Processing.'), true);
+}
+
+export function stopChatResponse(): void {
+	if (!appState.chat.processing || appState.chat.stopping || !appState.chat.requestId) return;
+	if (!emitUiEvent('ui_action_invoked', appState.currentCommandId, {
+		action_id: 'chat_stop',
+		payload: { request_id: appState.chat.requestId, conversation_id: appState.chat.conversationId },
+	})) {
+		setStatus(t('send_failed_status', 'Unable to send request. The host connection is unavailable.'), true);
+		return;
+	}
+	appState.chat.stopping = true;
+	setStatus(t('stopping_status', 'Stopping response...'), true);
 }
 
 export function submitProviderSelection(provider: string): void {
 	const value = provider.trim();
 	if (!value || appState.control.pendingChange || value === appState.control.selectedProvider) return;
 
+	const previousModelDraft = appState.control.modelDraft;
 	appState.control.modelDraft = '';
 	setControlPending('provider');
 	setStatus(t('provider_switching_status', 'Switching provider...'));
-	emitUiEvent('provider_selected', appState.currentCommandId, { provider: value });
+	if (!emitUiEvent('provider_selected', appState.currentCommandId, { provider: value })) {
+		appState.control.providerDraft = appState.control.selectedProvider;
+		appState.control.modelDraft = previousModelDraft;
+		setControlPending(null);
+		setStatus(t('send_failed_status', 'Unable to send request. The host connection is unavailable.'), true);
+	}
 }
 
 export function submitModelSelection(model: string): void {
@@ -174,10 +202,13 @@ export function submitModelSelection(model: string): void {
 
 	setControlPending('model');
 	setStatus(t('model_switching_status', 'Updating model...'));
-	emitUiEvent('model_selected', appState.currentCommandId, {
+	if (!emitUiEvent('model_selected', appState.currentCommandId, {
 		provider: appState.control.selectedProvider.trim() || null,
 		model: value,
-	});
+	})) {
+		setControlPending(null);
+		setStatus(t('send_failed_status', 'Unable to send request. The host connection is unavailable.'), true);
+	}
 }
 
 export function submitThinkModeToggle(enabled: boolean): void {
@@ -185,7 +216,11 @@ export function submitThinkModeToggle(enabled: boolean): void {
 
 	setControlPending('think');
 	setStatus(t('think_mode_updating_status', 'Updating think mode...'));
-	emitUiEvent('think_mode_toggled', appState.currentCommandId, { enabled });
+	if (!emitUiEvent('think_mode_toggled', appState.currentCommandId, { enabled })) {
+		appState.control.thinkDraft = appState.control.thinkEnabled;
+		setControlPending(null);
+		setStatus(t('send_failed_status', 'Unable to send request. The host connection is unavailable.'), true);
+	}
 }
 
 export function invokeResultAction(action: { id?: string; payload?: Record<string, unknown> }): void {
@@ -206,11 +241,14 @@ export function startNewConversation(): void {
 
 export function openConversation(conversationId: string): void {
 	if (!conversationId) return;
-	setActiveConversationId(conversationId);
-	emitUiEvent('ui_action_invoked', appState.currentCommandId, {
+	if (emitUiEvent('ui_action_invoked', appState.currentCommandId, {
 		action_id: 'conversation_open',
 		payload: { conversation_id: conversationId },
-	});
+	})) {
+		setActiveConversationId(conversationId);
+	} else {
+		setStatus(t('send_failed_status', 'Unable to send request. The host connection is unavailable.'), true);
+	}
 }
 
 export function deleteConversation(conversationId: string): void {

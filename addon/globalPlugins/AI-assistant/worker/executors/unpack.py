@@ -15,6 +15,7 @@ from pathlib import Path
 import shutil
 import tempfile
 from typing import TYPE_CHECKING
+from uuid import uuid4
 import zipfile
 
 if TYPE_CHECKING:
@@ -92,8 +93,12 @@ def unpack_zip(
 	if on_progress:
 		on_progress(f"Extracting {src_zip.name}...", 10.0)
 
-	with tempfile.TemporaryDirectory(prefix="unpack_worker_") as tmp_str:
-		tmp_dir = Path(tmp_str)
+	# Stage beside the destination so renames remain on the same filesystem.
+	target_dir.parent.mkdir(parents=True, exist_ok=True)
+	with tempfile.TemporaryDirectory(prefix="unpack_worker_", dir=target_dir.parent) as tmp_str:
+		staging_dir = Path(tmp_str)
+		tmp_dir = staging_dir / "extracted"
+		tmp_dir.mkdir()
 
 		with zipfile.ZipFile(src_zip, "r") as zf:
 			_safe_extract(zf, tmp_dir, cancel_token=cancel_token)
@@ -108,11 +113,15 @@ def unpack_zip(
 		if manifest_path.exists() and expected_files_sha256 is None:
 			try:
 				manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+				if not isinstance(manifest_data, dict):
+					raise ValueError("Manifest must be a JSON object")
 				files_dict = manifest_data.get("files")
+				if files_dict is not None and not isinstance(files_dict, dict):
+					raise ValueError("Manifest files must be an object")
 				if isinstance(files_dict, dict):
 					expected_files_sha256 = files_dict
-			except Exception as exc:
-				logger.warning("Could not parse manifest.json for hash validation: %s", exc)
+			except (ValueError, OSError) as exc:
+				raise UnpackError(f"Invalid manifest.json: {exc}") from exc
 
 		if expected_files_sha256:
 			if on_progress:
@@ -122,8 +131,12 @@ def unpack_zip(
 				if cancel_token and cancel_token.is_cancelled:
 					raise OperationCancelledError("Unpack verification cancelled")
 
-				full_file = extracted_root / rel_path
-				if not full_file.exists():
+				if not isinstance(rel_path, str) or not isinstance(expected_hash, str):
+					raise UnpackError("Invalid manifest file path or checksum")
+				full_file = (extracted_root / rel_path).resolve()
+				if not full_file.is_relative_to(extracted_root.resolve()):
+					raise UnpackError(f"Manifest file path escapes archive: {rel_path}")
+				if not full_file.is_file():
 					raise UnpackError(f"Missing file in archive: {rel_path}")
 
 				actual_hash = stream_sha256(full_file, cancel_token=cancel_token)
@@ -135,13 +148,31 @@ def unpack_zip(
 		if on_progress:
 			on_progress(f"Installing {target_dir.name}...", 90.0)
 
-		# Atomic directory swap
-		target_dir.parent.mkdir(parents=True, exist_ok=True)
-		if target_dir.exists():
-			# Backup or remove old directory
-			shutil.rmtree(target_dir, ignore_errors=True)
+		if cancel_token and cancel_token.is_cancelled:
+			raise OperationCancelledError("Unpack installation cancelled")
 
-		shutil.copytree(extracted_root, target_dir)
+		# Retain the previous installation until the replacement is in place.
+		# Keep the backup outside temporary staging: even a failed rollback
+		# must leave the previous installation recoverable.
+		backup = target_dir.with_name(f".{target_dir.name}.backup-{uuid4().hex}")
+		had_previous = target_dir.exists()
+		if had_previous:
+			target_dir.replace(backup)
+		try:
+			extracted_root.replace(target_dir)
+		except OSError:
+			if had_previous:
+				try:
+					backup.replace(target_dir)
+				except OSError:
+					logger.error("Runtime rollback failed; previous installation retained at %s", backup)
+					raise
+			raise
+		if had_previous:
+			try:
+				shutil.rmtree(backup)
+			except OSError:
+				logger.warning("Previous runtime backup could not be removed: %s", backup)
 
 	if on_progress:
 		on_progress(f"Ready: {target_dir.name}", 100.0)

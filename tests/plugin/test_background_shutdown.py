@@ -246,3 +246,63 @@ def test_stale_healthy_litert_runtime_is_replaced_before_use(monkeypatch) -> Non
 	background.ensure_litert_server_ready()
 
 	assert events == ["stop-stale", "start-current", "ready", "model"]
+
+def _wait_for_workers(runner):
+	for _ in range(200):
+		with runner._threads_lock:
+			if not runner._threads:
+				return
+		time.sleep(0.005)
+	raise AssertionError('worker did not finish')
+
+
+def test_stop_cancels_inference_during_readiness_and_skips_engine(monkeypatch):
+	entered, release = threading.Event(), threading.Event()
+	def ready(on_progress=None):
+		entered.set()
+		assert release.wait(2)
+	monkeypatch.setattr(background, 'ensure_provider_server_ready', ready)
+	engine = _BlockingEngine()
+	runner = _runner(engine)
+	runner.run_use_case_in_background('summary', 'Summary', lambda result: None)
+	assert entered.wait(2)
+	assert runner.cancel_active_requests() == 1
+	release.set()
+	_wait_for_workers(runner)
+	assert engine.calls == 0
+
+
+def test_stop_suppresses_result_already_queued_to_nvda(monkeypatch):
+	queued, rendered = [], []
+	monkeypatch.setattr(background.nvda_ui, 'queue', lambda *args: queued.append(args))
+	engine = _BlockingEngine()
+	engine.release.set()
+	runner = _runner(engine)
+	runner.run_use_case_in_background(background.OPEN_CHAT, 'Chat', rendered.append)
+	_wait_for_workers(runner)
+	assert queued
+	assert runner.cancel_active_requests() == 1
+	for callback, *args in queued:
+		callback(*args)
+	assert rendered == []
+
+
+def test_close_cancels_request_scoped_token_and_suppresses_late_error(monkeypatch):
+	entered, release = threading.Event(), threading.Event()
+	seen, errors = [], []
+	def execute(use_case_id, progress=None):
+		from importlib import import_module
+		api = import_module(f'{NAMESPACE}.core.cancellation')
+		seen.append(api.current_cancellation_token())
+		entered.set()
+		assert release.wait(2)
+		raise RuntimeError('late transport error')
+	monkeypatch.setattr(background.error_reporter, 'report', lambda *a, **k: errors.append(a))
+	runner = _runner(SimpleNamespace(execute=execute))
+	runner.run_use_case_in_background(background.OPEN_CHAT, 'Chat', lambda result: None)
+	assert entered.wait(2)
+	runner.close()
+	assert seen[0].cancelled
+	release.set()
+	_wait_for_workers(runner)
+	assert errors == []

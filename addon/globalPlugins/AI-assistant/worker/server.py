@@ -1061,11 +1061,15 @@ class WorkerServer:
 			return True
 		if sys.platform == "win32":
 			try:
+				import win32api
 				import win32process
 
 				# OpenProcess with PROCESS_QUERY_LIMITED_INFORMATION (0x1000)
-				handle = win32process.OpenProcess(0x1000, False, pid)
-				exit_code = win32process.GetExitCodeProcess(handle)
+				handle = win32api.OpenProcess(0x1000, False, pid)
+				try:
+					exit_code = win32process.GetExitCodeProcess(handle)
+				finally:
+					handle.Close()
 				# STILL_ACTIVE = 259
 				return exit_code == 259
 			except Exception:

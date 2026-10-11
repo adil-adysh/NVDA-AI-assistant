@@ -17,10 +17,10 @@ import sys
 # Configure sys.path so worker and core packages can be imported
 _REPO_ROOT = Path(__file__).resolve().parent
 _ADDON_ROOT = _REPO_ROOT / "addon" / "globalPlugins" / "AI-assistant"
+if not _ADDON_ROOT.is_dir():
+	_ADDON_ROOT = _REPO_ROOT.parent
 if str(_ADDON_ROOT) not in sys.path:
 	sys.path.insert(0, str(_ADDON_ROOT))
-if str(_REPO_ROOT) not in sys.path:
-	sys.path.insert(0, str(_REPO_ROOT))
 
 from worker.server import WorkerServer  # noqa: E402
 
@@ -47,10 +47,13 @@ def main() -> int:
 	parser.add_argument("--cmd-pipe", default=r"\\.\pipe\nvda_ai_worker_cmd")
 	parser.add_argument("--evt-pipe", default=r"\\.\pipe\nvda_ai_worker_evt")
 	parser.add_argument("--parent-pid", type=int, default=0)
+	parser.add_argument("--generation", type=int, default=1)
 	parser.add_argument("--log-file", default=None)
 	parser.add_argument("--log-level", default="INFO")
 	parser.add_argument("--instance-id", default=None)
 	args = parser.parse_args()
+	if args.generation < 1:
+		parser.error("--generation must be positive")
 
 	# Scope pipe names if instance-id is provided (for test concurrency)
 	cmd_pipe = (
@@ -79,6 +82,7 @@ def main() -> int:
 		evt_pipe_name=evt_pipe,
 		parent_pid=args.parent_pid,
 	)
+	server.active_generation = args.generation
 
 	try:
 		server.serve_forever()

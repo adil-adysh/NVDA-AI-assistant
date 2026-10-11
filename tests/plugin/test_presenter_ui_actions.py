@@ -50,27 +50,13 @@ class _FakeUIAdapter:
 	def render_display_after_speech(self, *args, **kwargs) -> None:
 		self.render_display(*args, **kwargs)
 
+	def present_one_shot(self, view_model, mode, *, on_present=None) -> None:
+		if on_present is not None:
+			on_present()
+		self.render_display(view_model, mode=mode)
+
 	def close(self) -> None:
 		pass
-
-
-class _FakeResultActionStore:
-	def __init__(self) -> None:
-		self._payloads: dict[str, dict[str, object]] = {}
-		self._next_token = 0
-
-	def put(self, payload: dict[str, object]) -> str:
-		self._next_token += 1
-		token = f"token-{self._next_token}"
-		self._payloads[token] = dict(payload)
-		return token
-
-	def pop(self, token: str) -> dict[str, object] | None:
-		payload = self._payloads.pop(token, None)
-		return dict(payload) if payload is not None else None
-
-	def clear(self) -> None:
-		self._payloads.clear()
 
 
 class _FakeProviderCatalogService:
@@ -191,6 +177,7 @@ sys.modules[config_state_module.__name__] = config_state_module
 
 config_settings_module = types.ModuleType(f"{PACKAGE_NAME}.config.settings")
 config_settings_module.get_provider_state = lambda: _ProviderState(provider="ollama", model_name="test-model")
+config_settings_module.get_one_shot_output_mode = lambda: 'display_only'
 sys.modules[config_settings_module.__name__] = config_settings_module
 
 core_events_module = types.ModuleType(f"{PACKAGE_NAME}.core.events")
@@ -218,9 +205,7 @@ ui_adapter_module = types.ModuleType(f"{PACKAGE_NAME}.ui.adapter")
 ui_adapter_module.ui_adapter = _FakeUIAdapter()
 sys.modules[ui_adapter_module.__name__] = ui_adapter_module
 
-ui_action_store_module = types.ModuleType(f"{PACKAGE_NAME}.ui.action_store")
-ui_action_store_module.ResultActionStore = _FakeResultActionStore
-sys.modules[ui_action_store_module.__name__] = ui_action_store_module
+ui_action_store_module = _load_module(f"{PACKAGE_NAME}.ui.action_store", ROOT_DIR / "ui" / "action_store.py")
 
 ui_intent_module = types.ModuleType(f"{PACKAGE_NAME}.ui.intent")
 ui_intent_module.ATTENTION_POLICY_ACTIVATE_AND_FOCUS = "activate_and_focus"
@@ -314,6 +299,9 @@ class PresenterUIActionTests(unittest.TestCase):
 		self.assertEqual(seed_messages[0].parts[0].text, "Page content...")
 		self.assertEqual(seed_messages[1].role, "assistant")
 		self.assertEqual(seed_messages[1].parts[0].text, "The summary")
+		# Reopening the retained result must leave all of its actions usable.
+		self.presenter._handle_result_action("open_in_new_chat", {"token": token})
+		self.assertEqual(len(captured), 2)
 
 	def test_open_in_new_chat_carries_focused_image_context(self) -> None:
 		captured: list[dict[str, object | None]] = []
@@ -645,6 +633,45 @@ class PresenterUIActionTests(unittest.TestCase):
 		self.assertEqual(len(ui_adapter_module.ui_adapter.render_display_calls), 1)
 		view_model = ui_adapter_module.ui_adapter.render_display_calls[0]["args"][0]
 		self.assertEqual(view_model.display_presentation["initial_focus"], "content")
+
+	def test_result_payloads_replaced_only_after_successful_delivery(self) -> None:
+		store = self.presenter._result_action_store
+		previous = store.put({"output_items": [{"id": "summary", "content": "Previous"}]})
+		pending = []
+		adapter = ui_adapter_module.ui_adapter
+		original = adapter.present_one_shot
+		adapter.present_one_shot = lambda view_model, mode, *, on_present: pending.append(on_present)
+		try:
+			self.presenter.present_use_case_result(types.SimpleNamespace(
+				output_text="New result", output_html=None, is_browseable=False,
+				metadata={}, message=None, prompt_context=None,
+			), title="Result")
+		finally:
+			adapter.present_one_shot = original
+		# A discarded/cancelled queued delivery must not invalidate the old result.
+		self.assertIsNotNone(store.get(previous))
+		pending[0]()
+		self.assertIsNone(store.get(previous))
+
+	def test_overlapping_result_deliveries_keep_latest_actions_usable(self) -> None:
+		pending = []
+		adapter = ui_adapter_module.ui_adapter
+		original = adapter.present_one_shot
+		adapter.present_one_shot = lambda view_model, mode, *, on_present: pending.append((view_model, on_present))
+		try:
+			for content in ("First", "Second"):
+				self.presenter.present_use_case_result(types.SimpleNamespace(
+					output_text=content, output_html=None, is_browseable=False,
+					metadata={"result_actions": True}, message=None, prompt_context=None,
+					context_items=(), output_items=(types.SimpleNamespace(id="summary", content=content),),
+				), title="Result")
+		finally:
+			adapter.present_one_shot = original
+		for view, deliver in pending:
+			deliver()
+			token = view.actions[0].payload["token"]
+			payload = self.presenter._result_action_store.get(token)
+			self.assertEqual(payload["output_items"][0]["content"], view.output_text)
 
 	def test_handle_result_action_reopens_chat_when_active_conversation_deleted(self) -> None:
 		captured_opens: list[dict[str, object | None]] = []

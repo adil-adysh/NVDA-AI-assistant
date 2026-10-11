@@ -44,6 +44,7 @@ fn to_wide(s: &str) -> Vec<u16> {
 // ── Message delivery ──────────────────────────────────────────────────
 
 fn send_pending_command(controller: &ICoreWebView2Controller, command: HostCommand) -> Result<DeliveryOutcome> {
+    crate::window::arm_command_focus(&command.message, command.activation_policy);
     if !host_dispatch::window_ready_for_delivery(
         command.activation_policy,
         crate::window::is_window_visible,
@@ -60,14 +61,8 @@ fn send_pending_command(controller: &ICoreWebView2Controller, command: HostComma
         return Ok(DeliveryOutcome::DeferredVisibility);
     }
 
-    // When ActivateAndFocus brings the window forward, wndproc's WM_SETFOCUS
-    // handler already calls focus_webview(). Skip the duplicate call here to
-    // avoid a spurious "parameter is incorrect" warning when the WebView2
-    // controller hasn't finished compositing yet.
-    if command.request_webview_focus {
-        let _ = focus_webview();
-    }
-
+    // Focus is applied after the correlated DOM acknowledgement, never
+    // before the new command has rendered its target element.
     post_message_to_webview(controller, &command.message)?;
     Ok(DeliveryOutcome::Delivered)
 }

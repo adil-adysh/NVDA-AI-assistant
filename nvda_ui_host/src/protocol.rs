@@ -265,7 +265,7 @@ fn protocol_error_code(kind: &ProtocolErrorKind) -> ErrorCode {
 	}
 }
 
-fn next_message_id(prefix: &str) -> String {
+pub(crate) fn next_message_id(prefix: &str) -> String {
 	use std::sync::atomic::{AtomicU64, Ordering};
 	use std::time::{SystemTime, UNIX_EPOCH};
 

@@ -121,6 +121,7 @@ _stub_module(
 	get_enabled_providers=lambda: ["litert-lm"],
 	get_llama_start_on_startup=lambda: False,
 	get_litert_start_on_startup=lambda: False,
+	get_local_startup_mode=lambda _provider: "lazy",
 	get_provider_state=lambda: types.SimpleNamespace(provider="litert-lm", model_name="model-1", backend_url=""),
 	register_language_resolver=lambda _cb: None,
 )
@@ -181,6 +182,50 @@ app_mod = load_module(
 	f"{CHALLENGE_NAMESPACE}.plugin.application",
 	ADDON_ROOT / "plugin" / "application.py",
 )
+
+
+def test_application_worker_policy_does_not_check_or_start_server(monkeypatch):
+	from tests.support.bootstrap import load_addon_module
+	startup = load_addon_module("plugin.local_provider_startup", namespace="startup_composition_testpkg")
+	calls = []
+	threads = []
+
+	class ControlledThread:
+		def __init__(self, *, target, name, daemon):
+			self.target = target
+			threads.append(self)
+
+		def start(self):
+			pass
+
+	def schedule(**kwargs):
+		return startup.schedule_active_local_provider_start(**kwargs, thread_factory=ControlledThread)
+
+	monkeypatch.setattr(app_mod, "get_local_startup_mode", lambda _provider: "worker")
+	monkeypatch.setattr(app_mod, "schedule_active_local_provider_start", schedule)
+	monkeypatch.setattr(app_mod, "ensure_provider_server_ready", lambda: calls.append("server"))
+	server_module = sys.modules[f"{CHALLENGE_NAMESPACE}.providers.runtime.server"]
+	monkeypatch.setattr(server_module, "get_litert_supervisor", lambda: calls.append("server probe"))
+	application = object.__new__(app_mod.AIAssistantApplication)
+	application._worker_owner = types.SimpleNamespace(ensure_client=lambda: calls.append("worker"))
+	application._auto_start_active_local_provider()
+	assert calls == []
+	assert len(threads) == 1
+	threads[0].target()
+	assert calls == ["worker"]
+
+
+def test_selecting_local_provider_preserves_lazy_server_startup(monkeypatch):
+	threads = []
+	monkeypatch.setattr(app_mod.threading, "Thread", lambda **kwargs: threads.append(kwargs) or types.SimpleNamespace(start=lambda: None))
+	monkeypatch.setattr(app_mod, "provider_control_service", types.SimpleNamespace(select_provider=lambda provider: types.SimpleNamespace(
+		provider_state=types.SimpleNamespace(provider=provider), readiness=object(),
+	)))
+	monkeypatch.setattr(app_mod, "build_provider_status_message", lambda *_args: "")
+	monkeypatch.setattr(app_mod.nvda_ui, "message", lambda *_args: None)
+	application = object.__new__(app_mod.AIAssistantApplication)
+	application._select_provider_by_id("litert-lm")
+	assert threads == []
 
 
 class TestSlice8ThreadEliminationInvariants(unittest.TestCase):
@@ -476,3 +521,46 @@ class TestInvariantA14AdversarialValidation(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+def test_provider_status_reads_current_configuration_without_services(monkeypatch):
+	messages = []
+	application = app_mod.AIAssistantApplication.__new__(app_mod.AIAssistantApplication)
+	state = types.SimpleNamespace(provider='litert-lm', model_name='model-one')
+	monkeypatch.setattr(app_mod, 'get_provider_state', lambda: state)
+	monkeypatch.setattr(app_mod, 'get_provider_display_name', lambda provider: 'LiteRT-LM')
+	monkeypatch.setattr(app_mod.nvda_ui, 'message', messages.append)
+	application.report_current_provider_model()
+	state.model_name = ''
+	application.report_current_provider_model()
+	assert messages == ['Provider: LiteRT-LM. Model: model-one.', 'Provider: LiteRT-LM. Model: Not selected.']
+
+
+def test_stop_active_requests_aggregates_chat_and_one_shot_requests(monkeypatch):
+	calls, messages = [], []
+	application = app_mod.AIAssistantApplication.__new__(app_mod.AIAssistantApplication)
+	application.background = types.SimpleNamespace(cancel_active_requests=lambda: calls.append('one-shot') or 2)
+	monkeypatch.setattr(app_mod, 'ui_adapter', types.SimpleNamespace(cancel_chat_requests=lambda: calls.append('chat') or 1))
+	monkeypatch.setattr(app_mod.nvda_ui, 'message', messages.append)
+	assert application.cancel_active_requests() == 3
+	assert calls == ['one-shot', 'chat']
+	assert messages == ['Stopping active AI requests.']
+
+
+def test_stop_active_requests_reports_when_nothing_is_running(monkeypatch):
+	messages = []
+	application = app_mod.AIAssistantApplication.__new__(app_mod.AIAssistantApplication)
+	application.background = types.SimpleNamespace(cancel_active_requests=lambda: 0)
+	monkeypatch.setattr(app_mod, 'ui_adapter', types.SimpleNamespace(cancel_chat_requests=lambda: 0))
+	monkeypatch.setattr(app_mod.nvda_ui, 'message', messages.append)
+	assert application.cancel_active_requests() == 0
+	assert messages == ['No active AI requests to stop.']
+
+
+def test_stop_request_command_is_available_from_menu_script_and_layer():
+	controller = ast.parse((ADDON_ROOT / 'plugin' / 'controller.py').read_text(encoding='utf-8'))
+	application = ast.parse((ADDON_ROOT / 'plugin' / 'application.py').read_text(encoding='utf-8'))
+	methods = {node.name: node for node in ast.walk(controller) if isinstance(node, ast.FunctionDef)}
+	assert 'script_stopActiveRequests' in methods
+	assert 'self._app.cancel_active_requests' in ast.unparse(methods['script_stopActiveRequests'])
+	assert '_stop_requests_item' in ast.unparse(methods['_build_tools_submenu'])
+	assert "('q', host.script_stopActiveRequests)" in ast.unparse(application)

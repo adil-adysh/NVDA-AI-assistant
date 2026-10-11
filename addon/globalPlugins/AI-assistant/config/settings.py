@@ -336,18 +336,38 @@ def get_litert_cpu_threads() -> int:
 	)
 
 
+LOCAL_STARTUP_MODES = ("lazy", "worker", "server")
+_LOCAL_STARTUP_KEYS = {"litert-lm": "litert", "llama-cpp-server": "llama"}
+
+
+def get_local_startup_mode(provider: str) -> str:
+	"""Read startup policy, preserving preferences saved by earlier releases."""
+	prefix = _LOCAL_STARTUP_KEYS.get(str(provider).strip().lower())
+	if prefix is None:
+		return "lazy"
+	mode = _read_string(prefix + "StartupMode", "").strip().lower()
+	if mode in LOCAL_STARTUP_MODES:
+		return mode
+	return "server" if _read_bool(prefix + "StartOnStartup", False) else "lazy"
+
+
+def set_local_startup_mode(provider: str, mode: str) -> None:
+	"""Save the policy and its legacy server-start flag together."""
+	prefix = _LOCAL_STARTUP_KEYS.get(str(provider).strip().lower())
+	mode = str(mode).strip().lower()
+	if prefix is None or mode not in LOCAL_STARTUP_MODES:
+		raise ValueError("Unsupported local provider startup policy")
+	_set_values({prefix + "StartupMode": mode, prefix + "StartOnStartup": mode == "server"})
+
+
 def get_litert_start_on_startup() -> bool:
 	"""Return whether the active LiteRT-LM server starts with the add-on."""
-	return _read_bool(
-		"litertStartOnStartup", defaults.DEFAULT_LITERT_START_ON_STARTUP
-	)
+	return get_local_startup_mode("litert-lm") == "server"
 
 
 def get_llama_start_on_startup() -> bool:
 	"""Return whether the active llama-server starts with the add-on."""
-	return _read_bool(
-		"llamaStartOnStartup", defaults.DEFAULT_LLAMA_START_ON_STARTUP
-	)
+	return get_local_startup_mode("llama-cpp-server") == "server"
 
 
 def _get_openai_endpoint_paths(provider: str) -> tuple[str, str]:
@@ -475,6 +495,20 @@ def get_streaming_tone_enabled() -> bool:
 
 def set_streaming_tone_enabled(value: bool) -> None:
 	_set_value("enableStreamingTone", bool(value))
+
+
+ONE_SHOT_OUTPUT_MODES = ("speak_then_display", "display_only", "speak_only")
+
+
+def get_one_shot_output_mode() -> str:
+	value = _read_string("oneShotOutputMode", defaults.DEFAULT_ONE_SHOT_OUTPUT_MODE)
+	return value if value in ONE_SHOT_OUTPUT_MODES else defaults.DEFAULT_ONE_SHOT_OUTPUT_MODE
+
+
+def set_one_shot_output_mode(value: str) -> None:
+	if value not in ONE_SHOT_OUTPUT_MODES:
+		raise ValueError(f"Invalid one-shot output mode: {value}")
+	_set_value("oneShotOutputMode", value)
 
 
 def is_progress_enabled() -> bool:
@@ -622,12 +656,12 @@ def set_litert_cpu_threads(threads: int) -> None:
 
 def set_litert_start_on_startup(enabled: bool) -> None:
 	"""Persist whether the active LiteRT-LM server starts with the add-on."""
-	_set_value("litertStartOnStartup", bool(enabled))
+	set_local_startup_mode("litert-lm", "server" if enabled else "lazy")
 
 
 def set_llama_start_on_startup(enabled: bool) -> None:
 	"""Persist whether the active llama-server starts with the add-on."""
-	_set_value("llamaStartOnStartup", bool(enabled))
+	set_local_startup_mode("llama-cpp-server", "server" if enabled else "lazy")
 
 
 def get_think(provider_id: str, model_id: str | None = None) -> bool:

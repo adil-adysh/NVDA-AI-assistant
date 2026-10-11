@@ -20,6 +20,23 @@ ADDON_LIB_DIR = ROOT_DIR / "addon" / "globalPlugins" / "AI-assistant" / "lib"
 NPM_EXECUTABLE = "npm.cmd" if os.name == "nt" else "npm"
 
 
+def project_build_command(*arguments: str) -> list[str]:
+	"""Use the locked project environment regardless of SCons' interpreter."""
+	uv = shutil.which("uv")
+	if uv is None:
+		raise RuntimeError("Install uv, run uv sync --locked, and build with uv run scons")
+	return [uv, "run", "--locked", "--project", str(ROOT_DIR), "python", str(ROOT_DIR / "scripts" / "build.py"), *arguments]
+
+
+def reexec_in_project_environment() -> int | None:
+	if Path(sys.prefix).resolve() == (ROOT_DIR / ".venv").resolve() or os.environ.get("NVDA_AI_BUILD_UV_CHILD") == "1":
+		return None
+	environment = os.environ.copy()
+	environment["NVDA_AI_BUILD_UV_CHILD"] = "1"
+	print("Selecting the pinned uv build environment.", flush=True)
+	return subprocess.run(project_build_command(*sys.argv[1:]), cwd=ROOT_DIR, env=environment).returncode
+
+
 def _cargo_build_args(*, manifest_path: Path | None = None, release: bool) -> list[str]:
 	"""Return reproducible Cargo build arguments for every native component."""
 	args = ["cargo", "build"]
@@ -387,6 +404,13 @@ def main() -> int:
 	args = parser.parse_args()
 
 	try:
+		reexecuted = reexec_in_project_environment()
+		if reexecuted is not None:
+			return reexecuted
+		from build_worker_bundle import build_worker_bundle, validate_build_environment
+
+		if not args.install_only:
+			validate_build_environment()
 		build_webui()
 		if not args.install_only:
 			build_host(release=not args.debug)
@@ -400,6 +424,7 @@ def main() -> int:
 		install_llm_client_extension(release=not args.debug, allow_existing_install=args.install_only)
 		install_embedding_engine_extension(release=not args.debug, allow_existing_install=args.install_only)
 		install_runtime_supervisor_extension(release=not args.debug, allow_existing_install=args.install_only)
+		build_worker_bundle(allow_existing=args.install_only)
 	except Exception as error:
 		print(f"Rust artifact build failed: {error}")
 		return 1

@@ -1,5 +1,4 @@
 use std::ptr::null;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use windows::{
     core::{PCWSTR, Result, w},
@@ -20,6 +19,8 @@ use crate::host_dispatch::HostCommand;
 const WM_HOST_COMMAND: u32 = WM_APP + 1;
 pub(crate) const WM_HOST_CLOSE: u32 = WM_APP + 2;
 const WM_DEFERRED_FOCUS_WEBVIEW: u32 = WM_APP + 3;
+const WM_HOST_ESCAPE: u32 = WM_APP + 4;
+const WM_HOST_DISMISS: u32 = WM_APP + 5;
 const HOST_QUEUE_CAPACITY: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,10 +34,123 @@ static WINDOW_HANDLE: OnceLock<usize> = OnceLock::new();
 static WINDOW_STATE: OnceLock<Mutex<WindowState>> = OnceLock::new();
 static CLOSE_REASON: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static HOST_COMMAND_QUEUE: OnceLock<Mutex<Vec<HostCommand>>> = OnceLock::new();
-static PENDING_UI_APPLIED_FOCUS: OnceLock<AtomicBool> = OnceLock::new();
+static FOCUS_REQUEST: OnceLock<Mutex<FocusRequest>> = OnceLock::new();
+static RETURN_FOCUS: OnceLock<Mutex<ReturnFocus>> = OnceLock::new();
 
-fn pending_ui_applied_focus() -> &'static AtomicBool {
-    PENDING_UI_APPLIED_FOCUS.get_or_init(|| AtomicBool::new(false))
+#[derive(Default)]
+struct ReturnFocus {
+    previous: Option<usize>,
+}
+
+impl ReturnFocus {
+    fn remember(&mut self, foreground: usize, host: usize) {
+        if foreground != 0 && foreground != host {
+            self.previous = Some(foreground);
+        }
+    }
+
+    fn take(&mut self, host_was_foreground: bool) -> Option<usize> {
+        let previous = self.previous.take();
+        if host_was_foreground { previous } else { None }
+    }
+}
+
+fn return_focus() -> &'static Mutex<ReturnFocus> {
+    RETURN_FOCUS.get_or_init(|| Mutex::new(ReturnFocus::default()))
+}
+
+#[derive(Default)]
+struct FocusRequest {
+    generation: usize,
+    pending_id: Option<String>,
+    posted: Option<usize>,
+}
+
+impl FocusRequest {
+    fn arm(&mut self, id: &str, policy: ActivationPolicy) {
+        if policy == ActivationPolicy::NoActivate { return; }
+        self.generation = self.generation.wrapping_add(1);
+        self.pending_id = Some(id.to_string());
+        self.posted = None;
+    }
+
+    fn is_pending(&self) -> bool { self.pending_id.is_some() }
+
+    fn acknowledge(&mut self, id: Option<&str>) -> Option<usize> {
+        if id.is_none() || self.pending_id.as_deref() != id { return None; }
+        self.pending_id = None;
+        self.posted = Some(self.generation);
+        self.posted
+    }
+
+    fn consume(&mut self, generation: usize) -> bool {
+        if self.posted != Some(generation) { return false; }
+        self.posted = None;
+        true
+    }
+
+    fn dismiss(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.pending_id = None;
+        self.posted = None;
+    }
+}
+
+fn focus_request() -> &'static Mutex<FocusRequest> {
+    FOCUS_REQUEST.get_or_init(|| Mutex::new(FocusRequest::default()))
+}
+
+pub(crate) fn arm_command_focus(message: &str, policy: ActivationPolicy) {
+    if let Ok(envelope) = serde_json::from_str::<serde_json::Value>(message) {
+        if let Some(id) = envelope.get("id").and_then(|id| id.as_str()) {
+            focus_request().lock().unwrap().arm(id, policy);
+        }
+    }
+}
+
+pub(crate) fn may_focus_webview() -> bool {
+    WINDOW_HANDLE.get().is_some()
+        && current_window_state() == WindowState::Visible
+        && is_window_visible()
+        && !should_activate_visible_window()
+        && !focus_request().lock().unwrap().is_pending()
+}
+
+pub(crate) fn post_escape_dismiss() {
+    if let Some(hwnd_value) = WINDOW_HANDLE.get() {
+        unsafe {
+            let _ = PostMessageW(Some(HWND(*hwnd_value as _)), WM_HOST_ESCAPE, WPARAM(0), LPARAM(0));
+        }
+    }
+}
+
+/// WebView callbacks must return before changing visibility or native focus.
+pub(crate) fn post_dismiss_window() {
+    if let Some(hwnd_value) = WINDOW_HANDLE.get() {
+        unsafe {
+            let _ = PostMessageW(Some(HWND(*hwnd_value as _)), WM_HOST_DISMISS, WPARAM(0), LPARAM(0));
+        }
+    }
+}
+
+fn hide_window_and_return_focus(hwnd: HWND) {
+    let was_foreground = unsafe { GetForegroundWindow() == hwnd };
+    // Remove the embedded document from accessibility visibility as well as
+    // hiding the outer HWND. Otherwise NVDA can retain its browse-mode buffer.
+    crate::webview::set_controller_visible(false);
+    unsafe { let _ = ShowWindow(hwnd, SW_HIDE); }
+    set_window_state(WindowState::Hidden);
+    let previous = return_focus().lock().unwrap().take(was_foreground);
+    if let Some(previous) = previous {
+        let target = HWND(previous as _);
+        unsafe {
+            if IsWindow(Some(target)).as_bool() && IsWindowVisible(target).as_bool() {
+                let result = SetForegroundWindow(target);
+                logger::info(&format!("Dismiss returning focus to {:?}: {:?}", target, result));
+            }
+        }
+    }
+    logger::info(&format!("Dismiss complete: native_visible={} state={:?}", is_window_visible(), current_window_state()));
 }
 
 /// Called by the WebView event handler when `ui_applied` is received —
@@ -44,14 +158,14 @@ fn pending_ui_applied_focus() -> &'static AtomicBool {
 /// has been called on the target element.  Only then is it safe to move
 /// host-level focus into the WebView without NVDA reading the container
 /// role ("pane").
-pub(crate) fn request_deferred_focus_webview() {
-    // Clear the gate flag so future WM_ACTIVATE events (e.g. Alt+Tab)
-    // are allowed to call focus_webview directly.
-    pending_ui_applied_focus().store(false, Ordering::SeqCst);
+pub(crate) fn request_deferred_focus_webview(correlation_id: Option<&str>) {
+    // Only the acknowledgement for the current activating command can
+    // release its gate. Progress and stale acknowledgements are ignored.
+    let Some(ticket) = focus_request().lock().unwrap().acknowledge(correlation_id) else { return; };
     if let Some(hwnd_value) = WINDOW_HANDLE.get() {
         let hwnd = HWND(*hwnd_value as _);
         unsafe {
-            let _ = PostMessageW(Some(hwnd), WM_DEFERRED_FOCUS_WEBVIEW, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(Some(hwnd), WM_DEFERRED_FOCUS_WEBVIEW, WPARAM(ticket), LPARAM(0));
         }
     }
 }
@@ -227,20 +341,21 @@ pub(crate) fn dismiss_window() {
         }
         let hwnd = HWND(*hwnd_value as _);
         logger::info("dismiss_window: hiding window (soft dismiss, queues preserved)");
-        // Clear any pending focus gate so the next activation works correctly.
-        pending_ui_applied_focus().store(false, Ordering::SeqCst);
-        unsafe {
-            if IsIconic(hwnd).as_bool() {
-                let _ = ShowWindow(hwnd, SW_RESTORE);
-            }
-            let _ = ShowWindow(hwnd, SW_HIDE);
-        }
-        set_window_state(WindowState::Hidden);
+        // Fence synchronous activation/focus callbacks during the hide.
+        set_window_state(WindowState::Closing);
+        crate::host_dispatch::suppress_command_activation(&mut command_queue().lock().unwrap());
+        crate::host_dispatch::dismiss_pending_commands();
+        // Invalidate both outstanding acknowledgements and posted focus work.
+        focus_request().lock().unwrap().dismiss();
+        hide_window_and_return_focus(hwnd);
         // Notify Python that the window was dismissed so it can set its
         // lifecycle to HIDDEN (preserving conversation for next open).
         let event_message = json!({
             "schema": "nvda.ui_host",
             "version": 2,
+            "id": crate::protocol::next_message_id("event"),
+            "correlation_id": null,
+            "source": "ui_host",
             "type": "event",
             "event": {
                 "name": "close_host",
@@ -339,7 +454,7 @@ fn handle_window_close(hwnd: HWND, source: &str) -> LRESULT {
     clear_host_command_queue();
     crate::webview::clear_pending_messages();
     // Clear any pending focus gate so the next activation works correctly.
-    pending_ui_applied_focus().store(false, Ordering::SeqCst);
+    focus_request().lock().unwrap().dismiss();
     let reason = if source == "WM_CLOSE" {
         let _ = take_close_reason();
         "os_close".to_string()
@@ -349,6 +464,9 @@ fn handle_window_close(hwnd: HWND, source: &str) -> LRESULT {
     let event_message = json!({
         "schema": "nvda.ui_host",
         "version": 2,
+        "id": crate::protocol::next_message_id("event"),
+        "correlation_id": null,
+        "source": "ui_host",
         "type": "event",
         "event": {
             "name": "close_host",
@@ -363,16 +481,7 @@ fn handle_window_close(hwnd: HWND, source: &str) -> LRESULT {
     let visible_before = unsafe { IsWindowVisible(hwnd).as_bool() };
     let iconic_before = unsafe { IsIconic(hwnd).as_bool() };
     logger::info(&format!("Window close before hide: hwnd={:?} visible_before={} iconic_before={} state={:?}", hwnd, visible_before, iconic_before, current_window_state()));
-    unsafe {
-        // Restore from minimized before hiding so the window cleanly
-        // transitions out of the iconic state instead of staying hidden
-        // while still logically minimized.
-        if iconic_before {
-            logger::info("Restoring minimized window before hiding");
-            let _ = ShowWindow(hwnd, SW_RESTORE);
-        }
-        let _ = ShowWindow(hwnd, SW_HIDE);
-    }
+    hide_window_and_return_focus(hwnd);
     let visible_after = unsafe { IsWindowVisible(hwnd).as_bool() };
     logger::info(&format!("ShowWindow(SW_HIDE) called; visible_after={} state=Hidden", visible_after));
     set_window_state(WindowState::Hidden);
@@ -380,21 +489,16 @@ fn handle_window_close(hwnd: HWND, source: &str) -> LRESULT {
 }
 
 fn activate_window(hwnd: HWND) {
+    let foreground = unsafe { GetForegroundWindow() };
+    return_focus().lock().unwrap().remember(foreground.0 as usize, hwnd.0 as usize);
+    crate::webview::set_controller_visible(true);
     let visible_before = unsafe { IsWindowVisible(hwnd).as_bool() };
     let style_before = unsafe { GetWindowLongW(hwnd, GWL_STYLE) };
     logger::info(&format!("activate_window called hwnd={:?} visible_before={} style_before=0x{:x}", hwnd, visible_before, style_before));
 
-    // Gate WM_ACTIVATE / WM_SETFOCUS from calling focus_webview()
-    // synchronously.  SetForegroundWindow and ShowWindow fire these
-    // messages, but the WebView hasn't received the open_chat /
-    // render_display command yet, so no DOM element is focused.  NVDA
-    // would read the container role ("pane") instead of the target
-    // element.  We defer focus_webview until the WebView sends
-    // ui_applied.  The gate must be armed BEFORE any window-activation
-    // call (ShowWindow, SetForegroundWindow, etc.) so that inline
-    // WM_SETFOCUS / WM_ACTIVATE messages from ShowWindow are also
-    // captured.
-    pending_ui_applied_focus().store(true, Ordering::SeqCst);
+    // Message delivery arms the correlated focus gate before activation.
+    // SetForegroundWindow/ShowWindow may fire focus messages synchronously;
+    // wait for the matching DOM acknowledgement before focusing WebView2.
 
     unsafe {
         let result = if IsIconic(hwnd).as_bool() {
@@ -501,13 +605,21 @@ unsafe extern "system" fn wndproc(
     match msg {
         WM_CLOSE => handle_window_close(hwnd, "WM_CLOSE"),
         WM_HOST_CLOSE => handle_window_close(hwnd, "WM_HOST_CLOSE"),
+        WM_HOST_ESCAPE => {
+            crate::webview::request_escape_dismiss();
+            LRESULT(0)
+        }
+        WM_HOST_DISMISS => {
+            dismiss_window();
+            LRESULT(0)
+        }
         WM_SETFOCUS => {
             // When the window is brought forward programmatically
             // (activate_window), focus is deferred until ui_applied.
             // The ui_applied handler posts WM_DEFERRED_FOCUS_WEBVIEW.
             // For user-initiated activation (Alt+Tab, click) the
             // pending flag won't be set, so we focus immediately.
-            if !pending_ui_applied_focus().load(Ordering::SeqCst) {
+            if may_focus_webview() {
                 let _ = crate::webview::focus_webview();
             } else {
                 logger::debug("WM_SETFOCUS: deferring focus_webview until ui_applied");
@@ -516,7 +628,7 @@ unsafe extern "system" fn wndproc(
         }
         WM_ACTIVATE => {
             if (wparam.0 & 0xFFFF) != WA_INACTIVE as usize {
-                if !pending_ui_applied_focus().load(Ordering::SeqCst) {
+                if may_focus_webview() {
                     let _ = crate::webview::focus_webview();
                 } else {
                     logger::debug("WM_ACTIVATE: deferring focus_webview until ui_applied");
@@ -526,7 +638,10 @@ unsafe extern "system" fn wndproc(
         }
         WM_DEFERRED_FOCUS_WEBVIEW => {
             logger::debug("WM_DEFERRED_FOCUS_WEBVIEW: applying deferred focus_webview");
-            let _ = crate::webview::focus_webview();
+            let authorized = focus_request().lock().unwrap().consume(wparam.0);
+            if authorized && may_focus_webview() {
+                let _ = crate::webview::focus_webview();
+            }
             LRESULT(0)
         }
         WM_DESTROY => {
@@ -540,7 +655,9 @@ unsafe extern "system" fn wndproc(
                 logger::info("Window minimized by user; tracking state");
             } else if restored {
                 logger::info("Window restored from minimized; ensuring WebView focus");
-                let _ = crate::webview::focus_webview();
+                if may_focus_webview() {
+                    let _ = crate::webview::focus_webview();
+                }
             }
             crate::webview::resize_webview(hwnd);
             LRESULT(0)
@@ -564,5 +681,80 @@ unsafe extern "system" fn wndproc(
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+#[cfg(test)]
+mod focus_tests {
+    #[test]
+    fn dismissal_returns_focus_to_application_that_was_interrupted() {
+        let mut focus = ReturnFocus::default();
+        focus.remember(10, 20);
+        focus.remember(20, 20);
+        assert_eq!(focus.take(true), Some(10));
+        assert_eq!(focus.take(true), None);
+    }
+
+    #[test]
+    fn closing_background_host_does_not_steal_focus() {
+        let mut focus = ReturnFocus::default();
+        focus.remember(10, 20);
+        assert_eq!(focus.take(false), None);
+        assert_eq!(focus.take(true), None);
+    }
+
+    #[test]
+    fn later_result_captures_the_current_application() {
+        let mut focus = ReturnFocus::default();
+        focus.remember(10, 20);
+        assert_eq!(focus.take(true), Some(10));
+        focus.remember(30, 20);
+        assert_eq!(focus.take(true), Some(30));
+    }
+    use super::*;
+
+    #[test]
+    fn unrelated_ack_cannot_release_pending_focus() {
+        let mut focus = FocusRequest::default();
+        focus.arm("answer", ActivationPolicy::ActivateIfBackground);
+        assert_eq!(focus.acknowledge(Some("progress")), None);
+        assert!(focus.is_pending());
+        assert!(focus.acknowledge(Some("answer")).is_some());
+    }
+
+    #[test]
+    fn background_updates_never_authorize_focus() {
+        let mut focus = FocusRequest::default();
+        focus.arm("delta", ActivationPolicy::NoActivate);
+        assert_eq!(focus.acknowledge(Some("delta")), None);
+        assert!(!focus.is_pending());
+    }
+
+    #[test]
+    fn dismiss_fences_inflight_acknowledgements() {
+        let mut focus = FocusRequest::default();
+        focus.arm("old-answer", ActivationPolicy::ActivateIfBackground);
+        focus.dismiss();
+        focus.arm("new-answer", ActivationPolicy::ActivateIfBackground);
+        assert_eq!(focus.acknowledge(Some("old-answer")), None);
+        assert!(focus.acknowledge(Some("new-answer")).is_some());
+    }
+
+    #[test]
+    fn dismiss_fences_already_posted_focus_messages() {
+        let mut focus = FocusRequest::default();
+        focus.arm("answer", ActivationPolicy::ActivateIfBackground);
+        let ticket = focus.acknowledge(Some("answer")).unwrap();
+        focus.dismiss();
+        assert!(!focus.consume(ticket));
+    }
+
+    #[test]
+    fn matching_ack_focus_is_one_shot() {
+        let mut focus = FocusRequest::default();
+        focus.arm("answer", ActivationPolicy::ActivateAndFocus);
+        let ticket = focus.acknowledge(Some("answer")).unwrap();
+        assert!(focus.consume(ticket));
+        assert!(!focus.consume(ticket));
     }
 }

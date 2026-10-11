@@ -13,7 +13,8 @@ export function emitUiEvent(
 		return false;
 	}
 
-	return (window as any).__sendHostEvent({
+	try {
+		return (window as any).__sendHostEvent({
 		schema: 'nvda.ui_host',
 		version: 2,
 		id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -21,5 +22,9 @@ export function emitUiEvent(
 		source: 'web_ui',
 		type: 'event',
 		event: { name, payload },
-	});
+		});
+	} catch (error) {
+		console.error('Unable to send host event.', error);
+		return false;
+	}
 }

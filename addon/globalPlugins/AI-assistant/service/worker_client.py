@@ -171,7 +171,7 @@ class NamedPipeJobClient(JobClient):
 
 		with self._lock:
 			snap = self._snapshots.get(spec.job_id)
-			if snap:
+			if snap and snap.state == JobStatus.SUBMITTED:
 				self._snapshots[spec.job_id] = JobSnapshot(
 					spec=snap.spec,
 					state=JobStatus.QUEUED,

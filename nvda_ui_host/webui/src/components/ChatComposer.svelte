@@ -1,5 +1,5 @@
 <script>
-    import { focusChatComposer, submitChatMessage } from '../lib/actions';
+    import { focusChatComposer, stopChatResponse, submitChatMessage } from '../lib/actions';
     import { handleFileSelection } from '../lib/attachments';
     import { appState, t } from '../lib/state.svelte';
     import AttachmentStrip from './AttachmentStrip.svelte';
@@ -22,7 +22,7 @@
     }
 
     function handleKeydown(event) {
-        if (event.key === 'Enter' && !event.shiftKey) {
+        if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
             event.preventDefault();
             submitChatMessage(fileInputElement);
         }
@@ -61,6 +61,9 @@
             </div>
 
             <button id="chat-send" type="button" aria-keyshortcuts="Enter,Alt+S" aria-busy={appState.chat.processing} onclick={() => submitChatMessage(fileInputElement)} disabled={chatDisabled}>{appState.chat.processing ? t('processing_button', 'Processing…') : t('send_button', 'Send')}</button>
+			{#if appState.chat.processing}
+				<button id="chat-stop" type="button" onclick={stopChatResponse} disabled={appState.chat.stopping}>{appState.chat.stopping ? t('stopping_status', 'Stopping response...') : t('stop_response', 'Stop response')}</button>
+			{/if}
         </div>
     </section>
 {/if}

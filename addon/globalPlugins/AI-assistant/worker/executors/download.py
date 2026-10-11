@@ -9,6 +9,7 @@ Zero NVDA dependencies — pure standard library.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 import time
 from typing import TYPE_CHECKING
@@ -73,6 +74,8 @@ def stream_download(
 		existing_size = dest.stat().st_size
 		if existing_size != current_offset:
 			current_offset = existing_size
+	elif not dest.exists():
+		current_offset = 0
 
 	total_size = expected_size or 0
 
@@ -102,15 +105,23 @@ def stream_download(
 
 				# Range supported: append
 				if status == 206:
-					mode = "ab"
+					mode = "ab" if current_offset else "wb"
 					content_range = resp.headers.get("Content-Range")
-					if content_range and "/" in content_range:
-						try:
-							total_size = int(content_range.rsplit("/", 1)[1])
-						except (ValueError, IndexError):
-							pass
-					elif hdr_length is not None:
-						total_size = current_offset + hdr_length
+					match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+|\*)", content_range or "")
+					if match is None:
+						raise DownloadError("Missing or invalid Content-Range in partial response")
+					start, end = int(match[1]), int(match[2])
+					if start != current_offset or end < start:
+						raise DownloadError("Partial response does not match requested byte offset")
+					if hdr_length is not None and hdr_length != end - start + 1:
+						raise DownloadError("Content-Length does not match Content-Range")
+					hdr_length = end - start + 1
+					if match[3] != "*":
+						total_size = int(match[3])
+						if end >= total_size:
+							raise DownloadError("Content-Range exceeds advertised file size")
+					else:
+						total_size = total_size or current_offset + hdr_length
 				else:
 					# Server does not support Range (200 OK) -> write fresh
 					mode = "wb"
@@ -119,6 +130,7 @@ def stream_download(
 						total_size = hdr_length
 
 				bytes_downloaded = current_offset
+				transfer_offset = current_offset
 				start_time = time.perf_counter()
 				last_progress_time = start_time
 				last_progress_bytes = bytes_downloaded
@@ -149,12 +161,17 @@ def stream_download(
 							last_progress_time = now
 							last_progress_bytes = bytes_downloaded
 
+				if hdr_length is not None and bytes_downloaded - transfer_offset != hdr_length:
+					raise OSError("Download ended before the advertised response length")
+				if total_size and bytes_downloaded != total_size:
+					raise OSError("Download size does not match advertised file size")
+
 				# Final progress tick
 				if on_progress:
 					now = time.perf_counter()
 					total_elapsed = now - start_time
 					overall_speed = (
-						(bytes_downloaded - resume_from) / total_elapsed
+						(bytes_downloaded - transfer_offset) / total_elapsed
 						if total_elapsed > 0
 						else 0.0
 					)

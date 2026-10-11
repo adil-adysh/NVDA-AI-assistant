@@ -3,6 +3,7 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
+		"test:webui": "node --test ../tests/webui/*.test.cjs",
 		"build:webui": "vite build",
 		"dev:webui": "vite"
 	},

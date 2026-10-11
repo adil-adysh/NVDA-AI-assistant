@@ -13,8 +13,7 @@ from logHandler import log
 from ..config.state import ProviderState, subscribe_provider_state_change, unsubscribe_provider_state_change
 from ..config.settings import (
 	get_enabled_providers,
-	get_llama_start_on_startup,
-	get_litert_start_on_startup,
+	get_local_startup_mode,
 	get_provider,
 	get_provider_state,
 )
@@ -45,6 +44,7 @@ from .layer_mode import AssistantLayerController
 from .local_provider_startup import schedule_active_local_provider_start
 from .presenter import UseCasePresenter
 from .types import PluginServices
+from .worker_supervisor import configure_worker_owner, shutdown_worker_owner
 
 
 def _translate(message: str) -> str:
@@ -70,6 +70,7 @@ class AIAssistantApplication:
 			pass
 		log.debug("Browser Assistant plugin initializing")
 		self._host = host
+		self._worker_owner = configure_worker_owner()
 		self._services = build_plugin_services()
 		self._auto_start_active_local_provider()
 		self._last_provider_state = get_provider_state()
@@ -101,7 +102,10 @@ class AIAssistantApplication:
 				("b", host.script_attachClipboardToChat),
 				("t", host.script_toggleAIProvider),
 				("m", host.script_selectModel),
+				("r", host.script_reportCurrentProviderModel),
+				("l", host.script_showLastResult),
 				("h", host.script_assistantLayerHelp),
+				("q", host.script_stopActiveRequests),
 			),
 			bind_gesture=host.bindGesture,
 			clear_gesture_bindings=host.clearGestureBindings,
@@ -124,7 +128,7 @@ class AIAssistantApplication:
 		return self._services
 
 	def _auto_start_active_local_provider(self) -> None:
-		"""Start the active managed local server in a background thread.
+		"""Apply the active local provider's startup policy in the background.
 
 		The check is cheap — only reads config and checks disk paths.
 		Actual server startup (including the health/adopt probe for a
@@ -133,33 +137,42 @@ class AIAssistantApplication:
 		"""
 		try:
 			provider = get_provider()
+			startup_mode = get_local_startup_mode(provider)
 			litert_installed = True
-			if provider == "litert-lm":
+			if provider == "litert-lm" and startup_mode == "server":
 				from ..providers.runtime.server import get_litert_supervisor
 
 				litert_installed = get_litert_supervisor().is_installed
 
 			thread = schedule_active_local_provider_start(
 				provider=provider,
-				litert_enabled=get_litert_start_on_startup(),
-				llama_enabled=get_llama_start_on_startup(),
 				litert_installed=litert_installed,
+				startup_mode=startup_mode,
+				prepare_worker=self._worker_owner.ensure_client,
 				ensure_ready=ensure_provider_server_ready,
 				report_error=lambda error, active_provider: error_reporter.report(
 					error,
 					ErrorContext(
-						operation="provider server startup",
+						operation="background worker startup" if startup_mode == "worker" else "provider server startup",
 						provider=active_provider,
 						origin="application startup",
 					),
 				),
 			)
 			if thread is not None:
-				log.debug("%s server auto-start scheduled in background", provider)
+				log.debug("%s %s startup scheduled in background", provider, startup_mode)
 		except Exception:
 			log.exception("Error during local-provider auto-start check")
 
+	def cancel_active_requests(self) -> int:
+		"""Request cancellation for chat, summary, and image inference."""
+		count = self.background.cancel_active_requests() + ui_adapter.cancel_chat_requests()
+		# TRANSLATORS: Spoken after requesting cancellation of active AI inference.
+		nvda_ui.message(_("Stopping active AI requests.") if count else _("No active AI requests to stop."))
+		return count
+
 	def terminate(self) -> None:
+		shutdown_worker_owner()
 		try:
 			self.background.close()
 		except Exception:
@@ -374,6 +387,18 @@ class AIAssistantApplication:
 			log.exception("Unable to capture accessibility graph")
 			nvda_ui.queue(nvda_ui.message, _("Unable to save the accessibility graph."))
 
+	def report_current_provider_model(self) -> None:
+		"""Announce configured status without starting services or moving focus."""
+		state = get_provider_state()
+		model = (state.model_name or "").strip() or _("Not selected")
+		# TRANSLATORS: Spoken status of the configured AI provider and model.
+		nvda_ui.message(_("Provider: {provider}. Model: {model}.").format(
+			provider=get_provider_display_name(state.provider), model=model,
+		))
+
+	def show_last_result(self) -> None:
+		ui_adapter.show_last_result()
+
 	def toggle_provider(self) -> None:
 		"""Announce enabled providers with digit labels and enter digit-selection mode."""
 		enabled = get_enabled_providers()
@@ -406,12 +431,6 @@ class AIAssistantApplication:
 				ErrorContext(operation="select provider", provider=provider_id, origin="provider selector"),
 			)
 			return
-		if provider_id in {"litert-lm", "llama-cpp-server"}:
-			threading.Thread(
-				target=ensure_provider_server_ready,
-				name=f"{provider_id}ServerSwitchStart",
-				daemon=True,
-			).start()
 		provider_label = get_provider_display_name(result.provider_state.provider)
 		# TRANSLATORS: Message spoken when the AI provider is switched.
 		message = _("AI provider switched to {provider}.").format(provider=provider_label)
@@ -503,7 +522,7 @@ class AIAssistantApplication:
 		nvda_ui.message(
 			# TRANSLATORS: Help message listing all available AI assistant layer commands.
 			_(
-				"Assistant layer commands: S for summary, O for structure summary, A for accessibility graph capture, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object to chat, V for attach selection to chat, B for attach clipboard to chat, T for provider select, M for model select, H for help. Press the key after activating the layer with NVDA+Shift+A."
+				"Assistant layer commands: S for summary, O for structure summary, A for accessibility graph capture, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object to chat, V for attach selection to chat, B for attach clipboard to chat, T for provider select, M for model select, R for current provider and model, L for last result, Q to stop active requests, H for help. Press the key after activating the layer with NVDA+Shift+A."
 			)
 		)
 

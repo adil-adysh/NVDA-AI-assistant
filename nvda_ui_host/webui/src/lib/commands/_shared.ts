@@ -14,6 +14,21 @@ import {
 } from '../state.svelte';
 import { emitUiEvent } from './_events';
 import { readPresentationValue, getMetadata } from '../operations/control-ops';
+import { tick } from 'svelte';
+
+let focusGeneration = 0;
+
+export function invalidatePresentationFocus(): void {
+	focusGeneration++;
+	appState.view.pendingFocus = null;
+}
+
+export async function focusPresentationElement(element: HTMLElement): Promise<void> {
+	const generation = ++focusGeneration;
+	await tick();
+	if (generation !== focusGeneration || !element.isConnected) return;
+	element.focus({ preventScroll: false });
+}
 
 // Re-export for convenience
 export { getMetadata, readPresentationValue };
@@ -53,6 +68,16 @@ export function getHostStatusMessage(payload: Record<string, unknown>): string {
 // Chat envelope (shared by chat-history and chat-streaming)
 // ---------------------------------------------------------------------------
 
+/** Incremental events belong to the displayed conversation and never select it. */
+export function isCurrentChatEvent(payload: Record<string, unknown>): boolean {
+	const conversationId = payload.conversation_id;
+	if (!appState.chat.active || (conversationId && conversationId !== appState.chat.conversationId)) return false;
+	const metadata = getMetadata(payload);
+	const requestId = payload.request_id ?? metadata.request_id;
+	const latestRequestId = appState.chat.latestRequestId ?? appState.chat.requestId;
+	return !requestId || !latestRequestId || requestId === latestRequestId;
+}
+
 export function updateChatEnvelope(payload: Record<string, unknown>): void {
 	appState.chat.active = true;
 	if (payload.conversation_id) {
@@ -69,7 +94,11 @@ export function updateChatEnvelope(payload: Record<string, unknown>): void {
 // Event reporting
 // ---------------------------------------------------------------------------
 
-export function reportUiApplied(commandId: string): void {
+export async function reportUiApplied(commandId: string): Promise<void> {
+	// The first flush creates targets and runs focus effects; the second
+	// lets their delayed element.focus() complete before native MoveFocus.
+	await tick();
+	await tick();
 	emitUiEvent('ui_applied', commandId);
 }
 

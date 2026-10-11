@@ -51,11 +51,11 @@ fn handle_js_event(message: &str, _hwnd: HWND) -> Result<()> {
         }
         Some(WebViewEvent::CloseHost) => {
             logger::info("WebView close event received, dismissing window (soft dismiss)");
-            crate::window::dismiss_window();
+            crate::window::post_dismiss_window();
         }
         Some(WebViewEvent::UiApplied) => {
             logger::debug("WebView ui_applied received; requesting deferred focus_webview");
-            crate::window::request_deferred_focus_webview();
+            crate::window::request_deferred_focus_webview(payload.get("correlation_id").and_then(Value::as_str));
             ipc::queue_ui_event(message.to_string());
         }
         Some(WebViewEvent::Other) => {

@@ -95,8 +95,10 @@ class BackgroundTaskRunner:
 			except Exception:
 				log.debug("Unable to report AI task event", exc_info=True)
 
-		def dispatch(callback: Callable[[], None]) -> None:
+		def dispatch(callback: Callable[[], None], *, deliver_after_cancel: bool = False) -> None:
 			def guarded_callback() -> None:
+				if cancel_event.is_set() and not deliver_after_cancel:
+					return
 				if is_alive is None or is_alive():
 					try:
 						callback()
@@ -124,7 +126,7 @@ class BackgroundTaskRunner:
 			if completed_future.cancelled():
 				report("task_cancelled", task=name)
 				if on_finally is not None:
-					dispatch(on_finally)
+					dispatch(on_finally, deliver_after_cancel=True)
 				return
 			try:
 				result = completed_future.result()
@@ -137,7 +139,7 @@ class BackgroundTaskRunner:
 				)
 				log.error("Background UI task failed: %s", error, exc_info=True)
 				context = ErrorContext(operation=name, origin="background task")
-				if on_error is not None and (is_alive is None or is_alive()):
+				if on_error is not None:
 					dispatch(lambda error=error: on_error(error))
 				else:
 					reporter.report(error, context)
@@ -150,7 +152,7 @@ class BackgroundTaskRunner:
 				if on_success is not None:
 					dispatch(lambda: on_success(result))
 			if on_finally is not None:
-				dispatch(on_finally)
+				dispatch(on_finally, deliver_after_cancel=True)
 
 		future.add_done_callback(completed)
 		return TaskHandle(cancel_event, future)

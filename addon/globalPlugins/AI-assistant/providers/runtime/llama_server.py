@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..interfaces import LLMProviderError
+from ...core.translation import _
 
 log = logging.getLogger(__name__)
 
@@ -131,7 +132,7 @@ class LlamaServerSupervisor:
 		self._models_cache: tuple[dict[str, object], ...] | None = None
 		self._models_cache_lock = threading.Lock()
 
-	def _get_worker_client(self) -> Any | None:
+	def _get_worker_client(self, *, start: bool = False) -> Any | None:
 		if self._worker_client is not None:
 			try:
 				conn = getattr(self._worker_client, "is_connected", False)
@@ -142,9 +143,9 @@ class LlamaServerSupervisor:
 				pass
 			return None
 		try:
-			from ...plugin.worker_supervisor import get_worker_client
+			from ...plugin.worker_supervisor import ensure_worker_client, get_worker_client
 
-			client = get_worker_client()
+			client = ensure_worker_client() if start else get_worker_client()
 			if client is not None:
 				conn = getattr(client, "is_connected", False)
 				is_connected = conn() if callable(conn) else bool(conn)
@@ -269,7 +270,7 @@ class LlamaServerSupervisor:
 			context=context,
 		)
 		if on_progress:
-			on_progress(f"Starting llama-server for {model_id or model}...")
+			on_progress(_("Checking llama-server readiness for {model}...").format(model=model_id or model))
 
 		native = self._get_native()
 		if native is not None:
@@ -294,7 +295,7 @@ class LlamaServerSupervisor:
 					"Install llama.cpp and ensure llama-server is on PATH."
 				) from exc
 
-		client = self._get_worker_client()
+		client = self._get_worker_client(start=True)
 		if client is None:
 			raise LlamaServerError("Worker process is not available")
 
@@ -352,7 +353,7 @@ class LlamaServerSupervisor:
 			context=context,
 		)
 		if on_progress:
-			on_progress(f"Restarting llama-server for {model_id or model}...")
+			on_progress(_("Restarting llama-server for {model}...").format(model=model_id or model))
 
 		native = self._get_native()
 		if native is not None:
@@ -372,7 +373,7 @@ class LlamaServerSupervisor:
 			except RuntimeError as exc:
 				raise LlamaServerError(str(exc)) from exc
 
-		client = self._get_worker_client()
+		client = self._get_worker_client(start=True)
 		if client is None:
 			raise LlamaServerError("Worker process is not available")
 
@@ -429,7 +430,7 @@ class LlamaServerSupervisor:
 			except RuntimeError as exc:
 				raise LlamaServerError(str(exc)) from exc
 
-		client = self._get_worker_client()
+		client = self._get_worker_client(start=True)
 		if client is None:
 			raise LlamaServerError("Worker process is not available")
 

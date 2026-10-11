@@ -19,6 +19,8 @@ from SCons.Script import EnsurePythonVersion, Variables, BoolVariable, Environme
 
 # Imports for type hints
 from SCons.Node import FS
+from scripts.build_worker_bundle import REQUIRED as worker_bundle_files
+from scripts.build import project_build_command
 
 # Add-on localization exchange facility and the template requires Python 3.10.
 # For best practice, use Python 3.11 or later to align with NVDA development.
@@ -109,17 +111,20 @@ for file in pythonFiles:
 	env.Depends(addon, file)
 
 def buildRustArtifacts(target, source, env):
-	build_script = Path("scripts/build.py")
-	command = [sys.executable, str(build_script)]
-	if env["dev"]:
-		command.append("--debug")
-	subprocess.run(command, check=True)
+	command = project_build_command(*(["--debug"] if env["dev"] else []))
+	subprocess.run(command, cwd=env.Dir("#").abspath, check=True)
 	Path(str(target[0])).write_text("ok\n", encoding="utf-8")
 
 
 rust_build_stamp = Path(".scons-rust-build.stamp")
 rust_build_sources = [
 	Path("scripts/build.py"),
+	Path("scripts/build_worker_bundle.py"),
+	Path("ai_assistant_worker.py"),
+	Path("uv.lock"),
+	Path("pyproject.toml"),
+	Path(".python-version"),
+	Path("scripts/licenses/pywin32-311.txt"),
 	Path("nvda_ui_host/Cargo.toml"),
 	Path("nvda_ui_host/Cargo.lock"),
 	Path("nvda_ui_host/package.json"),
@@ -144,8 +149,13 @@ rust_build_sources.extend(Path("llm_client/src").glob("**/*.rs"))
 rust_build_sources.extend(Path("embedding_engine/src").glob("**/*.rs"))
 rust_build_sources.extend(Path("runtime_supervisor/src").glob("**/*.rs"))
 
+worker_bundle_outputs = [
+	str(Path("addon/globalPlugins/AI-assistant/worker_host") / name)
+	for name in worker_bundle_files
+]
+
 rust_bundle = env.Command(
-	str(rust_build_stamp),
+	[str(rust_build_stamp), *worker_bundle_outputs],
 	[str(path) for path in rust_build_sources if path.exists()],
 	buildRustArtifacts,
 )

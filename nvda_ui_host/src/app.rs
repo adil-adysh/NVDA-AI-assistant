@@ -35,8 +35,14 @@ fn activation_policy(command: &ParsedCommand) -> ActivationPolicy {
             protocol::UiCommand::RenderDisplay(_) | protocol::UiCommand::ShowError(_) => {
                 ActivationPolicy::ActivateIfBackground
             }
-            protocol::UiCommand::ChatAppend(_)
-            | protocol::UiCommand::ChatStreamEnd(_) => ActivationPolicy::ActivateIfBackground,
+            protocol::UiCommand::ChatAppend(ref payload) => {
+                if payload.get("message").and_then(|message| message.get("role")).and_then(|role| role.as_str()) == Some("assistant") {
+                    ActivationPolicy::ActivateIfBackground
+                } else {
+                    ActivationPolicy::NoActivate
+                }
+            }
+            protocol::UiCommand::ChatStreamEnd(_) => ActivationPolicy::ActivateIfBackground,
             protocol::UiCommand::HealthCheck
             | protocol::UiCommand::SyncSession(_)
             | protocol::UiCommand::ChatSetHistory(_)
@@ -51,6 +57,9 @@ fn activation_policy(command: &ParsedCommand) -> ActivationPolicy {
 }
 
 fn requests_webview_focus(command: &ParsedCommand) -> bool {
+    if activation_policy(command) == ActivationPolicy::NoActivate {
+        return false;
+    }
     let payload = command.payload.payload();
     let focus_target = payload
         .get("focus_target")
@@ -167,6 +176,24 @@ mod tests {
     use serde_json::{from_str, Value};
     use serde_json::json;
     use std::io::Cursor;
+
+    #[test]
+    fn user_chat_append_does_not_activate_window() {
+        let command = test_command(protocol::UiCommand::ChatAppend(json!({"message": {"role": "user", "content": []}})));
+        assert_eq!(activation_policy(&command), ActivationPolicy::NoActivate);
+    }
+
+    #[test]
+    fn assistant_chat_append_activates_window() {
+        let command = test_command(protocol::UiCommand::ChatAppend(json!({"message": {"role": "assistant", "content": []}})));
+        assert_eq!(activation_policy(&command), ActivationPolicy::ActivateIfBackground);
+    }
+
+    #[test]
+    fn nonactivating_command_cannot_request_keyboard_focus() {
+        let command = test_command(protocol::UiCommand::UpdateProgress(json!({"message": "Working", "focus_target": "content"})));
+        assert!(!requests_webview_focus(&command));
+    }
 
     #[test]
     fn handle_health_check_returns_ack() {

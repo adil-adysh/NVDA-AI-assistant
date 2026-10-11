@@ -35,6 +35,7 @@ from .config import RuntimeConfig
 from .download import DownloadCancelledError, RuntimeDownloadService
 from .paths import get_runtime_path
 from ..interfaces import LLMProviderError
+from ...core.translation import _
 
 try:
 	_addon_lib = Path(__file__).resolve().parent.parent.parent / "lib"
@@ -388,7 +389,7 @@ class LiteRTServerSupervisor:
 			url_builder=self._build_download_url,
 		)
 
-	def _get_worker_client(self) -> Any | None:
+	def _get_worker_client(self, *, start: bool = False) -> Any | None:
 		if self._worker_client is not None:
 			try:
 				conn = getattr(self._worker_client, "is_connected", False)
@@ -399,9 +400,9 @@ class LiteRTServerSupervisor:
 				pass
 			return None
 		try:
-			from ...plugin.worker_supervisor import get_worker_client
+			from ...plugin.worker_supervisor import ensure_worker_client, get_worker_client
 
-			client = get_worker_client()
+			client = ensure_worker_client() if start else get_worker_client()
 			if client is not None:
 				conn = getattr(client, "is_connected", False)
 				is_connected = conn() if callable(conn) else bool(conn)
@@ -534,7 +535,7 @@ class LiteRTServerSupervisor:
 			log.debug("LiteRT runtime already present at %s", server_dir)
 			return server_dir
 
-		self._report(on_progress, "Downloading LiteRT-LM runtime...")
+		self._report(on_progress, _("Downloading LiteRT-LM runtime..."))
 
 		try:
 			self._download_service.download(
@@ -576,7 +577,7 @@ class LiteRTServerSupervisor:
 			cmd_args = ["-m", "litert_lm_cli.main", *serve_args]
 			env = self._process_environment()
 
-			self._report(on_progress, f"Starting LiteRT-LM server on port {port}...")
+			self._report(on_progress, _("Checking LiteRT-LM server readiness on port {port}...").format(port=port))
 			try:
 				status = native.ensure_ready(
 					str(python_exe),
@@ -591,7 +592,7 @@ class LiteRTServerSupervisor:
 			except RuntimeError as exc:
 				raise LiteRTServerError(str(exc)) from exc
 
-		client = self._get_worker_client()
+		client = self._get_worker_client(start=True)
 		if client is None:
 			if _run_litert_cli is not _real_run_litert_cli:
 				config = self._server_config_snapshot()
@@ -618,11 +619,12 @@ class LiteRTServerSupervisor:
 
 		config = self._server_config_snapshot()
 		host, port = self._effective_host_port()
-		self._report(on_progress, f"Starting LiteRT-LM server on port {port}...")
+		self._report(on_progress, _("Checking LiteRT-LM server readiness on port {port}...").format(port=port))
 
 		cmd = {
 			"type": "litert_ensure_ready",
 			"command": "litert_ensure_ready",
+			**self._worker_runtime_paths(),
 			"config": config,
 			"timeout_seconds": timeout,
 			"host": host,
@@ -668,7 +670,7 @@ class LiteRTServerSupervisor:
 			cmd_args = ["-m", "litert_lm_cli.main", *serve_args]
 			env = self._process_environment()
 
-			self._report(on_progress, f"Restarting LiteRT-LM server on port {port}...")
+			self._report(on_progress, _("Restarting LiteRT-LM server on port {port}...").format(port=port))
 			try:
 				return native.restart(
 					str(python_exe),
@@ -680,7 +682,7 @@ class LiteRTServerSupervisor:
 			except RuntimeError as exc:
 				raise LiteRTServerError(str(exc)) from exc
 
-		client = self._get_worker_client()
+		client = self._get_worker_client(start=True)
 		if client is None:
 			if _run_litert_cli is not _real_run_litert_cli:
 				return self.ensure_ready(timeout=timeout, on_progress=on_progress)
@@ -688,11 +690,12 @@ class LiteRTServerSupervisor:
 
 		config = self._server_config_snapshot()
 		host, port = self._effective_host_port()
-		self._report(on_progress, f"Restarting LiteRT-LM server on port {port}...")
+		self._report(on_progress, _("Restarting LiteRT-LM server on port {port}...").format(port=port))
 
 		cmd = {
 			"type": "litert_restart",
 			"command": "litert_restart",
+			**self._worker_runtime_paths(),
 			"config": config,
 			"timeout_seconds": timeout,
 			"host": host,
@@ -744,7 +747,7 @@ class LiteRTServerSupervisor:
 			except RuntimeError as exc:
 				raise LiteRTServerError(str(exc)) from exc
 
-		client = self._get_worker_client()
+		client = self._get_worker_client(start=True)
 		if client is None:
 			raise LiteRTServerError("Worker process is not available")
 
@@ -837,7 +840,7 @@ class LiteRTServerSupervisor:
 		if client is not None:
 			try:
 				resp = client.send_command(
-					{"type": "litert_list_models", "command": "litert_list_models"},
+					{"type": "litert_list_models", "command": "litert_list_models", **self._worker_runtime_paths()},
 					timeout=5.0,
 				)
 				if resp.get("success", False) and "models" in resp:
@@ -912,10 +915,10 @@ class LiteRTServerSupervisor:
 					log.debug("Could not delete source model file %s", model_path, exc_info=True)
 
 			if on_progress:
-				on_progress(f"Model {model_id} registered.")
+				on_progress(_("Model {model} registered.").format(model=model_id))
 			return
 
-		client = self._get_worker_client()
+		client = self._get_worker_client(start=True)
 		if client is None:
 			raise LiteRTServerError("Worker process is not available")
 
@@ -926,6 +929,7 @@ class LiteRTServerSupervisor:
 		cmd = {
 			"type": "litert_import_model",
 			"command": "litert_import_model",
+			**self._worker_runtime_paths(),
 			"model_path": str(model_path),
 			"model_id": model_id,
 			"delete_source": delete_source,
@@ -936,7 +940,7 @@ class LiteRTServerSupervisor:
 			raise LiteRTServerError(err_msg)
 
 		if on_progress:
-			on_progress(f"Model {model_id} registered.")
+			on_progress(_("Model {model} registered.").format(model=model_id))
 
 	def import_huggingface_model(
 		self,
@@ -961,7 +965,7 @@ class LiteRTServerSupervisor:
 
 		if _run_litert_cli is not _real_run_litert_cli:
 			python_exe = _resolve_litert_python(self._server_python())
-			self._report(on_progress, f"Importing {artifact} from Hugging Face...")
+			self._report(on_progress, _("Importing {artifact} from Hugging Face...").format(artifact=artifact))
 			try:
 				result = _run_litert_cli(
 					python_exe,
@@ -978,17 +982,18 @@ class LiteRTServerSupervisor:
 				stderr = result.stderr.strip() or result.stdout.strip()
 				raise LiteRTServerError(f"Hugging Face import failed for {repository}: {stderr}")
 			if on_progress:
-				on_progress(f"Model {model_id} registered.")
+				on_progress(_("Model {model} registered.").format(model=model_id))
 			return
 
-		client = self._get_worker_client()
+		client = self._get_worker_client(start=True)
 		if client is None:
 			raise LiteRTServerError("Worker process is not available")
 
-		self._report(on_progress, f"Importing {artifact} from Hugging Face...")
+		self._report(on_progress, _("Importing {artifact} from Hugging Face...").format(artifact=artifact))
 		cmd = {
 			"type": "litert_import_huggingface_model",
 			"command": "litert_import_huggingface_model",
+			**self._worker_runtime_paths(),
 			"repository": repository,
 			"artifact": artifact,
 			"model_id": model_id,
@@ -1000,7 +1005,7 @@ class LiteRTServerSupervisor:
 			raise LiteRTServerError(err_msg)
 
 		if on_progress:
-			on_progress(f"Model {model_id} registered.")
+			on_progress(_("Model {model} registered.").format(model=model_id))
 
 	def delete_model(self, model_id: str) -> None:
 		"""Unregister *model_id* from the LiteRT-LM catalog."""
@@ -1036,7 +1041,7 @@ class LiteRTServerSupervisor:
 			log.info("Model %s deleted from LiteRT-LM catalog", model_id)
 			return
 
-		client = self._get_worker_client()
+		client = self._get_worker_client(start=True)
 		if client is None:
 			raise LiteRTServerError("Worker process is not available")
 
@@ -1044,6 +1049,7 @@ class LiteRTServerSupervisor:
 		cmd = {
 			"type": "litert_delete_model",
 			"command": "litert_delete_model",
+			**self._worker_runtime_paths(),
 			"model_id": model_id,
 		}
 		resp = client.send_command(cmd, timeout=65.0)
@@ -1088,7 +1094,7 @@ class LiteRTServerSupervisor:
 			log.info("Model renamed from %s to %s", old_id, new_id)
 			return
 
-		client = self._get_worker_client()
+		client = self._get_worker_client(start=True)
 		if client is None:
 			raise LiteRTServerError("Worker process is not available")
 
@@ -1096,6 +1102,7 @@ class LiteRTServerSupervisor:
 		cmd = {
 			"type": "litert_rename_model",
 			"command": "litert_rename_model",
+			**self._worker_runtime_paths(),
 			"old_id": old_id,
 			"new_id": new_id,
 		}
@@ -1129,6 +1136,14 @@ class LiteRTServerSupervisor:
 				exc_info=True,
 			)
 		return self._host, self._port
+
+	def _worker_runtime_paths(self) -> dict[str, str]:
+		"""Pass resolved installation and registry paths across the process boundary."""
+		return {
+			"python_exe": str(self._server_python()),
+			"litert_dir": str(self._litert_dir()),
+			"version": self._version,
+		}
 
 	def _server_dir(self) -> Path:
 		"""Return the path to the self-contained runtime directory."""

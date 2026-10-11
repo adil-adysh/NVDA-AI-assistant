@@ -26,7 +26,7 @@ PACKAGE_NAME = "runtime_server_testpkg"
 # ── Load the server module ────────────────────────────────────────
 # We must register a synthetic package so intra-package imports resolve.
 _register_package = types.ModuleType(PACKAGE_NAME)
-_register_package.__path__ = [str(ROOT_DIR)]
+_register_package.__path__ = [str(ADDON_ROOT)]
 sys.modules[PACKAGE_NAME] = _register_package
 
 runtime_pkg = types.ModuleType(f"{PACKAGE_NAME}.providers")

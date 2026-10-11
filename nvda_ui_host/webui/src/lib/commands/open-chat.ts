@@ -19,7 +19,9 @@ import {
 } from './_shared';
 
 export function openChat(commandId: string, payload: OpenChatPayload): void {
-	const preserveConversation = !!(payload.preserve_conversation
+	const preserveConversation = appState.chat.active &&
+		(payload.conversation_id || null) === appState.chat.conversationId &&
+		!!(payload.preserve_conversation
 		?? (payload.metadata as Record<string, unknown>)?.preserve_conversation);
 	if (!preserveConversation) {
 		resetChatState();
@@ -34,8 +36,10 @@ export function openChat(commandId: string, payload: OpenChatPayload): void {
 
 	addInitialImageAttachment(payload.initial_image_base64);
 
-	appState.chat.composerText =
-		typeof payload.initial_text === 'string' ? payload.initial_text : '';
+	if (!preserveConversation || (typeof payload.initial_text === 'string' && payload.initial_text.length > 0)) {
+		appState.chat.composerText =
+			typeof payload.initial_text === 'string' ? payload.initial_text : '';
+	}
 	setCopyBuffers('', '');
 	applyPresentationState(payload as Record<string, unknown>, {
 		controlsVisible: true,

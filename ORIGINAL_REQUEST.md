@@ -207,3 +207,124 @@ Verify end-to-end system stability and failure containment under adversarial sce
 - [ ] `uv run ruff check .` reports 0 lint or formatting errors.
 - [ ] `uv run cargo test --manifest-path runtime_supervisor/Cargo.toml` passes (20/20).
 - [ ] `uv run pytest` passes without regression across all existing and new tests.
+
+## 2026-10-07T23:43:17Z
+
+# Teamwork Project Prompt
+
+Implement Migration Slice 6 (LiteRT Runtime Ownership Moved to Worker) and Slice 7 (llama.cpp Runtime Ownership Moved to Worker) for `adil-adysh/NVDA-AI-assistant` following the approved architecture deliverable.
+
+Working directory: D:\nvda-addons\NVDA-AI-assistant
+Integrity mode: development
+
+## Requirements
+
+### R1. Slice 6: LiteRT-LM Runtime Lifecycle Moved to Worker Process
+Relocate native `RuntimeSupervisor("litert-lm")` management from the NVDA process to the supervised Worker process:
+- **Worker Host Executor (`worker/executors/litert.py`):**
+  - Host and manage the native PyO3 `runtime_supervisor.RuntimeSupervisor("litert-lm", ...)` inside the worker process.
+  - Enforce Invariant A7: Exactly one authoritative owner of runtime lifecycle.
+  - Enforce Invariant A8: Rust supervisor receives immutable runtime specs.
+  - Handle worker commands: `litert_ensure_ready`, `litert_stop`, `litert_restart`, `litert_get_status`, `litert_import_model`.
+- **NVDA-Side Routing (`providers/litert_manager.py`):**
+  - Route server lifecycle commands through the Worker IPC client (`JobClient` / `NamedPipeWorkerClient`).
+  - Retain clean local fallback for standalone unit test environments where worker is mocked or uninitialized.
+- **Isolation & Resilience:**
+  - Verify that a crash, unhandled exit, or hang of `litert-lm.exe` is trapped by the worker-side Rust supervisor and NEVER crashes, freezes, or hangs the NVDA event thread.
+
+### R2. Slice 7: llama-server Runtime Lifecycle Moved to Worker Process
+Relocate native `RuntimeSupervisor("llama-server")` management from the NVDA process to the supervised Worker process:
+- **Worker Host Executor (`worker/executors/llama.py`):**
+  - Host and manage the native PyO3 `runtime_supervisor.RuntimeSupervisor("llama-server", ...)` inside the worker process.
+  - Handle worker commands: `llama_ensure_ready`, `llama_stop`, `llama_restart`, `llama_get_status`, `llama_configure_preset`.
+  - Coordinate router preset generation and model switching within the worker process.
+- **NVDA-Side Routing (`providers/llama_manager.py`):**
+  - Route server lifecycle and readiness checks across Worker IPC.
+  - Retain clean local fallback for standalone unit test environments.
+  - Remove in-process llama supervisor from `llama_server.py`.
+- **Isolation & Resilience:**
+  - Verify that a crash or exit of `llama-server.exe` does not affect NVDA process stability.
+
+### R3. Zero-Regression & Multi-Tier Verification Gate
+Verify end-to-end system stability across all test tiers:
+- **Test Suites:**
+  - `uv run ruff check .` passes with 0 errors.
+  - `uv run cargo test --manifest-path runtime_supervisor/Cargo.toml` passes 100% (20/20 tests).
+  - `cargo check --manifest-path nvda_ui_host/Cargo.toml` passes cleanly.
+  - `uv run pytest tests/test_import_boundaries.py` passes (0 forbidden imports).
+  - `uv run pytest -m "not nvda_integration"` passes cleanly across all existing and new tests.
+  - Unit and integration tests in `tests/worker/` and `tests/providers/` verify out-of-process lifecycle control, status reporting, model import, and crash recovery.
+
+## Acceptance Criteria
+
+### Slice 6: LiteRT Runtime in Worker
+- [ ] Worker server hosts `RuntimeSupervisor("litert-lm")` and responds to lifecycle commands over named pipe IPC.
+- [ ] Model import via `litert-lm` CLI executes out-of-process in the worker.
+- [ ] `LiteRTProvider` queries readiness and initiates server startup over Worker IPC without blocking the NVDA main thread.
+- [ ] Process termination of `litert-lm` is contained; monotonic generation counter increments in supervisor state.
+
+### Slice 7: llama.cpp Runtime in Worker
+- [ ] Worker server hosts `RuntimeSupervisor("llama-server")` and responds to lifecycle commands over named pipe IPC.
+- [ ] Router preset generation and model switching execute out-of-process in the worker.
+- [ ] `LlamaProvider` queries status and triggers startup over Worker IPC.
+- [ ] Abrupt termination of `llama-server` is contained; NVDA process remains fully responsive.
+
+### Verification & Tooling
+- [ ] `uv run ruff check .` reports 0 lint or formatting errors.
+- [ ] `uv run cargo test --manifest-path runtime_supervisor/Cargo.toml` passes (20/20).
+- [ ] Full existing test suite (`uv run pytest -m "not nvda_integration"`) passes with 0 regressions.
+
+## 2026-10-09T05:56:58Z
+
+# Teamwork Project Prompt
+
+Implement Migration Slice 8 (Removal of Obsolete NVDA-Side Runtime Threading & Shadow Test Shims) for `adil-adysh/NVDA-AI-assistant` following the approved architecture deliverable.
+
+Working directory: D:\nvda-addons\NVDA-AI-assistant
+Integrity mode: development
+
+## Requirements
+
+### R1. Slice 8: Deconstruction of `plugin/background.py` & Thread Elimination
+Eliminate unmanaged daemon threads, silent fallbacks, and obsolete aliases from `plugin/background.py`:
+- **Delete Unmanaged Config Listeners & Daemon Threads:**
+  - Remove `_on_litert_server_config_changed` and `_restart_litert_server_worker` (which spawned unmanaged `litert-restart-on-config-change` daemon threads).
+  - Remove `_on_llama_server_config_changed` (which spawned unmanaged `llama-shutdown-on-config-change` daemon threads).
+  - Unsubscribe `subscribe_litert_server_config_change` and `subscribe_llama_server_config_change` from `plugin/background.py`. Worker process supervises runtime configuration changes authoritatively.
+- **Delete Obsolete Test Shim Alias:**
+  - Remove `_ensure_litert_server_ready_locked()`.
+- **Enforce Invariant A14 (Zero Silent Fallbacks, F-F03):**
+  - In `ensure_provider_server_ready()`, eliminate the silent model mutation (`set_model_name(record.model_id)`). If the configured model is unknown/missing, fail closed by raising `LLMProviderError(f"Unknown llama.cpp model: {config.model_name}")` rather than silently mutating user settings.
+- **Relocate Domain Functions:**
+  - Relocate `_build_import_candidates` to `providers/litert_models.py` (pure hardware inspection).
+
+### R2. Clean Up `plugin/application.py` Shutdown Threads
+- **Remove Obsolete Termination Threads:**
+  - Delete `LiteRTServerShutdown` and `LlamaServerShutdown` daemon threads from `AIAssistantApplication.terminate()`.
+  - Runtime process termination is owned by the Worker process under Windows Job Object (`KILL_ON_JOB_CLOSE`) and `worker_supervisor`.
+
+### R3. Remove Obsolete Production Shadow Test Shims (RS-10)
+Purge duplicate Python test shims from production runtime modules (Invariant A7):
+- **Delete `_TestShimSupervisor` from `providers/runtime/server.py`:**
+  - Remove `_TestShimSupervisor` class and `if _run_litert_cli is not _real_run_litert_cli:` hook from `_get_native()`.
+- **Delete `_LlamaTestShimSupervisor` from `providers/runtime/llama_server.py`:**
+  - Remove `_LlamaTestShimSupervisor` class and `_process_factory` handling from `_get_native()`.
+- **Test Alignment:**
+  - Update `tests/integration/test_local_provider_lifecycle.py` and `tests/worker/test_llama_worker_challenge_c2.py` to use explicit mocks without relying on production module test shims.
+  - Update `tests/plugin/test_background_shutdown.py` and `tests/plugin/test_background_provider_ready.py` to match the cleaned `background.py` interfaces.
+
+### R4. Zero-Regression Multi-Tier Verification Gate
+Verify end-to-end system stability across all test tiers:
+- `uv run ruff check .` passes with 0 errors.
+- `uv run cargo test --manifest-path runtime_supervisor/Cargo.toml` passes 100% (20/20 tests).
+- `cargo check --manifest-path nvda_ui_host/Cargo.toml` passes cleanly.
+- `uv run pytest tests/test_import_boundaries.py` passes (0 forbidden imports).
+- `uv run pytest -m "not nvda_integration"` passes cleanly across all existing and new tests.
+- Verify zero ad-hoc threads spawned during startup/shutdown; zero shadow test shims in production code.
+
+## Acceptance Criteria
+- [ ] `plugin/background.py` no longer contains config-change listener threads or `_ensure_litert_server_ready_locked`.
+- [ ] Invariant A14 enforced: Zero silent model fallbacks or configuration mutations in `ensure_provider_server_ready()`.
+- [ ] `plugin/application.py` no longer spawns `LiteRTServerShutdown` or `LlamaServerShutdown` daemon threads during `terminate()`.
+- [ ] `_TestShimSupervisor` and `_LlamaTestShimSupervisor` are completely deleted from `server.py` and `llama_server.py`.
+- [ ] All test tiers pass cleanly without regressions (`ruff`, PyO3 `cargo test`, `test_import_boundaries.py`, and full pytest non-NVDA suite).

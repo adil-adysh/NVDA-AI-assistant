@@ -136,3 +136,35 @@ def test_litert_with_existing_process_still_enters_readiness_path() -> None:
 	assert thread is not None
 	thread.run()
 	assert readiness_checks == ["health-and-fingerprint"]
+
+
+@pytest.mark.parametrize("provider", ["litert-lm", "llama-cpp-server"])
+@pytest.mark.parametrize("mode,expected", [("lazy", []), ("worker", ["worker"]), ("server", ["server"])])
+def test_explicit_startup_mode_routes_only_the_requested_operation(provider, mode, expected):
+	factory = ThreadFactory()
+	calls = []
+	thread = startup.schedule_active_local_provider_start(
+		provider=provider, litert_enabled=False, llama_enabled=False,
+		litert_installed=True, startup_mode=mode,
+		prepare_worker=lambda: calls.append("worker"),
+		ensure_ready=lambda: calls.append("server"),
+		report_error=lambda *_args: None, thread_factory=factory,
+	)
+	assert calls == []
+	if thread is not None:
+		thread.run()
+	assert calls == expected
+
+
+def test_worker_preparation_does_not_require_installed_litert_server():
+	factory = ThreadFactory()
+	calls = []
+	thread = startup.schedule_active_local_provider_start(
+		provider="litert-lm", litert_enabled=False, llama_enabled=False,
+		litert_installed=False, startup_mode="worker",
+		prepare_worker=lambda: calls.append("worker"), ensure_ready=lambda: calls.append("server"),
+		report_error=lambda *_args: None, thread_factory=factory,
+	)
+	assert thread is not None
+	thread.run()
+	assert calls == ["worker"]

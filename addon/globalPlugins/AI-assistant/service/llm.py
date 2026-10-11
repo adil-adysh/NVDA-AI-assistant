@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from ..config.settings import is_streaming_enabled
+from ..core.cancellation import check_cancelled, record_partial
 from ..core.events import ProgressEvent, ProgressHandler
 from ..core.canonical import Message, Tool
 from ..core.message_transforms import build_assistant_message, build_tool_result_message
@@ -88,8 +89,9 @@ class ProviderLLMService:
 		return self._provider.get_model_info(model_name=model_name)
 
 	def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
-		effective = stream_handler if is_streaming_enabled() else None
-		return self._provider.summarize(prompt, stream_handler=effective)
+		check_cancelled()
+		effective = self._cancellable_stream(stream_handler) if is_streaming_enabled() else None
+		return self._request(lambda: self._provider.summarize(prompt, stream_handler=effective))
 
 	def summarize_structured(
 		self,
@@ -99,9 +101,9 @@ class ProviderLLMService:
 	) -> SummaryResponse:
 		# Structured responses are intentionally non-streaming: emitting partial
 		# JSON would not be a valid displayable structure-summary response.
-		return self._provider.summarize_structured(
+		return self._request(lambda: self._provider.summarize_structured(
 			prompt, schema=schema, stream_handler=None
-		)
+		))
 
 	def describe_image(
 		self,
@@ -109,12 +111,13 @@ class ProviderLLMService:
 		prompt: str,
 		stream_handler: PartialCallback | None = None,
 	) -> SummaryResponse:
-		effective = stream_handler if is_streaming_enabled() else None
-		return self._provider.describe_image(
+		check_cancelled()
+		effective = self._cancellable_stream(stream_handler) if is_streaming_enabled() else None
+		return self._request(lambda: self._provider.describe_image(
 			image_base64=image_base64,
 			prompt=prompt,
 			stream_handler=effective,
-		)
+		))
 
 	def generate(
 		self,
@@ -137,6 +140,7 @@ class ProviderLLMService:
 		stream_handler: Callable[[str, int], None] | None = None,
 		progress: ProgressHandler | None = None,
 	) -> ConversationTurnResult:
+		check_cancelled()
 		canonical_messages = list(messages)
 		generated_messages: list[Message] = []
 
@@ -147,6 +151,7 @@ class ProviderLLMService:
 		_streaming_enabled = is_streaming_enabled()
 
 		def stream_adapter(partial_text: str, generated_chars: int) -> None:
+			record_partial(partial_text, generated_chars)
 			if progress is not None:
 				emit("streaming", partial_text)
 			if stream_handler is not None:
@@ -155,11 +160,11 @@ class ProviderLLMService:
 		_use_streaming = _streaming_enabled and (stream_handler is not None or progress is not None)
 
 		emit("llm_request", f"Generating response with {self.provider_name()}...")
-		response = self._provider.generate(
+		response = self._request(lambda: self._provider.generate(
 			messages=canonical_messages,
 			tools=tools,
 			stream_handler=stream_adapter if _use_streaming else None,
-		)
+		))
 		assistant_message = build_assistant_message(text=response.text, tool_calls=response.tool_calls)
 		generated_messages.append(assistant_message)
 		if self._tool_executor is None:
@@ -167,23 +172,30 @@ class ProviderLLMService:
 
 		steps = 0
 		while response.tool_calls and steps < self.MAX_TOOL_STEPS:
+			check_cancelled()
 			# The assistant message carrying tool_calls must precede the tool
 			# results in the provider-visible history; otherwise OpenAI-compat
 			# servers reject the follow-up request (tool result without a
 			# matching assistant tool-call message).
 			canonical_messages.append(assistant_message)
 			emit("tool_execution", f"Executing {len(response.tool_calls)} tool call(s)...")
-			tool_messages = self._tool_executor.execute_tool_calls(response.tool_calls)
+			tool_messages = []
+			for tool_call in response.tool_calls:
+				check_cancelled()
+				tool_messages.extend(self._request(
+					lambda call=tool_call: self._tool_executor.execute_tool_calls([call])
+				))
+			check_cancelled()
 			canonical_tool_messages = self._convert_tool_messages(tool_messages)
 			canonical_messages.extend(canonical_tool_messages)
 			generated_messages.extend(canonical_tool_messages)
 			emit("tool_execution", "Tool execution complete.")
 			emit("llm_request", f"Continuing response with {self.provider_name()}...")
-			response = self._provider.generate(
+			response = self._request(lambda: self._provider.generate(
 				messages=canonical_messages,
 				tools=tools,
 				stream_handler=stream_adapter if _use_streaming else None,
-			)
+			))
 			assistant_message = build_assistant_message(text=response.text, tool_calls=response.tool_calls)
 			generated_messages.append(assistant_message)
 			steps += 1
@@ -192,6 +204,27 @@ class ProviderLLMService:
 
 	def ensure_model_available(self, on_progress: ProgressCallback | None = None) -> str | None:
 		return self._provider.ensure_model_available(on_progress=on_progress)
+
+	@staticmethod
+	def _request(operation):
+		check_cancelled()
+		try:
+			result = operation()
+		except Exception:
+			# HTTP adapters may wrap callback exceptions as provider errors.
+			check_cancelled()
+			raise
+		check_cancelled()
+		return result
+
+	@staticmethod
+	def _cancellable_stream(handler):
+		if handler is None:
+			return None
+		def callback(text, count):
+			record_partial(text, count)
+			handler(text, count)
+		return callback
 
 	def close(self) -> None:
 		self._provider.close()

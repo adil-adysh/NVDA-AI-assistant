@@ -6,8 +6,9 @@ endpoint, but they do not share a runtime implementation or cache identity.
 ## llama.cpp
 
 `LlamaCppModelManager.ensure_running()` lazily starts the server before a
-request. `LlamaServerSupervisor` owns the child process, readiness polling,
-and server model-catalog cache. Supervisors are cached by normalized
+request. `LlamaServerSupervisor` delegates process ownership and readiness to
+the worker/native supervisor and maintains the client-side model-catalog cache.
+Facades are cached by normalized
 executable path, case-insensitive host, and port.
 
 A live owned server is reusable only when its immutable startup snapshot still
@@ -21,7 +22,7 @@ cached supervisor.
 ## LiteRT-LM
 
 `ensure_litert_server_ready()` lazily starts or adopts the application-wide
-`LiteRTServerSupervisor`. The supervisor owns the child process and readiness;
+`LiteRTServerSupervisor`. Its worker/native supervisor owns the child process and readiness;
 LiteRT-LM itself owns lazy model loading inside that process.
 
 The process startup snapshot contains the bundled runtime version and Python
@@ -36,7 +37,17 @@ spawn, preventing mutable settings from changing the meaning of a cache entry.
 
 Both `LiteRTServerSupervisor` and `LlamaServerSupervisor` delegate process
 spawning, monitoring, adoption, health polling, and teardown to the native
-Rust/PyO3 `runtime_supervisor` extension (`RuntimeSupervisor`).
+Rust/PyO3 `runtime_supervisor` extension (`RuntimeSupervisor`) inside the private
+worker process. The application owns one lazy `WorkerSupervisor`; provider
+facades send commands over its command pipe and receive asynchronous job events
+over its event pipe. Worker connection does not initialize either model server.
+Status and teardown use passive lookups; readiness and model mutations request
+the connection explicitly. The per-provider startup choice can prepare only
+the background worker or enter server readiness on a daemon thread. The default
+starts both when needed. These choices apply only to the active provider on the
+next NVDA startup and reuse this same owner. Starting a server does not promise
+that its model weights are already loaded. Application termination permanently prevents
+new launches and performs worker/contained-server cleanup off the NVDA thread.
 
 The supervisor core implements an atomic state machine with explicit lifecycle states:
 

@@ -4,25 +4,13 @@ import {
 	ConversationSelectionState,
 } from '../state.svelte';
 
-function getConversationById(conversationId: string | null): ConversationSummary | null {
-	if (!conversationId) return null;
-	return appState.chat.conversations.find((c) => c.id === conversationId) ?? null;
-}
-
 export function evaluateSelectionState(): void {
-	const hasConversations = appState.chat.conversations.length > 0;
-	const selected = getConversationById(appState.chat.conversationId);
-
-	if (!hasConversations) {
-		appState.chat.conversationId = null;
-		appState.chat.conversationSelectionState = ConversationSelectionState.None;
-		return;
-	}
-
-	if (!selected) {
-		appState.chat.conversationId = null;
-		appState.chat.conversationSelectionState =
-			ConversationSelectionState.SummariesAvailable;
+	// Summaries may arrive later or omit a newly created empty conversation.
+	// Only an authoritative selection command changes the active ID.
+	if (!appState.chat.conversationId) {
+		appState.chat.conversationSelectionState = appState.chat.conversations.length > 0
+			? ConversationSelectionState.SummariesAvailable
+			: ConversationSelectionState.None;
 		return;
 	}
 
@@ -54,6 +42,10 @@ export function syncActiveConversationSelection(): void {
 
 export function resetChatState(): void {
 	appState.chat.active = false;
+	appState.chat.processing = false;
+	appState.chat.requestId = null;
+	appState.chat.latestRequestId = null;
+	appState.chat.stopping = false;
 	appState.chat.commandId = null;
 	appState.chat.conversationId = null;
 	appState.chat.conversationSelectionState = ConversationSelectionState.None;

@@ -4,9 +4,9 @@ import type {
 	ChatStreamEndPayload,
 	ChatStreamAbortPayload,
 } from '../protocol-types';
-import { announceResponse, appState, setViewMode, setStatus, t } from '../state.svelte';
+import { announceResponse, appState, setViewMode, setPendingFocus, setStatus, t } from '../state.svelte';
 import { summarizeForAnnouncement } from '../content';
-import { reportUiApplied, updateChatEnvelope } from './_shared';
+import { isCurrentChatEvent, readPresentationValue, resolvePresentationFocusTarget, reportUiApplied, updateChatEnvelope } from './_shared';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -26,6 +26,7 @@ function getStreamId(payload: Record<string, unknown>): string {
 // ---------------------------------------------------------------------------
 
 export function beginChatStream(commandId: string, payload: ChatStreamBeginPayload): void {
+	if (!isCurrentChatEvent(payload as Record<string, unknown>)) { reportUiApplied(commandId); return; }
 	const messageId = getMessageId(payload as Record<string, unknown>);
 	const streamId = getStreamId(payload as Record<string, unknown>);
 	if (!messageId || !streamId) return;
@@ -58,6 +59,7 @@ export function beginChatStream(commandId: string, payload: ChatStreamBeginPaylo
 // ---------------------------------------------------------------------------
 
 export function applyChatStreamDelta(commandId: string, payload: ChatStreamDeltaPayload): void {
+	if (!isCurrentChatEvent(payload as Record<string, unknown>)) { reportUiApplied(commandId); return; }
 	const messageId = getMessageId(payload as Record<string, unknown>);
 	const streamId = getStreamId(payload as Record<string, unknown>);
 	const delta = typeof payload.delta === 'string' ? payload.delta : '';
@@ -78,6 +80,7 @@ export function applyChatStreamDelta(commandId: string, payload: ChatStreamDelta
 // ---------------------------------------------------------------------------
 
 export function endChatStream(commandId: string, payload: ChatStreamEndPayload): void {
+	if (!isCurrentChatEvent(payload as Record<string, unknown>)) { reportUiApplied(commandId); return; }
 	const messageId = getMessageId(payload as Record<string, unknown>);
 	const streamId = getStreamId(payload as Record<string, unknown>);
 	if (!messageId || !streamId) return;
@@ -99,14 +102,19 @@ export function endChatStream(commandId: string, payload: ChatStreamEndPayload):
 	const ended = appState.chat.transcript.endStream(messageId, streamId, finalContent);
 	if (ended) {
 		appState.chat.processing = false;
+		appState.chat.requestId = null;
+		appState.chat.stopping = false;
+		const cancelled = readPresentationValue(payload, 'cancelled') === true;
+		const focusTarget = cancelled ? null : resolvePresentationFocusTarget(payload);
+		if (focusTarget) setPendingFocus(focusTarget);
 		const message = appState.chat.transcript.findById(messageId);
 		const summary = summarizeForAnnouncement(message?.content);
 		announceResponse(
-			summary
+			cancelled ? t('response_stopped_status', 'Response stopped.') : summary
 				? `${t('response_complete', 'Response complete')}: ${summary}`
 				: t('response_complete', 'Response complete.'),
 		);
-		setStatus(t('response_ready_status', 'Response ready.'), false);
+		setStatus(cancelled ? t('response_stopped_status', 'Response stopped.') : t('response_ready_status', 'Response ready.'), false);
 	}
 	reportUiApplied(commandId);
 }
@@ -116,12 +124,16 @@ export function endChatStream(commandId: string, payload: ChatStreamEndPayload):
 // ---------------------------------------------------------------------------
 
 export function abortChatStream(commandId: string, payload: ChatStreamAbortPayload): void {
+	if (!isCurrentChatEvent(payload as Record<string, unknown>)) { reportUiApplied(commandId); return; }
 	const messageId = getMessageId(payload as Record<string, unknown>);
 	const streamId = getStreamId(payload as Record<string, unknown>);
 	if (!messageId || !streamId) return;
 
 	updateChatEnvelope(payload as Record<string, unknown>);
-	appState.chat.transcript.abortStream(messageId, streamId);
-	appState.chat.processing = false;
+	if (appState.chat.transcript.abortStream(messageId, streamId)) {
+		appState.chat.processing = false;
+		appState.chat.requestId = null;
+		appState.chat.stopping = false;
+	}
 	reportUiApplied(commandId);
 }

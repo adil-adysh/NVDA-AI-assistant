@@ -67,9 +67,11 @@ class HostLifecycleService:
 		with self._lock:
 			self._state = HostLifecycleState.STOPPED
 
-	def mark_command_succeeded(self, command_name: str) -> None:
+	def mark_command_succeeded(self, command_name: str, *, activates: bool = False) -> None:
 		if command_name == "close_window":
 			self.mark_hidden()
+			return
+		if self.state == HostLifecycleState.HIDDEN and command_name not in {"open_chat", "render_display"} and not activates:
 			return
 		self.mark_ready()
 

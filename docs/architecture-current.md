@@ -19,11 +19,13 @@ flowchart LR
     EXT --> STORE
 ~~~
 
-There are three processes at runtime:
+The application uses these process roles at runtime:
 
 1. NVDA, which loads the add-on and owns the accessibility object model.
 2. The Python add-on, which owns application behavior, provider calls, configuration, context extraction, persistence, and presentation intent.
 3. nvda_ui_host.exe, which owns the native window, WebView2 controller, WebView event loop, and Svelte rendering. It does not choose prompts, providers, or use cases.
+4. The private CPython worker, which runs local-runtime commands and jobs and hosts
+   the native supervisor. Managed model servers run as its owned child processes.
 
 Python and the host use two Windows named pipes:
 
@@ -125,6 +127,8 @@ providers/interfaces.py defines the provider contract, errors, and model metadat
 service/llm.py adds streaming policy, progress, canonical message conversion, and the bounded tool loop above the provider contract. service/provider_readiness.py, provider_catalog.py, provider_controls.py, and model_cache.py support presenter and settings/model dialogs.
 
 ### Chat, persistence, and observability
+
+Request cancellation is owned by Python through `core/cancellation.py`. Chat submissions carry request IDs; the coordinator saves stopped partial answers with `[Stopped]` and guards session generation. Background requests retain cancellation ownership through deferred speech and UI delivery. The generic `ui_action_invoked` event carries chat Stop, while NVDA's global Stop command covers summary/image requests. Escape only hides the host. Passive streaming commands preserve the hidden lifecycle; completed responses carry explicit activation and content focus intent. Native focus is correlated with the command acknowledgement and invalidated on dismissal.
 
 service/chat/ owns interactive sessions:
 
@@ -287,7 +291,8 @@ Web UI chat_submitted -> event pipe -> HostRenderer -> UIAdapter
 
 ~~~text
 provider selection/startup -> BackgroundTaskRunner
-  -> ProviderReadiness/registry -> runtime supervisor
+  -> ProviderReadiness/registry -> lazy worker connection -> command pipe
+  -> worker executor -> native Rust runtime supervisor
   -> adopt/start local server -> health + /models catalog
   -> provider adapter uses advertised model identity
 ~~~
@@ -298,5 +303,5 @@ Python serializes usable context/output items as generic actions. The Web UI emi
 
 ## 9. Packaging and failure boundaries
 
-SConstruct packages Python sources, bundled libraries, native extensions, the Rust host, and localized documentation. Host failure is isolated by UIAdapter and falls back to native NVDA UI. Missing optional extensions have narrower fallbacks: JSON conversations replace memory_engine, and context reduction can use deterministic behavior when embeddings are disabled/unavailable. Provider/runtime errors are converted by the service error-presentation layer before reaching users.
+SConstruct packages Python sources, bundled libraries, native extensions, the Rust host, the isolated private CPython worker runtime, and localized documentation. By default the worker starts on the first model operation and model servers start on inference. Per-provider runtime settings can instead prepare the worker or start the local server at NVDA startup; only the active provider's choice applies. Application termination fences lazy launches and automatic recovery before asynchronous worker teardown. Host failure is isolated by UIAdapter and falls back to native NVDA UI. Missing optional extensions have narrower fallbacks: JSON conversations replace memory_engine, and context reduction can use deterministic behavior when embeddings are disabled/unavailable. Provider/runtime errors are converted by the service error-presentation layer before reaching users.
 

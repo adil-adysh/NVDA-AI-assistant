@@ -53,7 +53,7 @@ def default_runtime_dir(version: str = DEFAULT_LITERT_VERSION) -> Path:
 	"""Return the path to the self-contained embeddable runtime directory."""
 	appdata = os.getenv("APPDATA")
 	base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
-	return base / "nvda" / "AIAssistant" / "runtimes" / f"litert-lm-{version}"
+	return base / "nvda" / "AIAssistant" / "runtimes" / "litert-lm" / version
 
 
 def default_python_exe(version: str = DEFAULT_LITERT_VERSION) -> Path:

@@ -333,6 +333,10 @@ class HostRenderer(UIHostRenderer):
 			logger.warning("HostRenderer is_available() probe failed")
 			return False
 
+	def has_live_surface(self) -> bool:
+		"""Probe an existing process without starting or activating a host."""
+		return is_host_process_alive()
+
 	def _send_command(self, command_name: str, payload: HostCommandPayload) -> None:
 		command = HostCommand(name=command_name, payload=payload)
 		message = command.to_bytes()
@@ -343,7 +347,11 @@ class HostRenderer(UIHostRenderer):
 		try:
 			response_bytes = self._transport.send(message)
 			self._process_response(response_bytes, expected_request_id=command.id)
-			self._lifecycle.mark_command_succeeded(command_name)
+			metadata = payload.get("metadata") or {}
+			self._lifecycle.mark_command_succeeded(
+				command_name,
+				activates=metadata.get("attention_policy") in {"activate_and_focus", "foreground_if_background"},
+			)
 		except HostUnavailableError:
 			self._lifecycle.mark_failed()
 			raise

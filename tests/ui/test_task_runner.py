@@ -36,6 +36,40 @@ def _load_runner():
 
 
 class BackgroundTaskRunnerTests(unittest.TestCase):
+	def test_cancellation_suppresses_queued_result_but_runs_cleanup(self) -> None:
+		module, callbacks = _load_runner()
+		runner = module.BackgroundTaskRunner(max_workers=1)
+		results = []
+		cleaned = []
+		with mock.patch.object(wx, "CallAfter", callbacks.append):
+			handle = runner.submit(lambda _cancel: 42, on_success=results.append, on_finally=lambda: cleaned.append(True))
+			runner._executor.shutdown(wait=True)
+			handle.cancel()
+			for callback in callbacks:
+				callback()
+		self.assertEqual(results, [])
+		self.assertEqual(cleaned, [True])
+
+	def test_failure_checks_owner_only_on_ui_thread(self) -> None:
+		module, callbacks = _load_runner()
+		gate = threading.Event()
+		checks = []
+		errors = []
+		runner = module.BackgroundTaskRunner(max_workers=1)
+		def fail(_cancel):
+			gate.wait(2)
+			raise RuntimeError("boom")
+		with mock.patch.object(wx, "CallAfter", callbacks.append):
+			handle = runner.submit(fail, on_error=errors.append, is_alive=lambda: checks.append(threading.current_thread()) or True)
+			gate.set()
+			runner._executor.shutdown(wait=True)
+			self.assertTrue(handle.done)
+			self.assertEqual(checks, [])
+			for callback in callbacks:
+				callback()
+			self.assertEqual(checks, [threading.main_thread()])
+			self.assertEqual(len(errors), 1)
+
 	def test_success_is_dispatched_and_work_runs_off_main_thread(self) -> None:
 		runner_module, callbacks = _load_runner()
 		call_after_patch = mock.patch.object(wx, "CallAfter", lambda callback: callbacks.append(callback))

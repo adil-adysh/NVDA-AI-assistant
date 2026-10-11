@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 from typing import Any, Callable
+from uuid import uuid4
 
 try:
 	from ..core.job.client import WorkerClient
@@ -50,6 +51,8 @@ except (ImportError, ValueError):
 
 
 logger = logging.getLogger(__name__)
+
+from ..core.translation import _  # noqa: E402
 
 
 class SupervisorState(StrEnum):
@@ -121,17 +124,16 @@ class WorkerSupervisor:
 		self.max_backoff_seconds = max_backoff_seconds
 		self.auto_restart = auto_restart
 		self.on_circuit_breaker_tripped = on_circuit_breaker_tripped
+		self.worker_python_path = Path(sys.executable)
 
 		# Locate worker entrypoint
 		if worker_script_path is None:
-			candidate = (
-				Path(__file__).resolve().parent.parent.parent.parent
-				/ "ai_assistant_worker.py"
-			)
-			if not candidate.is_file():
-				# Try repo root relative to current directory
-				candidate = Path("ai_assistant_worker.py").resolve()
-			self.worker_script_path = candidate
+			bundle = Path(__file__).resolve().parents[1] / "worker_host"
+			if (bundle / "python.exe").is_file():
+				self.worker_python_path = bundle / "python.exe"
+				self.worker_script_path = bundle / "ai_assistant_worker.py"
+			else:
+				self.worker_script_path = Path(__file__).resolve().parents[4] / "ai_assistant_worker.py"
 		else:
 			self.worker_script_path = Path(worker_script_path).resolve()
 
@@ -142,6 +144,7 @@ class WorkerSupervisor:
 		self._crash_timestamps: deque[float] = deque()
 		self._last_pong_monotonic = 0.0
 		self._latest_health: WorkerHealth | None = None
+		self.last_startup_error: str | None = None
 
 		# Handles & Threads
 		self._process: subprocess.Popen[bytes] | None = None
@@ -149,6 +152,9 @@ class WorkerSupervisor:
 		self._cmd_client: NamedPipeClient | None = None
 		self._evt_client: NamedPipeClient | None = None
 		self._worker_client: WorkerClient | None = None
+		self._application_owned = False
+		self._disposed = False
+		self._restart_callback: Callable[[], None] | None = None
 		self.stderr_buffer = StderrRingBuffer(max_bytes=65536)
 
 		self._cmd_lock = threading.Lock()
@@ -172,6 +178,8 @@ class WorkerSupervisor:
 	def start(self, auto_connect_pipes: bool = True) -> bool:
 		"""Start worker process, assign to Job Object, connect pipes, and handshake."""
 		with self._state_lock:
+			if self._disposed:
+				return False
 			if self.state in (
 				SupervisorState.RUNNING,
 				SupervisorState.STARTING,
@@ -185,24 +193,38 @@ class WorkerSupervisor:
 
 			self.state = SupervisorState.STARTING
 			self._shutdown_event.clear()
+			self._latest_health = None
+			self.last_startup_error = None
 
 		try:
 			self._spawn_worker_process()
+			if self._disposed:
+				raise RuntimeError("Worker owner is closed")
 			if auto_connect_pipes:
 				self._connect_and_handshake()
-			set_worker_supervisor(self)
+			if not self._application_owned:
+				set_worker_supervisor(self)
 			return True
 		except Exception as exc:
+			self.last_startup_error = str(exc)
 			logger.error("Failed to start worker process: %s", exc)
+			if self._disposed:
+				self.stop()
+				return False
 			self._handle_crash(reason=f"STARTUP_ERROR: {exc}")
 			return False
 
 	def _spawn_worker_process(self) -> None:
 		"""Spawn the worker process enclosed in Windows Job Object."""
+		if not self.worker_script_path.is_file():
+			raise FileNotFoundError(_("AI Assistant worker bundle is missing; reinstall the add-on"))
+		if self.worker_python_path.stem.lower() not in ("python", "pythonw", "python3", "python3.13"):
+			raise RuntimeError(_("Private worker Python is missing; cannot launch worker with NVDA's executable"))
 		self._job_object = create_worker_job_object()
 
 		cmd = [
-			sys.executable,
+			str(self.worker_python_path),
+			"-B",
 			str(self.worker_script_path),
 			"--cmd-pipe",
 			self.cmd_pipe_name,
@@ -210,6 +232,8 @@ class WorkerSupervisor:
 			self.evt_pipe_name,
 			"--parent-pid",
 			str(os.getpid()),
+			"--generation",
+			str(self.active_generation),
 			"--log-level",
 			"DEBUG",
 		]
@@ -229,7 +253,7 @@ class WorkerSupervisor:
 		self._process = subprocess.Popen(
 			cmd,
 			stdin=subprocess.DEVNULL,
-			stdout=subprocess.PIPE,
+			stdout=subprocess.DEVNULL,
 			stderr=subprocess.PIPE,
 			creationflags=creationflags,
 			startupinfo=startupinfo,
@@ -286,7 +310,7 @@ class WorkerSupervisor:
 
 		with self._cmd_lock:
 			self._cmd_client.write_frame(req.to_dict())
-			raw_resp = self._cmd_client.read_frame()
+			raw_resp = self._cmd_client.read_frame(timeout_seconds=self.connect_timeout_seconds)
 
 		resp = HandshakeResponse.from_dict(raw_resp)
 		if not resp.accepted:
@@ -306,6 +330,8 @@ class WorkerSupervisor:
 		)
 
 		with self._state_lock:
+			if self._disposed:
+				raise RuntimeError("Worker owner is closed")
 			self.state = SupervisorState.RUNNING
 			self._last_pong_monotonic = time.monotonic()
 			self._restart_attempts = 0  # reset backoff on successful handshake
@@ -359,7 +385,7 @@ class WorkerSupervisor:
 							"generation": self.active_generation,
 						}
 					)
-					resp_frame = self._cmd_client.read_frame()
+					resp_frame = self._cmd_client.read_frame(timeout_seconds=self.liveness_timeout_seconds)
 
 				# Discard if older generation
 				frame_gen = int(
@@ -444,7 +470,10 @@ class WorkerSupervisor:
 			SupervisorState.STOPPED,
 			SupervisorState.FAILED_TRIPPED,
 		):
-			self.start()
+			if self._restart_callback is not None:
+				self._restart_callback()
+			else:
+				self.start()
 
 	def _notify_presenter_circuit_breaker_tripped(self) -> None:
 		"""Marshal non-blocking notification to UI/Presenter."""
@@ -485,9 +514,13 @@ class WorkerSupervisor:
 
 		# 1. Attempt graceful shutdown command over command pipe (timeout 1.0s)
 		try:
-			with self._cmd_lock:
-				if self._cmd_client and self._cmd_client.is_connected:
+			acquired = self._cmd_lock.acquire(timeout=0.1)
+			try:
+				if acquired and self._cmd_client and self._cmd_client.is_connected:
 					self._cmd_client.write_frame({"type": "shutdown_command"})
+			finally:
+				if acquired:
+					self._cmd_lock.release()
 		except Exception:
 			pass
 
@@ -496,6 +529,12 @@ class WorkerSupervisor:
 		if get_worker_supervisor() is self:
 			set_worker_supervisor(None)
 		logger.info("WorkerSupervisor stopped cleanly")
+
+	def disable_startup(self) -> None:
+		"""Permanently fence this application owner's launches before async teardown."""
+		with self._state_lock:
+			self._disposed = True
+			self._shutdown_event.set()
 
 	def _teardown_process_handles(self, force_kill: bool = False) -> None:
 		"""Terminate or kill worker process and close pipe handles."""
@@ -554,6 +593,142 @@ class WorkerSupervisor:
 
 _active_supervisor: WorkerSupervisor | None = None
 _active_client: WorkerClient | None = None
+_worker_owner: LazyWorkerOwner | None = None
+_worker_shutdown = False
+
+
+class LazyWorkerOwner:
+	"""One application-owned startup attempt, shared by background operations.
+
+	Registration and lookup are passive. Explicit prelaunch uses the same path
+	as an operation, allowing startup policy to evolve without another owner.
+	"""
+
+	def __init__(self, supervisor: WorkerSupervisor) -> None:
+		self.supervisor = supervisor
+		self.supervisor._application_owned = True
+		self.supervisor._restart_callback = self._restart
+		self._condition = threading.Condition()
+		self._starting = False
+		self._closed = False
+		self._error: str | None = None
+		self._shutdown_thread: threading.Thread | None = None
+
+	def get_client(self) -> WorkerClient | None:
+		with self._condition:
+			if self._closed or self._starting:
+				return None
+			return self.supervisor.get_worker_client() if self.supervisor.is_running else None
+
+	def ensure_client(self) -> WorkerClient:
+		with self._condition:
+			while self._starting and not self._closed:
+				self._condition.wait()
+			if self._closed:
+				raise RuntimeError("Worker owner is closed")
+			client = self.get_client()
+			if client is not None:
+				return client
+			if self._error is not None:
+				raise RuntimeError(self._error)
+			self._starting = True
+		try:
+			if not self.supervisor.start():
+				details = getattr(self.supervisor, "last_startup_error", None) or self.supervisor.stderr_buffer.get_text()[-1000:]
+				raise RuntimeError(_("Could not start AI Assistant worker. {details}").format(details=details))
+			client = self.supervisor.get_worker_client()
+			if client is None:
+				raise RuntimeError(_("Worker startup did not establish a connection"))
+		except Exception as exc:
+			with self._condition:
+				self._error = _("Worker startup failed: {error}").format(error=exc)
+				raise RuntimeError(self._error) from exc
+		finally:
+			with self._condition:
+				self._starting = False
+				closed = self._closed
+				self._condition.notify_all()
+			if closed:
+				self.supervisor.stop()
+		if closed:
+			raise RuntimeError("Worker owner is closed")
+		return client
+
+	def start_in_background(self) -> threading.Thread:
+		def launch() -> None:
+			try:
+				self.ensure_client()
+			except RuntimeError:
+				logger.exception("Background worker startup failed")
+		thread = threading.Thread(target=launch, name="AIWorkerStartup", daemon=True)
+		thread.start()
+		return thread
+
+	def _restart(self) -> None:
+		with self._condition:
+			if self._closed:
+				return
+			self._error = None
+		try:
+			self.ensure_client()
+		except RuntimeError:
+			logger.exception("Worker recovery failed")
+
+	def close(self) -> threading.Thread:
+		with self._condition:
+			if self._shutdown_thread is not None:
+				return self._shutdown_thread
+			self._closed = True
+			disable = getattr(self.supervisor, "disable_startup", None)
+			if callable(disable):
+				disable()
+			self._condition.notify_all()
+			self._shutdown_thread = threading.Thread(target=self.supervisor.stop, name="AIWorkerShutdown", daemon=True)
+			self._shutdown_thread.start()
+			return self._shutdown_thread
+
+
+def configure_worker_owner(*, start_on_startup: bool = False) -> LazyWorkerOwner:
+	"""Register a passive owner; optional worker prelaunch is independent of servers."""
+	global _worker_owner, _worker_shutdown
+	if _worker_owner is not None:
+		return _worker_owner
+	_worker_shutdown = False
+	token = f"{os.getpid()}_{uuid4().hex}"
+	_worker_owner = LazyWorkerOwner(WorkerSupervisor(
+		cmd_pipe_name=rf"\\.\pipe\nvda_ai_worker_cmd_{token}",
+		evt_pipe_name=rf"\\.\pipe\nvda_ai_worker_evt_{token}",
+	))
+	if start_on_startup:
+		_worker_owner.start_in_background()
+	return _worker_owner
+
+
+def ensure_worker_client() -> WorkerClient:
+	if _worker_shutdown:
+		raise RuntimeError("Worker owner is closed")
+	client = get_worker_client()
+	if client is not None:
+		return client
+	if _worker_owner is None:
+		raise RuntimeError("AI Assistant worker lifecycle has not been configured")
+	return _worker_owner.ensure_client()
+
+
+def get_worker_client_for_operation() -> WorkerClient | None:
+	"""Operations use the owner; standalone developer callers may use direct I/O."""
+	if _worker_owner is not None or _worker_shutdown:
+		return ensure_worker_client()
+	return get_worker_client()
+
+
+def shutdown_worker_owner() -> None:
+	"""Reject new operations immediately and release process handles in background."""
+	global _worker_owner, _worker_shutdown
+	_worker_shutdown = True
+	owner, _worker_owner = _worker_owner, None
+	if owner is not None:
+		owner.close()
 
 
 def get_worker_supervisor() -> WorkerSupervisor | None:
@@ -571,8 +746,12 @@ def set_worker_supervisor(supervisor: WorkerSupervisor | None) -> None:
 def get_worker_client() -> WorkerClient | None:
 	"""Return the active WorkerClient instance."""
 	global _active_client, _active_supervisor
+	if _worker_shutdown:
+		return None
 	if _active_client is not None:
 		return _active_client
+	if _worker_owner is not None:
+		return _worker_owner.get_client()
 	if _active_supervisor is not None:
 		return _active_supervisor.get_worker_client()
 	return None

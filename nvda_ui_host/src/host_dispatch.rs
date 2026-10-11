@@ -43,12 +43,29 @@ fn webview_ready_flag() -> &'static AtomicBool {
     WEBVIEW_READY.get_or_init(|| AtomicBool::new(false))
 }
 
+#[cfg(test)]
+pub(crate) fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static TEST_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+    TEST_MUTEX.get_or_init(|| Mutex::new(())).lock().unwrap()
+}
+
 pub(crate) fn pending_command_count() -> usize {
     pending_messages().lock().unwrap().len()
 }
 
 pub(crate) fn clear_pending_commands() {
     pending_messages().lock().unwrap().clear();
+}
+
+pub(crate) fn suppress_command_activation(commands: &mut [HostCommand]) {
+    for command in commands {
+        command.activation_policy = ActivationPolicy::NoActivate;
+        command.request_webview_focus = false;
+    }
+}
+
+pub(crate) fn dismiss_pending_commands() {
+    suppress_command_activation(&mut pending_messages().lock().unwrap());
 }
 
 pub(crate) fn enqueue_pending_command(command: HostCommand) {
@@ -164,6 +181,19 @@ mod tests {
     use std::cell::RefCell;
 
     #[test]
+    fn dismissal_preserves_queued_results_without_reactivation() {
+        let mut commands = vec![HostCommand {
+            message: "old answer".to_string(),
+            activation_policy: ActivationPolicy::ActivateAndFocus,
+            request_webview_focus: true,
+        }];
+        suppress_command_activation(&mut commands);
+        assert_eq!(commands[0].message, "old answer");
+        assert_eq!(commands[0].activation_policy, ActivationPolicy::NoActivate);
+        assert!(!commands[0].request_webview_focus);
+    }
+
+    #[test]
     fn no_activate_allows_hidden_window_for_background_streaming() {
         // NoActivate (streaming, sync, etc.) should not be gated by HWND
         // visibility — the WebView2 controller stays alive and can receive
@@ -225,6 +255,7 @@ mod tests {
 
     #[test]
     fn flush_pending_commands_requeues_deferred_and_failed_commands() {
+        let _guard = test_guard();
         clear_pending_commands();
         enqueue_pending_command(HostCommand {
             message: "delivered".to_string(),

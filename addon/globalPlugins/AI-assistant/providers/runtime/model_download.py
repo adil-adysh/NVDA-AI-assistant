@@ -34,6 +34,19 @@ class HuggingFaceFileNotFoundError(ModelDownloadError):
 	"""Raised when a repository has no compatible model artifact."""
 
 
+def _file_sha256(path: Path, cancel_event: threading.Event | None) -> str:
+	digest = hashlib.sha256()
+	with path.open("rb") as stream:
+		while True:
+			if cancel_event is not None and cancel_event.is_set():
+				raise DownloadCancelledError("Model verification cancelled")
+			chunk = stream.read(1024 * 1024)
+			if not chunk:
+				break
+			digest.update(chunk)
+	return digest.hexdigest()
+
+
 class ModelDownloadService:
 	"""Download and cache ``.litertlm`` model files.
 
@@ -99,19 +112,23 @@ class ModelDownloadService:
 		    ModelDownloadError: If the download or verification fails.
 		"""
 		dest = self._model_path(model_name)
+		if cancel_event is not None and cancel_event.is_set():
+			raise DownloadCancelledError("Model download cancelled")
 		if dest.exists():
+			if expected_sha256 and _file_sha256(dest, cancel_event) != expected_sha256.lower():
+				raise ModelDownloadError(f"SHA-256 mismatch for cached model {model_name}")
 			log.info("Model %s already cached at %s", model_name, dest)
 			return dest
 
-		# Try delegating to Worker process if client available
+		# First operations connect the application-owned lazy worker.
 		client = self._worker_client
 		if client is None:
 			try:
-				from ...plugin.worker_supervisor import get_worker_client
+				from ...plugin.worker_supervisor import get_worker_client_for_operation
 
-				client = get_worker_client()
-			except Exception:
-				pass
+				client = get_worker_client_for_operation()
+			except Exception as exc:
+				raise ModelDownloadError(f"Worker startup failed: {exc}") from exc
 
 		if client is not None:
 			try:
@@ -134,7 +151,7 @@ class ModelDownloadService:
 			except (DownloadCancelledError, ModelDownloadError):
 				raise
 			except Exception as exc:
-				log.warning("Worker download failed; attempting direct download fallback: %s", exc)
+				raise ModelDownloadError(f"Worker model download failed: {exc}") from exc
 
 		dest.parent.mkdir(parents=True, exist_ok=True)
 		part_path = dest.parent / f"{dest.name}.part"
@@ -172,8 +189,8 @@ class ModelDownloadService:
 		if expected_sha256:
 			if on_progress:
 				on_progress(f"Verifying {model_name}...")
-			actual = hashlib.sha256(part_path.read_bytes()).hexdigest()
-			if actual != expected_sha256:
+			actual = _file_sha256(part_path, cancel_event)
+			if actual != expected_sha256.lower():
 				_cleanup(part_path)
 				raise ModelDownloadError(
 					f"SHA-256 mismatch for {model_name}: expected {expected_sha256}, got {actual}"

@@ -68,6 +68,45 @@ class _FakeStore:
 
 settings_module._config_store = _FakeStore()  # pylint: disable=protected-access
 
+
+@pytest.mark.parametrize("provider,prefix", [("litert-lm", "litert"), ("llama-cpp-server", "llama")])
+def test_startup_mode_preserves_legacy_preference_and_round_trips(monkeypatch, provider, prefix):
+	store = _FakeStore()
+	monkeypatch.setattr(settings_module, "_config_store", store)
+	assert settings_module.get_local_startup_mode(provider) == "lazy"
+	store.set(prefix + "StartOnStartup", True)
+	assert settings_module.get_local_startup_mode(provider) == "server"
+	settings_module.set_local_startup_mode(provider, "worker")
+	assert settings_module.get_local_startup_mode(provider) == "worker"
+	assert store.get(prefix + "StartOnStartup") is False
+	settings_module.set_local_startup_mode(provider, "server")
+	assert store.get(prefix + "StartOnStartup") is True
+	with pytest.raises(ValueError):
+		settings_module.set_local_startup_mode(provider, "invalid")
+	assert settings_module.get_local_startup_mode(provider) == "server"
+
+
+@pytest.mark.parametrize("provider,prefix", [("litert-lm", "litert"), ("llama-cpp-server", "llama")])
+def test_legacy_setter_replaces_worker_policy(monkeypatch, provider, prefix):
+	store = _FakeStore()
+	monkeypatch.setattr(settings_module, "_config_store", store)
+	settings_module.set_local_startup_mode(provider, "worker")
+	setter = getattr(settings_module, "set_" + prefix + "_start_on_startup")
+	setter(True)
+	assert settings_module.get_local_startup_mode(provider) == "server"
+	setter(False)
+	assert settings_module.get_local_startup_mode(provider) == "lazy"
+
+
+def test_corrupt_startup_mode_retains_valid_legacy_server_preference(monkeypatch):
+	store = _FakeStore()
+	store.set_many({"litertStartupMode": "invalid", "litertStartOnStartup": True})
+	monkeypatch.setattr(settings_module, "_config_store", store)
+	assert settings_module.get_local_startup_mode("litert-lm") == "server"
+	assert settings_module.get_local_startup_mode("openai") == "lazy"
+	with pytest.raises(ValueError):
+		settings_module.set_local_startup_mode("openai", "worker")
+
 set_openai_compat_config = settings_module.set_openai_compat_config
 
 
@@ -271,8 +310,8 @@ class LiteRTEngineDefaultTests(unittest.TestCase):
 		self.assertEqual(settings_module.get_litert_backend(), "")
 		self.assertEqual(settings_module.get_litert_cache(), "")
 
-	def test_start_on_startup_defaults_to_enabled(self) -> None:
-		self.assertTrue(settings_module.get_litert_start_on_startup())
+	def test_start_on_startup_defaults_to_lazy(self) -> None:
+		self.assertFalse(settings_module.get_litert_start_on_startup())
 
 	def test_start_on_startup_round_trips(self) -> None:
 		settings_module.set_litert_start_on_startup(False)
@@ -280,8 +319,8 @@ class LiteRTEngineDefaultTests(unittest.TestCase):
 		settings_module.set_litert_start_on_startup(True)
 		self.assertTrue(settings_module.get_litert_start_on_startup())
 
-	def test_llama_start_on_startup_defaults_to_enabled(self) -> None:
-		self.assertTrue(settings_module.get_llama_start_on_startup())
+	def test_llama_start_on_startup_defaults_to_lazy(self) -> None:
+		self.assertFalse(settings_module.get_llama_start_on_startup())
 
 	def test_llama_start_on_startup_round_trips(self) -> None:
 		settings_module.set_llama_start_on_startup(False)

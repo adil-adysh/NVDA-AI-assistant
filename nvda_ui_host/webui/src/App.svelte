@@ -1,5 +1,6 @@
 <script lang="ts">
-    import { onMount, tick } from 'svelte';
+    import { onMount } from 'svelte';
+    import { focusPresentationElement } from './lib/commands/_shared';
     import AccessibilityAnnouncer from './components/AccessibilityAnnouncer.svelte';
     import ChatComposer from './components/ChatComposer.svelte';
     import ControlPanel from './components/ControlPanel.svelte';
@@ -28,16 +29,6 @@
     let firstResultActionElement: HTMLElement | null = $state(null);
     let fileInputElement: HTMLInputElement | null = $state(null);
 
-    async function focusElement(element: HTMLElement | null) {
-        if (!element) return;
-        // Wait for all pending Svelte DOM mutations to flush (including
-        // child-component bind:this registrations).  tick() resolves in
-        // microseconds via microtask — fast enough that the screen reader
-        // hasn't processed the foreground event yet, unlike rAF (~16ms).
-        await tick();
-        element.focus({ preventScroll: false });
-    }
-
     onMount(() => {
         initializeWebViewBridge();
         const cleanupShortcuts = registerGlobalShortcuts(
@@ -53,7 +44,7 @@
                 onAttachFile: () => fileInputElement?.click(),
                 onSubmit: submitChatMessage,
             },
-            fileInputElement,
+            () => fileInputElement,
         );
         return cleanupShortcuts;
     });
@@ -85,7 +76,7 @@
 
         if (!element) return;
 
-        focusElement(element);
+        void focusPresentationElement(element);
         appState.view.pendingFocus = null;
     });
 </script>

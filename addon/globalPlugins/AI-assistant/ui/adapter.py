@@ -9,10 +9,11 @@ import logging
 from uuid import uuid4
 
 from ..config.settings import get_image_mime_type
+from ..core.cancellation import CancellationToken, cancellation_scope, check_cancelled, current_cancellation_token
 from ..service.error_presentation import ErrorPresentation, present_error
 from ..service.provider_controls import provider_control_service
 from .host_lifecycle import HostLifecycleService, HostLifecycleState
-from .intent import ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND, merge_presentation_intent
+from .intent import ATTENTION_POLICY_ACTIVATE_AND_FOCUS, ATTENTION_POLICY_NONE, FOCUS_TARGET_CONTENT, merge_presentation_intent
 from . import nvda_ui
 from .accessibility import coerce_announcement_text, queue_response_announcement, strip_html_for_announcement
 from .host_renderer import HostRenderer, HostUnavailableError
@@ -36,10 +37,16 @@ class UIAdapter:
 		self._session_metadata_provider: Callable[[], dict[str, Any]] | None = None
 		self._litert_ready_handler: Callable[[Callable[[str], None] | None], None] | None = None
 		self._pending_session_metadata: dict[str, Any] | None = None
+		self._chat_requests_lock = threading.RLock()
+		self._chat_requests: dict[str, tuple[str | None, CancellationToken]] = {}
+		self._latest_chat_requests: dict[str | None, str] = {}
+		self._displayed_conversation_id: str | None = None
 		self._command_queue: queue.Queue[
 			tuple[Callable[[], None], Callable[[], None]] | object
 		] = queue.Queue()
 		self._running = True
+		self._last_one_shot_result: DisplayResultViewModel | None = None
+		self._one_shot_generation = 0
 		self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
 		self._worker_thread.start()
 
@@ -64,6 +71,11 @@ class UIAdapter:
 		self._litert_ready_handler = handler
 
 	def close(self) -> None:
+		self._last_one_shot_result = None
+		self._one_shot_generation += 1
+		with self._chat_requests_lock:
+			self._running = False
+		self.cancel_chat_requests()
 		try:
 			close_host = getattr(self._host_renderer, "close", None)
 			if callable(close_host):
@@ -108,6 +120,24 @@ class UIAdapter:
 				raise
 
 	def _dispatch_host_command(self, command: Callable[[], None], fallback: Callable[[], None]) -> None:
+		token = current_cancellation_token()
+		if token is not None:
+			release = token.hold_delivery()
+			original_command, original_fallback = command, fallback
+			def command() -> None:
+				if token.cancelled:
+					release()
+					return
+				with cancellation_scope(token):
+					original_command()
+				release()
+			def fallback() -> None:
+				try:
+					if not token.cancelled:
+						with cancellation_scope(token):
+							original_fallback()
+				finally:
+					release()
 		if not self._running:
 			log.debug("UIAdapter is closed; dispatching native fallback")
 			nvda_ui.queue(fallback)
@@ -211,7 +241,12 @@ class UIAdapter:
 		# When the host was previously shown and is now hidden (not restarted),
 		# the WebView still has the conversation loaded. Tell the WebView to
 		# preserve the existing transcript and skip re-sending history.
-		is_hidden = self._host_lifecycle.state == HostLifecycleState.HIDDEN
+		is_hidden = (
+			self._host_lifecycle.state == HostLifecycleState.HIDDEN
+			and conversation_id == self._displayed_conversation_id
+			and self._host_renderer.has_live_surface()
+		)
+		self._displayed_conversation_id = conversation_id
 		if is_hidden:
 			metadata = {**metadata, "preserve_conversation": True}
 
@@ -220,11 +255,23 @@ class UIAdapter:
 			def handle_chat_submission(
 				message: str, conversation_id: str | None, event_payload: dict[str, Any] | None
 			) -> None:
-				threading.Thread(
-					target=self._handle_host_chat_submission,
-					args=(message, conversation_id, coordinator, event_payload),
-					daemon=True,
-				).start()
+				request_id = str((event_payload or {}).get("request_id") or uuid4().hex)
+				token = CancellationToken()
+				with self._chat_requests_lock:
+					if not self._running or request_id in self._chat_requests:
+						return
+					self._chat_requests[request_id] = (conversation_id, token)
+					self._latest_chat_requests[conversation_id] = request_id
+				try:
+					threading.Thread(
+						target=self._handle_host_chat_submission,
+						args=(message, conversation_id, coordinator, event_payload, request_id, token),
+						daemon=True,
+					).start()
+				except Exception:
+					with self._chat_requests_lock:
+						self._chat_requests.pop(request_id, None)
+					raise
 
 			self._host_renderer.register_chat_submission_handler(handle_chat_submission)
 		self._host_renderer.register_ui_action_handler(self._handle_host_ui_action)
@@ -293,8 +340,30 @@ class UIAdapter:
 	def _final_answer_metadata(self, metadata: dict[str, Any] | None = None) -> dict[str, object]:
 		return merge_presentation_intent(
 			metadata,
-			attention_policy=ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND,
+			attention_policy=ATTENTION_POLICY_ACTIVATE_AND_FOCUS,
+			focus_target=FOCUS_TARGET_CONTENT,
 		)
+
+	def cancel_chat_requests(self, request_id: str | None = None, conversation_id: str | None = None) -> bool:
+		cancelled = False
+		with self._chat_requests_lock:
+			for current_id, (current_conversation, token) in self._chat_requests.items():
+				if token.cancelled:
+					continue
+				if request_id is not None and request_id != current_id:
+					continue
+				if conversation_id is not None and conversation_id != current_conversation:
+					continue
+				token.cancel()
+				cancelled = True
+		return cancelled
+
+	def _is_current_chat_request(self, request_id: str, conversation_id: str | None) -> bool:
+		with self._chat_requests_lock:
+			return (
+				self._running and self._displayed_conversation_id == conversation_id
+				and self._latest_chat_requests.get(conversation_id) == request_id
+			)
 
 	def _send_session_state(self, metadata: dict[str, Any] | None = None) -> None:
 		effective_metadata = metadata if isinstance(metadata, dict) else self._pending_session_metadata
@@ -313,6 +382,33 @@ class UIAdapter:
 		conversation_id: str | None,
 		coordinator: Any,
 		event_payload: dict[str, Any] | None = None,
+		request_id: str | None = None,
+		token: CancellationToken | None = None,
+	) -> None:
+		request_id = request_id or str((event_payload or {}).get("request_id") or uuid4().hex)
+		token = token or CancellationToken()
+		with self._chat_requests_lock:
+			if not self._running:
+				token.cancel()
+				return
+			if request_id not in self._chat_requests:
+				self._chat_requests[request_id] = (conversation_id, token)
+				self._latest_chat_requests[conversation_id] = request_id
+		try:
+			with cancellation_scope(token):
+				self._run_host_chat_submission(message, conversation_id, coordinator, event_payload, request_id, token)
+		finally:
+			with self._chat_requests_lock:
+				self._chat_requests.pop(request_id, None)
+
+	def _run_host_chat_submission(
+		self,
+		message: str,
+		conversation_id: str | None,
+		coordinator: Any,
+		event_payload: dict[str, Any] | None,
+		request_id: str,
+		token: CancellationToken,
 	) -> None:
 		conversation_id = conversation_id or None
 		use_case_id = None
@@ -333,6 +429,7 @@ class UIAdapter:
 				"role": "user",
 				"content": user_content,
 			},
+			metadata={"request_id": request_id, "attention_policy": ATTENTION_POLICY_NONE},
 		)
 		assistant_projection = StreamProjection(
 			renderer=self._host_renderer,
@@ -340,21 +437,37 @@ class UIAdapter:
 			conversation_id=conversation_id or "",
 			message_id=self._new_message_id("assistant"),
 			stream_id=str(uuid4()),
-			final_metadata_factory=self._final_answer_metadata,
+			final_metadata_factory=lambda: self._final_answer_metadata({"request_id": request_id}),
+			request_metadata={"request_id": request_id, "attention_policy": ATTENTION_POLICY_NONE},
 		)
 
 		try:
 			if self._litert_ready_handler is None:
 				raise RuntimeError("LiteRT readiness handler is not configured")
-			self._litert_ready_handler(
-				lambda msg: nvda_ui.queue(nvda_ui.message, msg),
-			)
-			response = coordinator.send_message(
-				text=message_text or None,
-				image_base64=image_base64,
-				progress_callback=assistant_projection.update,
-				expected_conversation_id=conversation_id,
-			)
+			def announce_readiness(message: str) -> None:
+				def deliver() -> None:
+					if self._running and not token.cancelled:
+						nvda_ui.message(message)
+				nvda_ui.queue(deliver)
+			try:
+				check_cancelled()
+				self._litert_ready_handler(announce_readiness)
+				check_cancelled()
+			except Exception:
+				if not token.cancelled:
+					raise
+				response = coordinator.record_stopped_turn(
+					text=message_text or None, image_base64=image_base64,
+					partial_text=token.partial_text, expected_conversation_id=conversation_id,
+				)
+			else:
+				response = coordinator.send_message(
+					text=message_text or None,
+					image_base64=image_base64,
+					progress_callback=assistant_projection.update,
+					expected_conversation_id=conversation_id,
+					cancellation_token=token,
+				)
 			if not coordinator.last_turn_committed():
 				# The conversation was switched/reset while the turn was in flight,
 				# so the backend discarded it.  Tear down the streamed placeholder
@@ -362,12 +475,12 @@ class UIAdapter:
 				# transcript to the authoritative backend history so the UI does
 				# not keep messages the backend dropped.
 				assistant_projection.abort(reason="conversation_changed")
-				if conversation_id and coordinator.get_active_conversation_id() == conversation_id:
+				if self._is_current_chat_request(request_id, conversation_id) and conversation_id and coordinator.get_active_conversation_id() == conversation_id:
 					self._host_renderer.chat_set_history(
 						use_case_id,
 						conversation_id,
 						coordinator.get_history_transport(),
-						metadata=assistant_projection.final_metadata_factory(),
+						metadata={"request_id": request_id, "attention_policy": ATTENTION_POLICY_NONE},
 					)
 					nvda_ui.queue(
 						nvda_ui.message,
@@ -379,6 +492,15 @@ class UIAdapter:
 				return
 			assistant_text = getattr(response, "text", None)
 			thinking_trace = self._extract_thinking_trace(response)
+			if not self._is_current_chat_request(request_id, conversation_id):
+				assistant_projection.abort(reason="request_superseded")
+				return
+			raw_response = getattr(response, "raw", None)
+			stopped = isinstance(raw_response, dict) and bool(raw_response.get("cancelled"))
+			if stopped:
+				assistant_projection.final_metadata_factory = lambda: {
+					"request_id": request_id, "cancelled": True, "attention_policy": ATTENTION_POLICY_NONE,
+				}
 			if isinstance(assistant_text, str) and assistant_text.strip():
 				assistant_content = self._build_assistant_content_blocks(
 					assistant_text,
@@ -386,8 +508,14 @@ class UIAdapter:
 					thinking_trace=thinking_trace if isinstance(thinking_trace, str) else None,
 				)
 				assistant_projection.finish(assistant_content)
-				queue_response_announcement(nvda_ui.queue, nvda_ui.message, assistant_text)
+				if stopped:
+					nvda_ui.queue(nvda_ui.message, localized_strings.get("stopped_status", "Stopped."))
+				else:
+					queue_response_announcement(nvda_ui.queue, nvda_ui.message, assistant_text)
 		except Exception as error:
+			if not self._is_current_chat_request(request_id, conversation_id):
+				assistant_projection.abort(reason="request_superseded")
+				return
 			presentation = present_error(error)
 			# ── Clean up streaming state if it had started ──
 			assistant_projection.abort(reason=presentation.message)
@@ -408,7 +536,7 @@ class UIAdapter:
 				},
 				metadata=error_metadata,
 			)
-			nvda_ui.message(presentation.message)
+			nvda_ui.queue(nvda_ui.message, presentation.message)
 
 	def _build_user_content(
 		self,
@@ -524,6 +652,12 @@ class UIAdapter:
 		return context.image_base64, context.file_context
 
 	def _handle_host_ui_action(self, action_id: str, payload: dict[str, Any] | None) -> None:
+		if action_id == "chat_stop":
+			request_id = (payload or {}).get("request_id")
+			conversation_id = (payload or {}).get("conversation_id")
+			if isinstance(request_id, str) and request_id and isinstance(conversation_id, str) and conversation_id:
+				self.cancel_chat_requests(request_id=request_id, conversation_id=conversation_id)
+			return
 		if self._result_action_handler is None:
 			log.debug("UIAdapter received host UI action without a registered handler: %s", action_id)
 			return
@@ -588,7 +722,7 @@ class UIAdapter:
 		# must remain available even when the WebView host is unavailable, and
 		# errors do not need the interactive result actions provided by the host.
 		body = details or error_message
-		nvda_ui.queue(
+		self._queue_request_ui(
 			nvda_ui.browseable_message,
 			body,
 			title=error_message or _("Error"),
@@ -596,7 +730,38 @@ class UIAdapter:
 			copy_button=True,
 		)
 
-	def render_display_after_speech(self, view_model: DisplayResultViewModel) -> None:
+	def present_one_shot(self, view_model: DisplayResultViewModel, mode: str, *, on_present: Callable[[], None] | None = None) -> None:
+		"""Apply the application-selected output mode only to successful one-shot results."""
+		def deliver() -> None:
+			self._one_shot_generation += 1
+			generation = self._one_shot_generation
+			if not view_model.success:
+				self.render_display(view_model)
+				return
+			self._last_one_shot_result = view_model
+			if on_present is not None:
+				on_present()
+			if mode == "speak_then_display":
+				self.render_display_after_speech(view_model, should_render=lambda: self._one_shot_generation == generation)
+			elif mode == "speak_only":
+				text = strip_html_for_announcement(view_model.output_html) if view_model.is_html else coerce_announcement_text(view_model.output_text, view_model.message)
+				if text:
+					nvda_ui.message(text)
+			else:
+				self.render_display(view_model)
+		self._queue_request_ui(deliver)
+
+	def show_last_result(self) -> bool:
+		result = self._last_one_shot_result
+		if result is None:
+			nvda_ui.message(_("No one-shot result is available yet."))
+			return False
+		# An explicit reopen supersedes any deferred speech-completion display.
+		self._one_shot_generation += 1
+		self.render_display(result)
+		return True
+
+	def render_display_after_speech(self, view_model: DisplayResultViewModel, *, should_render: Callable[[], bool] | None = None) -> None:
 		"""Speak a one-shot result before moving NVDA focus into its UI.
 
 		NVDA's browse-mode focus handling cancels active speech when a new
@@ -616,17 +781,43 @@ class UIAdapter:
 			self.render_display(view_model)
 			return
 
-		nvda_ui.queue(
-			nvda_ui.queue_speech_then,
-			announcement_text,
-			lambda: self.render_display(view_model),
-		)
+		token = current_cancellation_token()
+		release = token.hold_delivery() if token is not None else lambda: None
+		def complete() -> None:
+			try:
+				if (token is None or not token.cancelled) and (should_render is None or should_render()):
+					with cancellation_scope(token):
+						self.render_display(view_model)
+			finally:
+				release()
+		def speak() -> None:
+			if token is not None and token.cancelled:
+				release()
+				return
+			try:
+				nvda_ui.queue_speech_then(announcement_text, complete)
+			except Exception:
+				release()
+				raise
+		nvda_ui.queue(speak)
+
+	def _queue_request_ui(self, callback: Callable[..., None], *args: Any, **kwargs: Any) -> None:
+		token = current_cancellation_token()
+		release = token.hold_delivery() if token is not None else lambda: None
+		def deliver() -> None:
+			try:
+				if token is None or not token.cancelled:
+					with cancellation_scope(token):
+						callback(*args, **kwargs)
+			finally:
+				release()
+		nvda_ui.queue(deliver)
 
 	def show_progress(self, message: str) -> None:
 		# One-shot progress must never start, foreground, or queue a WebView
 		# command that could appear after the terminal result. Keep feedback in
 		# NVDA speech; the result/error command owns the UI lifecycle.
-		nvda_ui.queue(nvda_ui.message, message)
+		self._queue_request_ui(nvda_ui.message, message)
 
 	def close_window(self, reason: str | None = None) -> None:
 		if self._host_lifecycle.should_dispatch_background_command():

@@ -49,7 +49,10 @@ class LlamaServerTests(unittest.TestCase):
 		mock_status = Mock(is_ready=True, is_running=True)
 		mock_native.ensure_ready.return_value = mock_status
 		supervisor = MODULE.LlamaServerSupervisor(native_supervisor=mock_native)
-		supervisor.start("C:/models/model.gguf", model_id="model")
+		progress = []
+		for _ in range(2):
+			supervisor.start("C:/models/model.gguf", model_id="model", on_progress=progress.append)
+		self.assertEqual(progress, ["Checking llama-server readiness for model..."] * 2)
 		self.assertTrue(mock_native.ensure_ready.called)
 		args = mock_native.ensure_ready.call_args.args[1]
 		self.assertEqual(args[-4:], ["-m", "C:/models/model.gguf", "--alias", "model"])

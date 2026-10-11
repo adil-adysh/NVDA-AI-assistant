@@ -20,6 +20,7 @@ use webview2_com::{
     AddScriptToExecuteOnDocumentCreatedCompletedHandler,
     CreateCoreWebView2ControllerCompletedHandler, CreateCoreWebView2EnvironmentCompletedHandler,
     NavigationCompletedEventHandler, WebMessageReceivedEventHandler,
+    AcceleratorKeyPressedEventHandler, ExecuteScriptCompletedHandler,
 };
 
 use crate::ipc;
@@ -41,6 +42,14 @@ pub fn resize_webview(hwnd: HWND) {
     }
 }
 
+pub(crate) fn set_controller_visible(visible: bool) {
+    if let Some(controller) = current_controller() {
+        if let Err(error) = unsafe { controller.SetIsVisible(visible) } {
+            logger::warn(&format!("WebView visibility change to {} failed: {:?}", visible, error));
+        }
+    }
+}
+
 pub fn focus_webview() -> bool {
     if let Some(controller) = current_controller() {
         match unsafe { controller.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC) } {
@@ -57,6 +66,28 @@ pub fn focus_webview() -> bool {
         logger::debug("Skipped WebView focus move because controller is not ready");
         false
     }
+}
+
+pub(crate) fn request_escape_dismiss() {
+    let Some(controller) = current_controller() else {
+        crate::window::post_dismiss_window();
+        return;
+    };
+    // Run outside AcceleratorKeyPressed: WebView2 blocks browser input while
+    // that callback executes. Let the DOM guard preserve IME/select Escape.
+    let script = w!("typeof window.__dismissHostOnEscape === 'function' ? window.__dismissHostOnEscape() : null");
+    let result = unsafe {
+        controller.CoreWebView2().and_then(|webview| webview.ExecuteScript(
+            script,
+            &ExecuteScriptCompletedHandler::create(Box::new(|status, result| {
+                if status.is_err() || (result != "true" && result != "false") {
+                    crate::window::post_dismiss_window();
+                }
+                Ok(())
+            })),
+        ))
+    };
+    if result.is_err() { crate::window::post_dismiss_window(); }
 }
 
 pub(crate) fn post_host_command(message: &str, activation_policy: ActivationPolicy, request_webview_focus: bool) -> Result<()> {
@@ -123,11 +154,90 @@ pub(crate) fn notify_window_visible() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
+
+    #[test]
+    #[ignore = "requires an interactive Windows desktop and installed WebView2"]
+    fn real_one_shot_close_and_escape_hide_webview_and_reopen() {
+        use windows::core::BOOL;
+        use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+        use windows::Win32::UI::WindowsAndMessaging::*;
+        fn pump_until(mut ready: impl FnMut() -> bool) {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            while !ready() {
+                assert!(std::time::Instant::now() < deadline, "UI transition timed out");
+                unsafe {
+                    let mut message = MSG::default();
+                    while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                        let _ = TranslateMessage(&message);
+                        DispatchMessageW(&message);
+                    }
+                    MsgWaitForMultipleObjects(None, false, 20, QS_ALLINPUT);
+                }
+            }
+        }
+        let _guard = test_guard();
+        unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok().unwrap(); }
+        let hwnd = crate::window::create_window().unwrap();
+        crate::window::initialize_host_dispatch(hwnd);
+        init_webview(hwnd).unwrap();
+        pump_until(host_dispatch::host_ready);
+        let controller = current_controller().unwrap();
+        let webview = unsafe { controller.CoreWebView2().unwrap() };
+        for (index, script) in [
+            Some(w!("document.getElementById('close-window').click()")),
+            None,
+        ].into_iter().enumerate() {
+            let interrupted = unsafe { GetForegroundWindow() };
+            let message = serde_json::json!({
+                "schema": "nvda.ui_host", "version": 2, "id": format!("result-{index}"),
+                "correlation_id": null, "source": "ui_host", "type": "command",
+                "command": {"name": "render_display", "payload": {
+                    "title": "Dismissal regression", "output_text": "One-shot result",
+                    "display_presentation": {"toolbar": {"actions": ["close"]}}
+                }}
+            }).to_string();
+            post_host_command(&message, ActivationPolicy::ActivateAndFocus, true).unwrap();
+            pump_until(|| crate::window::is_window_visible() && crate::window::may_focus_webview());
+            let mut visible = BOOL(0);
+            unsafe {
+                controller.IsVisible(&mut visible).unwrap();
+                assert!(visible.as_bool());
+                if index == 0 {
+                    // Reproduce the old failure: hiding only the HWND leaves
+                    // the browser controller exposed to accessibility clients.
+                    let _ = ShowWindow(hwnd, SW_HIDE);
+                    controller.IsVisible(&mut visible).unwrap();
+                    assert!(visible.as_bool());
+                    let _ = ShowWindow(hwnd, SW_SHOW);
+                    let _ = SetForegroundWindow(hwnd);
+                }
+                if let Some(script) = script {
+                    webview.ExecuteScript(script, &ExecuteScriptCompletedHandler::create(Box::new(|status, _| {
+                        status?;
+                        Ok(())
+                    }))).unwrap();
+                } else {
+                    crate::window::post_escape_dismiss();
+                }
+            }
+            pump_until(|| crate::window::is_window_hidden());
+            unsafe { controller.IsVisible(&mut visible).unwrap(); }
+            assert!(!visible.as_bool(), "hidden host must remove WebView from accessibility visibility");
+            assert!(!crate::window::is_window_visible());
+            if !interrupted.0.is_null() && unsafe { IsWindow(Some(interrupted)).as_bool() } {
+                pump_until(|| unsafe { GetForegroundWindow() } == interrupted);
+                assert_eq!(unsafe { GetForegroundWindow() }, interrupted);
+            }
+        }
+        unsafe {
+            controller.Close().unwrap();
+            DestroyWindow(hwnd).unwrap();
+            CoUninitialize();
+        }
+    }
 
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
-        static TEST_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
-        TEST_MUTEX.get_or_init(|| Mutex::new(())).lock().unwrap()
+        host_dispatch::test_guard()
     }
 
     #[test]
@@ -272,6 +382,26 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
 
                         WEBVIEW_CORE = Some(webview.clone());
 
+                        let mut accelerator_token = 0i64;
+                        if let Err(error) = controller.add_AcceleratorKeyPressed(
+                            &AcceleratorKeyPressedEventHandler::create(Box::new(|_sender, args| {
+                                let Some(args) = args else { return Ok(()); };
+                                let mut key = 0;
+                                let mut kind = COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN;
+                                args.VirtualKey(&mut key)?;
+                                args.KeyEventKind(&mut kind)?;
+                                if key == 0x1B && kind == COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN {
+                                    // Do not set Handled: the first Escape can belong to
+                                    // an IME or an expanded native select in the Web UI.
+                                    crate::window::post_escape_dismiss();
+                                }
+                                Ok(())
+                            })),
+                            &mut accelerator_token,
+                        ) {
+                            logger::warn(&format!("Escape accelerator registration failed: {:?}", error));
+                        }
+
                         controller.SetIsVisible(true).unwrap_or_else(|e| {
                             logger::warn(&format!("SetIsVisible failed: {:?}", e));
                         });
@@ -369,7 +499,6 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
                         if let Err(e) = webview.add_NavigationCompleted(
                             &NavigationCompletedEventHandler::create(Box::new(move |_sender: Option<ICoreWebView2>, _args: Option<ICoreWebView2NavigationCompletedEventArgs>| {
                                 logger::debug("Navigation completed");
-                                let _ = focus_webview();
                                 // Safety net: if the web_ui_ready event arrived before
                                 // this callback fired (or was missed), try to transition
                                 // to Ready so queued commands are flushed.

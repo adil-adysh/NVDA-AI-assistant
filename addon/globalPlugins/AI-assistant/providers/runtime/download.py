@@ -20,11 +20,13 @@ import threading
 import time
 import urllib.request
 import zipfile
+from uuid import uuid4
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import logging
+import re
 
 from ..interfaces import DownloadCancelledError, ProgressCallback
 from .config import RuntimeConfig
@@ -124,10 +126,10 @@ class RuntimeDownloadService:
 		client = self._worker_client
 		if client is None:
 			try:
-				from ...plugin.worker_supervisor import get_worker_client
-				client = get_worker_client()
-			except Exception:
-				pass
+				from ...plugin.worker_supervisor import get_worker_client_for_operation
+				client = get_worker_client_for_operation()
+			except Exception as exc:
+				raise RuntimeDownloadError(f"Worker startup failed: {exc}") from exc
 
 		if client is not None:
 			try:
@@ -150,7 +152,7 @@ class RuntimeDownloadService:
 			except (DownloadCancelledError, RuntimeDownloadError):
 				raise
 			except Exception as exc:
-				log.warning('Worker runtime download failed; falling back to direct download: %s', exc)
+				raise RuntimeDownloadError(f"Worker runtime download failed: {exc}") from exc
 
 		# Download to a temporary file with byte-level progress
 		try:
@@ -239,10 +241,29 @@ class RuntimeDownloadService:
 	@staticmethod
 	def _atomic_move(source: Path, destination: Path) -> None:
 		"""Replace *destination* with *source* atomically (best-effort)."""
-		if destination.exists():
-			shutil.rmtree(destination, ignore_errors=True)
 		destination.parent.mkdir(parents=True, exist_ok=True)
-		shutil.copytree(source, destination)
+		with tempfile.TemporaryDirectory(prefix="runtime_install_", dir=destination.parent) as tmp_dir:
+			staged = Path(tmp_dir) / "replacement"
+			shutil.copytree(source, staged)
+			backup = destination.with_name(f".{destination.name}.backup-{uuid4().hex}")
+			had_previous = destination.exists()
+			if had_previous:
+				destination.replace(backup)
+			try:
+				staged.replace(destination)
+			except OSError:
+				if had_previous:
+					try:
+						backup.replace(destination)
+					except OSError:
+						log.error("Runtime rollback failed; previous installation retained at %s", backup)
+						raise
+				raise
+			if had_previous:
+				try:
+					shutil.rmtree(backup)
+				except OSError:
+					log.warning("Previous runtime backup could not be removed: %s", backup)
 
 	def _extract_and_verify(
 		self,
@@ -361,6 +382,7 @@ def _download_url_resume(
 		resp: Any | None = None
 
 		try:
+			last_error = None
 			req = urllib.request.Request(url)
 			if resume_from > 0:
 				req.add_header("Range", f"bytes={resume_from}-")
@@ -379,10 +401,6 @@ def _download_url_resume(
 					url,
 				)
 				resume_from = 0
-				dest_path.write_bytes(b"")
-				resp.close()
-				resp = None
-				continue
 
 			# Determine total file size for progress reporting
 			content_length = resp.length
@@ -392,6 +410,17 @@ def _download_url_resume(
 				total_size = content_length
 			else:
 				total_size = 0
+			if supports_range:
+				match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+|\*)", resp.headers.get("Content-Range", ""))
+				if match is None or int(match[1]) != resume_from or int(match[2]) < resume_from:
+					raise RuntimeDownloadError("Partial response does not match requested byte offset")
+				range_length = int(match[2]) - int(match[1]) + 1
+				if content_length is not None and content_length != range_length:
+					raise RuntimeDownloadError("Content-Length does not match Content-Range")
+				content_length = range_length
+				total_size = int(match[3]) if match[3] != "*" else resume_from + range_length
+				if int(match[2]) >= total_size:
+					raise RuntimeDownloadError("Content-Range exceeds advertised file size")
 
 			mode = "ab" if resume_from > 0 else "wb"
 			downloaded_this_session = 0
@@ -444,20 +473,29 @@ def _download_url_resume(
 				resp = None
 				continue
 
+			if content_length is not None and downloaded_this_session != content_length:
+				raise OSError("Download ended before the advertised response length")
+			if total_size and resume_from + downloaded_this_session != total_size:
+				raise OSError("Download size does not match advertised file size")
+
 			# Success — all data read
 			resp.close()
 			resp = None
 			return
 
+		except DownloadCancelledError:
+			raise
 		except urllib.request.HTTPError as exc:
 			resp = None
 			# 416 Range Not Satisfiable → the file is already complete
 			if exc.code == 416:
-				log.debug("Range 416 for %s — file already complete", dest_path.name)
-				if on_bytes_progress:
+				match = re.fullmatch(r"bytes \*/(\d+)", exc.headers.get("Content-Range", ""))
+				if match and resume_from > 0 and dest_path.is_file():
 					file_size = dest_path.stat().st_size
-					on_bytes_progress(file_size, file_size)
-				return
+					if file_size == resume_from == int(match[1]):
+						if on_bytes_progress:
+							on_bytes_progress(file_size, file_size)
+						return
 			last_error = exc
 			if attempt >= _MAX_RETRIES:
 				raise

@@ -205,6 +205,11 @@ def build_localized_strings(translate: Translator) -> dict[str, str]:
 		"image_attachment_alt": translate("Attached image"),
 		# TRANSLATORS: Status text shown after a chat message is submitted.
 		"submitted_status": translate("Message submitted."),
+		# TRANSLATORS: Chat action and status while cancelling the current response.
+		"stop_response": translate("Stop response"),
+		"stopping_status": translate("Stopping response..."),
+		"response_stopped_status": translate("Response stopped."),
+		"stopped_status": translate("Stopped."),
 		# TRANSLATORS: Status text shown when attachment upload fails.
 		"attach_failed_status": translate("Unable to attach file."),
 		# TRANSLATORS: Status text shown when content has been cleared.
@@ -213,6 +218,7 @@ def build_localized_strings(translate: Translator) -> dict[str, str]:
 		"copied_status": translate("Copied to clipboard."),
 		# TRANSLATORS: Status text shown when clipboard copy fails.
 		"copy_failed_status": translate("Copy failed."),
+		"send_failed_status": translate("Unable to send request. The host connection is unavailable."),
 		# TRANSLATORS: Status text shown for unsupported host metadata.
 		"unknown_schema_status": translate("Unknown host schema."),
 		# TRANSLATORS: Status text shown when the UI protocol version is unsupported.

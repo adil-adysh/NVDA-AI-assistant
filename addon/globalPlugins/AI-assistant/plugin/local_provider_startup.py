@@ -13,36 +13,44 @@ MANAGED_LOCAL_PROVIDERS = frozenset({"litert-lm", "llama-cpp-server"})
 def schedule_active_local_provider_start(
 	*,
 	provider: str,
-	litert_enabled: bool,
-	llama_enabled: bool,
+	litert_enabled: bool = False,
+	llama_enabled: bool = False,
 	litert_installed: bool,
 	ensure_ready: Callable[[], None],
 	report_error: Callable[[Exception, str], None],
+	startup_mode: str | None = None,
+	prepare_worker: Callable[[], object] | None = None,
 	thread_factory: Callable[..., threading.Thread] = threading.Thread,
 ) -> threading.Thread | None:
 	"""Schedule startup for the active managed provider when policy permits.
 
-	The worker always enters the normal readiness path. In particular, a live
-	LiteRT process is not skipped here: readiness owns health and startup
-	fingerprint validation and will reuse, adopt, or replace it as appropriate.
+	Worker preparation only connects the owned worker. Server startup enters
+	the normal readiness path, which owns health and startup fingerprint
+	validation and will reuse, adopt, or replace a live server as appropriate.
 	"""
 	provider = str(provider or "").strip().lower()
 	if provider not in MANAGED_LOCAL_PROVIDERS:
 		return None
-	if provider == "litert-lm" and (not litert_enabled or not litert_installed):
+	if startup_mode is None:
+		enabled = litert_enabled if provider == "litert-lm" else llama_enabled
+		startup_mode = "server" if enabled else "lazy"
+	if startup_mode not in {"worker", "server"}:
 		return None
-	if provider == "llama-cpp-server" and not llama_enabled:
+	if startup_mode == "server" and provider == "litert-lm" and not litert_installed:
 		return None
+	operation = prepare_worker if startup_mode == "worker" else ensure_ready
+	if operation is None:
+		raise ValueError("Worker startup requires a worker preparation callback")
 
 	def start_server() -> None:
 		try:
-			ensure_ready()
+			operation()
 		except Exception as error:  # Startup failure must never abort NVDA initialization.
 			report_error(error, provider)
 
 	thread = thread_factory(
 		target=start_server,
-		name=f"{provider}ServerAutoStart",
+		name=f"{provider}{'Worker' if startup_mode == 'worker' else 'Server'}AutoStart",
 		daemon=True,
 	)
 	thread.start()

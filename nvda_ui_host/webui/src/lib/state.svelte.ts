@@ -57,6 +57,9 @@ export const appState = $state({
 	localizedStrings: {} as Record<string, string>,
 
 	chat: {
+		requestId: null as string | null,
+		latestRequestId: null as string | null,
+		stopping: false,
 		active: false,
 		commandId: null as string | null,
 		conversationId: null as string | null,

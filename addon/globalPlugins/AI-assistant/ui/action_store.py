@@ -32,3 +32,8 @@ class ResultActionStore:
 	def clear(self) -> None:
 		with self._lock:
 			self._payloads.clear()
+
+	def replace(self, payloads: dict[str, dict[str, Any]]) -> None:
+		"""Activate a result's captured payloads atomically on successful delivery."""
+		with self._lock:
+			self._payloads = {token: dict(payload) for token, payload in payloads.items()}

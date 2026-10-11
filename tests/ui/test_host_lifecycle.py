@@ -47,6 +47,15 @@ class HostLifecycleTests(unittest.TestCase):
 
 		self.assertEqual(service.state, HostLifecycleState.HIDDEN)
 
+	def test_passive_commands_keep_hidden_until_final_attention(self) -> None:
+		service = HostLifecycleService()
+		service.mark_hidden()
+		for command in ("chat_append", "chat_stream_begin", "chat_stream_delta", "chat_stream_abort", "sync_session"):
+			service.mark_command_succeeded(command)
+			self.assertEqual(service.state, HostLifecycleState.HIDDEN)
+		service.mark_command_succeeded("chat_stream_end", activates=True)
+		self.assertEqual(service.state, HostLifecycleState.READY)
+
 
 if __name__ == "__main__":
 	unittest.main()

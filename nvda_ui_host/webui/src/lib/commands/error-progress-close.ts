@@ -9,7 +9,6 @@ import {
 	setDisplayBlocks,
     setViewMode,
     setWindowTitle,
-    showDisplayText,
     t,
 } from '../state.svelte';
 import {
@@ -55,7 +54,6 @@ export function showError(commandId: string, payload: ShowErrorPayload): void {
 
 export function updateProgress(commandId: string, payload: UpdateProgressPayload): void {
 	const msg = payload.message || getHostStatusMessage(payload as Record<string, unknown>);
-	showDisplayText(msg, 'status');
 	if (payload.title) setWindowTitle(payload.title);
 	setStatus(msg, false);
 	applyPresentationState(payload as Record<string, unknown>);

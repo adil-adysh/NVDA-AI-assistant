@@ -74,6 +74,18 @@ You can:
 * attach screenshots and page context
 * continue the same conversation across different models
 * press `Escape` to hide the window while a response keeps streaming in the background — it reappears automatically when the answer is ready
+* select **Stop response** to cancel the current answer; the partial answer stays in the conversation and is saved with `[Stopped]`
+
+Processing and streaming do not move keyboard focus. A completed answer brings the window forward and focuses its content. Escape keeps the chat, attachments, and unsent draft available; it does not cancel a request. When a dropdown or input composition is open, Escape dismisses that interaction first.
+
+To cancel a summary, image description, or chat request from outside the window, choose **NVDA Tools → AI Assistant → Stop active requests**, or press `NVDA+Shift+A`, then `Q`. The same command can be assigned a gesture in NVDA's Input Gestures dialog. Cancellation suppresses later results and error windows; a request waiting on a non-streaming provider may remain in flight until its network call returns.
+
+Under **Settings → Behavior & Output → One-shot response output**, choose
+**Display only** (default), **Speak, then display**, or **Speak only**. In the
+second mode, stopping speech still displays the answer. Speak only keeps keyboard
+focus unchanged. These preferences do not change chat or error feedback.
+Use **Show last result** in Tools, or `NVDA+Shift+A`, then `L`, to reopen the latest
+successful one-shot answer for the current session.
 
 ---
 

@@ -67,6 +67,21 @@ def execute_model_download_job(
 
 	dest_path = Path(dest_str)
 	if dest_path.exists():
+		try:
+			if token.is_cancelled:
+				raise OperationCancelledError("Download cancelled before cache verification")
+			if expected_sha256:
+				stream_sha256(dest_path, expected_sha256=expected_sha256, cancel_token=token)
+		except OperationCancelledError:
+			return JobResult(job_id=spec.job_id, status=JobStatus.CANCELLED, generation=spec.generation)
+		except (ChecksumMismatchError, OSError) as exc:
+			return JobResult(
+				job_id=spec.job_id,
+				status=JobStatus.FAILED,
+				error_code="CHECKSUM_MISMATCH" if isinstance(exc, ChecksumMismatchError) else "DOWNLOAD_FAILED",
+				error_message=str(exc),
+				generation=spec.generation,
+			)
 		logger.info("Model %s already exists at %s", model_name, dest_path)
 		return JobResult(
 			job_id=spec.job_id,

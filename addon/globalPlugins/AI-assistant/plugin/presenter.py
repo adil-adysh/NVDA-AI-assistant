@@ -15,7 +15,7 @@ from ..service.chat import ChatCoordinator, ConversationService
 from ..service.provider_catalog import ProviderCatalogService
 from ..service.provider_readiness import ProviderReadinessService
 from ..tools import ToolRegistry
-from ..config.settings import get_provider_state
+from ..config.settings import get_provider_state, get_one_shot_output_mode
 from ..context.navigation import resolve_and_move_target
 from ..ui.adapter import ui_adapter
 from ..ui.action_store import ResultActionStore
@@ -251,8 +251,10 @@ class UseCasePresenter:
 		copy_text = output_text if has_output_text and not is_html else None
 		copy_markdown = output_text if has_output_text else None
 		metadata = merge_session_metadata(getattr(use_case_result, "metadata", None), session_state)
-		self._result_action_store.clear()
-		actions = self._build_result_actions(use_case_result)
+		pending_action_store = ResultActionStore()
+		actions = self._build_result_actions(use_case_result, action_store=pending_action_store)
+		action_tokens = {action.payload["token"] for action in actions if action.payload.get("token")}
+		action_payloads = {token: pending_action_store.get(token) for token in action_tokens}
 		# result_actions flag is set by UseCaseSpec and auto-injected into
 		# metadata by UseCase.execute_prompted_use_case; avoids hardcoded lists.
 		has_result_actions = bool(actions and (metadata or {}).get("result_actions"))
@@ -264,7 +266,7 @@ class UseCasePresenter:
 			else FOCUS_TARGET_PRIMARY_ACTION,
 			toolbar_actions=self._build_display_toolbar_actions(include_clear=not is_result_action_screen),
 		)
-		ui_adapter.render_display_after_speech(
+		ui_adapter.present_one_shot(
 			DisplayResultViewModel(
 				use_case_id=use_case_id,
 				title=browseable_title,
@@ -284,7 +286,9 @@ class UseCasePresenter:
 				# One-shot result screens never expose chat session controls.
 				controls_visible=False,
 				attention_policy=ATTENTION_POLICY_FOREGROUND_IF_BACKGROUND,
-			)
+			),
+			mode=get_one_shot_output_mode(),
+			on_present=lambda: self._result_action_store.replace(action_payloads),
 		)
 
 	def _build_display_toolbar_actions(self, *, include_clear: bool) -> tuple[str, ...]:
@@ -390,7 +394,7 @@ class UseCasePresenter:
 			).to_metadata()
 		)
 
-	def _build_result_actions(self, use_case_result: Any) -> list[ResultActionViewModel]:
+	def _build_result_actions(self, use_case_result: Any, *, action_store: ResultActionStore | None = None) -> list[ResultActionViewModel]:
 		# Check the flag auto-injected by UseCase.execute_prompted_use_case
 		# from UseCaseSpec.result_actions.  Avoids hardcoded use-case-ID lists.
 		result_metadata = getattr(use_case_result, "metadata", None) or {}
@@ -414,8 +418,8 @@ class UseCasePresenter:
 			return []
 		# Store the full payload once; each action transports only its token and
 		# item id, so large page content or Base64 images never cross the event
-		# pipe.  The store is cleared on every new display (see present_use_case_result).
-		token = self._result_action_store.put(
+		# pipe. Payloads remain reusable until another successful result is retained.
+		token = (action_store if action_store is not None else self._result_action_store).put(
 			{
 				"context_items": [self._serialize_context_item(item) for item in context_items],
 				"output_items": [self._serialize_output_item(item) for item in output_items],
@@ -526,7 +530,7 @@ class UseCasePresenter:
 			self._dispatch_navigate_to_target(action)
 
 	def _dispatch_add_item_to_chat(self, action: AddItemToChatAction) -> None:
-		payload = self._result_action_store.pop(action.token)
+		payload = self._result_action_store.get(action.token)
 		if payload is None:
 			log.debug("Result action token expired: action=add_item_to_chat item_id=%s", action.item_id)
 			return
@@ -552,7 +556,7 @@ class UseCasePresenter:
 		self.open_chat_window(force_new_conversation=False)
 
 	def _dispatch_open_in_new_chat(self, action: OpenInNewChatAction) -> None:
-		payload = self._result_action_store.pop(action.token)
+		payload = self._result_action_store.get(action.token)
 		if payload is None:
 			log.debug("Result action token expired: action=open_in_new_chat")
 			return

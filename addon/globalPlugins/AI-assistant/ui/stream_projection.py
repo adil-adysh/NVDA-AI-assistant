@@ -62,6 +62,7 @@ class StreamProjection:
 	message_id: str
 	stream_id: str
 	final_metadata_factory: Callable[[], dict[str, object]]
+	request_metadata: dict[str, object] | None = None
 	stream_update_interval: int = 1200
 	streaming_started: bool = False
 	host_stream_updates_enabled: bool = True
@@ -99,6 +100,7 @@ class StreamProjection:
 					self.conversation_id,
 					self.message_id,
 					self.stream_id,
+					**({"metadata": self.request_metadata} if self.request_metadata is not None else {}),
 				)
 				self.streaming_started = True
 			self.renderer.chat_stream_delta(
@@ -108,6 +110,7 @@ class StreamProjection:
 				self.stream_id,
 				delta_text,
 				self.stream_sequence,
+				**({"metadata": self.request_metadata} if self.request_metadata is not None else {}),
 			)
 		except Exception:
 			self.host_stream_updates_enabled = False
@@ -156,6 +159,7 @@ class StreamProjection:
 						self.stream_id,
 						self.stream_sequence - 1,
 						reason="final_commit_failed",
+						metadata=self.request_metadata,
 					)
 				except Exception:
 					pass
@@ -181,6 +185,7 @@ class StreamProjection:
 				self.stream_id,
 				self.stream_sequence - 1,
 				reason=reason,
+				metadata=self.request_metadata,
 			)
 		except Exception:
 			log.exception("Stream abort delivery failed; streaming state may be dangling in the UI")

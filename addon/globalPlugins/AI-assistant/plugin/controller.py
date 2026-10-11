@@ -43,6 +43,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._settings_item = self._submenu.Append(
 			wx.ID_ANY, _("&Settings..."),
 		)
+		# TRANSLATORS: Menu command to cancel active chat, summary, or image requests.
+		self._stop_requests_item = self._submenu.Append(wx.ID_ANY, _("S&top active requests"))
+		self._last_result_item = self._submenu.Append(wx.ID_ANY, _("Show &last result"))
 		# TRANSLATORS: Name of the submenu in NVDA's Tools menu for AI Assistant features.
 		self._submenu_parent_item = self._tools_menu.AppendSubMenu(
 			self._submenu, _("AI Assistant"),
@@ -53,6 +56,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		gui.mainFrame.sysTrayIcon.Bind(
 			wx.EVT_MENU, self._on_tools_settings, self._settings_item,
 		)
+		gui.mainFrame.sysTrayIcon.Bind(
+			wx.EVT_MENU, self._on_tools_stop_requests, self._stop_requests_item,
+		)
+		gui.mainFrame.sysTrayIcon.Bind(wx.EVT_MENU, self._on_tools_last_result, self._last_result_item)
 
 	def _restore_default_gesture_bindings(self) -> None:
 		self.bindGestures(self.__gestures)
@@ -70,6 +77,23 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		gui.mainFrame.prePopup()
 		open_settings_dialog(gui.mainFrame)
 		gui.mainFrame.postPopup()
+
+	def _on_tools_stop_requests(self, _event: wx.CommandEvent) -> None:
+		self._app.cancel_active_requests()
+
+	def _on_tools_last_result(self, _event: wx.CommandEvent) -> None:
+		self._app.show_last_result()
+
+	@script(description=_("Shows the latest one-shot AI result."))
+	def script_showLastResult(self, _gesture: Any):
+		self._app.show_last_result()
+
+	@script(
+		# TRANSLATORS: Input Gestures command to cancel active AI inference requests.
+		description=_("Stops active AI chat, summary, and image requests."),
+	)
+	def script_stopActiveRequests(self, _gesture: Any):
+		self._app.cancel_active_requests()
 
 	def terminate(self) -> None:
 		try:
@@ -184,6 +208,13 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	)
 	def script_assistantLayerHelp(self, _gesture: Any):
 		self._app.show_assistant_layer_help()
+
+	@script(
+		# TRANSLATORS: Description of the gesture reporting the configured AI provider and model.
+		description=_("Reports the current AI provider and model."),
+	)
+	def script_reportCurrentProviderModel(self, _gesture: Any):
+		self._app.report_current_provider_model()
 
 	@script(
 		# TRANSLATORS: Description for the script that captures and describes the currently focused NVDA object.
