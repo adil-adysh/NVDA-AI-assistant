@@ -152,3 +152,14 @@ application startup integrations can use
 startup settings invoke the normal readiness path on a background thread.
 Shutdown permanently fences launches and automatic restarts before background
 process teardown.
+
+### LiteRT runtime package upgrades
+
+Installing LiteRT-LM also finalizes cached installations. Finalization verifies
+manifest identity and every declared SHA-256 before retiring the recognized
+0.15.0 package. The worker checks native supervisor status; cleanup is deferred
+while a server is running or adopted, or when Windows holds package files open.
+Repeat installation retries deferred cleanup. Failed verification or cancelled
+installation retains the previous package. The separate model registry is never
+part of runtime retirement. `core/runtime_upgrade.py` owns package verification
+and retirement policy; the worker retains authority over process status.

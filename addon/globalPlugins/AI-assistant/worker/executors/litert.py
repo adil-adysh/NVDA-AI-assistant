@@ -36,8 +36,10 @@ except Exception:
 	runtime_supervisor = None
 
 try:
+	from ...core.runtime_upgrade import finalize_litert_upgrade
 	from ...core.litert_contract import DEFAULT_LITERT_VERSION, validate_litert_artifact
 except ImportError:
+	from core.runtime_upgrade import finalize_litert_upgrade
 	from core.litert_contract import DEFAULT_LITERT_VERSION, validate_litert_artifact
 
 logger = logging.getLogger(__name__)
@@ -271,6 +273,13 @@ class LiteRTWorkerExecutor:
 			timeout_seconds=timeout_seconds,
 		)
 		return serialize_runtime_status(status)
+
+	def finalize_upgrade(self, version: str) -> list[str]:
+		if version != DEFAULT_LITERT_VERSION:
+			raise ValueError("Unsupported runtime upgrade version")
+		status = self.get_status()
+		return finalize_litert_upgrade(default_runtime_dir(version), version,
+			busy=bool(status.get("is_running") or status.get("is_adopted")))
 
 	def stop(self, timeout_seconds: float = 10.0) -> dict[str, Any]:
 		"""Stop the server process gracefully, then forcefully if needed."""

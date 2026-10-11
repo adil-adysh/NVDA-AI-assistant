@@ -37,6 +37,7 @@ from .paths import get_runtime_path
 from ..interfaces import LLMProviderError
 from ...core.litert_contract import DEFAULT_LITERT_VERSION, validate_litert_artifact
 from ...core.translation import _
+from ...core.runtime_upgrade import finalize_litert_upgrade
 from ...core.readiness_progress import run_with_readiness_progress
 
 try:
@@ -534,9 +535,12 @@ class LiteRTServerSupervisor:
 		"""
 		server_dir = self._server_dir()
 		python_exe = self._server_python()
+		if cancel_event is not None and cancel_event.is_set():
+			raise DownloadCancelledError("Runtime installation cancelled")
 
 		if python_exe.exists():
 			log.debug("LiteRT runtime already present at %s", server_dir)
+			self._finalize_upgrade(server_dir, on_progress)
 			return server_dir
 
 		self._report(on_progress, _("Downloading LiteRT-LM runtime..."))
@@ -558,8 +562,32 @@ class LiteRTServerSupervisor:
 		if not python_exe.exists():
 			raise LiteRTServerError(f"Runtime extracted but python.exe not found at {python_exe}")
 
+		if cancel_event is not None and cancel_event.is_set():
+			raise DownloadCancelledError("Runtime installation cancelled")
+		self._finalize_upgrade(server_dir, on_progress)
 		log.info("LiteRT runtime installed at %s", server_dir)
 		return server_dir
+
+	def _finalize_upgrade(self, server_dir: Path, on_progress=None) -> None:
+		self._report(on_progress, _("Verifying LiteRT-LM runtime..."))
+		try:
+			client = self._get_worker_client()
+			if client is not None:
+				response = client.send_command({
+					"type": "litert_finalize_upgrade", "command": "litert_finalize_upgrade",
+					"version": self._version,
+				}, timeout=120.0)
+				if not response.get("success"):
+					raise RuntimeError(response.get("error_message", "Runtime upgrade failed"))
+				pending = response.get("pending", [])
+			else:
+				status = self.status()
+				pending = finalize_litert_upgrade(server_dir, self._version,
+					busy=bool(getattr(status, "is_running", False) or getattr(status, "is_adopted", False)))
+			if pending:
+				self._report(on_progress, _("The previous runtime is in use. Cleanup will be retried on the next installation."))
+		except Exception as exc:
+			raise LiteRTServerError(_("Unable to verify runtime upgrade: {error}").format(error=exc)) from exc
 
 	def ensure_ready(
 		self,

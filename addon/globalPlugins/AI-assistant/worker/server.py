@@ -382,6 +382,15 @@ class WorkerServer:
 					}
 				)
 
+		elif cmd_type == "litert_finalize_upgrade":
+			try:
+				pending = self.get_litert_executor().finalize_upgrade(str(frame.get("version", DEFAULT_LITERT_VERSION)))
+				self._cmd_server.write_frame({"type": "litert_upgrade_response",
+					"command": cmd_type, "success": True, "pending": pending})
+			except Exception as exc:
+				self._cmd_server.write_frame({"type": "error", "command": cmd_type,
+					"success": False, "error_message": str(exc)})
+
 		elif cmd_type == "litert_stop":
 			try:
 				executor = self.get_litert_executor()
