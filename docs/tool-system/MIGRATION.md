@@ -1,7 +1,7 @@
 # Tool system migration guide
 
-This document describes what changed for existing callers and what a future MCP
-provider must do. Existing behavior is preserved wherever practical; the
+This document describes what changed for existing callers and how the
+production MCP provider uses the existing conversation model. Existing behavior is preserved wherever practical; the
 compatibility shims are listed explicitly.
 
 ## 1. Native tool registration
@@ -141,7 +141,12 @@ malformed JSON or non-object arguments. The executor refuses to run such calls
 and returns `invalid_arguments`, so a provider bug can no longer silently turn
 into an execution with `{}`.
 
-## 7. Adding an external (future MCP) provider
+## 7. External MCP provider integration
+
+Production MCP catalogs are connected through `McpCatalogService`; normal
+callers should configure servers through the MCP settings UI rather than
+registering a second provider registry manually. The lower-level provider
+contract remains useful for tests and future providers:
 
 ```python
 registry.register_external_tools(
@@ -151,12 +156,13 @@ registry.register_external_tools(
 )
 ```
 
-- One `provider_id` per server; it participates in the stable `tool_id`
-  (`mcp:server-a:lookup`) and in the model-facing name.
-- Refresh with `replace_provider_catalog(...)`; it is atomic and leaves the
-  previous catalog on failure.
-- On disconnect call `set_provider_available("server-a", False)`; on removal
-  call `unregister_provider("server-a")`.
+- Use one provider ID per server. MCP catalog metadata binds a tool to the
+  manager session, server incarnation and catalog generation as well as its
+  stable internal tool ID.
+- Catalog replacement is atomic and leaves the previous catalog intact on a
+  failed refresh. Stale list generations receive bounded retries.
+- Disconnect revokes provider availability before the worker command; manager
+  status resynchronization retires servers that disappeared unexpectedly.
 - Map transport/protocol failures to `ToolProviderError(..., uncertain=...)`;
   return `ToolExecutionResult(ok=False, error_source="tool")` for tool-level
   errors.

@@ -1,8 +1,8 @@
 # Tool system architecture
 
-Status: implemented (T01–T06). Scope: the Python tool foundation inside the
-NVDA add-on. The Rust MCP manager is deliberately **not** part of this
-milestone; this document defines the boundary it will plug into.
+Status: Python tool foundation implemented; production Rust MCP integration is
+implemented behind the same provider and registry boundary. See Section 11
+and `docs/mcp/PRODUCTION_ARCHITECTURE.md` for MCP process and catalog ownership.
 
 ## 1. Layers
 
@@ -18,7 +18,7 @@ service/llm.py ── provider request → tool loop (bounded) → provider requ
    ▼
 tools/executor.py ── validate · authorize · bound · normalize · diagnose
    ▼
-tools/provider.py ── ToolProvider backend (native now, MCP client later)
+tools/provider.py ── ToolProvider backend (native or MCP adapter)
 ```
 
 The Python application/service layer is authoritative for the enabled tool
@@ -147,8 +147,8 @@ class ToolProvider(Protocol):
     def execute(self, definition, arguments, context: ToolCallContext) -> object: ...
 ```
 
-`NativeToolBackend` adapts a callable; a future `McpToolProvider` will adapt the
-Rust manager's request/response protocol. `ToolCallContext` carries identity,
+`NativeToolBackend` adapts a callable; `McpToolProvider` adapts the Rust
+manager's request/response protocol through the private worker. `ToolCallContext` carries identity,
 correlation, timeout and a cancellation probe. Backends raise
 `ToolProviderError` for transport/protocol failures (with `uncertain=True` when
 the request may have been delivered) and return `ToolExecutionResult(ok=False)`
@@ -275,29 +275,34 @@ schemas needing other regex features must simplify or pre-normalize them.
   `budget_exceeded` tool results before a final assistant message, so the
   transcript is always valid for the next request.
 
-## 11. Future Rust MCP integration points
+## 11. Rust MCP integration
 
-The Rust manager (not implemented here) should:
+`worker/mcp_manager.py` owns the lazily launched Rust `rmcp` manager from the
+private Python worker. `tools/mcp_provider.py` adapts the existing
+`ToolProvider` interface; `tools/mcp_catalog.py` maps exact source tool names,
+server/session/incarnation/catalog identities and schemas into the existing
+registry. The execution path still passes through `ToolExecutor` validation,
+live availability checks, host policy, budgets, cancellation and result
+normalization. The Rust manager owns MCP transports and sessions, never Python
+authorization or conversation state.
 
-1. Own transport, discovery and `tools/list` / `tools/call`.
-2. Hand normalized tool descriptions to `ToolDefinition.from_provider_payload`
-   (or the equivalent dict) via `ToolRegistry.register_external_tools(...)` /
-   `replace_provider_catalog(...)`, one provider id per server.
-3. Implement `ToolProvider.execute(definition, arguments, context)` in a small
-   Python adapter that calls the Rust client, and register it as the provider
-   backend.
-4. Map protocol/transport errors to `ToolProviderError(uncertain=…)`; return
-   `ToolExecutionResult(ok=False, error_source="tool")` for `isError=true`
-   results.
-5. Call `set_provider_available(provider_id, False)` on disconnect and
-   `unregister_provider` on removal.
-6. Never rely on server metadata for authorization; the host approval sets are
-   the only authority. The host should add approvals keyed by stable `tool_id`
-   (which includes the provider id and original tool name).
+`McpCatalogService` consumes bounded worker events off the NVDA event thread.
+List-change events refresh one server; queue overflow or notification-stream
+failure causes authoritative status resynchronization. Missing servers are
+revoked and removed. A list response whose generation changes during fetching
+is rejected as stale and retried a bounded number of times. See
+[`../mcp/IPC_CONTRACT.md`](../mcp/IPC_CONTRACT.md) and
+[`../mcp/PRODUCTION_ARCHITECTURE.md`](../mcp/PRODUCTION_ARCHITECTURE.md).
 
-No core rewrite is required for this: identity, naming, snapshots, validation,
-policy, budgeting, cancellation and result classification are already
-provider-neutral.
+The core validator remains strict about Draft 2020-12. The MCP catalog adapter
+accepts a conservative Draft 7 subset used by NVDA MCP Bridge, preserving
+shared constraints and rejecting known dialect-specific assertions that are
+not translated.
+
+`ui/mcp_settings.py` persists server records, displays connection/tool state,
+and manages narrowly scoped per-tool approvals. HTTP bearer tokens are resolved
+through protected settings and sent only to the worker for the HTTP transport.
+Server annotations and tool output do not grant access.
 
 ## 12. Security and concurrency review
 
@@ -321,14 +326,18 @@ provider-neutral.
 1. Timeout/cancellation cannot kill an in-process native handler; a hung
    handler keeps one of eight process-wide slots occupied. It is reported as
    unconfirmed and never retried, but it may still produce side effects.
-2. No permission UI yet: external tools cannot be approved through the UI, so
-   they stay denied until a future host-surface approval flow lands.
-3. The custom JSON Schema implementation intentionally rejects unevaluated and
+2. No stdio environment secret-reference editor exists yet; users must not put
+   credentials in arguments. This limits servers whose authentication requires
+   environment variables.
+3. Real NVDA keyboard and speech validation has not been performed for the MCP
+   settings controls; the live safe read-only Bridge call used a narrow test
+   approval outside the settings UI.
+4. The custom JSON Schema implementation intentionally rejects unevaluated and
    dynamic-reference assertions and ignores `format` semantics by default; it
    does not support external/remote or recursive `$ref`. An MCP server relying
    on these needs schema pre-resolution or a supported schema profile.
-4. Parallel tool execution is modelled in `ToolExecutionBudget` but executes
+5. Parallel tool execution is modelled in `ToolExecutionBudget` but executes
    serially by design; enabling it needs per-tool side-effect analysis.
-5. `ToolDefinition` keeps a legacy `executor` field for constructor
+6. `ToolDefinition` keeps a legacy `executor` field for constructor
    compatibility; handlers are stripped from snapshots, but callers can still
    construct a definition with a callback embedded.
