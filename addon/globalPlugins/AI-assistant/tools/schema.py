@@ -38,26 +38,24 @@ _LENGTH_KEYS = (
 _UNSUPPORTED_ASSERTIONS = frozenset({"unevaluatedProperties", "unevaluatedItems", "$dynamicRef", "$dynamicAnchor"})
 MAX_REGEX_PATTERN_CHARS = 512
 MAX_REGEX_INPUT_CHARS = 8192
+_SUPPORTED_SCHEMA_URIS = frozenset({
+	"https://json-schema.org/draft/2020-12/schema",
+	"http://json-schema.org/draft/2020-12/schema",
+})
 
 
-class FrozenList(list[Any]):
-	"""A JSON-serializable list that rejects ordinary mutation attempts."""
+class FrozenList(tuple[Any, ...]):
+	"""Immutable JSON array with list-compatible equality for public schemas."""
 
-	def _immutable(self, *args: Any, **kwargs: Any) -> None:
-		raise TypeError("frozen JSON array cannot be modified")
+	def __new__(cls, items: Any = ()) -> "FrozenList":
+		return super().__new__(cls, items)
 
-	__setitem__ = _immutable
-	__delitem__ = _immutable
-	append = _immutable
-	clear = _immutable
-	extend = _immutable
-	insert = _immutable
-	pop = _immutable
-	remove = _immutable
-	reverse = _immutable
-	sort = _immutable
-	__iadd__ = _immutable
-	__imul__ = _immutable
+	def __eq__(self, other: object) -> bool:
+		if isinstance(other, (list, tuple)):
+			return tuple.__eq__(self, tuple(other))
+		return NotImplemented
+
+	__hash__ = None
 
 
 class ToolSchemaError(ValueError):
@@ -222,6 +220,14 @@ def _validate_schema_node(schema: Any, path: str, *, depth: int, root: Mapping[s
 			f"{path}.{keyword}: this assertion is not supported by the tool validator; "
 			"remove it or use supported constraints"
 		)
+	if depth == 0 and "$schema" in schema:
+		dialect = schema["$schema"]
+		if not isinstance(dialect, str):
+			raise ToolSchemaError(f"{path}.$schema: must be a string naming the Draft 2020-12 dialect")
+		if dialect.removesuffix("#") not in _SUPPORTED_SCHEMA_URIS:
+			raise ToolSchemaError(
+				f"{path}.$schema: only JSON Schema Draft 2020-12 is supported, got {dialect!r}"
+			)
 	if "$vocabulary" in schema:
 		vocabulary = schema["$vocabulary"]
 		if not isinstance(vocabulary, Mapping):
@@ -421,10 +427,11 @@ def _validate_pattern(pattern: Any, path: str) -> None:
 def _is_safe_regex(pattern: str) -> bool:
 	"""Conservatively accept a bounded subset of Python/ECMA-style patterns.
 
-	Only one unbounded quantifier is allowed. It may apply to one atom or a
-	group without alternation or nested repetition. Ambiguous repeated groups
-	are rejected. Runtime matching also has strict pattern, input, and bounded-
-	repeat ceilings.
+	At most one quantifier may be unbounded. It cannot be combined with other
+	quantifiers because Python's backtracking engine can otherwise revisit
+	ambiguous partitions for each search position. Bounded quantifiers have a
+	small aggregate work ceiling; ambiguous repeated groups are rejected.
+	Runtime matching also caps pattern and candidate string lengths.
 	"""
 	stack: list[dict[str, bool]] = []
 	in_class = False
@@ -489,7 +496,7 @@ def _is_safe_regex(pattern: str) -> bool:
 			else:
 				bounded_work *= 2
 				quantifier_count += 1
-			if bounded_work > 65_536 or quantifier_count > 16:
+			if bounded_work > 256 or quantifier_count > 8:
 				return False
 			if last_group_risky:
 				return False
@@ -499,7 +506,13 @@ def _is_safe_regex(pattern: str) -> bool:
 		else:
 			last_group_risky = False
 		index += 1
-	return not escaped and not in_class and not stack and unbounded_count <= 1
+	return (
+		not escaped
+		and not in_class
+		and not stack
+		and unbounded_count <= 1
+		and not (unbounded_count and quantifier_count)
+	)
 
 
 def _assert_no_ref_cycle(root: Mapping[str, Any], path: str) -> None:
@@ -817,7 +830,7 @@ def _declared_types(schema: Mapping[str, Any]) -> tuple[str, ...]:
 	declared = schema.get("type")
 	if isinstance(declared, str):
 		return (declared,)
-	if isinstance(declared, list):
+	if isinstance(declared, Sequence) and not isinstance(declared, (str, bytes)):
 		return tuple(item for item in declared if isinstance(item, str))
 	return ()
 

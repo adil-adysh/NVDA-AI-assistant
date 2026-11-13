@@ -219,6 +219,31 @@ def test_unsupported_assertion_vocabulary_fails_closed() -> None:
 		ToolDefinition(name="strict", description="strict", input_schema={"type": "object", "unevaluatedProperties": False})
 
 
+def test_declared_schema_dialect_must_match_the_validator_profile() -> None:
+	with pytest.raises(ToolSchemaError, match=r"\$schema.*2020-12"):
+		ToolDefinition(
+			name="legacy-dialect",
+			description="legacy dialect",
+			input_schema={
+				"$schema": "https://json-schema.org/draft/2019-09/schema",
+				"type": "object",
+				"properties": {"nested": {"$recursiveRef": "#"}},
+			},
+		)
+	with pytest.raises(ToolSchemaError, match=r"\$schema.*string"):
+		ToolDefinition(name="bad-dialect", description="bad dialect", input_schema={"$schema": ["not-a-uri"]})
+
+	definition = ToolDefinition(
+		name="current-dialect",
+		description="current dialect",
+		input_schema={
+			"$schema": "https://json-schema.org/draft/2020-12/schema",
+			"type": "object",
+		},
+	)
+	assert definition.input_schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+
+
 def test_zero_multiple_of_is_rejected_and_integer_accepts_integral_float() -> None:
 	with pytest.raises(ToolSchemaError, match="multipleOf.*greater than zero"):
 		ToolDefinition(name="bad", description="bad", input_schema={"type": "object", "properties": {"n": {"multipleOf": 0}}})
@@ -238,12 +263,33 @@ def test_json_numeric_and_nested_value_equality_survives_frozen_schemas() -> Non
 	assert validate_arguments(schema, {"value": {"items": [1, {"enabled": True}]}, "unique": [1, 1.0]})
 
 
+def test_union_types_remain_enforced_in_frozen_definition_schemas() -> None:
+	definition = ToolDefinition(
+		name="union",
+		description="union type",
+		input_schema={"type": "object", "properties": {"value": {"type": ["string", "null"]}}},
+	)
+	assert validate_arguments(definition.input_schema, {"value": "ok"}) == ()
+	assert validate_arguments(definition.input_schema, {"value": None}) == ()
+	assert validate_arguments(definition.input_schema, {"value": 3})
+
+
 def test_nested_repetition_patterns_are_rejected_but_simple_patterns_work() -> None:
 	with pytest.raises(ToolSchemaError, match="unsafe regular expression"):
 		ToolDefinition(name="unsafe", description="unsafe", input_schema={"type": "object", "properties": {"x": {"pattern": "(a+)+$"}}})
 	schema = {"type": "object", "properties": {"x": {"pattern": "^[a-z]{1,20}$"}}}
 	assert validate_arguments(schema, {"x": "safe"}) == ()
 	assert validate_arguments(schema, {"x": "Bad"})
+
+
+def test_regex_complexity_budget_rejects_optional_explosion_and_star_overlap() -> None:
+	for pattern in ("a?" * 16 + "b", "a*" + "a?" * 8 + "b"):
+		with pytest.raises(ToolSchemaError, match="unsafe regular expression"):
+			ToolDefinition(
+				name="bounded-regex",
+				description="bounded regex",
+				input_schema={"type": "object", "properties": {"value": {"pattern": pattern}}},
+			)
 
 
 @pytest.mark.parametrize(
@@ -307,6 +353,9 @@ def test_definition_schema_and_metadata_are_deeply_immutable() -> None:
 		definition.input_schema["properties"]["x"]["type"] = "integer"
 	with pytest.raises((TypeError, AttributeError)):
 		definition.input_schema["properties"]["x"]["enum"].append("c")
+	# The stored array must not be mutable through the base list API either.
+	with pytest.raises((TypeError, AttributeError)):
+		list.append(definition.input_schema["properties"]["x"]["enum"], "c")
 	with pytest.raises(TypeError):
 		definition.metadata["nested"]["new"] = True
 	with pytest.raises((TypeError, AttributeError)):
