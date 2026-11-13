@@ -135,6 +135,75 @@ async fn rejected_pre_handshake_invocations_do_not_consume_pending_capacity() {
 }
 
 #[tokio::test]
+async fn stdio_command_saturation_rejects_work_but_preserves_control_plane() {
+    let marker = unique_marker("command-saturation");
+    let mut manager = tokio::process::Command::new(env!("CARGO_BIN_EXE_mcp_manager"))
+        .env("NVDA_MCP_MAX_ACTIVE_COMMANDS", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = manager.stdin.take().unwrap();
+    let mut stdout = BufReader::new(manager.stdout.take().unwrap());
+    let hello = send_manager_command(
+        &mut stdin,
+        &mut stdout,
+        json!({"op":"hello", "id":"saturated-hello", "protocol_version":1}),
+    )
+    .await;
+    assert_eq!(hello["ok"], true);
+
+    let mut frame = serde_json::to_vec(&json!({
+        "op":"connect_stdio", "id":"saturated-connect", "server_id":"slow",
+        "executable":env!("CARGO_BIN_EXE_mock_mcp"),
+        "args":["--hang-init", marker.display().to_string()], "env":{}
+    }))
+    .unwrap();
+    frame.push(b'\n');
+    stdin.write_all(&frame).await.unwrap();
+    stdin.flush().await.unwrap();
+    wait_for_exists(&marker).await;
+
+    let rejected = send_manager_command(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "op":"connect_stdio", "id":"saturated-rejected", "server_id":"other",
+            "executable":env!("CARGO_BIN_EXE_mock_mcp"), "args":[], "env":{}
+        }),
+    )
+    .await;
+    assert_eq!(rejected["error"]["category"], "capacity");
+
+    let status = send_manager_command(
+        &mut stdin,
+        &mut stdout,
+        json!({"op":"status", "id":"saturated-status"}),
+    )
+    .await;
+    assert_eq!(status["ok"], true, "{status:#}");
+    assert_eq!(status["servers"][0]["state"], "connecting");
+
+    let started = Instant::now();
+    let shutdown = send_manager_command(
+        &mut stdin,
+        &mut stdout,
+        json!({"op":"shutdown", "id":"saturated-shutdown"}),
+    )
+    .await;
+    assert_eq!(shutdown["shutdown"], true, "{shutdown:#}");
+    assert!(started.elapsed() < Duration::from_millis(500));
+    drop(stdin);
+    let status = tokio::time::timeout(Duration::from_secs(3), manager.wait())
+        .await
+        .expect("manager did not exit after shutdown under command saturation")
+        .unwrap();
+    assert!(status.success(), "{status}");
+    let _ = tokio::fs::remove_file(marker).await;
+}
+
+#[tokio::test]
 async fn parent_eof_cancels_pending_initialization_and_exits_manager() {
     let marker = unique_marker("parent-eof");
     let mut manager = tokio::process::Command::new(env!("CARGO_BIN_EXE_mcp_manager"))

@@ -942,7 +942,13 @@ pub async fn run_stdio() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     use tokio::{io::BufReader, task::JoinSet};
     let mut input = BufReader::new(tokio::io::stdin());
     let mut output = tokio::io::stdout();
-    let manager = Manager::new();
+    let mut config = ManagerConfig::default();
+    if let Ok(value) = std::env::var("NVDA_MCP_MAX_ACTIVE_COMMANDS")
+        && let Ok(limit) = value.parse::<usize>()
+    {
+        config.max_active_commands = limit;
+    }
+    let manager = Manager::with_config(config);
     let mut event_rx = manager.events.subscribe();
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Reply>(128);
     let mut tasks = JoinSet::new();
