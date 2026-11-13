@@ -78,6 +78,21 @@ def test_serialized_schema_is_a_copy() -> None:
 	assert tool.input_schema["properties"]["filters"]["items"]["properties"]["field"]["enum"] == ["title", "body"]
 
 
+def test_frozen_canonical_schema_preserves_constraints() -> None:
+	definition = tools.ToolDefinition(
+		name="frozen",
+		description="Frozen",
+		input_schema={"type": "object", "properties": {"value": {"type": "integer", "minimum": 3}}},
+	)
+	canonical_tool = Tool(
+		name=definition.name,
+		description=definition.description,
+		input_schema=definition.input_schema,
+	)
+	parameters = build_function_tool_definition(canonical_tool)["function"]["parameters"]
+	assert parameters["properties"]["value"]["minimum"] == 3
+
+
 def test_normalize_tool_calls_decodes_json_arguments() -> None:
 	calls = normalize_tool_calls(
 		[{"id": "1", "function": {"name": "search", "arguments": '{"filters": [{"field": "title"}]}'}}]

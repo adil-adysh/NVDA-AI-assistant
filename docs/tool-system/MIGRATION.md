@@ -26,6 +26,8 @@ What changed:
   a rebuilt `{type, properties, required}` object.
 - `ToolDefinition` is immutable and deep-copies its schemas. Mutating the
   dictionary you passed in no longer affects the definition.
+- Nested schemas, provider metadata and annotation payloads are deeply frozen;
+  use serialization helpers to obtain mutable copies.
 - An invalid name or invalid schema now raises at construction time
   (`ValueError` / `ToolSchemaError`) instead of failing later at a provider.
 
@@ -58,10 +60,11 @@ duplicates. New capabilities:
 | `register_tool` | `register`, `register_provider_tools`, `register_external_tools`, `replace_provider_catalog` |
 | `get_definitions()` | kept (wire dicts); prefer `get_enabled_definitions()` / `snapshot()` |
 | `get_tool_names()` | kept; returns enabled model-facing names |
-| `execute(tool_call)` | deprecated compatibility path; use `ToolExecutor` for policy/timeouts |
+| `execute(tool_call)` | removed; use `ToolExecutor` for policy/timeouts |
 
-`ToolRegistry.execute()` cannot enforce policy, budgets or timeouts and should
-not be used by new code.
+`ToolRegistry.execute()` was removed because it bypassed policy, budgets,
+validation and normalization. `ToolExecutor` is the only supported execution
+entrypoint. Binding internals are private implementation details.
 
 ### Names
 

@@ -64,11 +64,20 @@ Operations:
 - `replace_provider_catalog` — build + validate the replacement first, then
   swap atomically. A failure leaves the previous catalog and generation intact.
 - `unregister` / `unregister_provider` — removed tools vanish from new
-  snapshots; already-resolved snapshots remain valid for in-flight calls.
+  snapshots; retained bindings preserve identity but live revocation prevents
+  new dispatch after removal.
 - `update` — replace metadata/handler without changing `tool_id`.
 - `set_provider_available` / `set_tool_available` — hide without losing identity.
 - `get_enabled_definitions`, `get_definitions` (compatibility wire dicts),
   `get_tool_names`, `snapshot`, `resolve`.
+
+Availability changes and unregister operations also revoke dispatch against
+retained snapshots. `ToolExecutor` checks the live registry gate immediately
+before starting a handler, so a snapshot preserves identity across a catalog
+refresh but cannot override a live provider/tool disablement. Policy can be
+replaced through the executor; replacement denies newly disallowed calls and
+signals matching active calls to cancel cooperatively. Re-enabling availability
+does not reinstate an approval removed from the current policy.
 
 ### Naming
 
@@ -106,17 +115,21 @@ and `tests/tools/test_provider_contract.py`.
 3. Validate arguments against `input_schema`; no execution on failure.
 4. Apply the permission policy.
 5. Enforce the budget (turn duration, call count, per-call timeout).
-6. Check cancellation before starting.
+6. Check cancellation and live provider/tool availability before starting.
 7. Run the backend on a daemon thread and join with a deadline, polling for
    cancellation every 20 ms.
 8. Normalize the outcome into `ToolExecutionResult` (identity, call id,
    content blocks, structured content, category, duration, correlation,
-   cancellation/timeout/uncertainty) and bound its size.
+   cancellation/timeout/uncertainty) and bound its complete persisted envelope.
 9. Update in-process diagnostics counters.
 
 Backends return either a JSON value, text, `ToolContentBlock`, or a
 `ToolExecutionResult`. A returned `ToolExecutionResult(ok=False)` is treated as
 a **tool-level** error (the future MCP `isError=true` case), never as success.
+At most eight tool handler threads may be outstanding process-wide. Timeout or
+cancellation signals the backend and returns promptly, but the admission slot
+is retained until the handler really exits; an exhausted gate returns a
+bounded budget error without starting another thread.
 
 ### Budgets
 
@@ -166,7 +179,8 @@ redacted; structured category/source/correlation fields remain available.
 - Cancellation is request-scoped via the existing `CancellationToken` /
   context variable.
 - A call cancelled before dispatch returns `cancelled`.
-- A call cancelled (or timed out) while running returns promptly with
+- A call cancelled (or timed out) while running signals its cooperative probe,
+  returns promptly with
   `termination_confirmed=False`; the daemon thread cannot be force-killed and
   may finish its side effects later.
 - `ProviderLLMService` re-checks cancellation between calls, so a stop skips
@@ -184,8 +198,9 @@ redacted; structured category/source/correlation fields remain available.
    `read_only_hint=True`.
 
 Everything else is denied. External annotations (`readOnlyHint`,
-`destructiveHint`, titles, descriptions) are ignored for authorization, and the
-policy is immutable so a tool result or error cannot change it. The plugin
+`destructiveHint`, titles, descriptions) are ignored for authorization. The
+executor can replace its current policy through a synchronized boundary, and
+policy changes revoke and signal affected active operations. The plugin
 composition root uses the deny-by-default policy; tests may inject
 `AllowAllToolPermissionPolicy`.
 
@@ -198,7 +213,9 @@ loaded inside NVDA; that packaging risk is out of scope and would violate the
 
 Supported (and preserved) keywords include: `type` (string or list), `properties`,
 `patternProperties`, `required`, `additionalProperties` (bool or schema),
-`items`/`prefixItems`, `minItems`/`maxItems`/`uniqueItems`, `enum`, `const`,
+`items`/`prefixItems`, `minItems`/`maxItems`/`uniqueItems`, `contains`,
+`minContains`/`maxContains`, `propertyNames`, `dependentRequired`,
+`dependentSchemas`, `if`/`then`/`else`, `enum`, `const`,
 `$defs`/`definitions` + local `$ref`, `allOf`/`anyOf`/`oneOf`/`not`,
 `minLength`/`maxLength`/`pattern`, numeric bounds and `multipleOf`,
 `minProperties`/`maxProperties`, `title`/`description`/`format`/`default`.
@@ -208,8 +225,14 @@ keyword shapes; argument validation produces bounded, path-addressed
 `SchemaViolation`s. Input schemas must be object-rooted; output schemas may be
 any JSON type. Serialization uses sorted compact JSON
 (`serialize_schema`/`schema_fingerprint`) for deterministic fingerprints, and
-all schema dictionaries are deep-copied so provider dictionaries are never
-mutated or aliased.
+schema, metadata and annotation data are deeply frozen at definition boundaries.
+Serialization explicitly thaws copies. Unsupported assertion vocabularies such
+as `unevaluatedProperties` are rejected rather than silently ignored. Regex
+patterns use a bounded safe subset; nested repetition, backreferences and
+lookarounds are rejected, and candidate strings are capped. `format` remains
+annotation-only under the default Draft 2020-12 vocabulary. Integral floating
+point values satisfy the JSON Schema `integer` type, and `multipleOf` uses
+base-10 decimal arithmetic.
 
 ## 10. Conversation history representation
 
@@ -256,13 +279,13 @@ provider-neutral.
 - **Thread affinity**: no NVDA object-model access added. Snapshot resolution
   happens on the chat worker; tool handlers run on daemon threads (or the chat
   worker) — never the NVDA main thread.
-- **Authorization**: deny-by-default; external metadata untrusted; immutable
-  policy; approvals are host-owned.
+- **Authorization**: deny-by-default; external metadata untrusted; policy
+  replacement revokes newly unauthorized work; approvals are host-owned.
 - **Data exposure**: bounded results and errors; secret redaction; unsupported
   content is marked, not rendered; no tool output can change policy.
 - **Races**: registry state behind one lock; immutable snapshots published by
-  single reference assignment; generation recorded per binding; in-flight
-  calls cannot be redirected (tested).
+  single reference assignment; generation recorded per binding; live dispatch
+  checks make disable/removal effective against retained snapshots (tested).
 - **Runaway work**: per-call timeout, turn timeout, call and iteration caps;
   timers poll cancellation; no automatic retries.
 - **Persistence**: envelopes are JSON-safe and round-trip through both the JSON
@@ -271,13 +294,14 @@ provider-neutral.
 ## 13. Remaining risks
 
 1. Timeout/cancellation cannot kill an in-process native handler; a hung
-   handler keeps a daemon thread alive. It is reported as unconfirmed and
-   never retried, but it may still produce side effects.
+   handler keeps one of eight process-wide slots occupied. It is reported as
+   unconfirmed and never retried, but it may still produce side effects.
 2. No permission UI yet: external tools cannot be approved through the UI, so
    they stay denied until a future host-surface approval flow lands.
-3. The custom JSON Schema subset ignores `format` semantics and does not
-   support external/remote `$ref`. Neither is used by the current native tools;
-   an MCP server relying on remote refs would need schema pre-resolution.
+3. The custom JSON Schema implementation intentionally rejects unevaluated and
+   dynamic-reference assertions and ignores `format` semantics by default; it
+   does not support external/remote or recursive `$ref`. An MCP server relying
+   on these needs schema pre-resolution or a supported schema profile.
 4. Parallel tool execution is modelled in `ToolExecutionBudget` but executes
    serially by design; enabling it needs per-tool side-effect analysis.
 5. `ToolDefinition` keeps a legacy `executor` field for constructor

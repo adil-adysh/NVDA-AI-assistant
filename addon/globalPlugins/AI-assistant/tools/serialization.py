@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 from ..core.canonical import Tool
@@ -16,7 +17,7 @@ def build_function_tool_definition(tool: Tool) -> dict[str, object]:
 	only when a legacy caller omitted ``input_schema``.
 	"""
 	schema = tool.input_schema
-	if not isinstance(schema, dict):
+	if not isinstance(schema, Mapping):
 		schema = {
 			"type": "object",
 			"properties": clone_schema(tool.parameters),

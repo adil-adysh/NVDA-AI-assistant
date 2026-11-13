@@ -110,7 +110,8 @@ def test_unregistered_provider_tools_become_unknown() -> None:
 def test_catalog_refresh_does_not_redirect_an_inflight_call() -> None:
 	registry, first, _ = _registry_with_two_servers()
 	policy = tools.DefaultToolPermissionPolicy(approved_provider_ids=frozenset({"server-a"}))
-	binding = registry.snapshot().require("mcp_server-a__lookup")
+	old_snapshot = registry.snapshot()
+	binding = old_snapshot.require("mcp_server-a__lookup")
 	replacement = FakeServer("server-a", "NEW")
 	registry.replace_provider_catalog(
 		"server-a",
@@ -118,15 +119,17 @@ def test_catalog_refresh_does_not_redirect_an_inflight_call() -> None:
 		backend=replacement,
 	)
 	executor = ToolExecutor(registry, policy=policy)
-	# The in-flight snapshot still targets the original binding.
-	result = executor.execute(
-		ToolCall(name=binding.model_name, arguments={"key": "x"}, id="1"),
+	old_result = executor.execute(
+		ToolCall(name=binding.model_name, arguments={"key": "old"}, id="old"),
+		snapshot=old_snapshot,
+	)
+	new_result = executor.execute(
+		ToolCall(name=binding.model_name, arguments={"key": "x"}, id="new"),
 		snapshot=registry.snapshot(),
 	)
-	assert result.ok
-	assert result.text == "NEW:x"  # the executor resolves the *new* snapshot here
-	# Directly invoking the captured binding reaches the original backend.
-	assert binding.invoke({"key": "old"}, _context(binding)) == "A:old"
+	assert old_result.ok and old_result.text == "A:old"
+	assert new_result.ok and new_result.text == "NEW:x"
+	assert not hasattr(binding, "invoke")
 	assert first.calls[-1] == ("lookup", {"key": "old"})
 	assert replacement.calls == [("lookup", {"key": "x"})]
 
@@ -179,14 +182,3 @@ def test_output_schema_and_original_name_survive_registration() -> None:
 	assert binding.definition.output_schema["properties"]["value"]["type"] == "string"
 	provider_tool = registry.snapshot().provider_tools()[0]
 	assert provider_tool.input_schema["properties"]["key"]["type"] == "string"
-
-
-def _context(binding):
-	return tools.ToolCallContext(
-		tool_id=binding.tool_id,
-		tool_name=binding.model_name,
-		tool_call_id="inflight",
-		provider_id=binding.provider_id,
-		timeout_seconds=None,
-		cancellation_requested=lambda: False,
-	)

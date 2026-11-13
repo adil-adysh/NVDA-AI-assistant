@@ -107,6 +107,8 @@ def test_output_schema_is_optional_and_validated() -> None:
 	assert normalize_output_schema(None) is None
 	output = normalize_output_schema({"type": "array", "items": {"type": "string"}})
 	assert output["type"] == "array"
+	assert normalize_output_schema(True) is True
+	assert normalize_output_schema(False) is False
 	with pytest.raises(ToolSchemaError, match="outputSchema.type"):
 		normalize_output_schema({"type": "nonsense"})
 
@@ -175,3 +177,113 @@ def test_one_of_and_any_of() -> None:
 	assert validate_arguments(schema, {"value": 3}) == ()
 	assert validate_arguments(schema, {"value": 1})
 	assert validate_arguments(schema, {"value": True})
+
+
+def test_ref_sibling_assertions_are_enforced() -> None:
+	schema = {
+		"type": "object",
+		"properties": {"value": {"$ref": "#/$defs/non_negative", "maximum": 3}},
+		"$defs": {"non_negative": {"minimum": 0}},
+	}
+	assert validate_arguments(schema, {"value": 2}) == ()
+	assert validate_arguments(schema, {"value": 4})
+	assert validate_arguments(schema, {"value": -1})
+
+
+def test_conditional_and_dependent_required_assertions_are_enforced() -> None:
+	schema = {
+		"type": "object",
+		"if": {"properties": {"kind": {"const": "file"}}, "required": ["kind"]},
+		"then": {"required": ["path"]},
+		"else": {"required": ["url"]},
+		"dependentRequired": {"credential": ["user"]},
+	}
+	assert validate_arguments(schema, {"kind": "file", "path": "a"}) == ()
+	assert validate_arguments(schema, {"kind": "file"})
+	assert validate_arguments(schema, {"credential": "secret"})
+
+
+def test_property_names_and_contains_cardinality_are_enforced() -> None:
+	schema = {
+		"type": "object",
+		"propertyNames": {"pattern": "^[a-z]+$"},
+		"properties": {"items": {"type": "array", "contains": {"type": "integer", "minimum": 3}, "minContains": 2, "maxContains": 2}},
+	}
+	assert validate_arguments(schema, {"items": [3, 4, "x"]}) == ()
+	assert validate_arguments(schema, {"items": [3]})
+	assert validate_arguments(schema, {"Bad": 1, "items": [3, 4, 5]})
+
+
+def test_unsupported_assertion_vocabulary_fails_closed() -> None:
+	with pytest.raises(ToolSchemaError, match="unevaluatedProperties.*not supported"):
+		ToolDefinition(name="strict", description="strict", input_schema={"type": "object", "unevaluatedProperties": False})
+
+
+def test_zero_multiple_of_is_rejected_and_integer_accepts_integral_float() -> None:
+	with pytest.raises(ToolSchemaError, match="multipleOf.*greater than zero"):
+		ToolDefinition(name="bad", description="bad", input_schema={"type": "object", "properties": {"n": {"multipleOf": 0}}})
+	assert validate_arguments({"type": "object", "properties": {"n": {"type": "integer"}}}, {"n": 2.0}) == ()
+	assert validate_arguments({"type": "object", "properties": {"n": {"multipleOf": 0.1}}}, {"n": 0.3}) == ()
+
+
+def test_json_numeric_and_nested_value_equality_survives_frozen_schemas() -> None:
+	schema = {
+		"type": "object",
+		"properties": {
+			"value": {"const": {"items": [1, {"enabled": True}]}},
+			"unique": {"type": "array", "uniqueItems": True},
+		},
+	}
+	assert validate_arguments(schema, {"value": {"items": [1.0, {"enabled": True}]}, "unique": [1, 2]}) == ()
+	assert validate_arguments(schema, {"value": {"items": [1, {"enabled": True}]}, "unique": [1, 1.0]})
+
+
+def test_nested_repetition_patterns_are_rejected_but_simple_patterns_work() -> None:
+	with pytest.raises(ToolSchemaError, match="unsafe regular expression"):
+		ToolDefinition(name="unsafe", description="unsafe", input_schema={"type": "object", "properties": {"x": {"pattern": "(a+)+$"}}})
+	schema = {"type": "object", "properties": {"x": {"pattern": "^[a-z]{1,20}$"}}}
+	assert validate_arguments(schema, {"x": "safe"}) == ()
+	assert validate_arguments(schema, {"x": "Bad"})
+
+
+@pytest.mark.parametrize(
+	"schema",
+	[
+		{"type": None},
+		{"required": None},
+		{"properties": None},
+		{"properties": {"value": {"maximum": None}}},
+		{"properties": {"value": {"multipleOf": None}}},
+		{"maxContains": 1},
+	],
+)
+def test_present_validation_keywords_cannot_use_null_as_omission(schema) -> None:
+	with pytest.raises(ToolSchemaError):
+		ToolDefinition(name="invalid", description="invalid", input_schema={"type": "object", **schema})
+
+
+def test_empty_prefix_items_is_a_valid_draft_2020_12_schema() -> None:
+	assert normalize_output_schema({"type": "array", "prefixItems": []}) == {
+		"type": "array",
+		"prefixItems": [],
+	}
+
+
+def test_definition_schema_and_metadata_are_deeply_immutable() -> None:
+	definition = ToolDefinition(
+		name="immutable",
+		description="immutable",
+		input_schema={"type": "object", "properties": {"x": {"enum": ["a", "b"]}}},
+		metadata={"nested": {"items": [1, 2]}},
+		annotations=definition_module.ToolAnnotations(raw={"nested": {"items": [1, 2]}}),
+	)
+	fingerprint = definition.schema_fingerprint
+	with pytest.raises(TypeError):
+		definition.input_schema["properties"]["x"]["type"] = "integer"
+	with pytest.raises((TypeError, AttributeError)):
+		definition.input_schema["properties"]["x"]["enum"].append("c")
+	with pytest.raises(TypeError):
+		definition.metadata["nested"]["new"] = True
+	with pytest.raises((TypeError, AttributeError)):
+		definition.annotations.raw["nested"]["items"].append(3)
+	assert definition.schema_fingerprint == fingerprint

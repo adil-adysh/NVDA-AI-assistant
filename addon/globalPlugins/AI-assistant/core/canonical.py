@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections.abc import Mapping
 from typing import Any, Literal
 
 
@@ -26,10 +27,10 @@ class Tool:
 
 	name: str
 	description: str
-	parameters: dict[str, Any] = field(default_factory=dict)
+	parameters: Mapping[str, Any] = field(default_factory=dict)
 	required: tuple[str, ...] = field(default_factory=tuple)
-	input_schema: dict[str, Any] | None = None
-	output_schema: dict[str, Any] | None = None
+	input_schema: Mapping[str, Any] | None = None
+	output_schema: Mapping[str, Any] | bool | None = None
 	provider_tool_name: str | None = None
 	tool_id: str | None = None
 

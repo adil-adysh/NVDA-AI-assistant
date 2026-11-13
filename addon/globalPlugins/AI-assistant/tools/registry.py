@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any
 
 from ..core.canonical import Tool
-from ..core.tooling import ToolArguments, ToolCall
+from ..core.tooling import ToolArguments
 from .definition import ToolDefinition, ToolExecutorCallable
 from .errors import ToolError, UnknownToolError
 from .naming import (
@@ -42,14 +42,15 @@ class ToolBinding:
 	model_name: str
 	tool_id: str
 	generation: int
-	handler: ToolExecutorCallable | None = None
-	backend: ToolProvider | None = None
+	_handler: ToolExecutorCallable | None = field(default=None, repr=False)
+	_backend: ToolProvider | None = field(default=None, repr=False)
 
-	def invoke(self, arguments: ToolArguments, context: ToolCallContext) -> object:
-		if self.backend is not None:
-			return self.backend.execute(self.definition, arguments, context)
-		if self.handler is not None:
-			return self.handler(arguments)
+	def _invoke(self, arguments: ToolArguments, context: ToolCallContext) -> object:
+		"""Internal dispatch hook. Public execution must go through ToolExecutor."""
+		if self._backend is not None:
+			return self._backend.execute(self.definition, arguments, context)
+		if self._handler is not None:
+			return self._handler(arguments)
 		raise ToolError(
 			f"Tool '{self.model_name}' has no execution backend",
 			safe_message=f"Tool '{self.model_name}' is unavailable.",
@@ -116,6 +117,7 @@ class ToolRegistry:
 		self._lock = threading.RLock()
 		self._entries: dict[str, _ToolEntry] = {}
 		self._provider_available: dict[str, bool] = {}
+		self._revoked_tool_ids: set[str] = set()
 		self._generation = 0
 		self._snapshot = ToolCatalogSnapshot(generation=0)
 
@@ -156,6 +158,10 @@ class ToolRegistry:
 			)
 			entries = dict(self._entries)
 			entries[entry.tool_id] = entry
+			if entry.definition.available:
+				self._revoked_tool_ids.discard(entry.tool_id)
+			else:
+				self._revoked_tool_ids.add(entry.tool_id)
 			self._publish(entries)
 			return entry.definition
 
@@ -191,6 +197,10 @@ class ToolRegistry:
 					original_name=definition.provider_tool_name or definition.name,
 				)
 				entries[entry.tool_id] = entry
+				if entry.definition.available:
+					self._revoked_tool_ids.discard(entry.tool_id)
+				else:
+					self._revoked_tool_ids.add(entry.tool_id)
 				created.append(entry.definition)
 			self._publish(entries)
 			return tuple(created)
@@ -244,6 +254,10 @@ class ToolRegistry:
 					original_name=definition.provider_tool_name or definition.name,
 				)
 				entries[entry.tool_id] = entry
+				if not entry.definition.available:
+					self._revoked_tool_ids.add(entry.tool_id)
+				elif self._provider_available.get(provider_id, True):
+					self._revoked_tool_ids.discard(entry.tool_id)
 				created.append(entry.definition)
 			self._publish(entries)
 			return tuple(created)
@@ -276,6 +290,10 @@ class ToolRegistry:
 			effective_backend = backend if backend is not None else existing.backend
 			if available is not None:
 				new_definition = new_definition.with_availability(available)
+			if new_definition.available:
+				self._revoked_tool_ids.discard(tool_id)
+			else:
+				self._revoked_tool_ids.add(tool_id)
 			used_names = self._used_names(exclude_tool_id=tool_id)
 			entry = self._build_entry(
 				definition=new_definition,
@@ -301,6 +319,7 @@ class ToolRegistry:
 				return False
 			entries = dict(self._entries)
 			entries.pop(tool_id, None)
+			self._revoked_tool_ids.add(tool_id)
 			self._publish(entries)
 			return True
 
@@ -313,6 +332,10 @@ class ToolRegistry:
 			}
 			removed = len(self._entries) - len(entries)
 			if removed:
+				self._revoked_tool_ids.update(
+					tool_id for tool_id, entry in self._entries.items() if entry.provider_id == provider_id
+				)
+				self._provider_available[provider_id] = False
 				self._publish(entries)
 			return removed
 
@@ -333,10 +356,27 @@ class ToolRegistry:
 			entries[entry.tool_id] = replace(
 				entry, definition=entry.definition.with_availability(available)
 			)
+			if available:
+				self._revoked_tool_ids.discard(entry.tool_id)
+			else:
+				self._revoked_tool_ids.add(entry.tool_id)
 			self._publish(entries)
 
 	def is_provider_available(self, provider_id: str) -> bool:
-		return self._provider_available.get(provider_id, True)
+		with self._lock:
+			return self._provider_available.get(provider_id, True)
+
+	def is_dispatch_available(self, provider_id: str, tool_id: str) -> bool:
+		with self._lock:
+			return self._provider_available.get(provider_id, True) and tool_id not in self._revoked_tool_ids
+
+	def dispatch_if_available(self, provider_id: str, tool_id: str, dispatch: Callable[[], None]) -> bool:
+		"""Atomically check live availability and start a new backend operation."""
+		with self._lock:
+			if not self._provider_available.get(provider_id, True) or tool_id in self._revoked_tool_ids:
+				return False
+			dispatch()
+			return True
 
 	# ------------------------------------------------------------------
 	# Reads
@@ -370,21 +410,6 @@ class ToolRegistry:
 			"providers": sorted({definition.provider_id for definition in snapshot.definitions}),
 			"enabled_names": list(snapshot.enabled_names()),
 		}
-
-	def execute(self, tool_call: ToolCall) -> str:
-		"""Deprecated direct execution path kept for compatibility.
-
-		New code goes through ``ToolExecutor``; this method cannot enforce
-		policy, budgets or timeouts.
-		"""
-		binding = self._snapshot.resolve(tool_call.name)
-		if binding is None:
-			raise ValueError(f"Unknown tool: {tool_call.name}")
-		try:
-			result = binding.invoke(tool_call.arguments or {}, _legacy_context(binding))
-		except Exception as error:
-			raise RuntimeError(f"Tool '{tool_call.name}' execution failed: {error}") from error
-		return result if isinstance(result, str) else str(result)
 
 	# ------------------------------------------------------------------
 	# Internals
@@ -480,8 +505,8 @@ class ToolRegistry:
 				model_name=entry.model_name,
 				tool_id=entry.tool_id,
 				generation=generation,
-				handler=entry.handler,
-				backend=entry.backend,
+				_handler=entry.handler,
+				_backend=entry.backend,
 			)
 			for entry in available_entries
 		}
@@ -500,15 +525,4 @@ def _to_canonical_tool(definition: ToolDefinition) -> Tool:
 		output_schema=definition.output_schema,
 		provider_tool_name=definition.provider_tool_name,
 		tool_id=definition.tool_id,
-	)
-
-
-def _legacy_context(binding: ToolBinding) -> ToolCallContext:
-	return ToolCallContext(
-		tool_id=binding.tool_id,
-		tool_name=binding.model_name,
-		tool_call_id=None,
-		provider_id=binding.provider_id,
-		timeout_seconds=None,
-		cancellation_requested=lambda: False,
 	)

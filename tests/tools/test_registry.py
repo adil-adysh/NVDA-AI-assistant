@@ -14,6 +14,7 @@ register_package(NAMESPACE, ADDON_ROOT)
 tools_module = importlib.import_module(f"{NAMESPACE}.tools")
 ToolDefinition = tools_module.ToolDefinition
 ToolRegistry = tools_module.ToolRegistry
+ToolCall = importlib.import_module(f"{NAMESPACE}.core.tooling").ToolCall
 ToolNameConflictError = tools_module.ToolNameConflictError
 ToolAlreadyRegisteredError = tools_module.ToolAlreadyRegisteredError
 
@@ -240,14 +241,63 @@ def test_concurrent_reads_are_consistent_during_catalog_changes() -> None:
 def test_refresh_does_not_redirect_an_already_resolved_binding() -> None:
 	registry = ToolRegistry()
 	registry.register_external_tools("server-a", [_external()], backend=FakeBackend("server-a", "old"))
-	inflight = registry.snapshot().require("mcp_server-a__lookup")
+	inflight = registry.snapshot()
 	registry.replace_provider_catalog(
 		"server-a",
 		[ToolDefinition.from_provider_payload(_external(), provider_id="server-a")],
 		backend=FakeBackend("server-a", "new"),
 	)
-	assert inflight.invoke({"key": "x"}, _context()) == "old"
-	assert registry.snapshot().require("mcp_server-a__lookup").invoke({"key": "x"}, _context()) == "new"
+	executor = tools_module.ToolExecutor(
+		registry,
+		policy=tools_module.DefaultToolPermissionPolicy(approved_provider_ids=frozenset({"server-a"})),
+	)
+	old_result = executor.execute(
+		ToolCall(name="mcp_server-a__lookup", arguments={"key": "x"}, id="old"),
+		snapshot=inflight,
+	)
+	new_result = executor.execute(
+		ToolCall(name="mcp_server-a__lookup", arguments={"key": "x"}, id="new"),
+	)
+	assert old_result.text == "old"
+	assert new_result.text == "new"
+	assert not hasattr(inflight.require("mcp_server-a__lookup"), "invoke")
+
+
+def test_provider_disable_revokes_dispatch_through_an_old_snapshot() -> None:
+	backend = FakeBackend("server-a")
+	registry = ToolRegistry()
+	registry.register_external_tools("server-a", [_external()], backend=backend)
+	old_snapshot = registry.snapshot()
+	registry.set_provider_available("server-a", False)
+	started: list[bool] = []
+	assert registry.dispatch_if_available("server-a", "mcp:server-a:lookup", lambda: started.append(True)) is False
+	assert started == []
+	assert old_snapshot.resolve("mcp_server-a__lookup") is not None
+
+
+def test_catalog_refresh_does_not_reenable_disabled_provider() -> None:
+	registry = ToolRegistry()
+	registry.register_external_tools("server-a", [_external("one")], backend=FakeBackend("server-a"))
+	old_snapshot = registry.snapshot()
+	registry.set_provider_available("server-a", False)
+	registry.replace_provider_catalog(
+		"server-a",
+		[ToolDefinition.from_provider_payload(_external("two"), provider_id="server-a")],
+		backend=FakeBackend("server-a"),
+	)
+	executor = tools_module.ToolExecutor(
+		registry,
+		policy=tools_module.DefaultToolPermissionPolicy(approved_provider_ids=frozenset({"server-a"})),
+	)
+	assert not executor.execute(ToolCall(name="mcp_server-a__lookup", arguments={}), snapshot=old_snapshot).ok
+	assert not executor.execute(ToolCall(name="mcp_server-a__two", arguments={"key": "x"})).ok
+	registry.set_provider_available("server-a", True)
+	assert executor.execute(ToolCall(name="mcp_server-a__two", arguments={"key": "x"})).ok
+
+
+def test_registry_exposes_no_direct_execution_bypass() -> None:
+	registry = ToolRegistry()
+	assert not callable(getattr(registry, "execute", None))
 
 
 def test_removed_tool_cannot_be_invoked_by_a_new_snapshot() -> None:
@@ -257,14 +307,3 @@ def test_removed_tool_cannot_be_invoked_by_a_new_snapshot() -> None:
 	assert registry.snapshot().resolve("echo") is None
 	with pytest.raises(tools_module.UnknownToolError):
 		registry.snapshot().require("echo")
-
-
-def _context():
-	return tools_module.ToolCallContext(
-		tool_id="mcp:server-a:lookup",
-		tool_name="mcp_server-a__lookup",
-		tool_call_id="call-1",
-		provider_id="server-a",
-		timeout_seconds=None,
-		cancellation_requested=lambda: False,
-	)

@@ -10,11 +10,15 @@ silently dropping schema information.
 from __future__ import annotations
 
 import copy
+from decimal import Decimal, InvalidOperation
+from fractions import Fraction
 import hashlib
+import math
 import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 from urllib.parse import unquote
 
@@ -24,9 +28,35 @@ MAX_REPORTED_VIOLATIONS = 20
 
 _JSON_TYPES = frozenset({"object", "array", "string", "number", "integer", "boolean", "null"})
 _SCHEMA_MAP_KEYS = ("properties", "patternProperties", "$defs", "definitions", "dependentSchemas")
-_SCHEMA_LIST_KEYS = ("allOf", "anyOf", "oneOf", "prefixItems")
+_SCHEMA_LIST_KEYS = ("allOf", "anyOf", "oneOf")
 _NUMERIC_KEYS = ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf")
-_LENGTH_KEYS = ("minLength", "maxLength", "minItems", "maxItems", "minProperties", "maxProperties")
+_LENGTH_KEYS = (
+	"minLength", "maxLength", "minItems", "maxItems", "minProperties", "maxProperties",
+	"minContains", "maxContains",
+)
+_UNSUPPORTED_ASSERTIONS = frozenset({"unevaluatedProperties", "unevaluatedItems", "$dynamicRef", "$dynamicAnchor"})
+MAX_REGEX_PATTERN_CHARS = 512
+MAX_REGEX_INPUT_CHARS = 8192
+
+
+class FrozenList(list[Any]):
+	"""A JSON-serializable list that rejects ordinary mutation attempts."""
+
+	def _immutable(self, *args: Any, **kwargs: Any) -> None:
+		raise TypeError("frozen JSON array cannot be modified")
+
+	__setitem__ = _immutable
+	__delitem__ = _immutable
+	append = _immutable
+	clear = _immutable
+	extend = _immutable
+	insert = _immutable
+	pop = _immutable
+	remove = _immutable
+	reverse = _immutable
+	sort = _immutable
+	__iadd__ = _immutable
+	__imul__ = _immutable
 
 
 class ToolSchemaError(ValueError):
@@ -44,7 +74,31 @@ class SchemaViolation:
 
 def clone_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
 	"""Return a deep, mutation-isolated copy of a provider-supplied schema."""
-	return copy.deepcopy(dict(schema))
+	return thaw_json(schema)
+
+
+def freeze_json(value: Any) -> Any:
+	"""Recursively freeze JSON-like values used by published tool definitions."""
+	if isinstance(value, Mapping):
+		if not all(isinstance(key, str) for key in value):
+			raise TypeError("JSON object keys must be strings")
+		return MappingProxyType({key: freeze_json(item) for key, item in value.items()})
+	if isinstance(value, (list, tuple)):
+		return FrozenList(freeze_json(item) for item in value)
+	if value is None or isinstance(value, (bool, str, int)):
+		return value
+	if isinstance(value, float) and math.isfinite(value):
+		return value
+	raise TypeError(f"value of type {type(value).__name__} is not JSON data")
+
+
+def thaw_json(value: Any) -> Any:
+	"""Copy frozen JSON-like mappings/sequences into ordinary dicts/lists."""
+	if isinstance(value, Mapping):
+		return {key: thaw_json(item) for key, item in value.items()}
+	if isinstance(value, (list, tuple)):
+		return [thaw_json(item) for item in value]
+	return copy.deepcopy(value)
 
 
 def normalize_input_schema(schema: Mapping[str, Any] | None, *, path: str = "inputSchema") -> dict[str, Any]:
@@ -58,7 +112,7 @@ def normalize_input_schema(schema: Mapping[str, Any] | None, *, path: str = "inp
 		return normalized
 	if not isinstance(schema, Mapping):
 		raise ToolSchemaError(f"{path}: schema must be a JSON object, got {type(schema).__name__}")
-	cloned = copy.deepcopy(dict(schema))
+	cloned = thaw_json(schema)
 	_validate_schema_node(cloned, path, depth=0, root=cloned)
 	_assert_no_ref_cycle(cloned, path)
 	root_type = cloned.get("type")
@@ -80,13 +134,19 @@ def normalize_input_schema(schema: Mapping[str, Any] | None, *, path: str = "inp
 	return cloned
 
 
-def normalize_output_schema(schema: Mapping[str, Any] | None, *, path: str = "outputSchema") -> dict[str, Any] | None:
+def normalize_output_schema(
+	schema: Mapping[str, Any] | bool | None,
+	*,
+	path: str = "outputSchema",
+) -> dict[str, Any] | bool | None:
 	"""Validate and copy an optional output schema (any JSON type is allowed)."""
 	if schema is None:
 		return None
+	if isinstance(schema, bool):
+		return schema
 	if not isinstance(schema, Mapping):
 		raise ToolSchemaError(f"{path}: schema must be a JSON object, got {type(schema).__name__}")
-	cloned = copy.deepcopy(dict(schema))
+	cloned = thaw_json(schema)
 	_validate_schema_node(cloned, path, depth=0, root=cloned)
 	_assert_no_ref_cycle(cloned, path)
 	return cloned
@@ -133,7 +193,7 @@ def format_violations(violations: Sequence[SchemaViolation]) -> str:
 
 def serialize_schema(schema: Mapping[str, Any]) -> str:
 	"""Deterministic compact JSON used for fingerprints and diagnostics."""
-	return json.dumps(schema, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+	return json.dumps(thaw_json(schema), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def schema_fingerprint(schema: Mapping[str, Any]) -> str:
@@ -154,9 +214,17 @@ def _validate_schema_node(schema: Any, path: str, *, depth: int, root: Mapping[s
 	for key in schema:
 		if not isinstance(key, str):
 			raise ToolSchemaError(f"{path}: schema keywords must be strings, got {key!r}")
+	for keyword in _UNSUPPORTED_ASSERTIONS.intersection(schema):
+		raise ToolSchemaError(
+			f"{path}.{keyword}: this assertion is not supported by the tool validator; "
+			"remove it or use supported constraints"
+		)
+	vocabulary = schema.get("$vocabulary")
+	if isinstance(vocabulary, Mapping) and vocabulary.get("https://json-schema.org/draft/2020-12/vocab/format-assertion") is True:
+		raise ToolSchemaError(f"{path}.$vocabulary: format-assertion is not supported")
 
 	schema_type = schema.get("type")
-	if schema_type is not None:
+	if "type" in schema:
 		if isinstance(schema_type, str):
 			if schema_type not in _JSON_TYPES:
 				raise ToolSchemaError(f"{path}.type: unsupported JSON type {schema_type!r}")
@@ -166,11 +234,13 @@ def _validate_schema_node(schema: Any, path: str, *, depth: int, root: Mapping[s
 			for item in schema_type:
 				if not isinstance(item, str) or item not in _JSON_TYPES:
 					raise ToolSchemaError(f"{path}.type: unsupported JSON type {item!r}")
+			if len(set(schema_type)) != len(schema_type):
+				raise ToolSchemaError(f"{path}.type: type list contains duplicates")
 		else:
 			raise ToolSchemaError(f"{path}.type: must be a string or a list of strings")
 
 	reference = schema.get("$ref")
-	if reference is not None:
+	if "$ref" in schema:
 		if not isinstance(reference, str):
 			raise ToolSchemaError(f"{path}.$ref: must be a string")
 		if not reference.startswith("#"):
@@ -180,9 +250,9 @@ def _validate_schema_node(schema: Any, path: str, *, depth: int, root: Mapping[s
 		_resolve_ref(reference, schema_root=root, path=path, strict=True)
 
 	for key in _SCHEMA_MAP_KEYS:
-		value = schema.get(key)
-		if value is None:
+		if key not in schema:
 			continue
+		value = schema[key]
 		if not isinstance(value, Mapping):
 			raise ToolSchemaError(f"{path}.{key}: must be a JSON object")
 		for name, subschema in value.items():
@@ -191,61 +261,185 @@ def _validate_schema_node(schema: Any, path: str, *, depth: int, root: Mapping[s
 			_validate_schema_node(subschema, f"{path}.{key}[{name!r}]", depth=depth + 1, root=root)
 
 	for key in _SCHEMA_LIST_KEYS:
-		value = schema.get(key)
-		if value is None:
+		if key not in schema:
 			continue
-		if not isinstance(value, list) or not value:
+		value = schema[key]
+		if not isinstance(value, (list, tuple)) or not value:
 			raise ToolSchemaError(f"{path}.{key}: must be a non-empty list of schemas")
 		for index, subschema in enumerate(value):
 			_validate_schema_node(subschema, f"{path}.{key}[{index}]", depth=depth + 1, root=root)
+	if "prefixItems" in schema:
+		prefix_items = schema["prefixItems"]
+		if not isinstance(prefix_items, (list, tuple)):
+			raise ToolSchemaError(f"{path}.prefixItems: must be an array of schemas")
+		for index, subschema in enumerate(prefix_items):
+			_validate_schema_node(subschema, f"{path}.prefixItems[{index}]", depth=depth + 1, root=root)
 
 	for key in ("items", "additionalProperties", "propertyNames", "contains", "not", "if", "then", "else"):
-		value = schema.get(key)
-		if value is None:
+		if key not in schema:
 			continue
-		if key == "items" and isinstance(value, list):
-			for index, subschema in enumerate(value):
-				_validate_schema_node(subschema, f"{path}.items[{index}]", depth=depth + 1, root=root)
-			continue
+		value = schema[key]
+		if key == "items" and isinstance(value, (list, tuple)):
+			raise ToolSchemaError(f"{path}.items: Draft 2020-12 requires a single schema; use prefixItems for tuples")
 		_validate_schema_node(value, f"{path}.{key}", depth=depth + 1, root=root)
 
+	dependent_required = schema.get("dependentRequired")
+	if "dependentRequired" in schema:
+		if not isinstance(dependent_required, Mapping):
+			raise ToolSchemaError(f"{path}.dependentRequired: must be a JSON object")
+		for name, dependencies in dependent_required.items():
+			if not isinstance(name, str) or not isinstance(dependencies, (list, tuple)) or not all(isinstance(item, str) for item in dependencies):
+				raise ToolSchemaError(f"{path}.dependentRequired: values must be arrays of strings")
+			if len(set(dependencies)) != len(dependencies):
+				raise ToolSchemaError(f"{path}.dependentRequired[{name!r}]: contains duplicate names")
+
 	required = schema.get("required")
-	if required is not None:
-		if not isinstance(required, list) or not all(isinstance(item, str) for item in required):
+	if "required" in schema:
+		if not isinstance(required, (list, tuple)) or not all(isinstance(item, str) for item in required):
 			raise ToolSchemaError(f"{path}.required: must be a list of strings")
 		if len(set(required)) != len(required):
 			raise ToolSchemaError(f"{path}.required: contains duplicate names")
 
 	enum = schema.get("enum")
-	if enum is not None:
-		if not isinstance(enum, list) or not enum:
+	if "enum" in schema:
+		if not isinstance(enum, (list, tuple)) or not enum:
 			raise ToolSchemaError(f"{path}.enum: must be a non-empty list")
 		if len({serialize_schema({"const": item}) for item in enum}) != len(enum):
 			raise ToolSchemaError(f"{path}.enum: contains duplicate values")
 
 	for key in _NUMERIC_KEYS:
-		value = schema.get(key)
-		if value is not None and (not isinstance(value, (int, float)) or isinstance(value, bool)):
+		if key not in schema:
+			continue
+		value = schema[key]
+		if (
+			not isinstance(value, (int, float)) or isinstance(value, bool)
+			or (isinstance(value, float) and not math.isfinite(value))
+		):
 			raise ToolSchemaError(f"{path}.{key}: must be a number")
+		if key == "multipleOf" and value <= 0:
+			raise ToolSchemaError(f"{path}.multipleOf: must be greater than zero")
 	for key in _LENGTH_KEYS:
-		value = schema.get(key)
-		if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
+		if key not in schema:
+			continue
+		value = schema[key]
+		if not isinstance(value, int) or isinstance(value, bool) or value < 0:
 			raise ToolSchemaError(f"{path}.{key}: must be a non-negative integer")
 	for key in ("uniqueItems",):
-		value = schema.get(key)
-		if value is not None and not isinstance(value, bool):
+		if key in schema and not isinstance(schema[key], bool):
 			raise ToolSchemaError(f"{path}.{key}: must be a boolean")
 	pattern = schema.get("pattern")
-	if pattern is not None:
-		if not isinstance(pattern, str):
-			raise ToolSchemaError(f"{path}.pattern: must be a string")
-		try:
-			re.compile(pattern)
-		except re.error as error:
-			raise ToolSchemaError(f"{path}.pattern: invalid regular expression: {error}") from error
+	if "pattern" in schema:
+		_validate_pattern(pattern, f"{path}.pattern")
+	pattern_properties = schema.get("patternProperties")
+	if isinstance(pattern_properties, Mapping):
+		for pattern in pattern_properties:
+			_validate_pattern(pattern, f"{path}.patternProperties[{pattern!r}]")
+	for keyword in ("minContains", "maxContains"):
+		if keyword in schema and "contains" not in schema:
+			raise ToolSchemaError(f"{path}.{keyword}: requires contains")
 	format_value = schema.get("format")
-	if format_value is not None and not isinstance(format_value, str):
+	if "format" in schema and not isinstance(format_value, str):
 		raise ToolSchemaError(f"{path}.format: must be a string")
+
+
+def _validate_pattern(pattern: Any, path: str) -> None:
+	if not isinstance(pattern, str):
+		raise ToolSchemaError(f"{path}: must be a string")
+	if len(pattern) > MAX_REGEX_PATTERN_CHARS:
+		raise ToolSchemaError(f"{path}: regular expression exceeds {MAX_REGEX_PATTERN_CHARS} characters")
+	try:
+		re.compile(pattern)
+	except re.error as error:
+		raise ToolSchemaError(f"{path}: invalid regular expression: {error}") from error
+	if not _is_safe_regex(pattern):
+		raise ToolSchemaError(
+			f"{path}: unsafe regular expression; nested repetition, ambiguous repeated groups, "
+			"backreferences, lookarounds, and excessive bounded repetition are not supported"
+		)
+
+
+def _is_safe_regex(pattern: str) -> bool:
+	"""Conservatively accept a bounded subset of Python/ECMA-style patterns.
+
+	Only one unbounded quantifier is allowed. It may apply to one atom or a
+	group without alternation or nested repetition. Ambiguous repeated groups
+	are rejected. Runtime matching also has strict pattern, input, and bounded-
+	repeat ceilings.
+	"""
+	stack: list[dict[str, bool]] = []
+	in_class = False
+	escaped = False
+	last_group_risky = False
+	unbounded_count = 0
+	quantifier_count = 0
+	bounded_work = 1
+	index = 0
+	while index < len(pattern):
+		char = pattern[index]
+		if escaped:
+			if char.isdigit() or char in {"g", "k"}:
+				return False
+			escaped = False
+			last_group_risky = False
+		elif char == "\\":
+			escaped = True
+		elif in_class:
+			if char == "]":
+				in_class = False
+			last_group_risky = False
+		elif char == "[":
+			in_class = True
+			last_group_risky = False
+		elif char == "(" :
+			if index + 1 < len(pattern) and pattern[index + 1] == "?":
+				return False
+			stack.append({"repeat": False, "alternate": False})
+			last_group_risky = False
+		elif char == "|":
+			if stack:
+				stack[-1]["alternate"] = True
+			last_group_risky = False
+		elif char == ")":
+			if not stack:
+				return False
+			group = stack.pop()
+			last_group_risky = group["repeat"] or group["alternate"]
+			if stack and last_group_risky:
+				stack[-1]["repeat"] = True
+		elif char in "*+?{":
+			if char == "{":
+				match = re.match(r"\{(\d+)(?:,(\d*)?)?\}", pattern[index:])
+				if match is None:
+					last_group_risky = False
+					index += 1
+					continue
+				upper = match.group(2)
+				if "," in match.group(0) and upper == "":
+					unbounded_count += 1
+				else:
+					low = int(match.group(1))
+					max_value = int(upper) if upper is not None else low
+					if max_value > 256:
+						return False
+					bounded_work *= max(1, max_value - low + 1)
+					quantifier_count += 1
+				index += len(match.group(0)) - 1
+			elif char in "*+":
+				unbounded_count += 1
+			else:
+				bounded_work *= 2
+				quantifier_count += 1
+			if bounded_work > 65_536 or quantifier_count > 16:
+				return False
+			if last_group_risky:
+				return False
+			if stack:
+				stack[-1]["repeat"] = True
+			last_group_risky = False
+		else:
+			last_group_risky = False
+		index += 1
+	return not escaped and not in_class and not stack and unbounded_count <= 1
 
 
 def _assert_no_ref_cycle(root: Mapping[str, Any], path: str) -> None:
@@ -334,20 +528,19 @@ def _validate_value(
 			value, target, root, path, errors,
 			depth=depth, active_refs=(*active_refs, reference), max_errors=max_errors,
 		)
-		return
 
 	all_of = schema.get("allOf")
-	if isinstance(all_of, list):
+	if isinstance(all_of, (list, tuple)):
 		for subschema in all_of:
 			_validate_value(value, subschema, root, path, errors, depth=depth + 1,
 				active_refs=active_refs, max_errors=max_errors)
 
 	any_of = schema.get("anyOf")
-	if isinstance(any_of, list) and not _matches_any(value, any_of, root):
+	if isinstance(any_of, (list, tuple)) and not _matches_any(value, any_of, root):
 		errors.append(SchemaViolation(path, "value does not match any allowed schema (anyOf)"))
 
 	one_of = schema.get("oneOf")
-	if isinstance(one_of, list):
+	if isinstance(one_of, (list, tuple)):
 		matches = sum(1 for subschema in one_of if _matches(value, subschema, root))
 		if matches != 1:
 			errors.append(SchemaViolation(path, f"value must match exactly one schema (oneOf), matched {matches}"))
@@ -360,7 +553,7 @@ def _validate_value(
 		errors.append(SchemaViolation(path, f"expected constant {schema['const']!r}"))
 
 	enum = schema.get("enum")
-	if isinstance(enum, list) and not any(_json_equal(value, item) for item in enum):
+	if isinstance(enum, (list, tuple)) and not any(_json_equal(value, item) for item in enum):
 		errors.append(SchemaViolation(path, f"value must be one of {enum!r}"))
 
 	expected_types = _declared_types(schema)
@@ -369,6 +562,11 @@ def _validate_value(
 			SchemaViolation(path, f"expected type {'/'.join(sorted(expected_types))}, got {_type_name(value)}")
 		)
 		return
+	if "if" in schema:
+		branch = "then" if _matches(value, schema["if"], root) else "else"
+		if branch in schema:
+			_validate_value(value, schema[branch], root, path, errors, depth=depth + 1,
+				active_refs=active_refs, max_errors=max_errors)
 
 	if isinstance(value, str):
 		_validate_string(value, schema, path, errors)
@@ -393,10 +591,14 @@ def _validate_string(value: str, schema: Mapping[str, Any], path: str, errors: l
 		errors.append(SchemaViolation(path, f"string is longer than {maximum} characters"))
 	pattern = schema.get("pattern")
 	if isinstance(pattern, str):
+		if len(value) > MAX_REGEX_INPUT_CHARS:
+			errors.append(SchemaViolation(path, f"string exceeds regex input limit of {MAX_REGEX_INPUT_CHARS} characters"))
+			return
 		try:
 			matched = re.search(pattern, value) is not None
-		except re.error:
-			matched = True
+		except re.error as error:
+			errors.append(SchemaViolation(path, f"invalid regular expression: {error}"))
+			return
 		if not matched:
 			errors.append(SchemaViolation(path, f"string does not match pattern {pattern!r}"))
 
@@ -416,8 +618,10 @@ def _validate_number(value: int | float, schema: Mapping[str, Any], path: str, e
 		errors.append(SchemaViolation(path, f"value must be less than {exclusive_maximum}"))
 	multiple_of = schema.get("multipleOf")
 	if isinstance(multiple_of, (int, float)) and multiple_of > 0:
-		quotient = value / multiple_of
-		if abs(quotient - round(quotient)) > 1e-9:
+		try:
+			if Fraction(Decimal(str(value))) % Fraction(Decimal(str(multiple_of))) != 0:
+				errors.append(SchemaViolation(path, f"value must be a multiple of {multiple_of}"))
+		except (InvalidOperation, ValueError):
 			errors.append(SchemaViolation(path, f"value must be a multiple of {multiple_of}"))
 
 
@@ -439,14 +643,23 @@ def _validate_array(
 	if isinstance(maximum, int) and len(value) > maximum:
 		errors.append(SchemaViolation(path, f"array has more than {maximum} items"))
 	if schema.get("uniqueItems") is True:
-		serialized = [serialize_schema({"const": item}) for item in value]
-		if len(set(serialized)) != len(serialized):
+		keys = [_json_key(item) for item in value]
+		if len(set(keys)) != len(keys):
 			errors.append(SchemaViolation(path, "array items must be unique"))
+	contains = schema.get("contains")
+	if isinstance(contains, (Mapping, bool)):
+		match_count = sum(1 for item in value if _matches(item, contains, root))
+		minimum_contains = schema.get("minContains", 1)
+		maximum_contains = schema.get("maxContains")
+		if match_count < minimum_contains:
+			errors.append(SchemaViolation(path, f"array has fewer than {minimum_contains} matching items (contains)"))
+		if isinstance(maximum_contains, int) and match_count > maximum_contains:
+			errors.append(SchemaViolation(path, f"array has more than {maximum_contains} matching items (contains)"))
 
 	prefix_items = schema.get("prefixItems")
 	item_schema = schema.get("items")
 	start = 0
-	if isinstance(prefix_items, list):
+	if isinstance(prefix_items, (list, tuple)):
 		for index, subschema in enumerate(prefix_items):
 			if index >= len(value):
 				break
@@ -480,10 +693,29 @@ def _validate_object(
 	properties = schema.get("properties")
 	properties = properties if isinstance(properties, Mapping) else {}
 	required = schema.get("required")
-	required = required if isinstance(required, list) else []
+	required = required if isinstance(required, (list, tuple)) else []
 	for name in required:
 		if isinstance(name, str) and name not in value:
 			errors.append(SchemaViolation(_property_path(path, name), "required property is missing"))
+	dependent_required = schema.get("dependentRequired")
+	if isinstance(dependent_required, Mapping):
+		for name, dependencies in dependent_required.items():
+			if name in value and isinstance(dependencies, (list, tuple)):
+				for dependency in dependencies:
+					if dependency not in value:
+						errors.append(SchemaViolation(_property_path(path, dependency), f"required by property {name!r}"))
+	dependent_schemas = schema.get("dependentSchemas")
+	if isinstance(dependent_schemas, Mapping):
+		for name, subschema in dependent_schemas.items():
+			if name in value:
+				_validate_value(value, subschema, root, path, errors, depth=depth + 1,
+					active_refs=active_refs, max_errors=max_errors)
+	property_names = schema.get("propertyNames")
+	if isinstance(property_names, (Mapping, bool)):
+		for name in value:
+			name_path = f"{path}.<propertyName:{name}>"
+			_validate_value(name, property_names, root, name_path, errors, depth=depth + 1,
+				active_refs=active_refs, max_errors=max_errors)
 
 	pattern_properties = schema.get("patternProperties")
 	pattern_properties = pattern_properties if isinstance(pattern_properties, Mapping) else {}
@@ -499,10 +731,14 @@ def _validate_object(
 				active_refs=active_refs, max_errors=max_errors)
 			handled = True
 		for pattern, subschema in pattern_properties.items():
+			if len(name) > MAX_REGEX_INPUT_CHARS:
+				errors.append(SchemaViolation(property_path, f"property name exceeds regex input limit of {MAX_REGEX_INPUT_CHARS} characters"))
+				continue
 			try:
 				pattern_matches = isinstance(name, str) and re.search(pattern, name) is not None
-			except re.error:
-				pattern_matches = False
+			except re.error as error:
+				errors.append(SchemaViolation(property_path, f"invalid regular expression: {error}"))
+				continue
 			if pattern_matches:
 				matched_by_pattern.add(name)
 				_validate_value(item, subschema, root, property_path, errors, depth=depth + 1,
@@ -536,7 +772,10 @@ def _type_matches(value: Any, expected: str) -> bool:
 	if expected == "number":
 		return isinstance(value, (int, float)) and not isinstance(value, bool)
 	if expected == "integer":
-		return isinstance(value, int) and not isinstance(value, bool)
+		return (
+			isinstance(value, int) and not isinstance(value, bool)
+			or isinstance(value, float) and math.isfinite(value) and value.is_integer()
+		)
 	if expected == "boolean":
 		return isinstance(value, bool)
 	if expected == "null":
@@ -567,15 +806,37 @@ def _json_equal(left: Any, right: Any) -> bool:
 		return isinstance(left, bool) and isinstance(right, bool) and left == right
 	if isinstance(left, (int, float)) and isinstance(right, (int, float)):
 		return left == right
-	if type(left) is not type(right):
-		return False
 	if isinstance(left, Mapping) and isinstance(right, Mapping):
 		return set(left.keys()) == set(right.keys()) and all(
 			_json_equal(left[key], right[key]) for key in left
 		)
-	if isinstance(left, list):
+	if isinstance(left, (list, tuple)) or isinstance(right, (list, tuple)):
+		if not isinstance(left, (list, tuple)) or not isinstance(right, (list, tuple)):
+			return False
 		return len(left) == len(right) and all(_json_equal(a, b) for a, b in zip(left, right))
+	if type(left) is not type(right):
+		return False
 	return left == right
+
+
+def _json_key(value: Any) -> Any:
+	"""Return a hashable JSON identity key using mathematical number equality."""
+	if value is None:
+		return ("null",)
+	if isinstance(value, bool):
+		return ("boolean", value)
+	if isinstance(value, (int, float)):
+		try:
+			return ("number", Fraction(Decimal(str(value))))
+		except (InvalidOperation, ValueError, OverflowError):
+			return ("number", repr(value))
+	if isinstance(value, str):
+		return ("string", value)
+	if isinstance(value, Mapping):
+		return ("object", tuple(sorted((key, _json_key(item)) for key, item in value.items())))
+	if isinstance(value, (list, tuple)):
+		return ("array", tuple(_json_key(item) for item in value))
+	return (type(value).__name__, repr(value))
 
 
 def _matches(value: Any, schema: Any, root: Mapping[str, Any]) -> bool:

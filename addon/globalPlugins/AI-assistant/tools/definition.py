@@ -10,13 +10,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from types import MappingProxyType
 from typing import Any
 
 from ..core.tooling import ToolArguments
 from .schema import (
 	ToolSchemaError,
 	clone_schema,
+	freeze_json,
 	normalize_input_schema,
 	normalize_output_schema,
 	schema_fingerprint,
@@ -38,7 +38,7 @@ class ToolAnnotations:
 	raw: Mapping[str, Any] = field(default_factory=dict, compare=False)
 
 	def __post_init__(self) -> None:
-		object.__setattr__(self, "raw", MappingProxyType(dict(self.raw or {})))
+		object.__setattr__(self, "raw", freeze_json(dict(self.raw or {})))
 
 	def to_dict(self) -> dict[str, Any]:
 		payload: dict[str, Any] = {}
@@ -80,11 +80,11 @@ class ToolDefinition:
 
 	name: str
 	description: str
-	parameters: dict[str, Any] = field(default_factory=dict)
+	parameters: Mapping[str, Any] = field(default_factory=dict)
 	required: list[str] = field(default_factory=list)
 	executor: ToolExecutorCallable | None = field(default=None, compare=False, repr=False)
 	input_schema: Mapping[str, Any] | None = None
-	output_schema: Mapping[str, Any] | None = None
+	output_schema: Mapping[str, Any] | bool | None = None
 	tool_id: str | None = None
 	provider_tool_name: str | None = None
 	provider_id: str = "native"
@@ -139,13 +139,13 @@ class ToolDefinition:
 		object.__setattr__(self, "name", declared_name)
 		object.__setattr__(self, "provider_id", provider_id)
 		object.__setattr__(self, "provider_tool_name", provider_tool_name)
-		object.__setattr__(self, "input_schema", schema)
-		object.__setattr__(self, "output_schema", output_schema)
+		object.__setattr__(self, "input_schema", freeze_json(schema))
+		object.__setattr__(self, "output_schema", freeze_json(output_schema) if output_schema is not None else None)
 		object.__setattr__(self, "tool_id", tool_id)
 		object.__setattr__(self, "annotations", annotations)
-		object.__setattr__(self, "metadata", MappingProxyType(metadata))
-		object.__setattr__(self, "parameters", parameters)
-		object.__setattr__(self, "required", required_list)
+		object.__setattr__(self, "metadata", freeze_json(metadata))
+		object.__setattr__(self, "parameters", freeze_json(parameters))
+		object.__setattr__(self, "required", freeze_json(required_list))
 
 	@property
 	def schema_fingerprint(self) -> str:
@@ -208,7 +208,7 @@ class ToolDefinition:
 			raise ToolSchemaError(
 				"Tool payload 'inputSchema' must be a JSON object"
 			)
-		if output_schema is not None and not isinstance(output_schema, Mapping):
+		if output_schema is not None and not isinstance(output_schema, (Mapping, bool)):
 			raise ToolSchemaError(
 				"Tool payload 'outputSchema' must be a JSON object"
 			)

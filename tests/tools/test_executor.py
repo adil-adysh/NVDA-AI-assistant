@@ -124,9 +124,14 @@ def test_approved_tool_can_execute() -> None:
 
 
 def test_timeout_is_unconfirmed_and_not_retried() -> None:
+	finished = threading.Event()
+
 	def slow(arguments):
-		time.sleep(0.3)
-		return "late"
+		try:
+			time.sleep(0.3)
+			return "late"
+		finally:
+			finished.set()
 
 	registry = _registry(slow)
 	executor = ToolExecutor(
@@ -139,6 +144,7 @@ def test_timeout_is_unconfirmed_and_not_retried() -> None:
 	assert result.timed_out
 	assert result.uncertain
 	assert not result.termination_confirmed
+	assert finished.wait(1)
 
 
 def test_cancellation_before_execution() -> None:
@@ -156,9 +162,14 @@ def test_cancellation_before_execution() -> None:
 
 def test_cancellation_during_execution_returns_promptly() -> None:
 	token = importlib.import_module(f"{NAMESPACE}.core.cancellation").CancellationToken()
+	finished = threading.Event()
+
 	def slow(arguments):
-		time.sleep(0.5)
-		return "late"
+		try:
+			time.sleep(0.5)
+			return "late"
+		finally:
+			finished.set()
 
 	registry = _registry(slow)
 	executor = ToolExecutor(
@@ -171,6 +182,7 @@ def test_cancellation_during_execution_returns_promptly() -> None:
 	assert time.monotonic() - started < 0.4
 	assert result.error_category == "cancelled"
 	assert not result.termination_confirmed
+	assert finished.wait(1)
 
 
 def test_uncertain_provider_failure() -> None:
@@ -303,3 +315,223 @@ def test_unapproved_external_tool_is_denied() -> None:
 	assert not result.ok
 	assert result.error_category == "permission_denied"
 	assert backend.called is False
+
+
+def test_oversized_structured_result_is_rejected_and_envelope_is_bounded() -> None:
+	registry = _registry(lambda arguments: {"payload": "x" * (256 * 1024 * 2)})
+	result = ToolExecutor(registry).execute(_call())
+	assert not result.ok
+	assert result.error_category == "execution_error"
+	assert "resource limits" in (result.error_message or "")
+	assert len(__import__("json").dumps(result.to_dict()).encode("utf-8")) <= 256 * 1024
+	restored = ToolExecutionResult.from_dict(result.to_dict())
+	assert restored.error_category == "execution_error"
+
+
+def test_oversized_media_and_excessive_content_blocks_are_rejected() -> None:
+	too_large_media = ToolContentBlock(type="image", data="A" * (256 * 1024 * 2))
+	media_result = ToolExecutor(_registry(lambda arguments: too_large_media)).execute(_call())
+	assert not media_result.ok
+	assert media_result.error_category == "execution_error"
+
+	blocks = tuple(ToolContentBlock.text_block(str(index)) for index in range(65))
+	tool_result = ToolExecutionResult(tool_name="echo", ok=True, content=blocks)
+	block_result = ToolExecutor(_registry(lambda arguments: tool_result)).execute(_call())
+	assert not block_result.ok
+	assert block_result.error_category == "execution_error"
+
+	metadata_result = ToolExecutionResult(
+		tool_name="echo",
+		ok=True,
+		metadata={"payload": "x" * (256 * 1024)},
+	)
+	bounded_metadata = ToolExecutor(_registry(lambda arguments: metadata_result)).execute(_call())
+	assert bounded_metadata.error_category == "execution_error"
+
+	deep_value = None
+	for _ in range(40):
+		deep_value = [deep_value]
+	deep_result = ToolExecutor(_registry(lambda arguments: deep_value)).execute(_call())
+	assert deep_result.error_category == "execution_error"
+
+
+def test_cyclic_structured_result_becomes_a_correlated_failure() -> None:
+	cyclic = {}
+	cyclic["self"] = cyclic
+	result = ToolExecutor(_registry(lambda arguments: cyclic)).execute(_call(call_id="cyclic-call"))
+	assert not result.ok
+	assert result.tool_call_id == "cyclic-call"
+	assert result.error_category == "execution_error"
+	assert len(__import__("json").dumps(result.to_dict()).encode("utf-8")) <= 256 * 1024
+
+
+def test_unsupported_backend_value_becomes_a_structured_failure() -> None:
+	result = ToolExecutor(_registry(lambda arguments: object())).execute(_call(call_id="unsupported-call"))
+	assert not result.ok
+	assert result.tool_call_id == "unsupported-call"
+	assert result.error_category == "execution_error"
+	assert "unsupported value type" in (result.error_message or "")
+
+
+
+
+def test_disabled_provider_rejects_dispatch_from_a_retained_snapshot() -> None:
+	class Backend:
+		provider_id = "server-a"
+		called = False
+
+		def execute(self, definition, arguments, context):
+			self.called = True
+			return "ran"
+
+	backend = Backend()
+	registry = ToolRegistry()
+	registry.register_external_tools("server-a", [{"name": "read", "inputSchema": {"type": "object"}}], backend=backend)
+	snapshot = registry.snapshot()
+	registry.set_provider_available("server-a", False)
+	executor = ToolExecutor(
+		registry,
+		policy=tools_module.DefaultToolPermissionPolicy(approved_provider_ids=frozenset({"server-a"})),
+	)
+	result = executor.execute(_call(name="mcp_server-a__read"), snapshot=snapshot)
+	assert not result.ok
+	assert result.error_category == "permission_denied"
+	assert not backend.called
+
+
+def test_permission_revocation_cancels_active_cooperative_backend() -> None:
+	started = threading.Event()
+	observed_cancel = threading.Event()
+	finished = threading.Event()
+
+	class Backend:
+		provider_id = "server-a"
+
+		def execute(self, definition, arguments, context):
+			try:
+				started.set()
+				while not context.cancelled():
+					time.sleep(0.005)
+				observed_cancel.set()
+				return "stopped"
+			finally:
+				finished.set()
+
+	registry = ToolRegistry()
+	registry.register_external_tools("server-a", [{"name": "read", "inputSchema": {"type": "object"}}], backend=Backend())
+	executor = ToolExecutor(
+		registry,
+		policy=tools_module.DefaultToolPermissionPolicy(approved_provider_ids=frozenset({"server-a"})),
+	)
+	results = []
+	thread = threading.Thread(target=lambda: results.append(executor.execute(_call(name="mcp_server-a__read"))))
+	thread.start()
+	assert started.wait(1)
+	executor.set_policy(tools_module.DefaultToolPermissionPolicy())
+	thread.join(1)
+	assert not thread.is_alive()
+	assert observed_cancel.is_set()
+	assert results[0].error_category == "cancelled"
+	assert not results[0].termination_confirmed
+	assert finished.wait(1)
+
+
+def test_provider_disable_cancels_active_cooperative_backend() -> None:
+	started = threading.Event()
+	observed_cancel = threading.Event()
+	finished = threading.Event()
+
+	class Backend:
+		provider_id = "server-a"
+
+		def execute(self, definition, arguments, context):
+			try:
+				started.set()
+				while not context.cancelled():
+					time.sleep(0.005)
+				observed_cancel.set()
+				return "stopped"
+			finally:
+				finished.set()
+
+	registry = ToolRegistry()
+	registry.register_external_tools("server-a", [{"name": "read", "inputSchema": {"type": "object"}}], backend=Backend())
+	executor = ToolExecutor(
+		registry,
+		policy=tools_module.DefaultToolPermissionPolicy(approved_provider_ids=frozenset({"server-a"})),
+	)
+	results = []
+	thread = threading.Thread(target=lambda: results.append(executor.execute(_call(name="mcp_server-a__read"))))
+	thread.start()
+	assert started.wait(1)
+	registry.set_provider_available("server-a", False)
+	thread.join(1)
+	assert not thread.is_alive()
+	assert observed_cancel.is_set()
+	assert results[0].error_category == "cancelled"
+	assert finished.wait(1)
+
+
+def test_provider_reenable_does_not_restore_revoked_approval() -> None:
+	class Backend:
+		provider_id = "server-a"
+		called = False
+
+		def execute(self, definition, arguments, context):
+			self.called = True
+			return "ran"
+
+	backend = Backend()
+	registry = ToolRegistry()
+	registry.register_external_tools("server-a", [{"name": "read", "inputSchema": {"type": "object"}}], backend=backend)
+	snapshot = registry.snapshot()
+	executor = ToolExecutor(
+		registry,
+		policy=tools_module.DefaultToolPermissionPolicy(approved_provider_ids=frozenset({"server-a"})),
+	)
+	executor.set_policy(tools_module.DefaultToolPermissionPolicy())
+	registry.set_provider_available("server-a", False)
+	registry.set_provider_available("server-a", True)
+	result = executor.execute(_call(name="mcp_server-a__read"), snapshot=snapshot)
+	assert result.error_category == "permission_denied"
+	assert not backend.called
+
+
+def test_timed_out_handlers_keep_global_capacity_until_they_finish() -> None:
+	capacity = 8
+	release = threading.Event()
+	all_started = threading.Event()
+	all_finished = threading.Event()
+	lock = threading.Lock()
+	calls = 0
+	finished = 0
+
+	def handler(arguments):
+		nonlocal calls, finished
+		with lock:
+			calls += 1
+			if calls == capacity:
+				all_started.set()
+		release.wait(2)
+		with lock:
+			finished += 1
+			if finished == capacity:
+				all_finished.set()
+		return "done"
+
+	registry = _registry(handler)
+	budget = tools_module.ToolExecutionBudget(call_timeout_seconds=0.02, turn_timeout_seconds=5.0)
+	try:
+		for index in range(capacity):
+			result = ToolExecutor(registry, budget=budget).execute(_call(call_id=f"stalled-{index}"))
+			assert result.error_category == "timeout"
+		assert all_started.wait(1)
+		rejected = ToolExecutor(registry, budget=budget).execute(_call(call_id="over-capacity"))
+		assert rejected.error_category == "budget_exceeded"
+		assert calls == capacity
+	finally:
+		release.set()
+	assert all_finished.wait(1)
+	completed = ToolExecutor(registry, budget=budget).execute(_call(call_id="after-release"))
+	assert completed.ok
+	assert calls == capacity + 1

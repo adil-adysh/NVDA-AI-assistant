@@ -12,6 +12,7 @@ import re
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 from ..core.cancellation import (
@@ -51,6 +52,8 @@ _SECRET_PATTERNS = (
 	re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+"),
 	re.compile(r"(?i)((?:api[_-]?key|token|secret|password)\s*[=:]\s*)\S+"),
 )
+MAX_OUTSTANDING_TOOL_EXECUTIONS = 8
+_TOOL_EXECUTION_SLOTS = threading.BoundedSemaphore(MAX_OUTSTANDING_TOOL_EXECUTIONS)
 
 
 class ToolExecutor:
@@ -63,6 +66,8 @@ class ToolExecutor:
 	) -> None:
 		self._tool_registry = tool_registry
 		self._policy = policy or DefaultToolPermissionPolicy()
+		self._policy_lock = threading.RLock()
+		self._active_operations: dict[object, tuple[ToolBinding, dict[str, Any], threading.Event]] = {}
 		self._budget = budget or ToolExecutionBudget()
 		self._diagnostics_lock = threading.Lock()
 		self._diagnostics: dict[str, Any] = {
@@ -75,6 +80,19 @@ class ToolExecutor:
 
 	def new_tracker(self) -> ToolExecutionTracker:
 		return ToolExecutionTracker(self._budget)
+
+	def set_policy(self, policy: ToolPermissionPolicy) -> None:
+		"""Replace host authorization policy and cancel newly unauthorized work."""
+		with self._policy_lock:
+			self._policy = policy
+			for binding, arguments, revocation_event in self._active_operations.values():
+				try:
+					policy.authorize(binding, arguments)
+				except ToolPermissionDenied:
+					revocation_event.set()
+				except Exception:
+					log.exception("Tool authorization policy failed during revocation (tool_id=%s)", binding.tool_id)
+					revocation_event.set()
 
 	def diagnostics(self) -> dict[str, Any]:
 		with self._diagnostics_lock:
@@ -100,6 +118,15 @@ class ToolExecutor:
 		if binding is None:
 			return self._finish(
 				self._error_result(tool_call, UnknownToolError(tool_call.name), started)
+			)
+		if not self._tool_registry.is_dispatch_available(binding.provider_id, binding.tool_id):
+			return self._finish(
+				self._error_result(
+					tool_call,
+					ToolPermissionDenied(binding.model_name, "provider or tool is disabled"),
+					started,
+					binding=binding,
+				)
 			)
 
 		if tool_call.parse_error:
@@ -134,7 +161,8 @@ class ToolExecutor:
 			)
 
 		try:
-			self._policy.authorize(binding, arguments)
+			with self._policy_lock:
+				self._policy.authorize(binding, arguments)
 		except ToolPermissionDenied as error:
 			return self._finish(self._error_result(tool_call, error, started, binding=binding))
 
@@ -144,7 +172,8 @@ class ToolExecutor:
 		except ToolBudgetExceeded as error:
 			return self._finish(self._error_result(tool_call, error, started, binding=binding))
 
-		is_cancelled = self._cancellation_probe(cancellation_token)
+		revocation_event = threading.Event()
+		is_cancelled = self._cancellation_probe(cancellation_token, binding, revocation_event)
 		if is_cancelled():
 			return self._finish(
 				self._error_result(tool_call, ToolCancelledError("Tool call cancelled"), started, binding=binding)
@@ -161,7 +190,9 @@ class ToolExecutor:
 		)
 
 		try:
-			state, value, error = self._invoke_bounded(binding, arguments, context, timeout, is_cancelled)
+			state, value, error = self._invoke_bounded(
+				binding, arguments, context, timeout, is_cancelled, revocation_event
+			)
 		except BaseException as unexpected:  # never let an executor bug escape as success
 			state, value, error = "error", None, unexpected
 
@@ -188,9 +219,28 @@ class ToolExecutor:
 		if state == "error":
 			return self._finish(self._error_result(tool_call, error, started, binding=binding))
 
-		return self._finish(
-			self._success_result(tool_call, value, binding, started, effective_tracker.budget.max_result_chars)
-		)
+		try:
+			result = self._success_result(
+				tool_call, value, binding, started, effective_tracker.budget.max_result_chars
+			)
+		except ToolError as error:
+			result = self._error_result(tool_call, error, started, binding=binding)
+		except Exception as unexpected:
+			log.exception(
+				"Unexpected tool result normalization failure (tool_id=%s, call_id=%s)",
+				binding.tool_id,
+				tool_call.id,
+			)
+			result = self._error_result(
+				tool_call,
+				ToolExecutionError(
+					f"Tool '{binding.model_name}' result normalization failed: {type(unexpected).__name__}",
+					safe_message=f"Tool '{binding.model_name}' returned a result that could not be processed.",
+				),
+				started,
+				binding=binding,
+			)
+		return self._finish(result)
 
 	def execute_tool_calls(
 		self,
@@ -223,13 +273,21 @@ class ToolExecutor:
 	# Internals
 	# ------------------------------------------------------------------
 
-	@staticmethod
-	def _cancellation_probe(token: CancellationToken | None) -> Callable[[], bool]:
+	def _cancellation_probe(
+		self,
+		token: CancellationToken | None,
+		binding: ToolBinding,
+		revocation_event: threading.Event,
+	) -> Callable[[], bool]:
 		def probe() -> bool:
 			if token is not None and token.cancelled:
 				return True
 			current = current_cancellation_token()
-			return current is not None and current.cancelled
+			return (
+				revocation_event.is_set()
+				or (current is not None and current.cancelled)
+				or not self._tool_registry.is_dispatch_available(binding.provider_id, binding.tool_id)
+			)
 
 		return probe
 
@@ -240,6 +298,7 @@ class ToolExecutor:
 		context: ToolCallContext,
 		timeout: float,
 		is_cancelled: Callable[[], bool],
+		revocation_event: threading.Event,
 	) -> tuple[str, object, BaseException | None]:
 		"""Run the backend on a daemon thread and join it with a deadline.
 
@@ -249,13 +308,26 @@ class ToolExecutor:
 		"""
 		state: dict[str, object] = {}
 		done = threading.Event()
+		operation_id = object()
+		if not _TOOL_EXECUTION_SLOTS.acquire(blocking=False):
+			return (
+				"error",
+				None,
+				ToolBudgetExceeded(
+					f"Global tool execution capacity is full ({MAX_OUTSTANDING_TOOL_EXECUTIONS})",
+					safe_message="Tool execution capacity is full; no operation was started.",
+				),
+			)
 
 		def worker() -> None:
 			try:
-				state["value"] = binding.invoke(arguments, context)
+				state["value"] = binding._invoke(arguments, context)
 			except BaseException as error:  # noqa: BLE001 - classified by the caller
 				state["error"] = error
 			finally:
+				with self._policy_lock:
+					self._active_operations.pop(operation_id, None)
+				_TOOL_EXECUTION_SLOTS.release()
 				done.set()
 
 		thread = threading.Thread(
@@ -263,14 +335,37 @@ class ToolExecutor:
 			name=f"AIToolExec-{binding.model_name}",
 			daemon=True,
 		)
-		thread.start()
+		try:
+			with self._policy_lock:
+				self._policy.authorize(binding, arguments)
+				self._active_operations[operation_id] = (binding, dict(arguments), revocation_event)
+				started = self._tool_registry.dispatch_if_available(
+					binding.provider_id, binding.tool_id, thread.start
+				)
+				if not started:
+					self._active_operations.pop(operation_id, None)
+					_TOOL_EXECUTION_SLOTS.release()
+					return "error", None, ToolPermissionDenied(binding.model_name, "provider or tool is disabled")
+		except ToolPermissionDenied as error:
+			with self._policy_lock:
+				self._active_operations.pop(operation_id, None)
+			_TOOL_EXECUTION_SLOTS.release()
+			return "error", None, error
+		except BaseException:
+			with self._policy_lock:
+				self._active_operations.pop(operation_id, None)
+			_TOOL_EXECUTION_SLOTS.release()
+			raise
 		deadline = time.monotonic() + timeout
 		while not done.wait(0.02):
 			if is_cancelled():
+				revocation_event.set()
 				return "cancelled", None, None
 			if time.monotonic() >= deadline:
+				revocation_event.set()
 				return "timeout", None, None
 		if is_cancelled():
+			revocation_event.set()
 			return "cancelled", None, None
 		error = state.get("error")
 		if error is not None:
@@ -376,8 +471,6 @@ def _adopt_provider_result(
 	duration_ms: float,
 	max_result_chars: int,
 ) -> ToolExecutionResult:
-	metadata = dict(result.metadata)
-	metadata["generation"] = binding.generation
 	ok = result.ok
 	error_category = result.error_category
 	error_source = result.error_source
@@ -390,7 +483,7 @@ def _adopt_provider_result(
 		error_message = error_message or f"Tool '{binding.model_name}' reported an error"
 	if error_message is not None:
 		error_message = _safe_message(error_message)
-	return ToolExecutionResult(
+	adopted = ToolExecutionResult(
 		tool_name=binding.model_name,
 		tool_call_id=tool_call.id or result.tool_call_id,
 		tool_id=binding.tool_id,
@@ -406,8 +499,11 @@ def _adopt_provider_result(
 		timed_out=result.timed_out,
 		termination_confirmed=result.termination_confirmed,
 		uncertain=result.uncertain,
-		metadata=metadata,
+		metadata=result.metadata,
 	).bounded(max_result_chars)
+	metadata = dict(adopted.metadata)
+	metadata["generation"] = binding.generation
+	return replace(adopted, metadata=metadata).bounded(max_result_chars)
 
 
 def _classify(
