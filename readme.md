@@ -89,6 +89,36 @@ successful one-shot answer for the current session.
 
 ---
 
+## External MCP tools
+
+AI Assistant can use tools exposed by a local or remote Model Context Protocol
+server. External tools are denied until you approve each exact tool.
+
+1. Open **NVDA menu → Tools → AI Assistant → Settings... → MCP Servers and
+   Tools**.
+2. Choose **Add...**, select **Standard I/O**, and enter the server ID, display
+   name and executable path. For example, the NVDA MCP Bridge companion is
+   usually installed at
+   `%LOCALAPPDATA%\Programs\NVDA MCP Bridge\bin\nvda-mcp-server.exe`.
+3. Choose **OK**, select the server, and choose **Connect**. The list changes
+   from **enabled** to **connected** and the discovered tools appear.
+4. Select a tool and choose **Approve selected tool**. The confirmation labels
+   the server-provided description as untrusted; tools the server declares
+   destructive get an additional warning. Approval is per tool, not per server.
+5. Ask for the action in chat. Only approved, currently available tools are
+   executable.
+
+The server list and the tool summary show the current connection and approval
+state. **Disconnect** removes the server's tools from the live catalog without
+deleting its configuration or approvals. **Refresh tools** re-reads the catalog
+after a tool-list change.
+
+For the NVDA MCP Bridge, do not put its token in the stdio arguments. The
+companion reads the add-on's protected token file automatically; if you use an
+environment-only token, start the server through a wrapper that supplies it.
+
+---
+
 ## Context injection
 
 Attach additional context into an active conversation.

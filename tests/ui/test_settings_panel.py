@@ -144,6 +144,24 @@ class SettingsPanelContractTests(unittest.TestCase):
 		self.assertIn("wx.NO_DEFAULT", mcp_source)
 		self.assertEqual(mcp_source.count("wx.NO_DEFAULT"), 2)
 
+	def test_mcp_approval_warns_about_server_declared_destructive_tools(self) -> None:
+		mcp_source = (ADDON_ROOT / "ui" / "mcp_settings.py").read_text(encoding="utf-8")
+		self.assertIn("_declares_destructive", mcp_source)
+		self.assertIn("able to change state", mcp_source)
+		# The warning is an additional hint; annotations still cannot approve.
+		self.assertIn("annotations are untrusted", mcp_source.lower())
+
+	def test_mcp_server_changes_return_focus_to_the_server_list(self) -> None:
+		mcp_tree = ast.parse((ADDON_ROOT / "ui" / "mcp_settings.py").read_text(encoding="utf-8"))
+		panel = next(
+			node for node in mcp_tree.body
+			if isinstance(node, ast.ClassDef) and node.name == "McpSettingsPanel"
+		)
+		edit = next(node for node in panel.body if isinstance(node, ast.FunctionDef) and node.name == "_edit_server")
+		self.assertIn("server_list.SetFocus", ast.unparse(edit))
+		save = next(node for node in panel.body if isinstance(node, ast.FunctionDef) and node.name == "_save_approvals")
+		self.assertIn("tool_list.SetFocus", ast.unparse(save))
+
 	def test_settings_tab_title_has_no_ampersand_mnemonic(self) -> None:
 		mcp_source = (ADDON_ROOT / "ui" / "mcp_settings.py").read_text(encoding="utf-8")
 		self.assertIn('title = _("MCP Servers and Tools")', mcp_source)

@@ -7,6 +7,7 @@ from typing import Any
 from ..core.tooling import ToolArguments, ToolContentBlock, ToolExecutionResult
 from .definition import ToolDefinition
 from .errors import ToolProviderError
+from .mcp_errors import manager_error_message
 from .provider import ToolCallContext
 
 
@@ -74,9 +75,13 @@ class McpToolProvider:
 		if not isinstance(response, Mapping) or response.get("success") is not True:
 			uncertain = bool(response.get("uncertain", False)) if isinstance(response, Mapping) else True
 			message = response.get("error_message") if isinstance(response, Mapping) else None
+			category = response.get("error_code") if isinstance(response, Mapping) else None
 			raise ToolProviderError(
 				str(message or "MCP manager request failed"),
-				safe_message="The external tool connection failed.",
+				safe_message=manager_error_message(
+					category,
+					fallback="The external tool connection failed.",
+				),
 				uncertain=uncertain,
 			)
 		reply = response.get("reply")
@@ -89,7 +94,7 @@ class McpToolProvider:
 			safe_message = (
 				"This external tool catalog is out of date. Refresh the MCP server tools."
 				if category in {"stale_catalog", "stale_server"}
-				else "The external tool connection failed."
+				else manager_error_message(category, fallback="The external tool connection failed.")
 			)
 			raise ToolProviderError(
 				f"MCP manager rejected invocation ({category})",

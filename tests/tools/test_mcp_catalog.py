@@ -383,3 +383,32 @@ def test_manager_failure_categories_produce_actionable_safe_messages():
         assert "could not be updated" in error.safe_message
     else:
         raise AssertionError("unknown failure must raise")
+
+
+def test_worker_manager_failure_categories_produce_actionable_safe_messages():
+    # The worker reports manager startup/transport failures as ``success:
+    # false`` with ``error_code`` rather than a manager reply.  Those failures
+    # must not collapse to the generic "connection failed" message.
+    launch = {
+        "success": False,
+        "error_code": "launch_failed",
+        "error_message": "MCP manager process exited",
+    }
+    try:
+        catalog_module.McpCatalogService._require_manager_success(launch)
+    except Exception as error:
+        assert "executable path" in error.safe_message
+    else:
+        raise AssertionError("worker launch failure must raise")
+
+    capacity = {
+        "success": False,
+        "error_code": "capacity",
+        "error_message": "MCP manager request capacity reached",
+    }
+    try:
+        catalog_module.McpCatalogService._require_manager_success(capacity)
+    except Exception as error:
+        assert "Too many MCP operations" in error.safe_message
+    else:
+        raise AssertionError("worker capacity failure must raise")

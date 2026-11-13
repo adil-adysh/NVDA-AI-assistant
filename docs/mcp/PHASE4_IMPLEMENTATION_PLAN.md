@@ -210,6 +210,43 @@ bytes with 1,038 entries, `mcp_manager.exe` (4,473,344 bytes), the new
 `test_http_bridge`, 30 `test_action_tools`, 15 `test_keyboard_dispatch` (all
 passing; the full bridge discovery run has one unrelated missing-pytest import).
 
+## NVDA MCP Bridge acceptance (2026-11-14)
+
+Added the installed Bridge companion as a stdio server through the live
+**MCP Servers and Tools** page:
+
+- Server ID `nvda-mcp`; executable
+  `C:\Users\adilh\AppData\Local\Programs\NVDA MCP Bridge\bin\nvda-mcp-server.exe`.
+- **Connect** discovered 31 tools and the server list changed from *enabled* to
+  *connected*.
+- Approved the read-only `health_snapshot` tool through the untrusted-description
+  confirmation.
+- Asked in chat: "Use the health_snapshot tool from the NVDA MCP Bridge and tell
+  me the NVDA version and whether any errors are reported." The model called the
+  tool through the worker/Rust manager; the answer reported NVDA 2026.3.1 and an
+  error count of zero.
+- The manager's process tree contained a child `nvda-mcp-server.exe`, separate
+  from the Bridge companion already used by the DSH MCP client.
+
+The live path also found and fixed worker-level error handling: manager startup
+or transport failures (`success: false` with `error_code`) were collapsing to a
+generic connection message. They now use the same actionable category guidance
+as manager replies. The settings page now labels connected servers, reports the
+discovered/approved tool counts, returns focus to the server list after
+add/edit, returns focus to the selected tool after approve/revoke, and adds a
+warning when a server declares a tool destructive. Annotations remain untrusted
+and cannot authorize a tool.
+
+Validation after these changes: `uv run ruff check .` passed; `uv run pytest`
+passed 1,327, skipped 3, deselected 40, with 60 subtests; `uv run scons`
+produced `AIAssistant-0.14.0.nvda-addon` (24,343,076 bytes) containing the new
+`tools/mcp_errors.py`. The package was installed over 0.14.0, NVDA restarted,
+the Bridge server reconnected, the list showed **connected**, all 31 tools and
+the persisted approval were present, and a second chat turn again returned NVDA
+2026.3.1 with 0 errors while the Bridge log recorded a successful
+`health_snapshot` action. The assistant's manager process owned a separate
+`nvda-mcp-server.exe` child.
+
 ## Baseline
 
 The hardening baseline at `70eaaba60d246bce1728550b70fcc1fb1934d213` is recorded above. Phase 4 began from current HEAD `4a6e7ca`. The worktree also contains unrelated host JavaScript edits and untracked `.superpowers/`; these are user work and must be preserved.

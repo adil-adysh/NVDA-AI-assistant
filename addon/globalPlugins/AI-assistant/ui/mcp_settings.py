@@ -203,6 +203,9 @@ class McpSettingsPanel(wx.Panel):
 		self.tool_list = wx.ListBox(self, choices=[])
 		self.tool_list.SetName(_("Discovered MCP tools; selection shows approval state"))
 		right.Add(self.tool_list, 1, wx.EXPAND | wx.BOTTOM, 6)
+		self.tool_summary = wx.StaticText(self, label=_("No tools discovered."))
+		self.tool_summary.SetName(_("MCP tool count and approval summary"))
+		right.Add(self.tool_summary, 0, wx.BOTTOM, 6)
 		tool_buttons = wx.BoxSizer(wx.HORIZONTAL)
 		self.approve_button = wx.Button(self, label=_("&Approve selected tool"))
 		self.revoke_button = wx.Button(self, label=_("&Revoke selected tool"))
@@ -235,7 +238,10 @@ class McpSettingsPanel(wx.Panel):
 		return None
 
 	def _refresh_servers(self, selected_id: str | None = None) -> None:
-		self.server_list.Set([f"{server.name} ({server.server_id}) — {_("enabled") if server.enabled else _("disabled")}" for server in self._configs])
+		self.server_list.Set([
+			f"{server.name} ({server.server_id}) — {self._server_state_label(server)}"
+			for server in self._configs
+		])
 		if selected_id:
 			for index, server in enumerate(self._configs):
 				if server.server_id == selected_id:
@@ -243,7 +249,12 @@ class McpSettingsPanel(wx.Panel):
 					break
 		self._on_server_selected(None)
 
-	def _refresh_tools(self) -> None:
+	def _server_state_label(self, server: McpServerConfig) -> str:
+		if self._connected(server.server_id):
+			return _("connected")
+		return _("enabled") if server.enabled else _("disabled")
+
+	def _refresh_tools(self, selected_tool_id: str | None = None) -> None:
 		selected = self._selected_config()
 		server_id = selected[1].server_id if selected else None
 		definitions = getattr(self._registry, "get_enabled_definitions")()
@@ -252,8 +263,18 @@ class McpSettingsPanel(wx.Panel):
 		self.tool_list.Set([
 			f"{definition.provider_tool_name} — {_("approved") if definition.tool_id in self._approved else _("denied")} — {_("Description")}: {_safe_tool_description(definition.description)}" for definition in available
 		])
+		approved_count = sum(1 for tool_id in self._tool_ids if tool_id in self._approved)
 		if self._tool_ids:
-			self.tool_list.SetSelection(0)
+			self.tool_summary.SetLabel(
+				_("{count} tools discovered; {approved} approved.").format(
+					count=len(self._tool_ids), approved=approved_count
+				)
+			)
+			index = self._tool_ids.index(selected_tool_id) if selected_tool_id in self._tool_ids else 0
+			self.tool_list.SetSelection(index)
+			self.tool_list.EnsureVisible(index)
+		else:
+			self.tool_summary.SetLabel(_("No tools discovered."))
 
 	def _connected(self, server_id: str) -> bool:
 		is_connected = getattr(self._catalog, "is_connected", None)
@@ -314,6 +335,7 @@ class McpSettingsPanel(wx.Panel):
 				set_mcp_server_token(updated.server_id, "")
 			set_mcp_servers(self._configs)
 			self._refresh_servers(updated.server_id)
+			self.server_list.SetFocus()
 		finally:
 			dialog.Destroy()
 
@@ -423,6 +445,8 @@ class McpSettingsPanel(wx.Panel):
 			server=selected[1].name,
 			description=description,
 		)
+		if _declares_destructive(definition):
+			prompt += _("\n\nThe server describes this tool as able to change state. Approve it only if you trust this server.")
 		if wx.MessageBox(prompt, _("Approve MCP tool"), wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING, parent=self) == wx.YES:
 			self._approved.add(tool_id)
 			self._save_approvals()
@@ -434,9 +458,11 @@ class McpSettingsPanel(wx.Panel):
 			self._save_approvals()
 
 	def _save_approvals(self) -> None:
+		selected_tool_id = self._selected_tool_id()
 		set_mcp_approved_tool_ids(sorted(self._approved))
 		self._apply_policy()
-		self._refresh_tools()
+		self._refresh_tools(selected_tool_id)
+		self.tool_list.SetFocus()
 		self._announce(_("MCP tool permissions updated."))
 
 	def _apply_policy(self) -> None:
@@ -460,6 +486,18 @@ class McpSettingsPanel(wx.Panel):
 			speak_message(message)
 		except Exception:
 			pass
+
+
+def _declares_destructive(definition: object) -> bool:
+	"""Return the server's destructive hint, used only as an approval warning.
+
+	Annotations are untrusted display data; they never grant permission.  A
+	server that explicitly labels a tool destructive gets a stronger warning so
+	the user does not approve a state-changing bridge tool as if it were a
+	read-only query.
+	"""
+	annotations = getattr(definition, "annotations", None)
+	return getattr(annotations, "destructive_hint", None) is True
 
 
 def _safe_tool_description(value: str) -> str:

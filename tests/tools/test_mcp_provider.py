@@ -71,6 +71,30 @@ def test_mcp_provider_reports_tool_error_without_hiding_content():
     assert result.content[0].text == "tool rejected request"
 
 
+def test_mcp_provider_maps_worker_failure_categories_to_actionable_safe_messages():
+    provider = provider_module.McpToolProvider("mcp:server-a", lambda *_args: {
+        "success": False,
+        "error_code": "launch_failed",
+        "error_message": "MCP manager process exited",
+        "uncertain": False,
+    })
+    definition = definitions.ToolDefinition.from_provider_payload(
+        {"name": "read", "inputSchema": {"type": "object"},
+            "metadata": {"server_id": "server-a", "manager_session_id": "session-a", "server_incarnation": 9, "catalog_generation": 12}},
+        provider_id="mcp:server-a")
+    context = provider_types.ToolCallContext(
+        tool_id=definition.tool_id, tool_name="read", tool_call_id=None,
+        provider_id="mcp:server-a", timeout_seconds=2,
+        cancellation_requested=lambda: False,
+    )
+    try:
+        provider.execute(definition, {}, context)
+    except Exception as error:
+        assert "executable path" in error.safe_message
+    else:
+        raise AssertionError("worker launch failure must raise")
+
+
 def test_mcp_tool_executes_only_through_existing_authorized_tool_executor():
     calls = []
 

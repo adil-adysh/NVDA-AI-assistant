@@ -101,15 +101,30 @@ can discover and invoke a deterministic fixture. A separate live test connected
 to the installed NVDA MCP Bridge and executed the narrowly approved read-only
 `list_loaded_addons` operation against the running NVDA process.
 
-On 2026-11-14 the installed assistant was exercised end to end with the bridge
-MCP tools: settings navigation, add/edit/remove, connect, discovery, per-tool
-approval (including the untrusted-description prompt), and a chat turn in which
-the approved `echo` tool ran through the worker/Rust manager and its result was
-rendered and persisted. Keyboard focus, safe confirmation defaults, actionable
-connection errors and the MCP editor's validation path were verified live. The
-same run found and fixed an inaccessible editor crash, focus loss on tab and
-server changes, an over-wide editor, and bridge defects in NVDA-menu state
-detection and scripted-key dispatch.
+On 2026-11-14 the installed assistant was exercised end to end with the
+installed NVDA MCP Bridge: added a stdio server for
+`%LOCALAPPDATA%\Programs\NVDA MCP Bridge\bin\nvda-mcp-server.exe`, connected it,
+discovered 31 tools, approved the read-only `health_snapshot` tool through the
+untrusted-description prompt, and asked for it in chat. The model called it
+through the worker/Rust manager and answered with NVDA 2026.3.1 and an error
+count of 0. The manager process owned a child `nvda-mcp-server.exe`; the test
+did not reuse the assistant's separate MCP companion process.
+
+The same live path found and fixed:
+
+- Worker-level manager failures (`success: false` with `error_code`) now use
+  the same actionable messages as manager replies instead of collapsing to
+  "The external tool connection failed."
+- The server list now shows **connected** rather than only **enabled**, and the
+  tool summary reports discovered and approved counts.
+- Adding or editing a server returns focus to the server list; approving or
+  revoking a tool returns focus to the same tool.
+- Approving a tool the server declares destructive adds a warning that the tool
+  can change state. Annotations remain untrusted and never grant permission.
+
+Earlier fixes from the same phase: an inaccessible editor crash, focus loss on
+tab and server changes, an over-wide editor, and bridge defects in NVDA-menu
+state detection and scripted-key dispatch.
 
 The sibling Bridge executable test remains ignored until that sibling checkout
 is built. Stdio secret environment references are not exposed by the current

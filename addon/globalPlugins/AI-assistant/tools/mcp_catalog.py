@@ -11,29 +11,11 @@ from typing import Any
 from ..config.mcp_servers import McpServerConfig
 from .definition import ToolDefinition
 from .errors import ToolProviderError
+from .mcp_errors import manager_error_message
 from .mcp_provider import McpDispatch, McpToolProvider
 from .registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
-
-#: User-facing explanations for the manager's bounded error categories. The
-#: manager deliberately hides transport detail, so these messages tell the user
-#: what to check without echoing server or credential data.
-_MANAGER_ERROR_GUIDANCE = {
-	"launch_failed": "The MCP server program could not be started. Check its executable path.",
-	"startup_timeout": "The MCP server did not finish starting in time.",
-	"protocol_error": (
-		"The MCP server did not complete the MCP handshake. Check that the program is an MCP "
-		"server and that any required environment variables are available to it."
-	),
-	"connection_failed": "Could not connect to the MCP server. Check the URL, token and network.",
-	"connection_error": "Could not connect to the MCP server. Check the URL, token and network.",
-	"version_mismatch": "The MCP server uses a protocol version this client does not support.",
-	"capacity": "Too many MCP operations are active. Wait a moment and try again.",
-	"message_too_large": "The MCP server response is too large to accept.",
-	"cancelled": "The MCP operation was cancelled.",
-	"disconnected": "The MCP server disconnected.",
-}
 
 _DRAFT_7_URI = "http://json-schema.org/draft-07/schema#"
 _DRAFT_7_UNTRANSLATED_ASSERTIONS = frozenset({
@@ -421,9 +403,15 @@ class McpCatalogService:
 	@staticmethod
 	def _require_manager_success(response: Mapping[str, Any]) -> Mapping[str, Any]:
 		if response.get("success") is not True:
+			# The worker reports its own manager failures with ``error_code``
+			# rather than a reply envelope.  Surface the same actionable text
+			# used for manager replies instead of a generic connection error.
 			raise ToolProviderError(
 				str(response.get("error_message") or "MCP manager request failed"),
-				safe_message="The external tool connection failed.",
+				safe_message=manager_error_message(
+					response.get("error_code"),
+					fallback="The external tool connection failed.",
+				),
 				uncertain=bool(response.get("uncertain", False)),
 			)
 		reply = response.get("reply")
@@ -432,9 +420,9 @@ class McpCatalogService:
 			category = error.get("category") if isinstance(error, Mapping) else "invalid_reply"
 			raise ToolProviderError(
 				f"MCP manager rejected catalog operation ({category})",
-				safe_message=_MANAGER_ERROR_GUIDANCE.get(
-					str(category),
-					"The external tool connection or catalog could not be updated.",
+				safe_message=manager_error_message(
+					category,
+					fallback="The external tool connection or catalog could not be updated.",
 				),
 				uncertain=bool(reply.get("uncertain", False)) if isinstance(reply, Mapping) else True,
 			)
