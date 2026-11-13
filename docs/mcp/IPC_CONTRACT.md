@@ -16,6 +16,12 @@ conversation state.
   can arrive out of order. A client correlates by ID. Events have an `event`
   field and no command ID. Manager broadcast lag or worker-local queue overflow
   yields `resync_required`.
+- The manager admits at most 32 ordinary commands and 8 control commands by
+  default. Control capacity is separate, so status, cancellation, disconnect
+  and shutdown remain admissible when ordinary work is saturated. The optional
+  `NVDA_MCP_MAX_ACTIVE_COMMANDS` process setting changes the ordinary limit;
+  `ManagerConfig` clamps it to 1–128. Saturation returns a `capacity` error
+  without launching work.
 - Successful `hello` negotiation is required before operational commands. It
   is protocol compatibility, not authentication. The manager is trusted
   through its worker-owned process boundary.

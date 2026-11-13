@@ -225,3 +225,94 @@ def test_tool_executor_cancellation_reaches_rust_and_keeps_outcome_uncertain(tmp
     finally:
         catalog.close()
         client.close()
+
+
+def test_chat_discards_mcp_tool_turn_when_conversation_changes(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm_module, "is_streaming_enabled", lambda: False)
+    client = mcp_manager.McpManagerClient((str(Path(MANAGER)),))
+    client.start()
+    worker = _Worker(client)
+
+    def dispatch(frame, timeout, cancelled):
+        output = []
+        runtime_commands.execute_runtime_command(
+            worker, frame, output.append, cancellation_requested=cancelled,
+        )
+        return output[-1]
+
+    registry = registry_module.ToolRegistry()
+    catalog = catalog_module.McpCatalogService(registry, dispatch)
+    marker = tmp_path / "mcp-conversation-switch.marker"
+
+    class ScriptedChatProvider:
+        model = "fixture-chat-switch"
+
+        def __init__(self):
+            self.calls = 0
+
+        def provider_name(self):
+            return "deterministic MCP conversation switch"
+
+        def supports_streaming(self):
+            return False
+
+        def supports_image_description(self):
+            return False
+
+        def list_models(self):
+            return ()
+
+        def get_model_info(self, model_name=None):
+            return None
+
+        def ensure_model_available(self, on_progress=None):
+            return self.model
+
+        def generate(self, messages, tools=None, stream_handler=None):
+            self.calls += 1
+            if self.calls == 1:
+                target = next(tool for tool in tools if tool.name.endswith("__slow"))
+                return messages_module.LLMResponse(
+                    text="", tool_calls=[tooling.ToolCall(
+                        name=target.name,
+                        arguments={"marker_path": str(marker)},
+                        id="chat-mcp-switch-call",
+                    )], model=self.model,
+                )
+            return messages_module.LLMResponse(text="stale MCP answer", model=self.model)
+
+        def close(self):
+            return None
+
+    try:
+        definitions = catalog.connect_stdio("fixture-switch", str(Path(FIXTURE)), timeout=15)
+        slow = next(item for item in definitions if item.provider_tool_name == "slow")
+        executor = executor_module.ToolExecutor(registry)
+        executor.set_policy(policy_module.DefaultToolPermissionPolicy().with_approval(tool_id=slow.tool_id))
+        chat = llm_module.ProviderLLMService(ScriptedChatProvider(), tool_executor=executor)
+        repository = repository_module.JsonConversationRepository(tmp_path / "switch-conversations.json")
+        coordinator = coordinator_module.ChatCoordinator(chat, repository=repository)
+        coordinator.activate_conversation("mcp-chat-switch")
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(
+                coordinator.send_message,
+                text="Run the approved slow tool.",
+                tool_catalog=registry.snapshot(),
+            )
+            deadline = time.monotonic() + 3
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            if not marker.exists():
+                pytest.fail("MCP fixture did not begin before conversation switch")
+            coordinator.activate_conversation("new-chat")
+            response = pending.result(timeout=5)
+
+        assert response.text == "stale MCP answer"
+        assert coordinator.get_active_conversation_id() == "new-chat"
+        assert coordinator.get_history() == []
+        assert coordinator.last_turn_committed() is False
+        assert repository.exists("mcp-chat-switch") is False
+    finally:
+        catalog.close()
+        client.close()

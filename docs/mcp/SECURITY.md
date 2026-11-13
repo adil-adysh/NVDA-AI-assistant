@@ -50,7 +50,10 @@ accessibility and installed add-on reload/uninstall checks remain open.
 - Manager JSON-line frames are capped at 1 MiB. Active commands, connections,
   invocations, per-server invocations, pending calls, catalogs, notification
   broadcast and request-ID history are bounded. Saturated operations fail with
-  a capacity result before dispatch. Control operations have reserved capacity.
+  a capacity result before dispatch. Control operations have a separate
+  reserved capacity; process-level command saturation tests confirm `status`
+  and `shutdown` remain responsive. The optional ordinary command limit is
+  clamped to 1–128 (`32` by default).
 - Rust `tools/list` pagination is consumed incrementally with cumulative
   catalog count and serialized-byte checks, repeated-cursor detection and a
   64-page maximum; it does not use RMCP's unbounded `list_all_tools()` helper.
