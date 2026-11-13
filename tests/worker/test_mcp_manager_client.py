@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from threading import Event
+import threading
 from concurrent.futures import ThreadPoolExecutor
 import pytest
 
@@ -9,6 +10,7 @@ from tests.support.bootstrap import load_addon_module
 
 mcp_manager = load_addon_module("worker.mcp_manager")
 runtime_commands = load_addon_module("worker.runtime_commands")
+worker_server_module = load_addon_module("worker.server")
 
 
 def test_manager_client_negotiates_and_correlates_concurrent_replies():
@@ -50,6 +52,32 @@ def test_manager_exit_during_invoke_marks_remote_outcome_uncertain():
 		assert caught.value.uncertain is True
 	finally:
 		client.close()
+
+
+def test_worker_replaces_failed_manager_with_lazy_client_without_replay():
+	class FailedManager:
+		closed = False
+
+		@property
+		def failed(self):
+			return True
+
+		def close(self, *, timeout):
+			self.closed = True
+
+	worker = object.__new__(worker_server_module.WorkerServer)
+	worker._executor_lock = threading.RLock()
+	worker._shutdown_event = Event()
+	failed_manager = FailedManager()
+	worker._mcp_manager_client = failed_manager
+
+	recovered = worker.get_mcp_manager()
+
+	assert failed_manager.closed is True
+	assert isinstance(recovered, mcp_manager.McpManagerClient)
+	assert recovered is not failed_manager
+	assert recovered._started is False
+	assert recovered._pending == {}
 
 
 def test_manager_startup_handshake_observes_cancellation():
