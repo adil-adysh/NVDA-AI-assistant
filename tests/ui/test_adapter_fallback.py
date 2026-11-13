@@ -399,3 +399,75 @@ def test_reopening_hidden_host_restores_history_after_process_exit(alive) -> Non
 		assert bool(histories) != alive
 	finally:
 		adapter.close()
+
+def test_chat_submission_forwards_registry_to_the_worker(monkeypatch) -> None:
+	adapter = adapter_module.UIAdapter()
+	captured = {}
+	monkeypatch.setattr(
+		adapter,
+		"_run_host_chat_submission",
+		lambda *args, **kwargs: captured.update(args=args, kwargs=kwargs),
+	)
+	registry = object()
+	token = adapter_module.CancellationToken()
+	try:
+		adapter._handle_host_chat_submission(
+			"hello", "A", object(), {"request_id": "request"}, "request", token,
+			tool_registry=registry,
+		)
+	finally:
+		adapter.close()
+	assert captured["args"][-1] is registry
+
+
+def test_chat_submission_uses_python_registry_snapshot(monkeypatch) -> None:
+	adapter = adapter_module.UIAdapter()
+	snapshot = object()
+
+	class Coordinator:
+		def __init__(self) -> None:
+			self.kwargs = None
+
+		def send_message(self, **kwargs):
+			self.kwargs = kwargs
+			return SimpleNamespace(text="answer", raw=None)
+
+		def last_turn_committed(self) -> bool:
+			return True
+
+		def get_active_conversation_id(self):
+			return "A"
+
+	class Projection:
+		def __init__(self, **_kwargs) -> None:
+			self.message_id = "assistant"
+			self.final_metadata_factory = lambda: {}
+
+		def update(self, *_args) -> None:
+			return None
+
+		def finish(self, _content) -> None:
+			return None
+
+		def abort(self, **_kwargs) -> None:
+			return None
+
+	adapter._litert_ready_handler = lambda announce=None: None
+	adapter._extract_attachment_context = lambda _payload, _strings: (None, None)
+	adapter._get_localized_strings = lambda: {}
+	adapter._build_user_content = lambda *_args: []
+	adapter._is_current_chat_request = lambda *_args: True
+	adapter._build_assistant_content_blocks = lambda *_args, **_kwargs: []
+	adapter._chat_completion_metadata = lambda *_args: {}
+	adapter._final_answer_metadata = lambda metadata=None: {}
+	adapter._host_renderer.chat_append = lambda *_args, **_kwargs: None
+	monkeypatch.setattr(adapter_module, "StreamProjection", Projection)
+	coordinator = Coordinator()
+	try:
+		adapter._run_host_chat_submission(
+			"hello", "A", coordinator, None, "request",
+			adapter_module.CancellationToken(), SimpleNamespace(snapshot=lambda: snapshot),
+		)
+	finally:
+		adapter.close()
+	assert coordinator.kwargs["tool_catalog"] is snapshot
