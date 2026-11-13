@@ -35,3 +35,7 @@ strip = true
 name = "mock_mcp"
 path = "src/bin/mock_mcp.rs"
 required-features = ["fixture-server"]
+
+[[bin]]
+name = "mcp_manager"
+path = "src/main.rs"
