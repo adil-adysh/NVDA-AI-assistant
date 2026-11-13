@@ -130,6 +130,7 @@ def test_chat_tool_loop_executes_mcp_and_persists_correlated_result(tmp_path, mo
             self.calls += 1
             if self.calls == 1:
                 target = next(tool for tool in tools if tool.name.endswith("__echo"))
+                target_error = next(tool for tool in tools if tool.name.endswith("__tool_error"))
                 return messages_module.LLMResponse(
                     text="", tool_calls=[
                         tooling.ToolCall(
@@ -141,6 +142,11 @@ def test_chat_tool_loop_executes_mcp_and_persists_correlated_result(tmp_path, mo
                             name=target.name,
                             arguments={"value": {"answer": 43}},
                             id="chat-mcp-call-2",
+                        ),
+                        tooling.ToolCall(
+                            name=target_error.name,
+                            arguments={},
+                            id="chat-mcp-call-error",
                         ),
                     ], model=self.model,
                 )
@@ -158,8 +164,13 @@ def test_chat_tool_loop_executes_mcp_and_persists_correlated_result(tmp_path, mo
     try:
         definitions = catalog.connect_stdio("fixture-chat", str(Path(FIXTURE)), timeout=15)
         echo = next(item for item in definitions if item.provider_tool_name == "echo")
+        tool_error = next(item for item in definitions if item.provider_tool_name == "tool_error")
         executor = executor_module.ToolExecutor(registry)
-        executor.set_policy(policy_module.DefaultToolPermissionPolicy().with_approval(tool_id=echo.tool_id))
+        executor.set_policy(
+            policy_module.DefaultToolPermissionPolicy()
+            .with_approval(tool_id=echo.tool_id)
+            .with_approval(tool_id=tool_error.tool_id)
+        )
         chat = llm_module.ProviderLLMService(ScriptedChatProvider(), tool_executor=executor)
         repository = repository_module.JsonConversationRepository(tmp_path / "conversations.json")
         coordinator = coordinator_module.ChatCoordinator(chat, repository=repository)
@@ -172,11 +183,19 @@ def test_chat_tool_loop_executes_mcp_and_persists_correlated_result(tmp_path, mo
         assert response.text.startswith("fixture=")
         saved = repository.load("mcp-chat").snapshot()
         tool_messages = [message for message in saved if message.role == "tool"]
-        assert len(tool_messages) == 2
+        assert len(tool_messages) == 3
         parts = [message.parts[0] for message in tool_messages]
-        assert [part.tool_call_id for part in parts] == ["chat-mcp-call-1", "chat-mcp-call-2"]
-        assert all(part.tool_result["tool_id"] == echo.tool_id for part in parts)
-        assert [part.tool_result["structured_content"]["value"]["answer"] for part in parts] == [42, 43]
+        assert [part.tool_call_id for part in parts] == [
+            "chat-mcp-call-1", "chat-mcp-call-2", "chat-mcp-call-error",
+        ]
+        assert [part.tool_result["tool_id"] for part in parts] == [
+            echo.tool_id, echo.tool_id, tool_error.tool_id,
+        ]
+        assert [part.tool_result["structured_content"]["value"]["answer"] for part in parts[:2]] == [42, 43]
+        assert parts[2].tool_result["error_category"] == "execution_error"
+        assert parts[2].tool_result["error_source"] == "tool"
+        assert parts[2].text == "External tool returned an error"
+        assert parts[2].tool_result["content"][0]["text"] == "fixture tool error"
     finally:
         catalog.close()
         client.close()
