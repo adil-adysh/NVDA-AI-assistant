@@ -94,14 +94,24 @@ cleanup use the manager's Windows process containment path; hostile-grandchild
 cleanup has a passing Windows fixture test. Full installed-add-on reload,
 uninstall and crash-recovery acceptance remains outstanding.
 
-## Current verification limits
+## Verification status
 
 The Python-to-Rust fixture test proves the worker adapter and real Rust manager
 can discover and invoke a deterministic fixture. A separate live test connected
 to the installed NVDA MCP Bridge and executed the narrowly approved read-only
-`list_loaded_addons` operation against the running NVDA process; this did not
-exercise the installed assistant add-on's settings UI or keyboard approvals.
+`list_loaded_addons` operation against the running NVDA process.
+
+On 2026-11-14 the installed assistant was exercised end to end with the bridge
+MCP tools: settings navigation, add/edit/remove, connect, discovery, per-tool
+approval (including the untrusted-description prompt), and a chat turn in which
+the approved `echo` tool ran through the worker/Rust manager and its result was
+rendered and persisted. Keyboard focus, safe confirmation defaults, actionable
+connection errors and the MCP editor's validation path were verified live. The
+same run found and fixed an inaccessible editor crash, focus loss on tab and
+server changes, an over-wide editor, and bridge defects in NVDA-menu state
+detection and scripted-key dispatch.
+
 The sibling Bridge executable test remains ignored until that sibling checkout
-is built. Keyboard/screen-reader interaction and add-on reload remain
-unverified. Stdio secret environment references are not exposed by the current
-configuration UI.
+is built. Stdio secret environment references are not exposed by the current
+configuration UI; a server that requires an environment-only credential will
+fail with the actionable MCP-handshake message rather than exposing the value.

@@ -133,6 +133,83 @@
 - Fresh Python validation after the recovery and tool-error acceptance additions: packaged-gated `uv run pytest` passed 1,320, skipped 2, deselected 40 (1,322 selected); `uv run ruff check .` passed.
 - The installed NVDA add-on currently lacks `mcp_settings.py` and `mcp_manager.exe`; live keyboard/speech validation against the new UI is therefore not yet possible without installing the newly built package. The current source contains the new settings panel, but static UI tests are not a substitute for installed NVDA interaction.
 
+## End-user acceptance (2026-11-14)
+
+Installed-AI Assistant and NVDA MCP Bridge were exercised through the live NVDA
+process and the bridge MCP tools. The acceptance itself found and fixed these
+defects.
+
+- MCP server editor: `wx.Dialog.CreateSeparatedButtonSizer()` created buttons
+  owned by the dialog, then added them to the panel's sizer. wx raised an
+  assertion before the editor appeared, so Add/Edit never worked. The button
+  sizer now belongs to the dialog's outer sizer. Regression:
+  `test_mcp_server_editor_validates_before_closing_and_keeps_safe_defaults`.
+- MCP editor and settings focus: both dialogs opened with focus on OK because
+  wx applies the default button after construction. `EVT_SHOW` now moves focus
+  to the first field/list control after the dialog is visible.
+- MCP tab: the `&` in "MCP Servers & Tools" was interpreted as an accelerator,
+  producing an inaccessible name. The tab is now "MCP Servers and Tools".
+- Tab switching dropped focus because `_on_page_changed` focused a non-focusable
+  panel. It now focuses the first usable control on the page, and the notebook
+  has a fallback. Regressions: `test_tab_switching_focuses_the_first_usable_control`,
+  `test_removing_a_server_restores_focus_to_the_list`.
+- The server editor was 1,354 px wide because the unwrapped security guidance
+  text set the best size; the arguments field was one line tall. The guidance is
+  wrapped, the arguments field has a usable minimum height, the dialog is
+  centred on its parent, and OK/Cancel remain reachable.
+- Invalid input and duplicate server IDs closed the editor after `ShowModal`,
+  discarding every field. Validation now runs on the OK button, shows the error,
+  and leaves the form intact. The duplicate check moved into the editor.
+- Approve-tool and Remove-server confirmations defaulted to Yes. Both now use
+  `wx.NO_DEFAULT`; focus lands on No and the destructive action requires an
+  explicit move. Verified live: the Remove prompt opened with "No" focused.
+- Connection failures spoke only "MCP operation failed". Manager error categories
+  now map to actionable safe messages (launch path, MCP handshake/environment,
+  URL/token, protocol version, capacity, oversized result), and the status field
+  and speech use that message. Regression:
+  `test_manager_failure_categories_produce_actionable_safe_messages`.
+- Removing a server left focus nowhere. Focus returns to the configured-server
+  list after the list is rebuilt.
+
+Live end-user path, using DeepSeek through the OpenAI-compatible provider with
+the user's key and `https://api.deepseek.com` plus model `deepseek-flash`:
+
+1. Opened `NVDA menu -> Tools -> AI Assistant -> Settings... -> MCP Servers and
+   Tools`; focus landed on the server list.
+2. Added a stdio server for `mock_mcp.exe`, connected it, discovered four tools,
+   and approved `echo` through the untrusted-description confirmation.
+3. Sent "Call the echo tool with the value 42 and tell me what it returns." The
+   model selected the approved MCP tool, the worker/Rust manager executed it, and
+   the chat rendered "The echo tool returned: stdio:echo" and a follow-up
+   explanation. The transcript exposes headings, paragraphs and tool text through
+   the WebView accessibility tree.
+4. Re-opened Add, reused the `mock` ID, confirmed OK, and verified the error kept
+   the editor and all values; cancelled the editor.
+5. Removed the unused `nvda-mcp` entry, confirmed the safe No default, moved to
+   Yes, and verified the list rebuilt with focus restored.
+
+Bridge defects fixed during the same run:
+
+- A stale `nvdaMenuIaIdentity` (`True`) blocked every input action until NVDA
+  restarted. Menu state now prefers the GUI thread's `GUITHREADINFO` menu flags,
+  then the native popup window, and falls back to the identity only when no
+  foreground window exists.
+- `press` was forbidden in menu/modal states, so the bridge could open the NVDA
+  menu but never navigate it. `press` is now allowed in both states.
+- `KeyboardInputGesture.send()` re-injected NVDA-bound commands and leaked the
+  main key to the focused app (for example "n" moved browser focus instead of
+  opening the menu). Scripted gestures now run through
+  `inputCore.manager.executeGesture` on NVDA's queue; only unscripted keys are
+  injected.
+
+Evidence: `uv run ruff check .` passed; `uv run pytest` passed 1,321, skipped 3,
+deselected 40; Rust host `cargo check` passed; runtime supervisor 24 passed;
+`uv run scons --dry-run` and `uv run scons` passed. The package is 24,340,582
+bytes with 1,038 entries, `mcp_manager.exe` (4,473,344 bytes), the new
+`ui/mcp_settings.py`, and no tests or bytecode. Bridge regressions: 11
+`test_http_bridge`, 30 `test_action_tools`, 15 `test_keyboard_dispatch` (all
+passing; the full bridge discovery run has one unrelated missing-pytest import).
+
 ## Baseline
 
 The hardening baseline at `70eaaba60d246bce1728550b70fcc1fb1934d213` is recorded above. Phase 4 began from current HEAD `4a6e7ca`. The worktree also contains unrelated host JavaScript edits and untracked `.superpowers/`; these are user work and must be preserved.

@@ -495,6 +495,15 @@ class AIAssistantSettingsDialog(SettingsDialog):
 		self.tabs: list[wx.Window] = []
 		self._mcp_dependencies = (mcp_catalog, tool_registry, tool_executor)
 		super().__init__(parent, resizeable=True, buttons={wx.OK, wx.CANCEL, wx.APPLY})
+		self.Bind(wx.EVT_SHOW, self._on_show)
+
+	def _on_show(self, event: wx.ShowEvent) -> None:
+		event.Skip()
+		if event.IsShown() and self.tabs:
+			# SettingsDialog focuses its default button after construction. Put
+			# keyboard focus on the active page so a keyboard user lands in the
+			# settings content rather than on OK.
+			wx.CallAfter(self._focus_current_page)
 
 	def makeSettings(self, settingsSizer: wx.BoxSizer) -> None:
 		self.notebook = wx.Notebook(self)
@@ -515,7 +524,25 @@ class AIAssistantSettingsDialog(SettingsDialog):
 		if event is not None:
 			event.Skip()
 		if self.tabs:
-			self.notebook.GetPage(self.notebook.GetSelection()).SetFocus()
+			# Focus a panel is not focusable; move to its first usable control so
+			# switching tabs with the keyboard does not drop focus on the floor.
+			wx.CallAfter(self._focus_current_page)
+
+	@staticmethod
+	def _first_focusable(window: wx.Window) -> wx.Window | None:
+		for child in window.GetChildren():
+			if child.IsShown() and child.IsEnabled() and child.AcceptsFocus():
+				return child
+			candidate = AIAssistantSettingsDialog._first_focusable(child)
+			if candidate is not None:
+				return candidate
+		return None
+
+	def _focus_current_page(self) -> None:
+		if not self.tabs:
+			return
+		page = self.notebook.GetPage(self.notebook.GetSelection())
+		(self._first_focusable(page) or self.notebook).SetFocus()
 
 	def show_validation_error(self, message: str, control: wx.Window, tab: wx.Window) -> None:
 		wx.MessageBox(message, _("Invalid configuration"), wx.OK | wx.ICON_ERROR, parent=self)

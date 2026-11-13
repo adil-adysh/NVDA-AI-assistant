@@ -26,9 +26,16 @@ _ = cast(Callable[[str], str], getattr(builtins, "_", lambda value: value))
 class _ServerEditor(wx.Dialog):
 	"""Accessible editor for one stdio or Streamable HTTP server."""
 
-	def __init__(self, parent: wx.Window, server: McpServerConfig | None = None) -> None:
+	def __init__(
+		self,
+		parent: wx.Window,
+		server: McpServerConfig | None = None,
+		existing_ids: set[str] | None = None,
+	) -> None:
 		super().__init__(parent, title=_("MCP Server"), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
 		self._existing = server
+		self._existing_ids = existing_ids or set()
+		self._validated: McpServerConfig | None = None
 		panel = wx.Panel(self)
 		sizer = wx.BoxSizer(wx.VERTICAL)
 		form = wx.FlexGridSizer(cols=2, vgap=6, hgap=8)
@@ -44,6 +51,7 @@ class _ServerEditor(wx.Dialog):
 		form.Add(self.transport, 1, wx.EXPAND)
 		self.command = self._field(form, panel, _("Executable path:"), server.command if server and server.transport == "stdio" else "")
 		self.arguments = wx.TextCtrl(panel, value="\n".join(server.args) if server and server.transport == "stdio" else "", style=wx.TE_MULTILINE)
+		self.arguments.SetMinSize((-1, 90))
 		self.arguments.SetName(_("Arguments, one per line"))
 		form.Add(wx.StaticText(panel, label=_("Arguments, one per line:")), 0, wx.ALIGN_TOP)
 		form.Add(self.arguments, 1, wx.EXPAND)
@@ -59,18 +67,26 @@ class _ServerEditor(wx.Dialog):
 		sizer.Add(form, 1, wx.ALL | wx.EXPAND, 12)
 		self.message = wx.StaticText(panel, label=_("HTTP must use HTTPS, or unauthenticated HTTP on localhost/loopback. Saved bearer tokens use Windows DPAPI. Do not put secrets in server URLs or stdio arguments."))
 		self.message.SetName(_("Connection security guidance"))
+		self.message.Wrap(520)
 		sizer.Add(self.message, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
-		buttons = self.CreateSeparatedButtonSizer(wx.OK | wx.CANCEL)
-		if buttons:
-			sizer.Add(buttons, 0, wx.EXPAND | wx.ALL, 8)
 		panel.SetSizer(sizer)
 		outer = wx.BoxSizer(wx.VERTICAL)
 		outer.Add(panel, 1, wx.EXPAND)
+		# The dialog creates these buttons, so they belong to the dialog's sizer.
+		# Adding them to the panel's sizer trips a wx assertion and prevents the
+		# editor from opening at all.
+		buttons = self.CreateSeparatedButtonSizer(wx.OK | wx.CANCEL)
+		if buttons:
+			outer.Add(buttons, 0, wx.EXPAND | wx.ALL, 8)
 		self.SetSizerAndFit(outer)
-		self.SetMinSize((560, 360))
+		self.SetMinSize((560, 420))
+		self.CentreOnParent()
 		self.transport.Bind(wx.EVT_CHOICE, self._update_fields)
 		self._update_fields()
-		self.server_id.SetFocus()
+		self.Bind(wx.EVT_SHOW, self._on_show)
+		ok_button = self.FindWindowById(wx.ID_OK)
+		if ok_button is not None:
+			ok_button.Bind(wx.EVT_BUTTON, self._on_ok)
 
 	@staticmethod
 	def _field(form: wx.FlexGridSizer, parent: wx.Window, label: str, value: str) -> wx.TextCtrl:
@@ -79,6 +95,25 @@ class _ServerEditor(wx.Dialog):
 		control.SetName(label.removesuffix(":"))
 		form.Add(control, 1, wx.EXPAND)
 		return control
+
+	def _on_show(self, event: wx.ShowEvent) -> None:
+		event.Skip()
+		if event.IsShown():
+			# ShowModal focuses the default button after construction. Move focus
+			# to the first editable field once the dialog is actually visible.
+			wx.CallAfter(self.server_id.SetFocus)
+
+	def _on_ok(self, event: wx.CommandEvent) -> None:
+		"""Validate before closing so a typo does not discard the whole form."""
+		try:
+			config = self._build_config()
+			if config.server_id in self._existing_ids:
+				raise ValueError(_("A server with that ID is already configured."))
+		except ValueError as error:
+			wx.MessageBox(str(error), _("Invalid MCP server"), wx.OK | wx.ICON_ERROR, parent=self)
+			return
+		self._validated = config
+		self.EndModal(wx.ID_OK)
 
 	def _update_fields(self, _event: wx.CommandEvent | None = None) -> None:
 		is_stdio = self.transport.GetSelection() == 0
@@ -89,6 +124,11 @@ class _ServerEditor(wx.Dialog):
 		self.clear_token.Enable(not is_stdio and bool(self._existing and self._existing.credential_ref))
 
 	def get_config(self) -> McpServerConfig:
+		if self._validated is not None:
+			return self._validated
+		return self._build_config()
+
+	def _build_config(self) -> McpServerConfig:
 		is_stdio = self.transport.GetSelection() == 0
 		base = {
 			"server_id": self.server_id.GetValue().strip(),
@@ -113,7 +153,7 @@ class _ServerEditor(wx.Dialog):
 class McpSettingsPanel(wx.Panel):
 	"""Accessible server list, status, tool inspection and approval controls."""
 
-	title = _("MCP Servers & Tools")
+	title = _("MCP Servers and Tools")
 
 	def __init__(self, parent: wx.Window, catalog: object, registry: object, executor: object) -> None:
 		super().__init__(parent, style=wx.TAB_TRAVERSAL)
@@ -248,17 +288,16 @@ class McpSettingsPanel(wx.Panel):
 
 	def _edit_server(self, index: int | None) -> None:
 		current = self._configs[index] if index is not None else None
-		dialog = _ServerEditor(self, current)
+		existing_ids = {
+			server.server_id
+			for position, server in enumerate(self._configs)
+			if position != index
+		}
+		dialog = _ServerEditor(self, current, existing_ids=existing_ids)
 		try:
 			if dialog.ShowModal() != wx.ID_OK:
 				return
-			try:
-				updated = dialog.get_config()
-				if any(i != index and item.server_id == updated.server_id for i, item in enumerate(self._configs)):
-					raise ValueError(_("A server with that ID is already configured."))
-			except ValueError as error:
-				wx.MessageBox(str(error), _("Invalid MCP server"), wx.OK | wx.ICON_ERROR, parent=self)
-				return
+			updated = dialog.get_config()
 			old = None
 			if index is None:
 				self._configs.append(updated)
@@ -286,7 +325,7 @@ class McpSettingsPanel(wx.Panel):
 		if self._connected(config.server_id):
 			wx.MessageBox(_("Disconnect the server before removing it."), _("MCP server is connected"), wx.OK | wx.ICON_INFORMATION, parent=self)
 			return
-		if wx.MessageBox(_("Remove {name} and its saved tool approvals?").format(name=config.name), _("Remove MCP server"), wx.YES_NO | wx.ICON_QUESTION, parent=self) != wx.YES:
+		if wx.MessageBox(_("Remove {name} and its saved tool approvals?").format(name=config.name), _("Remove MCP server"), wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION, parent=self) != wx.YES:
 			return
 		self._configs.pop(index)
 		self._approved = {tool_id for tool_id in self._approved if not tool_id.startswith(f"mcp:mcp:{config.server_id}:")}
@@ -295,6 +334,7 @@ class McpSettingsPanel(wx.Panel):
 		set_mcp_approved_tool_ids(sorted(self._approved))
 		self._apply_policy()
 		self._refresh_servers()
+		self.server_list.SetFocus()
 
 	def _submit(self, work: Callable[[], object], success: str) -> None:
 		self.connect_button.Disable()
@@ -383,7 +423,7 @@ class McpSettingsPanel(wx.Panel):
 			server=selected[1].name,
 			description=description,
 		)
-		if wx.MessageBox(prompt, _("Approve MCP tool"), wx.YES_NO | wx.ICON_WARNING, parent=self) == wx.YES:
+		if wx.MessageBox(prompt, _("Approve MCP tool"), wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING, parent=self) == wx.YES:
 			self._approved.add(tool_id)
 			self._save_approvals()
 
@@ -404,11 +444,14 @@ class McpSettingsPanel(wx.Panel):
 			DefaultToolPermissionPolicy(approved_tool_ids=frozenset(self._approved))
 		)
 
-	def _operation_failed(self, _error: Exception) -> None:
+	def _operation_failed(self, error: Exception) -> None:
 		self._busy = None
 		self._refresh_servers(self._selected_config()[1].server_id if self._selected_config() else None)
-		self.status.SetLabel(_("MCP operation failed. Review the server settings and try again."))
-		self._announce(self.status.GetLabel())
+		message = getattr(error, "safe_message", None)
+		if not isinstance(message, str) or not message.strip():
+			message = _("MCP operation failed. Review the server settings and try again.")
+		self.status.SetLabel(message)
+		self._announce(message)
 
 	@staticmethod
 	def _announce(message: str) -> None:

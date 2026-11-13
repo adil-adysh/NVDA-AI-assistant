@@ -347,3 +347,39 @@ def test_closed_catalog_service_fences_new_worker_commands():
     else:
         raise AssertionError("closed catalog service must reject new operations")
     assert calls == []
+
+
+def test_manager_failure_categories_produce_actionable_safe_messages():
+    launch = {
+        "success": True,
+        "reply": {"ok": False, "error": {"category": "launch_failed", "message": "server process could not be started"}},
+    }
+    try:
+        catalog_module.McpCatalogService._require_manager_success(launch)
+    except Exception as error:
+        assert "executable path" in error.safe_message
+    else:
+        raise AssertionError("launch failure must raise")
+
+    handshake = {
+        "success": True,
+        "reply": {"ok": False, "error": {"category": "protocol_error", "message": "MCP initialization failed"}},
+    }
+    try:
+        catalog_module.McpCatalogService._require_manager_success(handshake)
+    except Exception as error:
+        assert "handshake" in error.safe_message
+        assert "environment variables" in error.safe_message
+    else:
+        raise AssertionError("protocol failure must raise")
+
+    unknown = {
+        "success": True,
+        "reply": {"ok": False, "error": {"category": "surprise", "message": "x"}},
+    }
+    try:
+        catalog_module.McpCatalogService._require_manager_success(unknown)
+    except Exception as error:
+        assert "could not be updated" in error.safe_message
+    else:
+        raise AssertionError("unknown failure must raise")
