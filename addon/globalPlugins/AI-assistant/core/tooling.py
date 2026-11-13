@@ -179,9 +179,21 @@ class ToolExecutionResult:
 		return not self.ok
 
 	def to_model_text(self, max_chars: int = MAX_TOOL_RESULT_CHARS) -> str:
-		if not self.ok:
-			return _bounded(self.error_message or f"Tool '{self.tool_name}' failed", max_chars)
-		return _bounded(self.text, max_chars)
+		"""Render everything the model needs, including tool-level error detail.
+
+		An MCP tool can fail with structured content that explains *why* while
+		``ok`` is false. Returning only ``error_message`` hid that detail, so the
+		model saw "external tool returned an error" and had nothing to correct.
+		"""
+		parts: list[str] = []
+		if self.error_message:
+			parts.append(self.error_message)
+		text = self.text
+		if text:
+			parts.append(text)
+		if self.structured_content is not None and (not self.ok or not text):
+			parts.append(_serialize_json(self.structured_content))
+		return _bounded("\n".join(part for part in parts if part), max_chars)
 
 	def bounded(self, max_chars: int = MAX_TOOL_RESULT_CHARS) -> "ToolExecutionResult":
 		try:

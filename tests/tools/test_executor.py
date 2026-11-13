@@ -236,6 +236,30 @@ def test_tool_level_error_result_is_not_success() -> None:
 	assert "resource does not exist" in (result.error_message or "")
 
 
+def test_failed_tool_exposes_detail_to_the_model() -> None:
+	result = ToolExecutionResult(
+		tool_name="press",
+		ok=False,
+		content=(ToolContentBlock.text_block("Bridge tool error [4103] INVALID_PARAMS_SCHEMA: bad keys"),),
+		structured_content={"success": False, "error": {"code": "4103", "message": "bad keys"}},
+		error_message="External tool returned an error",
+	)
+	rendered = result.to_model_text()
+	assert "bad keys" in rendered
+	assert "INVALID_PARAMS_SCHEMA" in rendered
+
+
+def test_successful_tool_does_not_duplicate_structured_content() -> None:
+	result = ToolExecutionResult(
+		tool_name="observe",
+		ok=True,
+		content=(ToolContentBlock.text_block('{"success": true, "data": {"state_version": 3}}'),),
+		structured_content={"state_version": 3},
+	)
+	rendered = result.to_model_text()
+	assert rendered.count("state_version") == 1
+
+
 def test_large_output_is_bounded() -> None:
 	registry = _registry(lambda arguments: "x" * 50_000)
 	result = ToolExecutor(registry).execute(_call())
