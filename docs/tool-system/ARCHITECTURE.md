@@ -241,7 +241,19 @@ patterns use a bounded safe subset; nested repetition, backreferences and
 lookarounds are rejected, and candidate strings are capped. `format` remains
 annotation-only under the default Draft 2020-12 vocabulary. Integral floating
 point values satisfy the JSON Schema `integer` type, and `multipleOf` uses
-base-10 decimal arithmetic.
+base-10 decimal arithmetic. A declared `$schema` must identify the supported
+Draft 2020-12 dialect; older or custom dialects are rejected so their assertion
+keywords cannot be mistaken for annotations. Published JSON arrays are immutable
+tuple-backed values (with list-compatible equality); use the explicit schema
+serialization helpers to obtain mutable JSON copies.
+
+The regex profile allows at most one unbounded quantifier and rejects combining
+it with any other quantifier. Bounded quantifiers are limited to eight with a
+combined work estimate of at most 256; nested or ambiguous repeated groups,
+backreferences and lookarounds are rejected. Patterns are limited to 512
+characters and candidate strings to 8,192 characters. This conservative subset
+keeps Python's backtracking engine away from demonstrated exponential cases;
+schemas needing other regex features must simplify or pre-normalize them.
 
 ## 10. Conversation history representation
 
@@ -250,6 +262,10 @@ base-10 decimal arithmetic.
 - `Part.tool_result` stores the structured `ToolExecutionResult.to_dict()`
   envelope (outcome, category, structured content, duration, correlation,
   uncertainty). It is persisted and reloadable.
+- Envelope deserialization requires a boolean outcome and valid content-block
+  types/field shapes. Invalid envelopes become bounded `execution_error`
+  results with correlation identity retained, rather than being coerced into
+  apparent successes or silently rewritten content.
 - `Part.tool_call_id` is now persisted too, fixing correlation loss on reload.
 - Provider adapters use `Part.text` when present; only legacy parts without
   text fall back to JSON. Image/audio/resource content is represented by

@@ -115,3 +115,37 @@
 3. Add live revocation, cancellation signalling, and global slot accounting.
 4. Remove direct execution bypass and update architecture/migration documentation.
 5. Run the documented cross-layer validation matrix and inspect the built package.
+
+## Independent review at current HEAD
+
+- Reviewed HEAD 70eaaba (feat(tools): add isolated rmcp feasibility prototype). Before follow-up edits, uv sync --locked and uv run ruff check . passed; 111 focused tool tests passed.
+- The full-suite baseline at this same HEAD was recorded in the preceding validation as 1,268 passed, 2 skipped and 40 deselected. The historical 1,232-test baseline above refers to the earlier hardening starting point 0ecd452.
+- Kept the Rust MCP prototype, unrelated host JavaScript edits and .superpowers/ working-tree content out of this hardening scope.
+- Added failing regressions for mutation through list.append, mismatched $schema dialects, regex backtracking limits, invalid result envelope coercion/overflow and frozen union types. All now pass.
+- A temporary, non-project jsonschema 4.25.1 dependency served as the Draft 2020-12 oracle; 25 curated schema-instance cases matched. No dependency or lockfile change was made.
+- Reproduced regex risk in a subprocess: a? repeated 16 times plus a failing suffix against an 8,192-character candidate exceeded a 2-second timeout. The tightened safe profile rejects it at schema registration.
+
+### Follow-up dispositions
+
+- **H01:** Root $schema declarations now must identify Draft 2020-12; older/custom dialects fail with an actionable error rather than having dialect-specific assertions silently treated as annotations. Differential checks matched in 25 curated cases.
+- **H02/H04:** Result envelope reads require a boolean ok, valid content block shapes and valid flags. Unrepresentable/invalid durations and invalid blocks become bounded execution_error results with correlation retained. The string "false" no longer becomes success.
+- **H03:** FrozenList is now tuple-backed; invoking list.append against the exposed array raises and fingerprints stay stable. A regression also verifies union types remain enforced on the frozen definition schema.
+- **H08:** The regex subset now rejects optional-quantifier explosion and mixing an unbounded quantifier with additional quantifiers; bounded work is capped at 256 with at most eight bounded quantifiers.
+
+H05 and H06 remain supported by the existing live registry gate, cooperative cancellation and process-wide semaphore tests. H07 remains resolved: production has no ToolRegistry.execute() API or caller; execution goes through ToolExecutor.
+
+Final validation counts and build/package results will be added after the complete matrix finishes.
+
+## Final validation at current HEAD plus hardening changes
+
+- uv sync --locked: passed.
+- uv run ruff check .: passed.
+- uv run pytest tests/tools -q: 116 passed.
+- uv run pytest: 1,273 passed, 2 skipped, 40 deselected (1,275 selected).
+- cargo check --manifest-path nvda_ui_host/Cargo.toml: passed.
+- PYO3_PYTHON=.venv/Scripts/python.exe cargo test --manifest-path runtime_supervisor/Cargo.toml: 24 passed.
+- npm --prefix nvda_ui_host run build:webui: passed; npm --prefix nvda_ui_host run test:webui: 49 passed.
+- uv run scons --dry-run and uv run scons: passed. The generated AIAssistant-0.14.0.nvda-addon contains 1,031 entries and no tests, test_*.py files or .pyc files.
+- NVDA integration-marked tests were not run; they require the built NVDA checkout/process described in docs/development.md. The normal suite deselected 40 such tests.
+
+The final audit confirms the bounded Python tool system is safe to proceed toward a future Rust MCP provider, subject to the documented limitations: unsupported schema vocabularies/dialects are rejected, Python regex support is deliberately conservative, in-process handlers cannot be forcibly terminated, and external tools still require host approval.
