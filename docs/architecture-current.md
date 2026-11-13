@@ -1,8 +1,35 @@
 # Current architecture
 
-This document describes the implementation in this repository as of August 2026. It is organized around runtime ownership and package boundaries; the protocol documents describe individual message schemas in more detail.
+The llama manager now presents one configuration/external-model list. Add model
+owns local/HF/cache source selection and optional vision, draft or MTP companion
+descriptors. `models.json` remains authoritative; explicit companion options are
+derived into runtime presets. Worker HF metadata lookup never downloads; remote
+companion resolution occurs only for explicit Load or first inference. Cache
+verification is role-aware, and shared-file deletion is blocked in both manager
+and worker, including legacy projector/draft option paths.
 
-Managed-runtime preparation feedback is request-scoped. `core/readiness_progress.py` observes native lifecycle snapshots and emits startup, restart, and one delayed-preparation stage. Readiness RPCs opt in with `report_readiness_progress`; the worker sends `runtime_progress` frames with a `stage` of `starting`, `restarting`, or `delayed`, followed by the final response. `NamedPipeWorkerClient` consumes the complete transaction under its command lock and translates stages in the NVDA process. No stages are sent to clients that do not opt in. Presentation checks cancellation, current chat identity, preparation lifetime, and output settings before speaking. Model loading is not inferred from elapsed time.
+`service/llama_operations.py` retains application-owned Load/Unload operations,
+progress/error history and cancellation independently of dialog lifetime. Closing
+the manager/Tasks detaches observers; Stop targets one operation. Disposable scans
+still cancel on dismissal. Shutdown fences new operations before worker teardown.
+Model unload is owned-server-only and succeeds only after observing unloaded.
+Installed help gates option keys and speculative mode values; compatibility of
+tensor/projector combinations is not inferred from filenames.
+
+This document describes the implementation in this repository as of October 2026. It is organized around runtime ownership and package boundaries; the protocol documents describe individual message schemas in more detail.
+
+Managed runtime calls use correlated `runtime_command` jobs. The command pipe
+acknowledges submission and handles health, cancellation and shutdown promptly;
+progress and terminal responses use the event pipe. LiteRT, llama, embeddings and
+conversation persistence have separate serialized execution lanes. Status and
+Stop have reserved execution capacity. Passive NVDA event-thread status reads
+use cached snapshots and schedule asynchronous refresh; explicit authoritative
+status reads must run off that thread. Command writes and reads have deadlines,
+and a timed-out transaction reconnects before reuse. Job state is fenced by the
+handshake generation and released when its consumer finishes. Progress congestion
+may discard progress; terminal events are retained.
+
+Managed-runtime preparation feedback is request-scoped. `core/readiness_progress.py` observes native lifecycle snapshots and emits startup, restart, and one delayed-preparation stage. Readiness RPCs opt in with `report_readiness_progress`; the worker sends `runtime_progress` frames with a `stage` of `starting`, `restarting`, or `delayed`, followed by the final response. `NamedPipeWorkerClient` waits for job events outside the command lock and translates stages in the NVDA process. No stages are sent to clients that do not opt in. Presentation checks cancellation, current chat identity, preparation lifetime, and output settings before speaking. Model loading is not inferred from elapsed time.
 
 ## 1. Runtime topology
 
@@ -27,7 +54,7 @@ The application uses these process roles at runtime:
 2. The Python add-on, which owns application behavior, provider calls, configuration, context extraction, persistence, and presentation intent.
 3. nvda_ui_host.exe, which owns the native window, WebView2 controller, WebView event loop, and Svelte rendering. It does not choose prompts, providers, or use cases.
 4. The private CPython worker, which runs local-runtime commands and jobs and hosts
-   the native supervisor. Its entry point is `worker/__main__.py`, launched with `python -B -m worker` from the add-on directory. Managed model servers run as its owned child processes.
+   the native supervisor, embedding engine and conversation database. Its entry point is `worker/__main__.py`, launched with `python -B -m worker` from the add-on directory. Managed model servers run as its owned child processes.
 
 Python and the host use two Windows named pipes:
 
@@ -137,7 +164,7 @@ service/chat/ owns interactive sessions:
 - ChatCoordinator builds user messages, applies page context, calls the LLM, streams progress, and commits turns.
 - ConversationService exposes list/load/delete operations.
 - ConversationRepository is the persistence port.
-- repository_backends.py prefers the Rust memory_engine extension at %APPDATA%\\nvda\\AIAssistant\\conversations.db; it falls back to atomic JSON at conversations.json.
+- repository_worker.py is the NVDA-side repository port. In the worker, repository_backends.py prefers the Rust memory_engine extension at %APPDATA%\\nvda\\AIAssistant\\conversations.db; it falls back to atomic JSON at conversations.json.
 - projector.py maps canonical history to host transport messages.
 - session.py, transaction.py, and types.py hold session and turn data.
 
@@ -145,7 +172,7 @@ observability/ records request context, events, and metrics. The file reporter i
 
 ### Image and embedding subsystems
 
-image/ captures focused objects/windows/screenshots, checks screen-curtain state, preprocesses/resizes/encodes images, and exposes typed image services. CandleEmbeddingAdapter is a lazy port to the PyO3 embedding_engine; the reducer only loads it when embedding is enabled and required.
+image/ captures focused objects/windows/screenshots, checks screen-curtain state, preprocesses/resizes/encodes images, and exposes typed image services. CandleEmbeddingAdapter is a lazy worker port to the PyO3 embedding_engine; the reducer only loads it when embedding is enabled and required.
 
 ## 3. UI boundary and rendering
 
@@ -309,3 +336,136 @@ The native process driver validates preset readability, INI line structure, and 
 
 SConstruct packages Python sources, bundled libraries, native extensions, the Rust host, the isolated private CPython worker runtime, and localized documentation. By default the worker starts on the first model operation and model servers start on inference. Per-provider runtime settings can instead prepare the worker or start the local server at NVDA startup; only the active provider's choice applies. Application termination fences lazy launches and automatic recovery before asynchronous worker teardown. Host failure is isolated by UIAdapter and falls back to native NVDA UI. Missing optional extensions have narrower fallbacks: JSON conversations replace memory_engine, and context reduction can use deterministic behavior when embeddings are disabled/unavailable. Provider/runtime errors are converted by the service error-presentation layer before reaching users.
 
+
+## Worker isolation and cancellation
+
+Model discovery uses the central catalog cache, with generation fencing for fetch
+results and deferred presenter callbacks. Endpoint, credential scope and catalog
+configuration changes invalidate cached discoveries. Cloud model managers read
+the central cache directly. Discovery failures remain retryable errors; capabilities
+retain successful flags while refresh is loading or fails. Managed local discovery
+is independent of inference readiness; authoritative LiteRT discovery prepares the
+worker and reports unavailability rather than returning a successful empty list.
+
+`core/llama_preset.py` owns pure preset reconciliation shared by NVDA and the worker.
+Imports preserve quantization and explicit file selectors; unsupported non-main
+llama.cpp revisions are rejected. Preset edits override stale manifest sources,
+global context/reasoning settings contribute metadata, and relative model paths
+resolve beside the preset before export. Preset replacement/removal is atomic.
+Registering a remote reference does not imply its weights are already downloaded.
+
+The worker advertises `job.runtime_command`, `job.embedding` and `job.conversation`.
+The runtime dispatcher lives in `worker/runtime_commands.py` independently of pipe
+transport. Current clients submit long operations as jobs; the legacy synchronous
+runtime protocol remains for older clients. Worker jobs never import NVDA APIs.
+
+Native embedding preparation/inference and database IO release the Python GIL.
+Embedding requests are split into ordered batches of at most 256 texts, with
+cancellation checks between native minibatches. Cancellation discards native
+results; an individual native call may finish before yielding. LiteRT CLI jobs
+poll cancellation, terminate their child and cap captured diagnostics. Native
+startup checks cancellation immediately before launch and stops a late owned
+startup when cancellation races with preparation. Adopted external servers are
+never terminated by startup cancellation.
+
+NVDA keeps gestures, screen-curtain checks, accessibility snapshots, prompts,
+provider policy, chat state, speech and focus decisions. Chat open/switch/delete
+and catalog presentation run on one serialized presentation IO lane. Worker
+persistence commits are shielded from inference cancellation so stopped partial
+answers remain saved. Image capture keeps object access on the NVDA event thread;
+existing resize/encoding work runs on the calling background thread.
+
+The packaged worker resolves native extensions through `../lib` in its private
+Python path. Packaging tests run outside the checkout with PATH/PYTHONPATH cleared
+and a temporary data directory; they exercise native imports, runtime status,
+embedding validation, conversation IO and downloads.
+
+
+### Deterministic llama.cpp model management
+
+`ManagedModel` separates registration, source ownership, file availability,
+runtime availability and explicit actions. llama.cpp remote registrations are
+marked registered rather than downloaded. Missing local sources remain removable;
+server-discovered rows are read-only registrations and never auto-import during
+catalog lookup. The UI uses these actions instead of inferring removal from a
+download state. Selection and mutations run on the background task boundary, with
+refresh generations, completion speech and list focus restored after a mutation.
+
+`LlamaPresetCodec` generates version-1 presets in canonical model-ID order.
+`core/llama_options.py` owns supported options, aliases, validation and UI labels.
+Per-model records hold explicit runtime options; imported `[*]` defaults are
+flattened into those records. Preset import is a one-time migration, never a live
+configuration link. Unsupported options are reported by section/key and block
+import without changing the catalog or source file. The import summary lists the
+models and settings migrated. Explicit reimport replaces matching IDs and retains
+other registrations.
+
+`models.json` is the authoritative catalog. Legacy list manifests and source-scoped
+manifests migrate on first catalog access, preserving removed IDs. Once the manifest
+has its authoritative marker, neither the original preset nor generated files are
+read as model state. Original files remain unchanged, even when they are named
+`models.ini` inside the managed directory. The derived output is `runtime-models.ini`.
+Both NVDA and worker export from records rather than merging previous output.
+
+Runtime settings load and save off the NVDA event thread. The accessible dialog
+provides context, GPU layers, Flash Attention, cache precision/placement and MoE
+expert placement/cache controls, with reset and validation. Mutually exclusive flags
+are generated from a single placement choice. Other supported imported options
+survive ordinary edits; Reset clears all runtime options. The worker inspects the
+installed server's `--help`, with cancellation and a five-second deadline, and
+caches supported flags by executable file identity. Unavailable controls are disabled;
+unsupported configured flags fail before preset export and server launch. Provider
+context defaults are applied only to unpinned models in the export, not as a router
+command-line flag overriding per-model context. Changes take effect on the next
+managed inference/load, with the existing startup fingerprint triggering a restart
+when the derived preset changes.
+
+The versioned model manifest retains exact removed IDs and retired server aliases.
+Legacy list manifests are accepted. Catalog commits serialize across instances and
+roll back manifest changes when an atomic preset export fails. Removal verifies
+worker runtime status, stops only an owned router, and clears the active selection
+using compare-and-set so it cannot clear a newer choice. It preserves original
+model files and shared llama.cpp cache contents. Repeated removal is idempotent.
+
+Cached-file deletion is a separate worker job. The worker resolves its own managed
+cache root, requires an explicit add-on ownership record for the exact model/file,
+and rejects caller-selected roots and paths outside that root. Current llama.cpp
+Hugging Face downloads remain upstream-owned: importing a reference does not grant
+this add-on permission to delete files from that shared cache.
+
+
+### llama.cpp configuration, asset and server views
+
+`providers/llama_catalog.py` is the shared presentation/selection policy. Entries
+separate saved configurations, worker-verified downloaded assets and server models.
+Runtime observations decode loaded/unloaded/loading/downloading/sleeping/failed
+instead of treating discovery as proof that a model is loaded. Missing local sources
+remain manageable but are excluded from ordinary selectors. Friendly names retain
+stable inference IDs. Explicit model capabilities remain available before load;
+a loaded server's actual capabilities take precedence.
+
+`core/model_assets.py` provides immutable worker-safe snapshots. The model-asset
+executor scans configured folders, worker-visible llama.cpp and HF Hub caches with
+cancellation and limits. It checks GGUF headers, treats shard/projector entries as
+unsupported for standalone creation, deduplicates resolved paths and rejects links
+outside the declared root. It does not load weights or claim full tensor integrity.
+Opaque tokens expire and file identity is rechecked before reuse. Verified HF source
+metadata is retained in configuration records; cache ownership stays with the user.
+
+`ui/llama_model_manager.py` provides one accessible manager with three views, named
+columns, explicit primary actions, search, visibility controls and source details.
+Read tasks do not invalidate catalogs or move focus; durable mutations refresh the
+catalog with generation fences. Stop requests are distinct from errors, and closed
+views reject late results. `ui/llama_configuration_dialog.py` collects friendly name,
+source and optional stable ID. Cached creation references existing files without
+copying, downloading or starting an inference server. Several configurations can
+share one asset. Existing verified add-on-owned deletion is separate from removal.
+
+Preset imports have a preview, explicit replacement IDs, and source/catalog digests
+rechecked at commit. Runtime settings use Basic/Advanced pages with stored/effective
+values, default origins and individually removable unsupported options. Runtime
+allocation is separate from request context budgeting. Explicit preparation uses
+an owned router load request and waits for authoritative loaded status. Cancellation
+requests unload of that model, fenced against replacement server generations; it
+does not terminate an external server. Settings and gestures consume the shared
+selectable model policy through the manager/provider catalog.

@@ -163,3 +163,97 @@ Repeat installation retries deferred cleanup. Failed verification or cancelled
 installation retains the previous package. The separate model registry is never
 part of runtime retirement. `core/runtime_upgrade.py` owns package verification
 and retirement policy; the worker retains authority over process status.
+
+### Worker isolation checks
+
+`tests/worker/test_runtime_jobs.py` verifies cancellation, stale generations,
+terminal-event retention, blocked pipe writes, independent execution lanes, Stop
+with busy ordinary execution capacity, late startup cancellation and passive
+status reads. Run packaged smoke tests with `NVDA_AI_REQUIRE_PACKAGED_TESTS=1`
+after `uv run scons`; the suite then fails instead of skipping missing artifacts.
+Do not run the package build concurrently with tests that load bundled DLLs.
+
+The explicit `uv run pytest -m nvda_integration` command isolates collection to
+files declaring that marker; normal marker deselection happens too late to
+prevent standalone GUI stubs from affecting real NVDA imports. If COM imports
+report `Typelib different than module`, regenerate the sibling checkout's
+`source/comInterfaces` target with its supported `scons.bat` build workflow.
+
+
+### llama.cpp model management compatibility checks
+
+Run `uv run pytest tests/providers/test_deterministic_llama_management.py tests/ui/test_model_management_actions.py tests/build/test_llama_preset_smoke.py`.
+The real router smoke requires an installed `llama-server`; set
+`NVDA_AI_REQUIRE_LLAMA_TESTS=1` to fail instead of skipping when absent. It verifies
+router discovery of a generated version-1 preset with startup model loading disabled
+and offline mode enabled; it neither downloads weights nor performs inference.
+This implementation was validated against Windows build 10970 (0.4.1-dev,
+commit bfdc32183). Generated syntax is pinned to preset version 1; the native
+preflight rejects unsupported versions. Test another intended server build before
+expanding the supported syntax. Runtime binaries remain user-configurable.
+
+Packaged-worker smoke also exercises the owned cache-deletion command and native
+extension imports. Keep package builds sequential with DLL-loading tests.
+
+
+Preset migration and tuning regression checks:
+`uv run pytest tests/providers/test_llama_preset_migration.py tests/ui/test_llama_runtime_options.py`.
+Tests cover immutable import snapshots, source deletion, legacy tombstones,
+unsupported-option atomicity, per-model/default context precedence, runtime-help
+compatibility, placement conflicts and removal of stale worker preset sections.
+Unknown options are deliberately rejected rather than copied opaquely. To migrate
+an unsupported preset, prepare a copy containing supported options and import it;
+keep the original as a backup. Later external edits require explicit reimport.
+
+
+### llama.cpp real-world UX acceptance
+
+The October 13 unified manager has one list and Add model with local, HF and
+existing-download sources. Optional companion files are configured by explicit
+role (vision projector, draft or MTP). HF Resolve only reads metadata; Load/first
+inference downloads missing remote companions. Authentication uses the worker's
+`HF_TOKEN` environment when supplied. Downloaded companions live in the shared HF
+cache; task-owned partials are removed on cancellation/failure, with no resume claim.
+
+Load/Unload progress remains in Tasks after closing the main manager. Stop affects
+only the selected operation; shutdown cancels application operations before worker
+teardown. Settings/source changes and deletion are rejected while lifecycle jobs
+are active. Shared file references block deletion; remove configurations separately.
+
+Additional tests: `uv run pytest tests/providers/test_llama_unified_management.py tests/providers/test_llama_companion_contract.py tests/service/test_llama_operations.py tests/worker/test_llama_companions.py`.
+Manual checks also cover Create versus Create and use, the collapsed companion
+section, role-specific cache/HF pickers, reopen Tasks during Load, explicit Unload,
+missing companions, MTP support after runtime downgrade, and shared-file protection.
+
+See [the integration workflow matrix](testing-llama-integration.md) for automated
+coverage across the catalog, worker, HTTP client, native dialogs and package.
+
+Automated checks: `uv run pytest tests/providers/test_llama_catalog_presentation.py tests/providers/test_llama_cached_configuration.py tests/providers/test_llama_configuration_transactions.py tests/providers/test_llama_model_recovery.py tests/worker/test_model_asset_discovery.py tests/worker/test_llama_prepare_model.py tests/ui/test_llama_model_manager_views.py tests/ui/test_llama_runtime_settings_accessibility.py tests/ui/test_llama_selection_consistency.py`.
+The NVDA integration tier constructs hidden dialogs with the pinned real GUI helpers.
+Packaged smoke discovers a temporary GGUF, creates a named configuration through
+the packaged worker, verifies unchanged files and confirms the server stays stopped.
+
+Before release, manually exercise with running NVDA:
+
+- First setup; empty configurations; Add local/HF reference with accurate lazy-load copy.
+- View/Search/columns read clearly; Enter uses or creates, visibility uses Space;
+  Tab/Shift+Tab and Escape work in every dialog.
+- Discover a real cache while the server is stopped; create two named configurations
+  referencing one asset; remove one and confirm weights/other configuration remain.
+- Refresh while focus is in Search; change views during scanning; close/Stop while
+  work is pending; no late dialogs, focus theft or false failure announcements.
+- Preview preset replacements; Cancel; modify the source after preview; unsupported
+  options; active choice and original file remain unchanged on rejected commits.
+- Basic/Advanced settings; provider/default origins; allocation versus budget copy;
+  runtime downgrade; individually reset saved unsupported flags; all-options reset.
+- Prepare then Stop; failed/missing files; Locate source and preserve settings; verify
+  actual loaded status rather than inferring it from endpoint availability.
+- Cancel Prepare while loading, retry the same model, and verify old completion does
+  not unload the successful retry. Delete a previously discovered file externally
+  and refresh; its configuration must offer Locate files and leave ordinary choices.
+- Interrupt the server during refresh; retain prior server rows with stale/error
+  feedback and disable their selection until a successful refresh.
+- Friendly model names/exact IDs agree in manager, settings, host and gesture menus;
+  unavailable current configurations remain identifiable and manageable.
+
+Do not interpret automated hidden-dialog tests as live speech/focus acceptance.
