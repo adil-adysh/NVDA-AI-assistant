@@ -54,7 +54,7 @@ impl Fixture {
 
     #[tool(description = "Write a marker and wait to exercise cancellation")]
     async fn slow(&self, Parameters(SlowArgs { marker_path }): Parameters<SlowArgs>) -> String {
-        let _ = std::fs::write(marker_path, "running");
+        let _ = std::fs::write(marker_path, std::process::id().to_string());
         tokio::time::sleep(std::time::Duration::from_millis(700)).await;
         "finished".to_owned()
     }

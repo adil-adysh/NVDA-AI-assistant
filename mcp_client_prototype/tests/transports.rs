@@ -245,6 +245,64 @@ async fn parent_eof_cancels_pending_initialization_and_exits_manager() {
     let _ = tokio::fs::remove_file(marker).await;
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn parent_eof_during_invocation_exits_manager_and_cleans_up_server() {
+    let marker = unique_marker("parent-eof-invoke");
+    let mut manager = tokio::process::Command::new(env!("CARGO_BIN_EXE_mcp_manager"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = manager.stdin.take().unwrap();
+    let mut stdout = BufReader::new(manager.stdout.take().unwrap());
+    let hello = send_manager_command(
+        &mut stdin,
+        &mut stdout,
+        json!({"op":"hello", "id":"eof-invoke-hello", "protocol_version":1}),
+    )
+    .await;
+    assert_eq!(hello["ok"], true);
+    let connected = send_manager_command(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "op":"connect_stdio", "id":"eof-invoke-connect", "server_id":"slow",
+            "executable":env!("CARGO_BIN_EXE_mock_mcp"), "args":[], "env":{}
+        }),
+    )
+    .await;
+    assert_eq!(connected["ok"], true, "{connected:#}");
+    let mut invocation = serde_json::to_vec(&json!({
+        "op":"invoke", "id":"eof-running-invoke", "server_id":"slow",
+        "manager_session_id":connected["manager_session_id"],
+        "server_incarnation":connected["server_incarnation"],
+        "catalog_generation":connected["catalog_generation"],
+        "tool_name":"slow", "arguments":{"marker_path":marker.display().to_string()},
+        "timeout_ms":5000
+    }))
+    .unwrap();
+    invocation.push(b'\n');
+    stdin.write_all(&invocation).await.unwrap();
+    stdin.flush().await.unwrap();
+    wait_for_marker(&marker).await;
+    let child_pid: u32 = tokio::fs::read_to_string(&marker)
+        .await
+        .unwrap()
+        .parse()
+        .unwrap();
+
+    drop(stdin);
+    let status = tokio::time::timeout(Duration::from_secs(3), manager.wait())
+        .await
+        .expect("manager did not exit after parent EOF during invocation")
+        .unwrap();
+    assert!(status.success(), "{status}");
+    wait_for_windows_process_exit(child_pid).await;
+    let _ = tokio::fs::remove_file(marker).await;
+}
+
 #[tokio::test]
 async fn manager_reply_does_not_discard_a_partial_next_command_frame() {
     let mut manager = tokio::process::Command::new(env!("CARGO_BIN_EXE_mcp_manager"))
