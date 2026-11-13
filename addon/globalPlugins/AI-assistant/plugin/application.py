@@ -70,6 +70,8 @@ class AIAssistantApplication:
 			pass
 		log.debug("Browser Assistant plugin initializing")
 		self._host = host
+		from ..service.llama_operations import initialize_model_operations
+		initialize_model_operations()
 		self._worker_owner = configure_worker_owner()
 		self._services = build_plugin_services()
 		self._auto_start_active_local_provider()
@@ -172,6 +174,8 @@ class AIAssistantApplication:
 		return count
 
 	def terminate(self) -> None:
+		from ..service.llama_operations import shutdown_model_operations
+		shutdown_model_operations()
 		shutdown_worker_owner()
 		try:
 			self.background.close()

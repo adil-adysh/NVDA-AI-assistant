@@ -122,6 +122,16 @@ def _notify_llama_server_config_changed() -> None:
 	_notify_llama_server_config_changed_impl()
 
 
+def get_llama_cache_roots() -> list[dict[str, str]]:
+	value = _get_raw_setting("llamaCppCacheRoots", [])
+	return [{"path": item["path"], "source": item.get("source", "user_folder")} for item in value
+		if isinstance(item, dict) and isinstance(item.get("path"), str)] if isinstance(value, list) else []
+
+
+def set_llama_cache_roots(roots: list[dict[str, str]]) -> None:
+	_set_value("llamaCppCacheRoots", roots)
+
+
 def get_provider() -> str:
 	"""Return the selected LLM provider."""
 	return _read_string("provider", defaults.DEFAULT_PROVIDER).strip().lower()
@@ -769,6 +779,34 @@ def set_openai_config(config: "OpenAICompatConfig") -> None:
 
 def set_litert_config(config: "OpenAICompatConfig") -> None:
 	set_openai_compat_config(config)
+
+
+def set_provider_preset_path(provider_id: str, path: str) -> None:
+	"""Select a provider's user-owned preset without changing active provider."""
+	spec = get_provider_config_spec(provider_id)
+	if spec is None or spec.models_preset_key is None:
+		raise ValueError("Provider does not support model presets")
+	_set_value(spec.models_preset_key, str(path), notify=True)
+	_notify_llama_server_config_changed()
+
+
+def compare_provider_model_name(provider_id: str, expected: str, value: str) -> bool:
+	"""Replace a selection only if an asynchronous operation still owns it."""
+	spec = get_provider_config_spec(provider_id)
+	if spec is None:
+		raise ValueError("Unsupported provider")
+	changed = _config_store.compare_and_set(spec.model_key, expected, value)
+	if changed:
+		_notify_provider_state_changed()
+	return changed
+
+
+def set_provider_model_name(provider_id: str, model_name: str) -> None:
+	"""Update one provider's selection without activating another provider."""
+	spec = get_provider_config_spec(provider_id)
+	if spec is None:
+		raise ValueError("Unsupported provider")
+	_set_value(spec.model_key, str(model_name).strip(), notify=True)
 
 
 def set_model_name(modelName: str) -> None:

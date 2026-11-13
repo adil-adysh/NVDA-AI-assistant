@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import types
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from tests.support import ADDON_ROOT, load_module, register_package
 
@@ -29,6 +29,13 @@ MODULE = _load_module()
 
 
 class LlamaServerTests(unittest.TestCase):
+	def test_refresh_failure_retains_models_with_error_metadata(self) -> None:
+		supervisor = MODULE.LlamaServerSupervisor(native_supervisor=Mock())
+		supervisor._models_cache = ({"id": "old"},)
+		with patch.object(MODULE.urllib.request, "urlopen", side_effect=OSError("offline")):
+			self.assertEqual(supervisor.list_models(refresh=True), ({"id": "old"},))
+			self.assertEqual(supervisor._models_cache, ({"id": "old"},))
+			self.assertIn("offline", supervisor.models_error)
 	def test_native_failure_preserves_preset_diagnostic(self) -> None:
 		native = Mock()
 		native.ensure_ready.side_effect = RuntimeError("llama server process exited unexpectedly with code 1: option 'mlock' not recognized")

@@ -36,6 +36,19 @@ def _load_runner():
 
 
 class BackgroundTaskRunnerTests(unittest.TestCase):
+	def test_cancelled_failure_is_not_logged_as_error(self) -> None:
+		module, callbacks = _load_runner()
+		runner = module.BackgroundTaskRunner(max_workers=1)
+		def stop(cancel):
+			cancel.set()
+			raise RuntimeError("Request stopped")
+		with mock.patch.object(wx, "CallAfter", callbacks.append), mock.patch.object(module.log, "error") as errors:
+			runner.submit(stop)
+			runner._executor.shutdown(wait=True)
+			for callback in callbacks:
+				callback()
+			errors.assert_not_called()
+
 	def test_cancellation_suppresses_queued_result_but_runs_cleanup(self) -> None:
 		module, callbacks = _load_runner()
 		runner = module.BackgroundTaskRunner(max_workers=1)

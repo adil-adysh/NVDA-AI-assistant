@@ -75,6 +75,9 @@ class ModelConfigureDialog(wx.Dialog):
 		provider_id: str,
 		model_id: str,
 		display_name: str,
+		*,
+		field_labels: dict[str, str] | None = None,
+		extra_fields: tuple[ModelFieldSpec, ...] = (),
 	) -> None:
 		super().__init__(
 			parent,
@@ -84,6 +87,8 @@ class ModelConfigureDialog(wx.Dialog):
 		self._provider_id = provider_id
 		self._model_id = model_id
 		self._display_name = display_name
+		self._field_labels = field_labels or {}
+		self._extra_fields = extra_fields
 		self._base = _base_sampling(provider_id)
 		#: Per-field LabeledControlHelper keyed by spec.id.
 		self._lch: dict[str, LabeledControlHelper] = {}
@@ -128,13 +133,14 @@ class ModelConfigureDialog(wx.Dialog):
 		)
 		s_helper.addItem(override_hint)
 
-		for spec in MODEL_CONFIG_FIELDS:
+		for spec in (*MODEL_CONFIG_FIELDS, *getattr(self, "_extra_fields", ())):
 			# Use NVDA's LabeledControlHelper so the label and text
 			# control are properly associated for screen readers and
 			# the label's enabled/disabled state tracks the control.
-			lch = LabeledControlHelper(self, spec.label, wx.TextCtrl)
+			label = self._field_labels.get(spec.id, spec.label)
+			lch = LabeledControlHelper(self, label, wx.TextCtrl)
 			# TRANSLATORS: Accessible name suffix for model config text fields.
-			lch.control.SetName(_("{} value").format(spec.label.rstrip(":")))
+			lch.control.SetName(_("{} value").format(label.rstrip(":")))
 
 			# Each "Use default" checkbox gets a unique visible label
 			# so screen readers can distinguish them instead of hearing
@@ -144,7 +150,7 @@ class ModelConfigureDialog(wx.Dialog):
 			# Tab navigation and Space to toggle.
 			# TRANSLATORS: Checkbox that makes a sampling parameter follow the provider's global setting; {field} is the parameter name (e.g. "Temperature").
 			cb_label = _("Use default for {field}").format(
-				field=spec.label.rstrip(":")
+				field=label.rstrip(":")
 			)
 			use_default_cb = wx.CheckBox(self, label=cb_label)
 			use_default_cb.Bind(
@@ -196,7 +202,7 @@ class ModelConfigureDialog(wx.Dialog):
 		focus is assigned.  Falls back to the OK button when every
 		field is disabled.
 		"""
-		for spec in MODEL_CONFIG_FIELDS:
+		for spec in (*MODEL_CONFIG_FIELDS, *getattr(self, "_extra_fields", ())):
 			lch = self._lch.get(spec.id)
 			if lch is not None and lch.control.IsEnabled():
 				lch.control.SetFocus()
@@ -234,7 +240,7 @@ class ModelConfigureDialog(wx.Dialog):
 		automatically when the control is enabled/disabled.
 		"""
 		explicit = get_model_sampling(self._provider_id, self._model_id)
-		for spec in MODEL_CONFIG_FIELDS:
+		for spec in (*MODEL_CONFIG_FIELDS, *getattr(self, "_extra_fields", ())):
 			lch = self._lch.get(spec.id)
 			use_default_cb = self._use_default_cbs.get(spec.id)
 			if lch is None or use_default_cb is None:
@@ -336,7 +342,7 @@ class ModelConfigureDialog(wx.Dialog):
 		when any overridden field is empty or invalid.
 		"""
 		values: dict[str, int | float] = {}
-		for spec in MODEL_CONFIG_FIELDS:
+		for spec in (*MODEL_CONFIG_FIELDS, *getattr(self, "_extra_fields", ())):
 			use_default_cb = self._use_default_cbs.get(spec.id)
 			if use_default_cb is not None and use_default_cb.Value:
 				continue
@@ -422,6 +428,9 @@ def open_model_configure(
 	provider_id: str,
 	model_id: str,
 	display_name: str,
+	*,
+	field_labels: dict[str, str] | None = None,
+	extra_fields: tuple[ModelFieldSpec, ...] = (),
 ) -> None:
 	"""Open the Configure dialog for *model_id* under *provider_id*.
 
@@ -432,6 +441,8 @@ def open_model_configure(
 		provider_id,
 		model_id,
 		display_name,
+		**({"field_labels": field_labels} if field_labels else {}),
+		**({"extra_fields": extra_fields} if extra_fields else {}),
 	)
 	try:
 		dlg.ShowModal()

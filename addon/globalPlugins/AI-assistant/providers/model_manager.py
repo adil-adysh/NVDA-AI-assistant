@@ -32,6 +32,7 @@ class ModelState(str, Enum):
 	"""
 
 	READY = "ready"  # cloud — always available
+	REGISTERED = "registered"  # reference available; weights may load on first use
 	DOWNLOADED = "downloaded"  # local — on disk
 	NOT_DOWNLOADED = "not_downloaded"  # local — known but absent
 	DOWNLOADING = "downloading"  # local — in progress
@@ -39,7 +40,43 @@ class ModelState(str, Enum):
 
 	def is_ready(self) -> bool:
 		"""Can this model actually perform inference right now?"""
-		return self in (ModelState.READY, ModelState.DOWNLOADED)
+		return self in (ModelState.READY, ModelState.DOWNLOADED, ModelState.REGISTERED)
+
+
+class ModelOwnership(str, Enum):
+	USER = "user"
+	ADDON = "addon"
+	EXTERNAL = "external"
+
+
+class ModelFileAvailability(str, Enum):
+	PRESENT = "present"
+	MISSING = "missing"
+	REMOTE = "remote"
+	UNKNOWN = "unknown"
+
+
+class ModelRuntimeState(str, Enum):
+	AVAILABLE = "available"
+	STOPPED = "stopped"
+	UNKNOWN = "unknown"
+	LOADED = "loaded"
+	UNLOADED = "unloaded"
+	LOADING = "loading"
+	DOWNLOADING = "downloading"
+	SLEEPING = "sleeping"
+	FAILED = "failed"
+
+
+class ModelAction(str, Enum):
+	REMOVE = "remove"
+	DELETE_CACHE = "delete_cache"
+	DOWNLOAD = "download"
+	SELECT = "select"
+	CREATE_CONFIGURATION = "create_configuration"
+	EDIT_RUNTIME = "edit_runtime"
+	EDIT_GENERATION = "edit_generation"
+	LOCATE_SOURCE = "locate_source"
 
 
 @dataclass(frozen=True)
@@ -58,6 +95,12 @@ class ManagedModel:
 	capabilities: tuple[str, ...] = field(default_factory=tuple)
 	description: str = ""  # plain-text description for the details panel
 	canonical_id: str = ""  # owning model's canonical ID (set for variant entries)
+	registered: bool = False
+	ownership: ModelOwnership = ModelOwnership.EXTERNAL
+	file_availability: ModelFileAvailability = ModelFileAvailability.UNKNOWN
+	runtime_state: ModelRuntimeState = ModelRuntimeState.UNKNOWN
+	actions: tuple[ModelAction, ...] | None = None
+	cached_files: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -70,6 +113,22 @@ class ProviderFeatures:
 	download: bool = False
 	delete: bool = False
 	import_model: bool = False
+	import_preset: bool = False
+	configuration_management: bool = False
+
+
+def available_model_actions(model: ManagedModel, features: ProviderFeatures) -> frozenset[ModelAction]:
+	"""Explicit actions take precedence; legacy providers keep their existing rules."""
+	if model.actions is not None:
+		return frozenset(model.actions)
+	actions = set()
+	if features.delete and model.state is ModelState.DOWNLOADED:
+		actions.add(ModelAction.REMOVE)
+	if features.download and model.state is ModelState.NOT_DOWNLOADED:
+		actions.add(ModelAction.DOWNLOAD)
+	if model.state.is_ready():
+		actions.add(ModelAction.SELECT)
+	return frozenset(actions)
 
 
 @runtime_checkable
@@ -174,8 +233,6 @@ class CloudModelManagerAdapter:
 		self._get_config_fn = get_config_fn
 		self._model_cache = model_cache
 		self._capability_cache = capability_cache
-		self._cached_models: list[ManagedModel] | None = None
-		self._cache_lock = threading.Lock()
 
 	@property
 	def features(self) -> ProviderFeatures:
@@ -193,39 +250,20 @@ class CloudModelManagerAdapter:
 		return str(cfg.model_name or "").strip() or None
 
 	def list_managed_models(self) -> list[ManagedModel]:
-		"""Fetch models from the cloud provider (cached for dialog lifetime).
-
-		If a ``ModelCatalogCache`` is available, uses it as the first
-		data source — this avoids a network round-trip when the cache
-		was preloaded at startup.  Falls back to a direct provider call
-		when the cache is cold or unavailable.
-		"""
-		with self._cache_lock:
-			if self._cached_models is not None:
-				return self._cached_models
-
-		# 1. Try the central model cache (populated at startup).
+		"""Read the central catalog so refreshes cannot be hidden by a second cache."""
 		if self._model_cache is not None:
-			cached_info = self._model_cache.get_models_or_empty(self.provider_id)
-			if cached_info:
-				result = self._convert_to_managed(cached_info)
-				with self._cache_lock:
-					self._cached_models = result
-				return result
-
-		# 2. Fall back to direct provider call.
+			from ..service.model_cache import CatalogState
+			raw = self._model_cache.get_models(self.provider_id)
+			snapshot = self._model_cache.get_snapshot(self.provider_id)
+			if snapshot.state is CatalogState.ERROR:
+				from .interfaces import LLMProviderError
+				raise LLMProviderError(snapshot.error_message or "Model discovery failed")
+			return self._convert_to_managed(raw)
+		provider = self._provider_class(config=self._config)
 		try:
-			provider = self._provider_class(config=self._config)
-			try:
-				raw = provider.list_models()
-			finally:
-				provider.close()
-		except Exception:
-			return []
-		result = self._convert_to_managed(raw)
-		with self._cache_lock:
-			self._cached_models = result
-		return result
+			return self._convert_to_managed(provider.list_models())
+		finally:
+			provider.close()
 
 	def _convert_to_managed(
 		self,

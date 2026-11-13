@@ -12,6 +12,25 @@ from tests.support import load_addon_module
 yaml_store = load_addon_module("config.yaml_store", namespace="yaml_store_testpkg")
 
 
+def test_compare_and_set_preserves_newer_model_choice(tmp_path):
+	store = yaml_store.YamlConfigStore(tmp_path / "config.yaml")
+	store.set("model", "new")
+	assert not store.compare_and_set("model", "old", "")
+	assert store.get("model", None) == "new"
+	assert store.compare_and_set("model", "new", "")
+	assert yaml_store.YamlConfigStore(tmp_path / "config.yaml").get("model", None) == ""
+
+
+def test_failed_setting_save_restores_in_memory_state(tmp_path, monkeypatch):
+	import pytest
+	store = yaml_store.YamlConfigStore(tmp_path / "config.yaml")
+	store.set("model", "old")
+	monkeypatch.setattr(store, "save", lambda: (_ for _ in ()).throw(OSError("disk full")))
+	with pytest.raises(OSError):
+		store.set("model", "new")
+	assert store.get("model", None) == "old"
+
+
 def _deterministic_crypto(monkeypatch) -> None:
 	monkeypatch.setattr(yaml_store, "is_encrypted", lambda value: value.startswith("enc:"))
 	monkeypatch.setattr(yaml_store, "encrypt_value", lambda value: f"enc:{value}")

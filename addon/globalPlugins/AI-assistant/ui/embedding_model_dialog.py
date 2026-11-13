@@ -19,15 +19,26 @@ _ = cast(Callable[[str], str], getattr(builtins, "_", lambda text: text))
 class EmbeddingModelManagementDialog(wx.Dialog):
 	def __init__(self, parent: wx.Window) -> None:
 		super().__init__(parent, title=_("Manage Embedding Models"), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
-		self._models = list(embedding_model_service.list_models())
+		self._models = []
 		self._cached: dict[str, bool] = {}
 		self._status_task: TaskHandle[tuple[tuple[str, bool], ...]] | None = None
 		self._delete_task: TaskHandle[None] | None = None
 		self._destroyed = False
 		self._build_ui()
-		self._refresh()
+		self._update_buttons()
+		self._status_task = background_tasks.submit(
+			lambda _cancel: embedding_model_service.list_models(),
+			on_success=self._on_models_loaded, is_alive=lambda: not self._destroyed,
+			on_error=lambda error: error_reporter.report(error,
+				ErrorContext(operation="list embedding models", origin="embedding model manager")),
+		)
 		self.Bind(wx.EVT_CLOSE, self._on_close)
 		self.CentreOnParent()
+
+	def _on_models_loaded(self, models) -> None:
+		self._status_task = None
+		self._models = list(models)
+		self._refresh()
 
 	def _build_ui(self) -> None:
 		sizer = wx.BoxSizer(wx.VERTICAL)
@@ -140,7 +151,7 @@ class EmbeddingModelManagementDialog(wx.Dialog):
 			return
 
 		def worker(dialog: DownloadProgressDialog) -> None:
-			embedding_model_service.prepare(model.id, progress=dialog.update_message)
+			embedding_model_service.prepare(model.id, progress=dialog.update_message, cancel_event=dialog.cancel_event)
 			dialog.signal_complete(True, _("Embedding model is ready."))
 
 		DownloadProgressDialog.run(self, _("Prepare Embedding Model"), worker, initial_message=_("Preparing model…"))

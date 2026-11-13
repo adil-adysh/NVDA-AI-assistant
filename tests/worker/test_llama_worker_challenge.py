@@ -433,7 +433,7 @@ class TestWorkerErrorResponsePreservation(unittest.TestCase):
 			"success": False,
 		}
 		supervisor = LlamaServerSupervisor(worker_client=mock_client)
-		st = supervisor.status()
+		st = supervisor.status(refresh=True)
 
 		self.assertEqual(st.state, "failed")
 		self.assertEqual(st.error_code, "LLAMA_CRASHED")
@@ -462,7 +462,7 @@ class TestWorkerErrorResponsePreservation(unittest.TestCase):
 			},
 		}
 		supervisor = LlamaServerSupervisor(worker_client=mock_client)
-		st = supervisor.status()
+		st = supervisor.status(refresh=True)
 
 		self.assertEqual(st.state, "failed")
 		self.assertEqual(st.error_message, "Port 8080 already bound by another process")
@@ -531,7 +531,8 @@ class TestWorkerErrorResponsePreservation(unittest.TestCase):
 			"error_message": "Insufficient VRAM to load GGUF tensors",
 			"success": False,
 		}
-		mgr = LlamaCppModelManager(worker_client=mock_client)
+		self.addCleanup(tempfile.TemporaryDirectory.cleanup, (catalog_tmp := tempfile.TemporaryDirectory()))
+		mgr = LlamaCppModelManager(worker_client=mock_client, cache_dir=catalog_tmp.name)
 		rec = LlamaModelRecord(model_id="heavy_qwen", source="heavy.gguf", kind="local_file")
 
 		with self.assertRaises(LlamaServerError) as ctx:
@@ -709,7 +710,7 @@ class TestLlamaWorkerStressAndFaultIsolation(unittest.TestCase):
 
 		for _ in range(5):
 			t0 = time.perf_counter()
-			st = supervisor.status()
+			st = supervisor.status(refresh=True)
 			elapsed = time.perf_counter() - t0
 			self.assertEqual(st.state, "stopped")
 			self.assertLess(elapsed, 0.05)

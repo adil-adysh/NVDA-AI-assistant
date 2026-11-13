@@ -62,6 +62,7 @@ class ModelSamplingConfig:
 	top_p: float | None = None
 	max_tokens: int | None = None
 	repeat_penalty: float | None = None
+	seed: int | None = None
 
 
 #: Fields resolved as *explicit override → provider global setting*.
@@ -77,7 +78,7 @@ _LOCAL_FALLBACK_FIELDS: tuple[str, ...] = ("num_ctx",)
 #: Fields sent only when a model pins them explicitly.  OpenAI-compatible
 #: cloud endpoints reject unknown request parameters, so these must never
 #: leak onto the wire from a global default.
-_PINNED_ONLY_FIELDS: tuple[str, ...] = ("top_k", "repeat_penalty")
+_PINNED_ONLY_FIELDS: tuple[str, ...] = ("top_k", "repeat_penalty", "seed")
 
 #: All user-configurable sampling field IDs, in dialog order.
 SAMPLING_FIELD_IDS: tuple[str, ...] = (
@@ -149,6 +150,8 @@ MODEL_CONFIG_FIELDS: tuple[ModelFieldSpec, ...] = (
 )
 
 MODEL_FIELD_BY_ID: dict[str, ModelFieldSpec] = {spec.id: spec for spec in MODEL_CONFIG_FIELDS}
+SEED_FIELD = ModelFieldSpec("seed", _("Random seed:"), kind="int", minimum=0)
+MODEL_FIELD_BY_ID["seed"] = SEED_FIELD
 
 
 def get_model_config_fields() -> tuple[ModelFieldSpec, ...]:
@@ -285,6 +288,8 @@ def set_model_sampling(
 	# Model-level flags (such as thinking) share this record.  Merge the
 	# sampling values so changing sampling does not reset those flags.
 	stored = store.get(provider_id, model_id)
+	for field in SAMPLING_FIELD_IDS:
+		stored.pop(field, None)
 	stored.update(values)
 	store.set(provider_id, model_id, stored)
 	if str(provider_id or "").strip().lower() == "litert-lm":

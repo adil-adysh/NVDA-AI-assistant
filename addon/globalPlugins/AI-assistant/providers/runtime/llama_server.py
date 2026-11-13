@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..interfaces import LLMProviderError
+from ...core.cancellation import RequestCancelled
 from ...core.translation import _
 from ...core.readiness_progress import run_with_readiness_progress
 
@@ -132,6 +133,7 @@ class LlamaServerSupervisor:
 		self._test_shim: Any | None = None
 		self._models_cache: tuple[dict[str, object], ...] | None = None
 		self._models_cache_lock = threading.Lock()
+		self.models_error: str | None = None
 
 	def _get_worker_client(self, *, start: bool = False) -> Any | None:
 		if self._worker_client is not None:
@@ -140,6 +142,8 @@ class LlamaServerSupervisor:
 				is_connected = conn() if callable(conn) else bool(conn)
 				if is_connected:
 					return self._worker_client
+			except RequestCancelled:
+				raise
 			except Exception:
 				pass
 			return None
@@ -152,6 +156,8 @@ class LlamaServerSupervisor:
 				is_connected = conn() if callable(conn) else bool(conn)
 				if is_connected:
 					return client
+		except RequestCancelled:
+			raise
 		except Exception as exc:
 			if start:
 				raise LlamaServerError(_("Could not start local AI worker: {details}").format(details=exc)) from exc
@@ -163,18 +169,26 @@ class LlamaServerSupervisor:
 			return self._native_supervisor
 		return None
 
-	def status(self) -> Any:
+	def status(self, *, refresh: bool = False, strict: bool = False) -> Any:
 		"""Return an immutable snapshot of supervisor status (non-blocking)."""
 		native = self._get_native()
 		if native is not None:
 			return native.status()
-		client = self._get_worker_client()
+		client = self._get_worker_client(start=True) if strict else self._get_worker_client()
 		if client is not None:
+			if not strict and not refresh and threading.current_thread() is threading.main_thread() and callable(getattr(type(client), "get_runtime_status_snapshot", None)):
+				snapshot = client.get_runtime_status_snapshot("llama")
+				if snapshot:
+					return _status_dict_to_namespace(snapshot)
+				return _idle_runtime_status(self.host, self.port)
+
 			try:
 				resp = client.send_command(
 					{"type": "llama_get_status", "command": "llama_get_status"},
 					timeout=5.0,
 				)
+				if strict and (not resp.get("success") or not isinstance(resp.get("status"), dict) or "is_running" not in resp["status"]):
+					raise LlamaServerError(resp.get("error_message") or _("Unable to verify llama.cpp runtime status."))
 				if resp.get("status"):
 					return _status_dict_to_namespace(resp["status"])
 				if resp.get("success") is False or resp.get("type") == "error":
@@ -193,8 +207,14 @@ class LlamaServerSupervisor:
 						running_model=None,
 						base_url=self.base_url,
 					)
+			except RequestCancelled:
+				raise
 			except Exception as exc:
+				if strict:
+					raise LlamaServerError(_("Unable to verify llama.cpp runtime status: {error}").format(error=exc)) from exc
 				log.debug("Worker llama_get_status query failed: %s", exc)
+		if strict:
+			raise LlamaServerError(_("The local AI worker is unavailable; runtime ownership could not be verified."))
 		return _idle_runtime_status(self.host, self.port)
 
 	@property
@@ -235,9 +255,11 @@ class LlamaServerSupervisor:
 		if native is not None:
 			try:
 				return native.matches_startup_configuration(startup_identity)
+			except RequestCancelled:
+				raise
 			except Exception:
 				return False
-		status = self.status()
+		status = self.status(refresh=True)
 		alive = bool(status.is_running)
 		return alive and getattr(status, "startup_identity", None) == startup_identity
 
@@ -289,6 +311,8 @@ class LlamaServerSupervisor:
 				with self._models_cache_lock:
 					self._models_cache = None
 				return status
+			except RequestCancelled:
+				raise
 			except RuntimeError as exc:
 				raise LlamaServerError(
 					_("Could not prepare llama-server: {details}").format(details=exc)
@@ -368,6 +392,8 @@ class LlamaServerSupervisor:
 				with self._models_cache_lock:
 					self._models_cache = None
 				return status
+			except RequestCancelled:
+				raise
 			except RuntimeError as exc:
 				raise LlamaServerError(str(exc)) from exc
 
@@ -425,6 +451,8 @@ class LlamaServerSupervisor:
 				with self._models_cache_lock:
 					self._models_cache = None
 				return status
+			except RequestCancelled:
+				raise
 			except RuntimeError as exc:
 				raise LlamaServerError(str(exc)) from exc
 
@@ -459,14 +487,14 @@ class LlamaServerSupervisor:
 		on_progress: Callable[[str], None] | None = None,
 	) -> bool:
 		del on_progress
-		status = self.status()
+		status = self.status(refresh=True)
 		if not status.is_running and not status.is_adopted:
 			raise LlamaServerError("llama-server exited before becoming ready")
 		if not self.is_healthy():
 			deadline = time.time() + timeout
 			while time.time() < deadline:
 				time.sleep(POLL_INTERVAL)
-				status = self.status()
+				status = self.status(refresh=True)
 				if not status.is_running and not status.is_adopted:
 					raise LlamaServerError("llama-server exited before becoming ready")
 				if self.is_healthy():
@@ -484,7 +512,8 @@ class LlamaServerSupervisor:
 		with self._models_cache_lock:
 			if self._models_cache is not None and not refresh:
 				return self._models_cache
-		for path in ("/v1/models", "/models"):
+		error = _("The server did not return a valid model catalog.")
+		for path in ("/models", "/v1/models"):
 			try:
 				request = urllib.request.Request(f"{self.base_url}{path}", method="GET")
 				with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -492,34 +521,49 @@ class LlamaServerSupervisor:
 			except urllib.error.HTTPError as exc:
 				if exc.code == 404:
 					continue
+				error = str(exc)
 				break
-			except (OSError, urllib.error.URLError, json.JSONDecodeError):
+			except (OSError, urllib.error.URLError, json.JSONDecodeError, UnicodeError) as exc:
+				error = str(exc)
 				break
 			items = payload.get("data") if isinstance(payload, dict) else None
-			if isinstance(items, list):
-				models = tuple(item for item in items if isinstance(item, dict))
+			if isinstance(items, list) and all(isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"].strip() for item in items):
+				models = tuple(items)
 				with self._models_cache_lock:
 					self._models_cache = models
+					self.models_error = None
 				return models
-		return ()
+		with self._models_cache_lock:
+			self.models_error = error
+			return self._models_cache or ()
 
-	def stop(self) -> None:
+	def stop(self, *, strict: bool = False) -> None:
 		native = self._get_native()
 		if native is not None:
 			try:
 				native.stop()
+			except RequestCancelled:
+				raise
 			except Exception:
-				pass
+				if strict:
+					raise
 		else:
 			client = self._get_worker_client()
+			if strict and client is None:
+				raise LlamaServerError(_("The local AI worker is unavailable; the model was not removed."))
 			if client is not None:
 				try:
-					client.send_command(
+					response = client.send_command(
 						{"type": "llama_stop", "command": "llama_stop", "timeout_seconds": 10.0},
 						timeout=15.0,
 					)
+					if strict and (not response.get("success") or response.get("status", {}).get("is_running")):
+						raise LlamaServerError(response.get("error_message") or _("Unable to stop llama.cpp before removing the model."))
+				except RequestCancelled:
+					raise
 				except Exception:
-					pass
+					if strict:
+						raise
 		with self._models_cache_lock:
 			self._models_cache = None
 
@@ -529,6 +573,8 @@ class LlamaServerSupervisor:
 	def shutdown(self) -> None:
 		try:
 			self.stop()
+		except RequestCancelled:
+			raise
 		except Exception:
 			pass
 		with self._models_cache_lock:

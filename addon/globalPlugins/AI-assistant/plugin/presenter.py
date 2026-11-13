@@ -5,6 +5,8 @@ from __future__ import annotations
 import builtins
 from collections.abc import Callable
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
 
 from ..config.state import ProviderState
@@ -97,6 +99,11 @@ class UseCasePresenter:
 		provider_catalog: ProviderCatalogService | None = None,
 		readiness_service: ProviderReadinessService | None = None,
 	) -> None:
+		self._async_io = bool(getattr(getattr(chat_coordinator, "_repository", None), "requires_background", False))
+		self._closed = False
+		self._io_context = threading.local()
+		self._io_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="AIChatPresentation") if self._async_io else None
+		self._conversation_summaries = []
 		self._chat_coordinator = chat_coordinator
 		self._conversation_service = conversation_service
 		self._tool_registry = tool_registry
@@ -108,6 +115,9 @@ class UseCasePresenter:
 		ui_adapter.register_session_metadata_provider(self._build_chat_metadata)
 
 	def close(self) -> None:
+		self._closed = True
+		if self._io_executor is not None:
+			self._io_executor.shutdown(wait=False, cancel_futures=True)
 		if self._catalog_unsubscribe is not None:
 			self._catalog_unsubscribe()
 			self._catalog_unsubscribe = None
@@ -116,6 +126,25 @@ class UseCasePresenter:
 		# Shutdown must never raise: the host may already be gone.
 		except Exception:  # pylint: disable=broad-exception-caught
 			log.exception("Error closing UI adapter during presenter shutdown")
+
+	def _offload_io(self, callback):
+		if self._closed:
+			return True
+		if not self._async_io or getattr(self._io_context, "active", False):
+			return False
+		def execute():
+			self._io_context.active = True
+			try:
+				if not self._closed:
+					callback()
+			except Exception as error:
+				if not self._closed:
+					from ..service.error_reporter import error_reporter, ErrorContext
+					error_reporter.report(error, ErrorContext(operation="chat persistence", origin="presenter"))
+			finally:
+				self._io_context.active = False
+		self._io_executor.submit(execute)
+		return True
 
 	def open_chat_window(
 		self,
@@ -127,6 +156,11 @@ class UseCasePresenter:
 		seed_messages: tuple[Message, ...] | None = None,
 		page_context: Any | None = None,
 	) -> None:
+		if self._offload_io(lambda: self.open_chat_window(initial_text=initial_text,
+			initial_image_base64=initial_image_base64, initial_assistant_text=initial_assistant_text,
+			conversation_id=conversation_id, force_new_conversation=force_new_conversation,
+			seed_messages=seed_messages, page_context=page_context)):
+			return
 		# When carrying both an image and its description into the conversation,
 		# inject the image as a user message seed so it appears in the transcript.
 		# When only an image is provided (e.g. open_chat_with_screenshot shortcut),
@@ -154,6 +188,8 @@ class UseCasePresenter:
 			conversation_summaries=self._build_conversation_summaries(),
 			readiness=self._readiness_service.evaluate_active(),
 		)
+		if self._closed:
+			return
 		ui_adapter.open_chat_view(
 			ChatWindowViewModel(
 				use_case_id=None,
@@ -175,6 +211,8 @@ class UseCasePresenter:
 		self._refresh_available_models_async(provider_state)
 
 	def update_provider_state(self, provider_state: ProviderState | None = None) -> None:
+		if self._offload_io(lambda: self.update_provider_state(provider_state)):
+			return
 		try:
 			if provider_state is None:
 				provider_state = get_provider_state()
@@ -355,7 +393,10 @@ class UseCasePresenter:
 		).to_metadata()
 
 	def _build_conversation_summaries(self) -> list[dict[str, object]]:
-		return self._conversation_service.list_conversation_summaries()
+		if self._async_io and threading.current_thread() is threading.main_thread():
+			return list(self._conversation_summaries)
+		self._conversation_summaries = self._conversation_service.list_conversation_summaries()
+		return list(self._conversation_summaries)
 
 	def _get_cached_models(self, provider_state: ProviderState) -> tuple[str, ...]:
 		return tuple(m.id for m in model_catalog_cache.get_models_or_empty(provider_state.provider))
@@ -371,6 +412,10 @@ class UseCasePresenter:
 		model_catalog_cache.refresh_async(provider_state.provider)
 
 	def _on_catalog_updated(self, provider: str, snapshot: ModelCatalogSnapshot) -> None:
+		if self._offload_io(lambda: self._on_catalog_updated(provider, snapshot)):
+			return
+		if snapshot.version != model_catalog_cache.version(provider):
+			return
 		current_state = get_provider_state()
 		if current_state.provider != provider:
 			log.debug(
@@ -494,7 +539,8 @@ class UseCasePresenter:
 		action = parse_ui_action(action_id, payload)
 		if action is None:
 			return
-		self._dispatch_ui_action(action)
+		if not self._offload_io(lambda: self._dispatch_ui_action(action)):
+			self._dispatch_ui_action(action)
 
 	def _dispatch_ui_action(
 		self,

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from functools import wraps
+import threading
 import os
 import tempfile
 from pathlib import Path
@@ -16,6 +18,14 @@ from .store import ConfigStore
 log = logging.getLogger(__name__)
 
 
+def _locked(method):
+	@wraps(method)
+	def wrapped(self, *args, **kwargs):
+		with self._lock:
+			return method(self, *args, **kwargs)
+	return wrapped
+
+
 class YamlConfigStore(ConfigStore):
 	"""YAML-backed store for AI assistant configuration.
 
@@ -24,11 +34,13 @@ class YamlConfigStore(ConfigStore):
 	"""
 
 	def __init__(self, path: str | Path | None = None, section_name: str = "aiAssistant") -> None:
+		self._lock = threading.RLock()
 		self._file_path = Path(path or DEFAULT_CONFIG_PATH)
 		self._section_name = section_name
 		self._data: dict[str, Any] = {}
 		self.load()
 
+	@_locked
 	def load(self) -> None:
 		try:
 			with self._file_path.open("r", encoding="utf-8") as config_file:
@@ -47,6 +59,7 @@ class YamlConfigStore(ConfigStore):
 		# Decrypt any encrypted values (transparent to callers).
 		self._decrypt_sensitive()
 
+	@_locked
 	def save(self) -> None:
 		self._file_path.parent.mkdir(parents=True, exist_ok=True)
 		fd, temp_path = tempfile.mkstemp(
@@ -69,16 +82,30 @@ class YamlConfigStore(ConfigStore):
 			except Exception:
 				pass
 
+	@_locked
 	def get(self, key: str, default: Any) -> Any:
 		return self._data.get(key, default)
 
+	@_locked
 	def set(self, key: str, value: Any) -> None:
-		self._data[key] = value
-		self.save()
+		self.set_many({key: value})
 
+	@_locked
 	def set_many(self, values: dict[str, Any]) -> None:
+		previous = dict(self._data)
 		self._data.update(values)
-		self.save()
+		try:
+			self.save()
+		except Exception:
+			self._data = previous
+			raise
+
+	@_locked
+	def compare_and_set(self, key: str, expected: Any, value: Any) -> bool:
+		if self._data.get(key) != expected:
+			return False
+		self.set(key, value)
+		return True
 
 	# ------------------------------------------------------------------
 	# Internal helpers

@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from typing import Any
 import urllib.error
 import urllib.request
@@ -38,6 +39,15 @@ try:
 	import runtime_supervisor
 except Exception:
 	runtime_supervisor = None
+
+try:
+	from ...core.job.execution import check_job_cancelled
+	from ...core.translation import _
+	from ...core.llama_options import canonical_key, OPTION_BY_KEY
+except ImportError:
+	from core.job.execution import check_job_cancelled
+	from core.translation import _
+	from core.llama_options import canonical_key, OPTION_BY_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +66,8 @@ def default_preset_dir() -> Path:
 
 
 def default_preset_file() -> Path:
-	"""Return the path to the router preset models.ini file."""
-	return default_preset_dir() / "models.ini"
+	"""Keep generated output separate from legacy migration input."""
+	return default_preset_dir() / "runtime-models.ini"
 
 
 def subprocess_flags() -> int:
@@ -142,98 +152,10 @@ def build_startup_identity(
 	return json.dumps(identity_data, sort_keys=True)
 
 
-def _record_source_lines(model: dict[str, Any] | Any) -> list[str]:
-	if isinstance(model, dict):
-		kind = model.get("kind", "")
-		source = str(model.get("source", "")).strip()
-		variant = model.get("variant")
-		local_path = model.get("local_path")
-		hf_repo = model.get("hf_repo") or model.get("hf-repo")
-	else:
-		kind = getattr(model, "kind", "")
-		source = str(getattr(model, "source", "")).strip()
-		variant = getattr(model, "variant", None)
-		local_path = getattr(model, "local_path", None)
-		hf_repo = getattr(model, "hf_repo", None)
-
-	if hf_repo:
-		clean_hf_repo = re.sub(r"[\r\n]+", "", str(hf_repo)).strip()
-		if clean_hf_repo:
-			return [f"hf-repo = {clean_hf_repo}"]
-	if kind == "hugging_face" or source.startswith("hf://"):
-		clean_source = re.sub(r"[\r\n]+", "", source).strip()
-		repo = clean_source.removeprefix("hf://").strip()
-		if variant:
-			clean_variant = re.sub(r"[\r\n]+", "", str(variant)).strip()
-			if clean_variant:
-				repo = f"{repo}:{clean_variant}"
-		if repo:
-			return [f"hf-repo = {repo}"]
-	raw_target = str(local_path or source)
-	clean_target = re.sub(r"[\r\n]+", "", raw_target).strip()
-	if not clean_target:
-		return []
-	try:
-		path = str(Path(clean_target).resolve())
-	except Exception:
-		path = clean_target
-	return [f"model = {path}"]
-
-
-def build_models_preset(models: list[Any]) -> str:
-	"""Build a llama-server router preset from model records."""
-	lines = ["version = 1", ""]
-	for m in models:
-		m_id = m.get("model_id") if isinstance(m, dict) else getattr(m, "model_id", "")
-		m_id = str(m_id or "").strip()
-		if not m_id or any(char in m_id for char in "[]\r\n"):
-			continue
-		lines.append(f"[{m_id}]")
-		lines.extend(_record_source_lines(m))
-		lines.append("")
-	return "\n".join(lines)
-
-
-def merge_models_preset(text: str, models: list[Any]) -> str:
-	"""Reconcile model sources while preserving preset comments and options."""
-	if not text.strip():
-		return build_models_preset(models)
-	lines = text.splitlines()
-	sections: list[tuple[str, int, int]] = []
-	for index, line in enumerate(lines):
-		match = _SECTION_RE.match(line.strip())
-		if match:
-			if sections:
-				sections[-1] = (sections[-1][0], sections[-1][1], index)
-			sections.append((match.group(1).strip(), index, len(lines)))
-
-	managed: dict[str, Any] = {}
-	for m in models:
-		m_id = m.get("model_id") if isinstance(m, dict) else getattr(m, "model_id", "")
-		m_id_str = str(m_id or "").strip()
-		if m_id_str and not any(char in m_id_str for char in "[]\r\n"):
-			managed[m_id_str] = m
-
-	output = list(lines)
-	for section, start, end in reversed(sections):
-		m = managed.get(section)
-		if m is None or section == "*":
-			continue
-		body = output[start + 1 : end]
-		body = [line for line in body if not re.match(r"^\s*(?:model|hf-repo)\s*=", line, re.I)]
-		body = _record_source_lines(m) + body
-		output[start + 1 : end] = body
-
-	existing = {section for section, _, _ in sections}
-	for m in models:
-		m_id = m.get("model_id") if isinstance(m, dict) else getattr(m, "model_id", "")
-		m_id_str = str(m_id or "").strip()
-		if not m_id_str or any(char in m_id_str for char in "[]\r\n") or m_id_str in existing:
-			continue
-		while output and not output[-1].strip():
-			output.pop()
-		output.extend(["", f"[{m_id_str}]", *_record_source_lines(m)])
-	return "\n".join(output).rstrip() + "\n"
+try:
+	from ...core.llama_preset import LlamaPresetCodec, build_models_preset as build_models_preset, merge_models_preset as merge_models_preset
+except ImportError:
+	from core.llama_preset import LlamaPresetCodec, build_models_preset as build_models_preset, merge_models_preset as merge_models_preset
 
 
 class LlamaWorkerExecutor:
@@ -244,11 +166,17 @@ class LlamaWorkerExecutor:
 		host: str = DEFAULT_LLAMA_HOST,
 		port: int = DEFAULT_LLAMA_PORT,
 		supervisor: Any | None = None,
+		owned_cache_root: Path | None = None,
 	) -> None:
 		self.host = host
 		self.port = port
 		self._supervisor = supervisor
 		self._preset_lock = threading.Lock()
+		self._option_cache = {}
+		self._spec_modes = None
+		self._preparation_lock = threading.Lock()
+		self._preparations = {}
+		self._owned_cache_root = (owned_cache_root or (default_preset_dir() / "cache")).resolve()
 
 		if self._supervisor is None and runtime_supervisor is not None and hasattr(runtime_supervisor, "RuntimeSupervisor"):
 			try:
@@ -317,6 +245,9 @@ class LlamaWorkerExecutor:
 		startup_identity: str | None = None,
 	) -> dict[str, Any]:
 		"""Atomically ensure the llama-server is running and healthy."""
+		# A new use/startup supersedes cleanup from any abandoned preparation.
+		with self._preparation_lock:
+			self._preparations.clear()
 		if host is not None:
 			self.host = str(host)
 		if port is not None:
@@ -357,6 +288,7 @@ class LlamaWorkerExecutor:
 		env = dict(os.environ)
 		sup = self._get_supervisor()
 
+		check_job_cancelled()
 		status = sup.ensure_ready(
 			exe_str,
 			args,
@@ -423,6 +355,7 @@ class LlamaWorkerExecutor:
 		env = dict(os.environ)
 		sup = self._get_supervisor()
 
+		check_job_cancelled()
 		status = sup.restart(
 			exe_str,
 			args,
@@ -446,11 +379,197 @@ class LlamaWorkerExecutor:
 		status = sup.adopt(model_id=model_id)
 		return serialize_runtime_status(status)
 
+	def delete_cache(self, cache_root: str, path: str, model_id: str | None = None) -> dict[str, Any]:
+		"""Delete only a recorded owned GGUF under the worker's authoritative root."""
+		root = self._owned_cache_root
+		target = Path(path).resolve()
+		if Path(cache_root).resolve() != root or not target.is_relative_to(root) or target == root or target.suffix.lower() != ".gguf":
+			raise ValueError(_("Model cache deletion target is outside the owned cache directory"))
+		owned = False
+		for manifest in root.parent.glob("models*.json"):
+			try:
+				payload = json.loads(manifest.read_text(encoding="utf-8"))
+			except (OSError, ValueError) as error:
+				raise ValueError(_("Unable to verify model catalog dependencies before deletion.")) from error
+			if not isinstance(payload, dict) or payload.get("version") != 1:
+				continue
+			for record in payload.get("models", []):
+				if not isinstance(record, dict):
+					continue
+				if record.get("model_id") == model_id and record.get("ownership") == "addon" and record.get("cached_path"):
+					owned = owned or Path(record["cached_path"]).resolve() == target
+				if record.get("model_id") == model_id:
+					continue
+				references = [record.get(key) for key in ("source", "local_path", "cached_path")]
+				options = record.get("preset_options") or {}
+				if isinstance(options, dict):
+					references.extend(options.get(key) for key in ("mmproj", "spec-draft-model", "model-draft"))
+				for companion in record.get("companions") or ():
+					if isinstance(companion, dict):
+						references.extend(companion.get(key) for key in ("source", "local_path"))
+				for reference in references:
+					if isinstance(reference, str) and reference and Path(reference).resolve() == target:
+						raise ValueError(_("This file is referenced by another model configuration."))
+		if not owned:
+			raise ValueError(_("The cached model file has no add-on ownership record"))
+		check_job_cancelled()
+		target.unlink(missing_ok=True)
+		return {"success": True}
+
+	def _model_request(self, operation: str, model_id: str, timeout_seconds: float):
+		url_host = f"[{self.host}]" if ":" in self.host and not self.host.startswith("[") else self.host
+		request = urllib.request.Request(f"http://{url_host}:{self.port}/models/{operation}",
+			data=json.dumps({"model": model_id}).encode(), headers={"Content-Type": "application/json"}, method="POST")
+		with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+			return json.load(response)
+
+	def prepare_model(self, model_id: str, timeout_seconds: float = 300, on_stage=None):
+		"""Load explicitly, without claiming router health means model readiness."""
+		before = self.get_status()
+		if not before.get("is_running") or before.get("is_adopted"):
+			raise ValueError(_("Model preparation is available only for an add-on-owned server."))
+		check_job_cancelled()
+		finished, stopped = threading.Event(), threading.Event()
+		token = object()
+		with self._preparation_lock:
+			self._preparations[model_id] = token
+		initial = next((item for item in self.list_models(timeout_seconds=0.5) if str(item.get("id", "")) == model_id), None)
+		initial_status = initial.get("status") if initial else None
+		if isinstance(initial_status, dict) and initial_status.get("value") == "loaded":
+			check_job_cancelled()
+			return {"success": True, "state": "loaded"}
+		errors = []
+		def unload():
+			with self._preparation_lock:
+				if self._preparations.get(model_id) is not token:
+					return
+				try:
+					current = self.get_status()
+					if current.get("generation") == before.get("generation") and current.get("pid") == before.get("pid") and not current.get("is_adopted"):
+						self._model_request("unload", model_id, 2)
+				except Exception:
+					logger.debug("Unable to unload stopped preparation", exc_info=True)
+		def load():
+			try:
+				self._model_request("load", model_id, timeout_seconds)
+			except Exception as error:
+				errors.append(error)
+			finally:
+				finished.set()
+				if stopped.is_set():
+					unload()
+		if on_stage:
+			on_stage("loading_model")
+		threading.Thread(target=load, daemon=True, name="llama-prepare-request").start()
+		deadline = time.monotonic() + timeout_seconds
+		try:
+			while time.monotonic() < deadline:
+				check_job_cancelled()
+				if errors:
+					raise ValueError(_("Model preparation failed: {error}").format(error=errors[0]))
+				items = self.list_models(timeout_seconds=0.5)
+				item = next((item for item in items if str(item.get("id", "")) == model_id), None)
+				status = item.get("status") if item else None
+				status = status if isinstance(status, dict) else {}
+				if status.get("failed"):
+					raise ValueError(_("Model loading failed. Edit runtime settings or choose another model."))
+				if status.get("value") == "loaded":
+					return {"success": True, "state": "loaded"}
+				stopped.wait(0.1)
+			raise ValueError(_("Timed out waiting for the model to load."))
+		except BaseException:
+			stopped.set()
+			unload()
+			raise
+
+	def resolve_hf(self, repo, revision="main", role="primary"):
+		from .llama_hf import resolve_hf
+		return resolve_hf(repo, revision, role)
+
+	def resolve_companions(self, companions, on_stage=None):
+		from .llama_hf import resolve_companions
+		return resolve_companions(companions, on_stage=on_stage)
+
+	def unload_model(self, model_id: str, timeout_seconds: float = 30, on_stage=None):
+		"""Confirm the owned router has unloaded this exact model, with a bound."""
+		if not str(model_id).strip():
+			raise ValueError(_("A model ID is required for unload."))
+		before = self.get_status()
+		if not before.get("is_running") or before.get("is_adopted"):
+			raise ValueError(_("Model unload is available only for an add-on-owned server."))
+		with self._preparation_lock:
+			self._preparations.pop(model_id, None)
+		timeout = min(30.0, max(0.01, float(timeout_seconds)))
+		deadline = time.monotonic() + timeout
+		check_job_cancelled()
+		if on_stage:
+			on_stage("unloading_model")
+		response = self._model_request("unload", model_id, min(2.0, timeout))
+		if isinstance(response, dict) and response.get("success") is False:
+			raise ValueError(_("The server rejected the model unload request."))
+		while time.monotonic() < deadline:
+			check_job_cancelled()
+			current = self.get_status()
+			if current.get("generation") != before.get("generation") or current.get("pid") != before.get("pid") or current.get("is_adopted"):
+				raise ValueError(_("The owned server changed while unloading the model."))
+			items = self.list_models(timeout_seconds=min(0.5, max(0.001, (deadline-time.monotonic())/2)))
+			item = next((item for item in items if str(item.get("id", "")) == model_id), None)
+			status = item.get("status") if item else None
+			if isinstance(status, dict) and status.get("value") == "unloaded":
+				return {"success": True, "state": "unloaded", "model_id": model_id}
+			time.sleep(min(0.1, max(0, deadline-time.monotonic())))
+		raise ValueError(_("Unable to observe the model unloaded before the timeout."))
+
+	def inspect_options(self, executable: str) -> set[str]:
+		"""Inspect the installed binary in the worker; cache by file identity."""
+		path = Path(shutil.which(executable) or executable).resolve()
+		shim = path.with_suffix(".shim")
+		if shim.is_file():
+			for line in shim.read_text(encoding="utf-8").splitlines():
+				if line.startswith("path = "):
+					candidate = Path(line.split("=", 1)[1].strip().strip('"'))
+					if candidate.is_file():
+						path = candidate.resolve()
+					break
+		stat = path.stat()
+		identity = (str(path), stat.st_mtime_ns, stat.st_size)
+		if identity in self._option_cache:
+			return set(self._option_cache[identity])
+		check_job_cancelled()
+		process = subprocess.Popen([str(path), "--help"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess_flags())
+		deadline = time.monotonic() + 5.0
+		try:
+			while True:
+				check_job_cancelled()
+				if time.monotonic() >= deadline:
+					raise ValueError(_("Timed out checking supported llama.cpp runtime options."))
+				try:
+					output, unused = process.communicate(timeout=0.1)
+					break
+				except subprocess.TimeoutExpired:
+					continue
+		finally:
+			if process.poll() is None:
+				process.kill()
+				process.communicate()
+		if process.returncode != 0:
+			raise ValueError(_("Unable to check supported llama.cpp runtime options. Check the server executable."))
+		help_text = output.decode("utf-8", errors="replace")
+		mode_match = re.search(r"--spec-type\s+([a-z0-9,-]+)", help_text)
+		self._spec_modes = frozenset(mode_match.group(1).split(",")) if mode_match else frozenset()
+		keys = {canonical_key(key) for key in re.findall(r"(?<!\w)--([a-z][a-z0-9-]+)", output.decode("utf-8", errors="replace"))}
+		# These are documented router preset options, absent from CLI help.
+		keys.update({"load-on-startup", "stop-timeout", "dedup-cache-models"})
+		supported = keys & OPTION_BY_KEY.keys()
+		self._option_cache = {identity: frozenset(supported)}
+		return supported
+
 	def configure_preset(
 		self,
 		models: list[dict[str, Any]] | list[Any],
 		default_model: str | None = None,
 		preset_path: str | Path | None = None,
+		executable: str | None = None,
 	) -> dict[str, Any]:
 		"""Generate and write a llama-server router preset models.ini atomically."""
 		target_path = Path(preset_path) if preset_path else default_preset_file()
@@ -471,14 +590,17 @@ class LlamaWorkerExecutor:
 				if def_match is not None:
 					ordered_models = [def_match, *remaining]
 
-			existing_content = ""
-			if target_path.is_file():
-				try:
-					existing_content = target_path.read_text(encoding="utf-8")
-				except OSError:
-					existing_content = ""
-
-			content = merge_models_preset(existing_content, ordered_models)
+			# The catalog is authoritative. Never merge stale generated files.
+			content = LlamaPresetCodec().encode(ordered_models)
+			if executable:
+				supported = self.inspect_options(executable)
+				requested_modes = {line.split("=", 1)[1].strip() for line in content.splitlines() if line.startswith("spec-type =")}
+				if self._spec_modes is not None and requested_modes - self._spec_modes:
+					raise ValueError(_("The installed llama.cpp runtime does not support speculative modes: {modes}.").format(modes=", ".join(sorted(requested_modes - self._spec_modes))))
+				used = {line.split("=", 1)[0].strip() for line in content.splitlines() if "=" in line}
+				unsupported = sorted((used & OPTION_BY_KEY.keys()) - supported)
+				if unsupported:
+					raise ValueError(_("The installed llama.cpp runtime does not support: {options}. Update the runtime or reset these model settings.").format(options=", ".join(unsupported)))
 
 			fd, temp_file = tempfile.mkstemp(prefix="models-", suffix=".ini", dir=target_path.parent)
 			try:
@@ -508,7 +630,7 @@ class LlamaWorkerExecutor:
 	) -> list[dict[str, Any]]:
 		"""List models exposed by the running server."""
 		url_host = f"[{self.host}]" if ":" in self.host and not self.host.startswith("[") else self.host
-		for path in ("/v1/models", "/models"):
+		for path in ("/models", "/v1/models"):
 			try:
 				url = f"http://{url_host}:{self.port}{path}"
 				req = urllib.request.Request(url, method="GET")

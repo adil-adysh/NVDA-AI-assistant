@@ -117,7 +117,7 @@ class TestLlamaProcessCrashContainment(unittest.TestCase):
 
 		try:
 			t0 = time.perf_counter()
-			status = supervisor.status()
+			status = supervisor.status(refresh=True)
 			elapsed = time.perf_counter() - t0
 
 			self.assertLess(elapsed, 0.5, "status() over IPC took too long")
@@ -263,13 +263,13 @@ class TestLlamaTimeoutAndDeadlockResistance(unittest.TestCase):
 
 		# 1. Send slow ensure_ready with timeout=0.1s
 		with self.assertRaises(TimeoutError):
-			self.client.send_command({"type": "llama_ensure_ready_slow"}, timeout=0.1)
+			self.client._send_control_command({"type": "llama_ensure_ready_slow"}, timeout=0.1)
 
 		# 2. Wait for server to finish slow command and attempt writing stale response
 		time.sleep(0.5)
 
 		# 3. Send fast status command over the same client connection
-		resp2 = self.client.send_command({"type": "llama_get_status"}, timeout=2.0)
+		resp2 = self.client._send_control_command({"type": "llama_get_status"}, timeout=2.0)
 
 		self.assertTrue(resp2.get("success"))
 		self.assertEqual(resp2.get("command"), "llama_get_status")
@@ -481,7 +481,7 @@ class TestLlamaConcurrencyAndStressIPC(unittest.TestCase):
 		results: list[bool] = []
 
 		def query_status() -> None:
-			st = supervisor.status()
+			st = supervisor.status(refresh=True)
 			results.append(st.is_ready)
 
 		with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
@@ -683,7 +683,7 @@ class TestLlamaBrokenPipeAndRecycleRecovery(unittest.TestCase):
 
 		for _ in range(5):
 			t0 = time.perf_counter()
-			st = supervisor.status()
+			st = supervisor.status(refresh=True)
 			elapsed = time.perf_counter() - t0
 			self.assertEqual(st.state, "stopped")
 			self.assertLess(elapsed, 0.05, f"status() took too long during broken pipe: {elapsed}s")
@@ -706,7 +706,7 @@ class TestLlamaBrokenPipeAndRecycleRecovery(unittest.TestCase):
 		client.connect()
 		supervisor = LlamaServerSupervisor(worker_client=client)
 
-		st1 = supervisor.status()
+		st1 = supervisor.status(refresh=True)
 		self.assertEqual(st1.state, "ready_owned")
 
 		# Terminate server1
@@ -722,7 +722,7 @@ class TestLlamaBrokenPipeAndRecycleRecovery(unittest.TestCase):
 
 		try:
 			client.connect()
-			st2 = supervisor.status()
+			st2 = supervisor.status(refresh=True)
 			self.assertEqual(st2.state, "ready_owned")
 			self.assertEqual(st2.generation, 2)
 		finally:
@@ -790,7 +790,7 @@ class TestLlamaContractsAndTypeSafety(unittest.TestCase):
 				else:
 					self.assertIsNone(resolved)
 
-				st = sup.status()
+				st = sup.status(refresh=True)
 				if expected_connected:
 					self.assertEqual(st.state, "ready_owned")
 					self.assertTrue(st.is_ready)
@@ -847,7 +847,7 @@ class TestLlamaContractsAndTypeSafety(unittest.TestCase):
 			"success": False,
 		}
 		sup = LlamaServerSupervisor(worker_client=mock_client)
-		st = sup.status()
+		st = sup.status(refresh=True)
 		self.assertEqual(st.state, "failed")
 		self.assertFalse(st.is_ready)
 		self.assertFalse(st.is_running)
@@ -973,7 +973,7 @@ class TestLlamaFailClosedInvariants(unittest.TestCase):
 			with self.subTest(variant=label):
 				sup = LlamaServerSupervisor(host="127.0.0.1", port=8080, worker_client=client)
 				t0 = time.perf_counter()
-				st = sup.status()
+				st = sup.status(refresh=True)
 				elapsed = time.perf_counter() - t0
 
 				self.assertLess(elapsed, 0.05, f"status() took {elapsed:.4f}s (>50ms) for variant {label}")
@@ -998,7 +998,7 @@ class TestLlamaFailClosedInvariants(unittest.TestCase):
 
 		sup = LlamaServerSupervisor(host="127.0.0.1", port=8080, worker_client=mock_client)
 		t0 = time.perf_counter()
-		st = sup.status()
+		st = sup.status(refresh=True)
 		elapsed = time.perf_counter() - t0
 
 		self.assertLess(elapsed, 0.05)
@@ -1073,7 +1073,7 @@ class TestLlamaFailClosedInvariants(unittest.TestCase):
 				self.addCleanup(patch_fallback.stop)
 
 			sup = LlamaServerSupervisor(port=8080)
-			st = sup.status()
+			st = sup.status(refresh=True)
 			self.assertEqual(st.state, "ready_owned")
 			self.assertTrue(st.is_ready)
 			self.assertEqual(st.generation, 3)

@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 import threading
+import hashlib
 from collections.abc import Callable
 
 import logging
@@ -91,6 +92,7 @@ class ModelCatalogCache:
         #   ModelCatalogSnapshot  → cached snapshot (READY, EMPTY, or ERROR)
         self._entries: dict[str, ModelCatalogSnapshot | _FetchGate] = {}
         self._generations: dict[str, int] = {}
+        self._config_identities: dict[str, bytes] = {}
         self._subscribers: list[Callable[[str, ModelCatalogSnapshot], None]] = []
         self._catalog_factory = catalog_factory
 
@@ -109,6 +111,7 @@ class ModelCatalogCache:
         request.
         """
         provider_id = self._normalize_id(provider_id)
+        self._observe_config(provider_id)
         with self._lock:
             entry = self._entries.get(provider_id)
 
@@ -118,7 +121,6 @@ class ModelCatalogCache:
             if entry.state is CatalogState.EMPTY:
                 return ()
             # State is ERROR: retry synchronously
-            self.invalidate(provider_id)
 
         return self._fetch_and_cache(provider_id)
 
@@ -128,6 +130,7 @@ class ModelCatalogCache:
         Never blocks — safe to call from the NVDA main thread.
         """
         provider_id = self._normalize_id(provider_id)
+        self._observe_config(provider_id)
         with self._lock:
             entry = self._entries.get(provider_id)
         if isinstance(entry, ModelCatalogSnapshot) and entry.state is CatalogState.READY:
@@ -140,6 +143,7 @@ class ModelCatalogCache:
         Never blocks — safe to call from the NVDA main thread.
         """
         provider_id = self._normalize_id(provider_id)
+        self._observe_config(provider_id)
         with self._lock:
             entry = self._entries.get(provider_id)
             version = self._generations.get(provider_id, 0)
@@ -163,6 +167,7 @@ class ModelCatalogCache:
     def version(self, provider_id: str) -> int:
         """Return the invalidation version for *provider_id*."""
         provider_id = self._normalize_id(provider_id)
+        self._observe_config(provider_id)
         with self._lock:
             return self._generations.get(provider_id, 0)
 
@@ -199,6 +204,7 @@ class ModelCatalogCache:
     def preload_async(self, provider_id: str) -> None:
         """Fetch models for *provider_id* in a background thread if not already cached."""
         provider_id = self._normalize_id(provider_id)
+        self._observe_config(provider_id)
         with self._lock:
             current = self._entries.get(provider_id)
             if isinstance(current, ModelCatalogSnapshot) and current.state in (
@@ -230,9 +236,10 @@ class ModelCatalogCache:
     def invalidate_all(self) -> None:
         """Clear the entire cache."""
         with self._lock:
+            providers = set(self._entries) | set(self._generations)
             self._entries.clear()
-            for provider_id in tuple(self._generations):
-                self._generations[provider_id] += 1
+            for provider_id in providers:
+                self._generations[provider_id] = self._generations.get(provider_id, 0) + 1
         log.debug("ModelCatalogCache: invalidated all caches")
 
     def refresh_async(self, provider_id: str) -> None:
@@ -244,6 +251,26 @@ class ModelCatalogCache:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    def _observe_config(self, provider_id: str) -> None:
+        # Provider IDs alone do not identify endpoints or credential scopes.
+        # Store a digest only; credentials must never reach diagnostic output.
+        try:
+            from ..config.settings import build_provider_config
+            config = build_provider_config(provider_id)
+            values = tuple(getattr(config, field, None) for field in (
+                "base_url", "models_path", "api_key", "api_token", "organization",
+                "litert_cache", "models_preset",
+            ))
+            identity = hashlib.sha256(repr(values).encode("utf-8")).digest()
+        except Exception:
+            return
+        with self._lock:
+            previous = self._config_identities.get(provider_id)
+            self._config_identities[provider_id] = identity
+            if previous is not None and previous != identity:
+                self._entries.pop(provider_id, None)
+                self._generations[provider_id] = self._generations.get(provider_id, 0) + 1
 
     @staticmethod
     def _normalize_id(provider_id: str) -> str:
@@ -282,15 +309,15 @@ class ModelCatalogCache:
             except Exception as exc:
                 log.exception("ModelCatalogCache: unexpected fetch failure for '%s'", provider_id)
                 error = exc
-            self._finish_fetch(provider_id, gate, models, error=error)
-            return models
+            published = self._finish_fetch(provider_id, gate, models, error=error)
+            return models if published else self._fetch_and_cache(provider_id)
         else:
             gate.event.wait()
             with self._lock:
                 final = self._entries.get(provider_id)
                 if isinstance(final, ModelCatalogSnapshot):
                     return final.models
-                return self._fetch_and_cache(provider_id)
+            return self._fetch_and_cache(provider_id)
 
     def _perform_fetch(self, provider_id: str) -> tuple[ProviderModelInfo, ...]:
         """Actually perform the catalog fetch."""
@@ -299,7 +326,8 @@ class ModelCatalogCache:
         from ..config.settings import build_provider_config
 
         config = build_provider_config(provider_id)
-        models = tuple(catalog.list_models(config) or ())
+        discover = getattr(type(catalog), "discover_models", None)
+        models = tuple((catalog.discover_models(config) if callable(discover) else catalog.list_models(config)) or ())
         log.debug(
             "ModelCatalogCache: cached %d models for '%s'",
             len(models),
@@ -313,8 +341,9 @@ class ModelCatalogCache:
         gate: _FetchGate,
         models: tuple[ProviderModelInfo, ...],
         error: Exception | None = None,
-    ) -> None:
+    ) -> bool:
         """Publish a fetch result and notify subscribers."""
+        self._observe_config(provider_id)
         with self._lock:
             version = self._generations.get(provider_id, 0)
             if error is not None:
@@ -340,9 +369,12 @@ class ModelCatalogCache:
                     version=version,
                 )
 
-            if self._entries.get(provider_id) is gate:
+            published = self._entries.get(provider_id) is gate
+            if published:
                 self._entries[provider_id] = snapshot
-            subscribers = list(self._subscribers)
+                subscribers = list(self._subscribers)
+            else:
+                subscribers = []
 
         gate.result = models
         gate.error = error
@@ -353,6 +385,7 @@ class ModelCatalogCache:
                 subscriber(provider_id, snapshot)
             except Exception:
                 log.exception("ModelCatalogCache: error in subscriber callback")
+        return published
 
     def _preload_background(self) -> None:
         try:
@@ -414,11 +447,12 @@ class ModelCapabilityCache:
             snapshot = self._catalog_cache.get_snapshot(key[0])
 
         # If discovery failed with ERROR, do NOT downgrade capabilities or cache empty flags
-        if snapshot.state is CatalogState.ERROR:
+        if snapshot.state in (CatalogState.ERROR, CatalogState.LOADING, CatalogState.COLD):
             if cached is not None:
                 return cached[1]
             return ModelCapabilities()
 
+        catalog_version = snapshot.version
         models = snapshot.models
         capabilities = ModelCapabilities()
         for model in models:
@@ -429,7 +463,8 @@ class ModelCapabilityCache:
             current = self._entries.get(key)
             if current is not None and current[0] == catalog_version:
                 return current[1]
-            self._entries[key] = (catalog_version, capabilities)
+            if self._catalog_cache.version(key[0]) == catalog_version:
+                self._entries[key] = (catalog_version, capabilities)
             return capabilities
 
     def invalidate(self, provider_id: str, model_id: str | None = None) -> None:

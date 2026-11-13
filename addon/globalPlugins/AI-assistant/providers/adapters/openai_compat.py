@@ -226,10 +226,10 @@ class OpenAICompatProvider(LLMProvider):
 		try:
 			from ..runtime.server import get_litert_supervisor
 
-			model_ids = sorted(get_litert_supervisor().list_server_models())
+			model_ids = sorted(get_litert_supervisor().list_server_models(strict=True))
 		except Exception as exc:
 			log.debug("OpenAICompatProvider: LiteRT model listing failed: %s", exc)
-			return ()
+			raise LLMProviderError(str(exc)) from exc
 		return tuple(self._capabilities_for_model(model_id) for model_id in model_ids if model_id)
 
 	def get_model_info(self, model_name: str | None = None) -> ProviderModelInfo | None:
@@ -442,7 +442,7 @@ class OpenAICompatProvider(LLMProvider):
 			data = self._native_client().get("/api/tags")
 		except Exception as exc:
 			log.debug("OpenAICompatProvider: /api/tags failed: %s", exc)
-			return ()
+			raise LLMProviderError(str(exc)) from exc
 
 		models_list = data.get("models") if isinstance(data, dict) else None
 		if not isinstance(models_list, list):
@@ -533,7 +533,7 @@ class OpenAICompatProvider(LLMProvider):
 			models = self._client.list_models()
 		except Exception as exc:
 			log.debug("OpenAICompatProvider: /v1/models failed: %s", exc)
-			return ()
+			raise LLMProviderError(str(exc)) from exc
 
 		if not isinstance(models, list):
 			return ()
@@ -1182,6 +1182,9 @@ class OpenAICompatProvider(LLMProvider):
 			"reasoning_format": "deepseek" if enabled else "none",
 			"chat_template_kwargs": {"enable_thinking": enabled},
 		}
+		seed = self._resolve_sampling(model_id).seed
+		if seed is not None:
+			body["seed"] = seed
 		if response_format is not None:
 			body["response_format"] = response_format
 		return body

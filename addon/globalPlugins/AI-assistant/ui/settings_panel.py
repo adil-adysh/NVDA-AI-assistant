@@ -134,6 +134,14 @@ class _SettingsTab(scrolledpanel.ScrolledPanel):
 		return
 
 
+class ModelChoiceList(list):
+	"""Rendered choices with exact IDs, delivered as one generation-fenced result."""
+	def __init__(self):
+		super().__init__()
+		self.identities = {}
+		self.selectable = set()
+
+
 class AIAssistantGeneralPanel(_SettingsTab):
 	title = _("General")
 
@@ -172,25 +180,38 @@ class AIAssistantGeneralPanel(_SettingsTab):
 			return ""
 
 	def _model_choices_for(self, provider_id: str) -> list[str]:
-		choices: list[str] = []
+		choices = ModelChoiceList()
 		try:
 			manager = build_model_manager(provider_id, model_cache=model_catalog_cache, capability_cache=model_capability_cache)
-			choices.extend(model.id for model in manager.list_managed_models())
+			from ..providers.model_manager import ModelAction, available_model_actions
+			for model in manager.list_managed_models():
+				if ModelAction.SELECT not in available_model_actions(model, manager.features):
+					continue
+				label = model.id if model.display_name == model.id else _("{name} [{id}]").format(name=model.display_name, id=model.id)
+				choices.append(label)
+				choices.identities[label] = model.id
+				choices.identities[model.id] = model.id
+				choices.selectable.add(model.id)
 		except Exception:
 			pass
-		if not choices:
+		if not choices and provider_id != "llama-cpp-server":
 			try:
-				choices.extend(m.id for m in model_catalog_cache.get_models_or_empty(provider_id))
+				for model in model_catalog_cache.get_models_or_empty(provider_id):
+					choices.append(model.id)
+					choices.identities[model.id] = model.id
+					choices.selectable.add(model.id)
 			except Exception:
 				pass
 		try:
 			visibility = ModelVisibilityStore()
-			choices = [m for m in choices if visibility.is_model_visible(provider_id, m)]
+			choices[:] = [label for label in choices if visibility.is_model_visible(provider_id, choices.identities.get(label, label))]
 		except Exception:
 			pass
 		current = self._current_model_name(provider_id)
-		if current and current not in choices:
-			choices.insert(0, current)
+		if current and current not in choices.selectable:
+			label = _("Unavailable: {model}").format(model=current)
+			choices.insert(0, label)
+			choices.identities[label] = current
 		return choices
 
 	def _refresh_model_choices(self, provider_id: str) -> None:
@@ -213,8 +234,12 @@ class AIAssistantGeneralPanel(_SettingsTab):
 		if not bool(self) or self.IsBeingDeleted() or provider_id != self.selected_provider() or generation != self._model_choice_generation:
 			return
 		draft = self.model_combo.GetValue()
+		self._model_choice_identity = getattr(choices, "identities", {})
+		self._model_choice_selectable = getattr(choices, "selectable", set(choices))
 		self.model_combo.Clear()
 		self.model_combo.AppendItems(choices)
+		if draft == self._current_model_name(provider_id):
+			draft = next((label for label in choices if self._model_choice_identity.get(label) == draft), draft)
 		self.model_combo.SetValue(draft)
 		self.model_combo.Enable()
 
@@ -248,7 +273,7 @@ class AIAssistantGeneralPanel(_SettingsTab):
 		self._update_active_state()
 
 	def _on_configure_model(self, _event: wx.CommandEvent) -> None:
-		model_name = self.model_combo.GetValue().strip()
+		model_name = getattr(self, "_model_choice_identity", {}).get(self.model_combo.GetValue().strip(), self.model_combo.GetValue().strip())
 		if not model_name:
 			self.dialog.show_validation_error(_("Select a model to configure first."), self.model_combo, self)
 			return
@@ -259,9 +284,11 @@ class AIAssistantGeneralPanel(_SettingsTab):
 		provider_id = self.selected_provider()
 		if provider_id not in get_enabled_providers():
 			raise _InvalidSetting(_("{name} is disabled. Enable it in Manage AI Providers first.").format(name=provider_display_name(provider_id)), self.provider_choice, self)
-		model_name = self.model_combo.GetValue().strip()
+		model_name = getattr(self, "_model_choice_identity", {}).get(self.model_combo.GetValue().strip(), self.model_combo.GetValue().strip())
 		if not model_name:
 			raise _InvalidSetting(_("Active model name cannot be empty."), self.model_combo, self)
+		if provider_id == "llama-cpp-server" and model_name not in getattr(self, "_model_choice_selectable", set()) and model_name != self._current_model_name(provider_id):
+			raise _InvalidSetting(_("Choose an available configuration or create one in Manage Models."), self.model_combo, self)
 		try:
 			manager = build_model_manager(provider_id, model_cache=model_catalog_cache, capability_cache=model_capability_cache)
 			model_name = manager.resolve_model_identity(model_name)
@@ -290,10 +317,21 @@ class AIAssistantModelsContextPanel(_SettingsTab):
 		self.embedding_page_chat = helper.addItem(wx.CheckBox(self, label=_("Use embeddings for page chat")))
 		self.embedding_page_chat.SetValue(get_embedding_page_chat_enabled())
 		helper.addItem(wx.StaticText(self, label=_("Active embedding model:")))
-		self.embedding_model = helper.addItem(wx.ComboBox(self, choices=[model.id for model in embedding_model_service.list_models()], style=wx.CB_READONLY))
+		self.embedding_model = helper.addItem(wx.ComboBox(self, choices=[get_embedding_model() or defaults.DEFAULT_EMBEDDING_MODEL], style=wx.CB_READONLY))
 		self.embedding_model.SetValue(get_embedding_model())
 		manage = helper.addItem(wx.Button(self, label=_("Manage Embedding Models...")))
 		manage.Bind(wx.EVT_BUTTON, self._on_manage_embeddings)
+		self._embedding_catalog_task = background_tasks.submit(
+			lambda _cancel: embedding_model_service.list_models(),
+			on_success=self._on_embedding_models_loaded,
+			is_alive=lambda: bool(self) and not self.IsBeingDeleted(),
+		)
+
+	def _on_embedding_models_loaded(self, models) -> None:
+		selected = self.embedding_model.GetValue()
+		choices = list(dict.fromkeys([selected, *(model.id for model in models)]))
+		self.embedding_model.SetItems(choices)
+		self.embedding_model.SetValue(selected)
 
 	def _on_manage_embeddings(self, _event: wx.CommandEvent) -> None:
 		from .embedding_model_dialog import open_embedding_model_dialog

@@ -50,7 +50,10 @@ class LlamaCppServerProviderTests(unittest.TestCase):
 			generate_max_tokens=512,
 			models_preset=str(self.preset_file),
 		)
-		self.provider = LlamaCppServerProvider(self.config)
+		manager_module = load_addon_module("providers.llama_manager", namespace=NAMESPACE)
+		with patch.object(llama_cpp, "LlamaCppModelManager", side_effect=lambda config: manager_module.LlamaCppModelManager(
+			config, cache_dir=self.temp_dir.name, supervisor=MagicMock(models_error=None))):
+			self.provider = LlamaCppServerProvider(self.config)
 
 	def tearDown(self) -> None:
 		self.temp_dir.cleanup()
@@ -85,8 +88,8 @@ class LlamaCppServerProviderTests(unittest.TestCase):
 			self.assertIn("dynamic-server-model", model_ids)
 
 			qwen = next(m for m in models if m.id == "qwen-preset")
-			# Server metadata takes precedence for context window when online
-			self.assertEqual(qwen.context_window, 16384)
+			# Configured allocation takes precedence over the training context.
+			self.assertEqual(qwen.context_window, 8192)
 
 	def test_get_model_info_matches_by_id_and_alias(self) -> None:
 		with patch.object(self.provider._llama_manager, "list_server_models", return_value=()):

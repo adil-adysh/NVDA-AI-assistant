@@ -6,7 +6,8 @@ from collections.abc import Callable
 from ..config.settings import get_active_provider_config
 from ..providers.config import ProviderConfig
 from ..providers.factory import ProviderFactory
-from ..providers.interfaces import ProviderModelInfo
+from ..providers.interfaces import LLMProviderError, ProviderModelInfo
+from ..core.translation import _
 from .provider_readiness import ProviderReadinessService
 
 
@@ -26,6 +27,18 @@ class ProviderCatalogService:
 
 	def list_active_models(self) -> tuple[ProviderModelInfo, ...]:
 		return self.list_models(self._config_resolver())
+
+	def discover_models(self, config: ProviderConfig) -> tuple[ProviderModelInfo, ...]:
+		"""Discover independently of inference readiness; failures are retryable."""
+		if config.provider not in {"litert-lm", "llama-cpp-server"}:
+			readiness = self._readiness_service.evaluate(config)
+			if not readiness.can_list_models:
+				raise LLMProviderError(_("Configure this provider before refreshing its models."))
+		provider = self._provider_factory(config)
+		try:
+			return provider.list_models()
+		finally:
+			provider.close()
 
 	def list_models(self, config: ProviderConfig) -> tuple[ProviderModelInfo, ...]:
 		readiness = self._readiness_service.evaluate(config)

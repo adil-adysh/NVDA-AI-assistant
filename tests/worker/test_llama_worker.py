@@ -392,7 +392,7 @@ class TestLlamaServerSupervisorProxyIntegration(unittest.TestCase):
 			"error_message": None,
 			"running_model": "qwen",
 		}
-		status = self.proxy_supervisor.status()
+		status = self.proxy_supervisor.status(refresh=True)
 		self.assertEqual(status.state, "ready_owned")
 		self.assertEqual(status.generation, 5)
 		self.assertEqual(status.pid, 9999)
@@ -451,7 +451,7 @@ class TestLlamaServerSupervisorProxyIntegration(unittest.TestCase):
 
 	def test_uninitialized_worker_fallback(self) -> None:
 		supervisor = LlamaServerSupervisor(worker_client=None)
-		status = supervisor.status()
+		status = supervisor.status(refresh=True)
 		self.assertEqual(status.state, "stopped")
 		self.assertFalse(status.is_ready)
 		self.assertEqual(status.generation, 0)
@@ -487,7 +487,7 @@ class TestLlamaServerSupervisorProxyIntegration(unittest.TestCase):
 			"success": False,
 		}
 		supervisor = LlamaServerSupervisor(worker_client=mock_client)
-		st = supervisor.status()
+		st = supervisor.status(refresh=True)
 		self.assertEqual(st.state, "failed")
 		self.assertEqual(st.error_code, "LLAMA_CRASHED")
 		self.assertEqual(st.error_message, "llama-server crashed abruptly")

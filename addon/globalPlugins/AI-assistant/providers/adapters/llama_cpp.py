@@ -6,7 +6,8 @@ from __future__ import annotations
 from ..config import OpenAICompatConfig
 from ..interfaces import LLMProviderError, ProgressCallback, ProviderModelInfo, SamplingDefaults
 from ..llama_manager import LlamaCppModelManager
-from ..runtime.llama_models import llama_model_capabilities, llama_model_context_window
+from ..runtime.llama_models import llama_model_context_window
+from ..llama_catalog import reconcile_llama_entries, selectable_llama_entries, configuration_capabilities
 from .openai_compat import OpenAICompatProvider
 
 
@@ -21,7 +22,11 @@ class LlamaCppServerProvider(OpenAICompatProvider):
 		model_id = str(self._config.model_name or "").strip()
 		if not model_id:
 			raise LLMProviderError("No llama.cpp model is configured")
-		record = self._llama_manager.find_record(model_id)
+		record = self._llama_manager.find_record(model_id, register_missing=False)
+		if record is None and any(str(item.get("id", "")) == model_id for item in self._llama_manager.list_server_models(refresh=True)):
+			return model_id
+		if record is None:
+			record = self._llama_manager.find_record(model_id)
 		if record is None:
 			raise LLMProviderError(f"Unknown llama.cpp model: {model_id}")
 		self._llama_manager.ensure_running(record, on_progress=on_progress)
@@ -31,18 +36,25 @@ class LlamaCppServerProvider(OpenAICompatProvider):
 		models: dict[str, ProviderModelInfo] = {}
 		server_items = {
 			str(item.get("id", "")).strip(): item
-			for item in self._llama_manager.list_server_models()
+			for item in self._llama_manager.list_server_models(refresh=True)
 			if str(item.get("id", "")).strip()
 		}
-		for record in self._llama_manager._catalog.list_records():
+		records = self._llama_manager._catalog.list_records()
+		selectable = {entry.model.id for entry in selectable_llama_entries(reconcile_llama_entries(records, (),
+			list(server_items.values()), endpoint_owned=False, stale=bool(self._llama_manager.server_models_error)))}
+		for record in records:
+			if record.model_id not in selectable:
+				continue
 			server_item = next(
 				(item for sid, item in server_items.items() if record.matches_server_id(sid)),
 				None,
 			)
 			models[record.model_id] = self._model_info(record.model_id, server_item, record=record)
 		for server_id, item in server_items.items():
-			record = self._llama_manager.find_record(server_id)
+			record = self._llama_manager.find_record(server_id, register_missing=False)
 			model_id = record.model_id if record is not None else server_id
+			if model_id not in selectable:
+				continue
 			if model_id not in models:
 				models[model_id] = self._model_info(model_id, item, record=record)
 		return tuple(sorted(models.values(), key=lambda m: m.display_name.lower()))
@@ -53,9 +65,14 @@ class LlamaCppServerProvider(OpenAICompatProvider):
 			return None
 		models = self.list_models()
 		for model in models:
-			if model.id.lower() == requested.lower():
+			if model.id == requested:
 				return model
-		record = self._llama_manager.find_record(requested)
+		case_matches = [model for model in models if model.id.casefold() == requested.casefold()]
+		if len(case_matches) == 1:
+			return case_matches[0]
+		if len(case_matches) > 1:
+			return None
+		record = self._llama_manager.find_record(requested, register_missing=False)
 		if record is not None:
 			for model in models:
 				if record.matches_server_id(model.id):
@@ -74,16 +91,17 @@ class LlamaCppServerProvider(OpenAICompatProvider):
 	) -> ProviderModelInfo:
 		item = item or {}
 		context_window = llama_model_context_window(item)
-		if context_window is None and record is not None:
-			context_window = getattr(record, "context_window", None)
-		capabilities = llama_model_capabilities(item) if item else (
-			getattr(record, "capabilities", None)
-			or ("chat", "completion", "streaming", "text_input", "text_output")
-		)
+		if record is not None:
+			pinned = int((getattr(record, "preset_options", {}) or {}).get("ctx-size", 0) or 0)
+			context_window = pinned or getattr(record, "context_window", None) or int(getattr(self._config, "num_ctx", 0) or 0) or context_window
+		declared = set(getattr(record, "capabilities", None) or ("chat", "completion", "streaming", "text_input", "text_output"))
+		if any(companion["role"] == "vision" for companion in getattr(record, "companions", ())):
+			declared.add("image_input")
+		capabilities = configuration_capabilities(item, declared)
 		return ProviderModelInfo(
 			id=model_id,
 			provider=self.provider_name(),
-			display_name=model_id,
+			display_name=getattr(record, "display_name", "") or model_id,
 			owned_by=str(item.get("owned_by", "llamacpp")),
 			created=item.get("created") if isinstance(item.get("created"), int) else None,
 			context_window=context_window,
@@ -94,7 +112,7 @@ class LlamaCppServerProvider(OpenAICompatProvider):
 
 	def _resolve_model(self) -> str:
 		configured = super()._resolve_model()
-		record = self._llama_manager.find_record(configured)
+		record = self._llama_manager.find_record(configured, register_missing=False)
 		return record.model_id if record is not None else configured
 
 	def close(self) -> None:

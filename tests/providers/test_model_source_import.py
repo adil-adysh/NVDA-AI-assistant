@@ -7,13 +7,23 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.support import ADDON_ROOT, load_module
+from tests.support import load_addon_module
 
-_PATH = ADDON_ROOT / "providers" / "model_import.py"
-_MODULE = load_module("model_import", _PATH)
+_MODULE = load_addon_module("providers.model_import", namespace="source_import_tests")
 
 
 class ModelImportTests(unittest.TestCase):
+	def test_llama_explicit_revision_is_not_quantization(self) -> None:
+		request = _MODULE.parse_model_import_source("org/model@v1#file=model.gguf", provider_id="llama-cpp-server")
+		self.assertEqual(request.source, "org/model")
+		self.assertEqual(request.revision, "v1")
+		self.assertIsNone(request.variant)
+		self.assertEqual(request.artifact, "model.gguf")
+
+	def test_llama_file_selector_is_not_quantization(self) -> None:
+		request = _MODULE.parse_model_import_source("org/model#file=model.gguf", provider_id="llama-cpp-server")
+		self.assertIsNone(request.variant)
+		self.assertEqual(request.artifact, "model.gguf")
 	def test_parses_hugging_face_repo_and_revision(self) -> None:
 		request = _MODULE.parse_model_import_source("org/model:v1")
 		self.assertEqual(request.kind, _MODULE.ModelSourceKind.HUGGING_FACE)

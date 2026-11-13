@@ -131,6 +131,11 @@ class BackgroundTaskRunner:
 			try:
 				result = completed_future.result()
 			except Exception as error:
+				if cancel_event.is_set():
+					report("task_cancelled", task=name)
+					if on_finally is not None:
+						dispatch(on_finally, deliver_after_cancel=True)
+					return
 				report(
 					"task_failed",
 					task=name,

@@ -285,6 +285,37 @@ class BuildDeleteArgsTests(unittest.TestCase):
 		self.assertEqual(args, ["delete", ""])
 
 
+
+def _worker_bridge(run_cli):
+	"""Exercise the real worker dispatcher rather than a production CLI shim."""
+	from tests.support import load_addon_module
+	worker = load_addon_module("worker.executors.litert")
+	router = load_addon_module("worker.runtime_commands")
+	executor = worker.LiteRTWorkerExecutor()
+	status = types.SimpleNamespace(state="stopped", is_ready=False, is_running=False,
+		is_adopted=False, pid=None, generation=0)
+	def spawn(executable, args, env, identity, **kwargs):
+		process = run_cli(Path(executable), args[2:], env=env)
+		status.state, status.is_ready, status.is_running = "ready_owned", True, True
+		status.pid = getattr(process, "pid", None)
+		return status
+	executor._supervisor = types.SimpleNamespace(status=lambda: status, ensure_ready=spawn,
+		restart=spawn, stop=lambda **kwargs: status)
+	def cli(args, **kwargs):
+		try:
+			return run_cli(Path(kwargs["python_exe"]), args,
+				env={"LITERT_LM_DIR": str(kwargs["litert_dir"])},
+				timeout=kwargs["timeout_seconds"], capture=True)
+		except subprocess.TimeoutExpired as exc:
+			raise RuntimeError("Model command timed out") from exc
+	executor._run_cli = cli
+	server = types.SimpleNamespace(get_litert_executor=lambda: executor)
+	def send(frame, **kwargs):
+		frames = []
+		router.execute_runtime_command(server, frame, frames.append)
+		return frames[-1]
+	return types.SimpleNamespace(is_connected=True, send_command=send)
+
 class SupervisorDeleteModelTests(unittest.TestCase):
 	"""Tests for LiteRTServerSupervisor.delete_model."""
 
@@ -302,7 +333,7 @@ class SupervisorDeleteModelTests(unittest.TestCase):
 		self.mock_run_cli = self._run_cli_patcher.start()
 
 		# Create supervisor with fake internals
-		self.supervisor = LiteRTServerSupervisor(worker_client=mock.Mock(is_connected=False))
+		self.supervisor = LiteRTServerSupervisor(worker_client=_worker_bridge(self.mock_run_cli))
 		# Replace server dir/path resolution with a fixed path
 		self.supervisor._server_dir = mock.MagicMock(  # pylint: disable=protected-access
 			return_value=Path("/fake/runtime")
@@ -453,7 +484,7 @@ class SupervisorStartConfigTests(unittest.TestCase):
 		self._litert_dir_patcher.start()
 		self.addCleanup(self._litert_dir_patcher.stop)
 
-		self.supervisor = LiteRTServerSupervisor(worker_client=mock.Mock(is_connected=False))
+		self.supervisor = LiteRTServerSupervisor(worker_client=_worker_bridge(self.mock_run_cli))
 		self.supervisor._server_dir = mock.MagicMock(  # pylint: disable=protected-access
 			return_value=Path("/fake/runtime"),
 		)
@@ -559,7 +590,7 @@ class SupervisorRestartTests(unittest.TestCase):
 		self._litert_dir_patcher.start()
 		self.addCleanup(self._litert_dir_patcher.stop)
 
-		self.supervisor = LiteRTServerSupervisor(worker_client=mock.Mock(is_connected=False))
+		self.supervisor = LiteRTServerSupervisor(worker_client=_worker_bridge(self.mock_run_cli))
 		self.supervisor._server_dir = mock.MagicMock(  # pylint: disable=protected-access
 			return_value=Path("/fake/runtime"),
 		)

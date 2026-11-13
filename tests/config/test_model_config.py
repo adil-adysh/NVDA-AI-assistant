@@ -235,7 +235,7 @@ class ModelConfigFieldTests(unittest.TestCase):
 	def test_field_ids_match_sampling_fields(self) -> None:
 		self.assertEqual(
 			{spec.id for spec in MODEL_CONFIG_FIELDS},
-			set(SAMPLING_FIELD_IDS),
+			set(SAMPLING_FIELD_IDS) - {"seed"},
 		)
 
 	def test_fields_cover_sampling_fields(self) -> None:

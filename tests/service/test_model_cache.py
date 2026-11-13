@@ -60,6 +60,68 @@ class _FakeCatalog:
 
 
 class ModelCacheTests(unittest.TestCase):
+	def test_invalidated_fetch_caller_receives_current_models(self) -> None:
+		started, release = threading.Event(), threading.Event()
+		class Catalog:
+			calls = 0
+			def list_models(self, config):
+				self.calls += 1
+				if self.calls == 1:
+					started.set()
+					assert release.wait(2)
+					return (ProviderModelInfo(id="old", provider="openai"),)
+				return (ProviderModelInfo(id="new", provider="openai"),)
+		catalog = Catalog()
+		cache = ModelCatalogCache(catalog_factory=lambda: catalog)
+		results = []
+		thread = threading.Thread(target=lambda: results.append(cache.get_models("openai")))
+		thread.start()
+		try:
+			self.assertTrue(started.wait(2))
+			cache.invalidate("openai")
+			current = cache.get_models("openai")
+		finally:
+			release.set()
+			thread.join(2)
+		self.assertEqual(results, [current])
+	def test_endpoint_change_invalidates_cached_catalog(self) -> None:
+		from unittest.mock import patch
+		config = types.SimpleNamespace(provider="openai", base_url="https://first.invalid")
+		calls = []
+		cache = ModelCatalogCache(catalog_factory=lambda: _FakeCatalog(calls))
+		with patch.object(settings, "build_provider_config", return_value=config):
+			cache.get_models("openai")
+			config.base_url = "https://second.invalid"
+			cache.get_models("openai")
+		self.assertEqual(calls, ["openai", "openai"])
+	def test_invalidated_fetch_does_not_notify_subscribers(self) -> None:
+		cache = ModelCatalogCache()
+		gate = cache_module._FetchGate()
+		cache._entries["ollama"] = gate
+		received = []
+		cache.subscribe(lambda p, s: received.append(s))
+		cache.invalidate("ollama")
+		cache._finish_fetch("ollama", gate, (ProviderModelInfo(id="old", provider="ollama"),))
+		self.assertTrue(gate.event.is_set())
+		self.assertEqual(received, [])
+		self.assertEqual(cache.get_snapshot("ollama").state, CatalogState.COLD)
+
+	def test_capabilities_survive_loading_and_are_updated_after_fetch(self) -> None:
+		cache = ModelCatalogCache(catalog_factory=lambda: _FakeCatalog([]))
+		caps = ModelCapabilityCache(cache)
+		self.assertTrue(caps.get("ollama", "ollama-model").supports("image_input"))
+		cache.invalidate("ollama")
+		gate = cache_module._FetchGate()
+		cache._entries["ollama"] = gate
+		self.assertTrue(caps.get("ollama", "ollama-model").supports("image_input"))
+		cache._finish_fetch("ollama", gate, (ProviderModelInfo(id="ollama-model", provider="ollama", capabilities=("thinking",)),))
+		self.assertTrue(caps.get("ollama", "ollama-model").supports("thinking"))
+
+	def test_invalidate_all_advances_populated_provider_generation(self) -> None:
+		cache = ModelCatalogCache(catalog_factory=lambda: _FakeCatalog([]))
+		cache.get_models("ollama")
+		cache.invalidate_all()
+		self.assertEqual(cache.version("ollama"), 1)
 	def test_discovery_error_is_retried(self) -> None:
 		calls: list[str] = []
 

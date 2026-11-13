@@ -24,6 +24,35 @@ build_llama_server_args = llama_server.build_llama_server_args
 
 
 class LlamaModelsPresetTests(unittest.TestCase):
+	def test_preset_global_metadata_and_relative_paths(self) -> None:
+		with tempfile.TemporaryDirectory() as directory:
+			preset = Path(directory) / "custom.ini"
+			preset.write_text("version = 1\n[*]\nctx-size = 4096\nreasoning = on\n[local]\nmodel = local.gguf\n", encoding="utf-8")
+			record = LlamaModelCatalog(directory, preset_path=preset).find("local")
+			self.assertEqual(record.local_path, str(Path(directory) / "local.gguf"))
+			self.assertEqual(record.context_window, 4096)
+			self.assertIn("thinking", record.capabilities)
+	def test_explicit_artifact_roundtrips_without_stale_source_options(self) -> None:
+		record = LlamaModelRecord("selected", "org/model", ModelSourceKind.HUGGING_FACE.value, artifact="new.gguf")
+		merged = merge_models_preset("version = 1\n[selected]\nhf-repo = old/repo\nhf-file = old.gguf\n", [record])
+		self.assertIn("hf-file = new.gguf", merged)
+		self.assertNotIn("old.gguf", merged)
+		self.assertEqual(parse_models_preset(merged)[0].artifact, "new.gguf")
+
+	def test_generated_preset_edits_are_ignored_after_manifest_creation(self) -> None:
+		with tempfile.TemporaryDirectory() as directory:
+			catalog = LlamaModelCatalog(directory)
+			catalog.upsert(LlamaModelRecord("selected", "org/old", ModelSourceKind.HUGGING_FACE.value))
+			path = catalog.write_preset()
+			path.write_text("version = 1\n[selected]\nhf-repo = org/new\nctx-size = 8192\n", encoding="utf-8")
+			self.assertEqual(catalog.find("selected").source, "org/old")
+			self.assertIsNone(catalog.find("selected").context_window)
+
+	def test_invalid_section_id_rejected_before_persistence(self) -> None:
+		with tempfile.TemporaryDirectory() as directory:
+			catalog = LlamaModelCatalog(directory)
+			with self.assertRaises(ValueError):
+				catalog.upsert(LlamaModelRecord("bad]", "org/model", ModelSourceKind.HUGGING_FACE.value))
 	def test_router_command_uses_preset_without_single_model_flag(self) -> None:
 		args = build_llama_server_args(
 			"model-a",
@@ -87,7 +116,7 @@ class LlamaModelsPresetTests(unittest.TestCase):
 			preset_path = catalog.write_preset()
 
 			self.assertEqual(catalog.find("model-a"), record)
-			self.assertEqual(preset_path, Path(directory) / "models.ini")
+			self.assertEqual(preset_path, Path(directory) / "runtime-models.ini")
 			self.assertIn("[model-a]", preset_path.read_text(encoding="utf-8"))
 
 			catalog.remove("model-a")

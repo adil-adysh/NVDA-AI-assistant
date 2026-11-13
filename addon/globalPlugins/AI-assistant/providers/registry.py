@@ -472,7 +472,12 @@ def build_model_manager(
 	if normalized == "llama-cpp-server":
 		from .llama_manager import LlamaCppModelManager
 
-		return LlamaCppModelManager(config=config)
+		from ..config.settings import compare_provider_model_name, set_provider_preset_path
+
+		return LlamaCppModelManager(config=config, set_model_fn=_make_set_model(normalized),
+			clear_model_fn=lambda expected, value: compare_provider_model_name(normalized, expected, value),
+			get_config_fn=lambda: build_provider_config(normalized),
+			set_preset_fn=lambda path: set_provider_preset_path(normalized, path))
 	return CloudModelManagerAdapter(
 		provider_id=normalized,
 		config=config,

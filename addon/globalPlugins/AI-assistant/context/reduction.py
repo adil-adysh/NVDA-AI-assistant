@@ -10,6 +10,8 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+from ..core.cancellation import RequestCancelled
+
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Protocol
@@ -257,6 +259,8 @@ class ContextReducer:
 				)
 			else:
 				selected = self._select_for_coverage(chunks, budget, policy.max_chunks)
+		except RequestCancelled:
+			raise
 		except Exception:
 			# Reduction is an optimization.  A broken optional embedder must not
 			# break a working summary/chat use case.
@@ -289,6 +293,8 @@ class ContextReducer:
 				ranked = self._rank_by_query(chunks, query, "Retrieve relevant webpage sections")
 			else:
 				ranked = self._rank_sections_lexically(chunks, query)
+		except RequestCancelled:
+			raise
 		except Exception:
 			ranked = self._rank_sections_lexically(chunks, query)
 		by_id = {section.id: section for section in sections}

@@ -18,6 +18,7 @@ from ..providers.model_manager import (
 	ManagedModel,
 	ModelManagerProvider,
 	ModelState,
+	ModelAction, available_model_actions,
 )
 from ..providers.model_import import default_model_id_for_file, parse_model_import_source
 from ..providers.registry import (
@@ -30,6 +31,8 @@ from ..config.enabled_models import ModelVisibilityStore
 from ..service.model_cache import model_capability_cache, model_catalog_cache
 from ..service.error_reporter import ErrorContext, error_reporter
 from .task_runner import TaskHandle, background_tasks
+from ..core.cancellation import cancellation_event_scope
+from . import nvda_ui
 
 _RECOMMENDED_PRIORITY = 50
 
@@ -67,6 +70,9 @@ class ModelManagerDialog(wx.Dialog):
 		self._fetch_task: TaskHandle[list[ManagedModel]] | None = None
 		self._mutation_task: TaskHandle[None] | None = None
 		self._is_destroyed = False
+		self._refresh_generation = 0
+		self._refresh_pending = False
+		self._mutation_focus = None
 
 		self._build_ui()
 		self._start_initial_load()
@@ -136,11 +142,12 @@ class ModelManagerDialog(wx.Dialog):
 		s_helper.addItem(self._show_disabled_cb)
 
 		# ── Action buttons ───────────────────────────────────────
-		button_sizer = wx.BoxSizer(wx.HORIZONTAL)
+		button_sizer = wx.WrapSizer(wx.HORIZONTAL)
 
 		# TRANSLATORS: Button to download a model.
 		self._download_btn = wx.Button(self, label=_("Download"))
 		self._download_btn.Bind(wx.EVT_BUTTON, self._on_download)
+		self._download_btn.Show(self._provider.features.download)
 		button_sizer.Add(self._download_btn, flag=wx.RIGHT, border=5)
 
 		# TRANSLATORS: Button to import a local model file.
@@ -152,8 +159,20 @@ class ModelManagerDialog(wx.Dialog):
 		self._import_hf_btn.Bind(wx.EVT_BUTTON, self._on_import_hugging_face)
 		button_sizer.Add(self._import_hf_btn, flag=wx.RIGHT, border=5)
 
+		self._import_preset_btn = wx.Button(self, label=_("Import preset..."))
+		self._import_preset_btn.Bind(wx.EVT_BUTTON, self._on_import_preset)
+		self._import_preset_btn.Show(self._provider.features.import_preset)
+		button_sizer.Add(self._import_preset_btn, flag=wx.RIGHT, border=5)
+		self._cache_delete_btn = wx.Button(self, label=_("Delete cached files..."))
+		self._cache_delete_btn.Bind(wx.EVT_BUTTON, self._on_delete_cache)
+		self._cache_delete_btn.Show(callable(getattr(type(self._provider), "delete_cached_files", None)))
+		button_sizer.Add(self._cache_delete_btn, flag=wx.RIGHT, border=5)
+		self._refresh_btn = wx.Button(self, label=_("Refresh"))
+		self._refresh_btn.Bind(wx.EVT_BUTTON, self._on_refresh)
+		button_sizer.Add(self._refresh_btn, flag=wx.RIGHT, border=5)
+
 		# TRANSLATORS: Button to delete a downloaded model.
-		self._delete_btn = wx.Button(self, label=_("Delete"))
+		self._delete_btn = wx.Button(self, label=_("Remove model") if self._provider.provider_id == "llama-cpp-server" else _("Delete"))
 		self._delete_btn.Bind(wx.EVT_BUTTON, self._on_delete)
 		button_sizer.Add(self._delete_btn, flag=wx.RIGHT, border=5)
 
@@ -166,6 +185,10 @@ class ModelManagerDialog(wx.Dialog):
 		self._configure_btn = wx.Button(self, label=_("Configure Model..."))
 		self._configure_btn.Bind(wx.EVT_BUTTON, self._on_configure_model)
 		button_sizer.Add(self._configure_btn, flag=wx.LEFT, border=5)
+		self._runtime_btn = wx.Button(self, label=_("Runtime settings..."))
+		self._runtime_btn.Bind(wx.EVT_BUTTON, self._on_runtime_settings)
+		self._runtime_btn.Show(callable(getattr(type(self._provider), "get_runtime_options", None)))
+		button_sizer.Add(self._runtime_btn, flag=wx.LEFT, border=5)
 
 		s_helper.addItem(button_sizer)
 
@@ -198,15 +221,15 @@ class ModelManagerDialog(wx.Dialog):
 		self._update_buttons()
 		self._request_model_refresh()
 
-	def _on_models_fetched(self, models: list[ManagedModel], focus_model_id: str | None = None) -> None:
+	def _on_models_fetched(self, models: list[ManagedModel], focus_model_id: str | None = None, *, generation: int | None = None) -> None:
 		"""Populate the list with fetched models (called on the main thread)."""
-		if self._is_destroyed:
+		if self._is_destroyed or (generation is not None and generation != self._refresh_generation):
 			return
 		self._fetch_task = None
 		self._populate_model_list(models, focus_model_id)
 
-	def _on_models_fetch_error(self, error: Exception) -> None:
-		if self._is_destroyed:
+	def _on_models_fetch_error(self, error: Exception, *, generation: int | None = None) -> None:
+		if self._is_destroyed or (generation is not None and generation != self._refresh_generation):
 			return
 		self._fetch_task = None
 		error_reporter.report(
@@ -231,6 +254,8 @@ class ModelManagerDialog(wx.Dialog):
 		else:
 			self._list.DeleteAllItems()
 			self._list.InsertItem(0, _("Unable to load models. Try again."))
+
+		self._update_buttons()
 
 	def _show_loading_indicator(self) -> None:
 		"""Display a 'Loading models...' placeholder."""
@@ -257,16 +282,21 @@ class ModelManagerDialog(wx.Dialog):
 
 	def _request_model_refresh(self, focus_model_id: str | None = None) -> None:
 		"""Fetch provider models off the wx thread."""
+		if self._mutation_task is not None:
+			self._refresh_pending = True
+			return
 		if self._fetch_task is not None and not self._fetch_task.done:
 			return
 		if not self._models:
 			self._list.DeleteAllItems()
 			self._show_loading_indicator()
 		self._update_buttons()
+		self._refresh_generation += 1
+		generation = self._refresh_generation
 		self._fetch_task = background_tasks.submit(
 			lambda _cancel: list(self._provider.list_managed_models()),
-			on_success=lambda models: self._on_models_fetched(models, focus_model_id),
-			on_error=self._on_models_fetch_error,
+			on_success=lambda models: self._on_models_fetched(models, focus_model_id, generation=generation),
+			on_error=lambda error: self._on_models_fetch_error(error, generation=generation),
 			is_alive=lambda: not self._is_destroyed,
 		)
 
@@ -313,13 +343,13 @@ class ModelManagerDialog(wx.Dialog):
 			self._add_section_header(_("── Recommended — Ready to use ──"))
 			self._add_models(recommended_ready, disabled_ids)
 		if recommended_download:
-			self._add_section_header(_("── Recommended — Available to download ──"))
+			self._add_section_header(_("── Recommended — Available to download ──") if self._provider.features.download else _("── Recommended — Unavailable sources ──"))
 			self._add_models(recommended_download, disabled_ids)
 		if other_ready:
 			self._add_section_header(_("── Other Models — Ready to use ──"))
 			self._add_models(other_ready, disabled_ids)
 		if other_download:
-			self._add_section_header(_("── Other Models — Available to download ──"))
+			self._add_section_header(_("── Other Models — Available to download ──") if self._provider.features.download else _("── Other Models — Unavailable sources ──"))
 			self._add_models(other_download, disabled_ids)
 
 		# Restore focus to the previously selected model.
@@ -400,40 +430,21 @@ class ModelManagerDialog(wx.Dialog):
 		return self._get_displayed_model_at(sel)
 
 	def _update_buttons(self) -> None:
-		if self._mutation_task is not None and not self._mutation_task.done:
-			for button in (
-				self._download_btn,
-				self._import_file_btn,
-				self._import_hf_btn,
-				self._delete_btn,
-				self._set_active_btn,
-				self._configure_btn,
-			):
-				button.Disable()
-			return
+		busy = self._mutation_task is not None
+		features = self._provider.features
+		self._import_file_btn.Enable(not busy and features.import_model)
+		self._import_hf_btn.Enable(not busy and features.import_model)
+		self._import_preset_btn.Enable(not busy and features.import_preset)
+		if hasattr(self, "_refresh_btn"):
+			self._refresh_btn.Enable(not busy and self._fetch_task is None)
 		model = self._get_selected_model()
-		if model is None:
-			self._download_btn.Disable()
-			self._import_file_btn.Disable()
-			self._import_hf_btn.Disable()
-			self._delete_btn.Disable()
-			self._set_active_btn.Disable()
-			self._configure_btn.Disable()
-			return
-
-		can_dl = (
-			self._provider.features.download
-			and model.state == ModelState.NOT_DOWNLOADED
-			and model.id not in self._pending_downloads
-		)
-		can_del = self._provider.features.delete and model.state == ModelState.DOWNLOADED
-
-		self._download_btn.Enable(can_dl)
-		self._import_file_btn.Enable(self._provider.features.import_model)
-		self._import_hf_btn.Enable(self._provider.features.import_model)
-		self._delete_btn.Enable(can_del)
-		self._set_active_btn.Enable(model.state.is_ready())
-		self._configure_btn.Enable(True)
+		actions = available_model_actions(model, features) if model is not None else frozenset()
+		self._download_btn.Enable(not busy and ModelAction.DOWNLOAD in actions and model.id not in self._pending_downloads)
+		self._delete_btn.Enable(not busy and ModelAction.REMOVE in actions)
+		self._cache_delete_btn.Enable(not busy and ModelAction.DELETE_CACHE in actions)
+		self._set_active_btn.Enable(not busy and ModelAction.SELECT in actions)
+		self._configure_btn.Enable(not busy and model is not None)
+		self._runtime_btn.Enable(not busy and model is not None and model.registered)
 
 	def _update_details(self) -> None:
 		model = self._get_selected_model()
@@ -446,9 +457,9 @@ class ModelManagerDialog(wx.Dialog):
 		lines = [
 			model.display_name,
 			"",
-			f"Size: {model.size_hint}",
-			f"Status: {_status_label(model.state)}",
-			f"Capabilities: {caps}",
+			_("Size: {size}").format(size=model.size_hint),
+			_("Status: {status}").format(status=_status_label(model.state)),
+			_("Capabilities: {capabilities}").format(capabilities=caps),
 		]
 		if desc:
 			lines.append("")
@@ -534,39 +545,84 @@ class ModelManagerDialog(wx.Dialog):
 			initial_message=_("Downloading {}...").format(model.display_name),
 		)
 
+	def _on_refresh(self, _event: wx.Event) -> None:
+		model_catalog_cache.invalidate(self._provider.provider_id)
+		self._refresh_model_list()
+
+	def _on_import_preset(self, _event: wx.Event) -> None:
+		if not self._provider.features.import_preset:
+			return
+		dialog = wx.FileDialog(self, message=_("Select llama.cpp model preset"),
+			wildcard=_("Preset files (*.ini)|*.ini|All files (*.*)|*.*"), style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
+		try:
+			if dialog.ShowModal() != wx.ID_OK:
+				return
+			path = dialog.GetPath()
+		finally:
+			dialog.Destroy()
+		def describe(summary):
+			if self._is_destroyed:
+				return
+			message = _("Imported {count} models and {settings} runtime settings. The original file is unchanged and is no longer watched.\n\nModels:\n{models}").format(count=len(summary.model_ids), settings=summary.option_count, models="\n".join(summary.model_ids))
+			wx.MessageBox(message, _("Preset import summary"), wx.OK | wx.ICON_INFORMATION, parent=self)
+		self._run_mutation(lambda: self._provider.import_preset(path), _("Preset imported into the model catalog."), on_success=describe)
+
 	def _on_delete(self, _event: wx.CommandEvent) -> None:
 		model = self._get_selected_model()
-		if model is None:
+		if model is None or ModelAction.REMOVE not in available_model_actions(model, self._provider.features):
 			return
-		model_id = model.id
-		self._mutation_task = background_tasks.submit(
-			lambda _cancel: self._provider.delete_model(model_id),
-			on_error=lambda error: error_reporter.report(
-				error,
-				ErrorContext(
-					operation="delete model",
-					provider=self._provider.provider_id,
-					model=model_id,
-					origin="model manager",
-				),
-				owner=lambda presentation: wx.MessageBox(
-					presentation.message,
-					presentation.title,
-					wx.ICON_ERROR,
-					parent=self,
-				),
-			),
-			on_finally=self._finish_mutation,
-			is_alive=lambda: not self._is_destroyed,
-		)
+		managed_reference = model.actions is not None
+		message = (_("Remove {model}? Original files and the shared llama.cpp cache will be kept. Any add-on-owned llama.cpp server will be stopped.")
+			if managed_reference else _("Delete downloaded model {model}?"))
+		if wx.MessageBox(message.format(model=model.display_name), _("Remove model") if managed_reference else _("Delete model"), wx.YES_NO | wx.ICON_QUESTION, parent=self) != wx.YES:
+			return
+		was_active = _model_matches_active(model, self._provider.active_model_id)
+		remaining = [item.id for item in self._displayed_models if item.id != model.id]
+		focus = remaining[0] if remaining else None
+		feedback = (_("Model removed. Select another model before making a request.") if was_active else _("Model removed.")) if managed_reference else _("Model deleted.")
+		self._run_mutation(lambda: self._provider.delete_model(model.id), feedback, focus_model_id=focus)
+
+	def _on_delete_cache(self, _event: wx.Event) -> None:
+		model = self._get_selected_model()
+		if model is None or ModelAction.DELETE_CACHE not in available_model_actions(model, self._provider.features):
+			return
+		message = _("Delete the add-on-owned cached files for {model}? The model registration will remain. Any add-on-owned llama.cpp server will be stopped.\n\nFiles:\n{files}").format(model=model.display_name, files="\n".join(model.cached_files))
+		if wx.MessageBox(message, _("Delete cached files"), wx.YES_NO | wx.ICON_WARNING, parent=self) != wx.YES:
+			return
+		self._run_mutation(lambda: self._provider.delete_cached_files(model.id), _("Cached model files deleted."), focus_model_id=model.id)
+
+	def _run_mutation(self, operation, feedback: str, *, focus_model_id: str | None = None, on_success=None) -> None:
+		if self._mutation_task is not None or self._is_destroyed:
+			return
+		self._refresh_generation += 1
+		if self._fetch_task is not None:
+			self._fetch_task.cancel()
+			self._fetch_task = None
+		self._mutation_focus = focus_model_id
+		def work(cancel):
+			with cancellation_event_scope(cancel):
+				return operation()
+		def completed(result):
+			if feedback:
+				nvda_ui.queue(nvda_ui.message, feedback)
+			if on_success:
+				wx.CallAfter(on_success, result)
+		self._mutation_task = background_tasks.submit(work,
+			on_success=completed,
+			on_error=lambda error: error_reporter.report(error,
+				ErrorContext(operation="manage model", provider=self._provider.provider_id, origin="model manager"),
+				owner=lambda presentation: wx.MessageBox(presentation.message, presentation.title, wx.ICON_ERROR, parent=self)),
+			on_finally=self._finish_mutation, is_alive=lambda: not self._is_destroyed)
 		self._update_buttons()
 
 	def _finish_mutation(self) -> None:
 		self._mutation_task = None
+		self._refresh_pending = False
 		model_catalog_cache.invalidate(self._provider.provider_id)
 		model_capability_cache.invalidate(self._provider.provider_id)
 		if not self._is_destroyed:
-			self._refresh_model_list()
+			self._refresh_model_list(self._mutation_focus)
+			self._list.SetFocus()
 
 	def _prompt_model_id(self, default: str | None = None) -> tuple[bool, str | None]:
 		model_id_dialog = wx.TextEntryDialog(
@@ -664,8 +720,27 @@ class ModelManagerDialog(wx.Dialog):
 		model = self._get_selected_model()
 		if model is None or not model.state.is_ready():
 			return
-		self._provider.set_active_model(model.id)
-		self._refresh_model_list()
+		self._run_mutation(lambda: self._provider.set_active_model(model.id), _("Active model changed."), focus_model_id=model.id)
+
+	def _on_runtime_settings(self, _event):
+		model = self._get_selected_model()
+		if model is None or not model.registered:
+			return
+		def show(configuration):
+			if self._is_destroyed:
+				return
+			from .llama_runtime_dialog import LlamaRuntimeDialog
+			options, supported = configuration
+			dialog = LlamaRuntimeDialog(self, model.id, options, supported)
+			try:
+				if dialog.ShowModal() != wx.ID_OK:
+					return
+				updated = dialog.options
+			finally:
+				dialog.Destroy()
+			self._run_mutation(lambda: self._provider.set_runtime_options(model.id, updated),
+				_("Runtime settings saved. They apply on the next model load; the owned server may restart."), focus_model_id=model.id)
+		self._run_mutation(lambda: self._provider.get_runtime_configuration(model.id), "", on_success=show)
 
 	def _on_configure_model(self, _event: wx.CommandEvent) -> None:
 		"""Open the per-model Configure dialog for the selected model."""
@@ -707,16 +782,18 @@ class ModelManagerDialog(wx.Dialog):
 
 def _status_label(state: ModelState) -> str:
 	"""Return a human-readable label for a model state."""
+	if state == ModelState.REGISTERED:
+		return _("Registered — loads on first use")
 	if state == ModelState.DOWNLOADED:
-		return "✅ Downloaded"  # noqa: RUF001
+		return _("Downloaded")  # noqa: RUF001
 	if state == ModelState.NOT_DOWNLOADED:
-		return "⬇️ Not downloaded"  # noqa: RUF001
+		return _("Not downloaded or source missing")  # noqa: RUF001
 	if state == ModelState.DOWNLOADING:
-		return "⏳ Downloading..."  # noqa: RUF001
+		return _("Downloading...")  # noqa: RUF001
 	if state == ModelState.FAILED:
-		return "❌ Failed"  # noqa: RUF001
+		return _("Failed")  # noqa: RUF001
 	if state == ModelState.READY:
-		return "Available"
+		return _("Available")
 	return str(state.value)
 
 
@@ -730,6 +807,8 @@ def _model_matches_active(model: ManagedModel, active_id: str | None) -> bool:
 	"""
 	if active_id is None:
 		return False
+	if model.actions is not None:
+		return model.id == active_id.strip()
 	ids_to_check = [model.id]
 	if model.canonical_id and model.canonical_id not in ids_to_check:
 		ids_to_check.append(model.canonical_id)
@@ -750,16 +829,16 @@ def _capabilities_label(model: ManagedModel) -> str:
 	parts: list[str] = []
 	caps = set(model.capabilities)
 	if "streaming" in caps:
-		parts.append("Streaming")
+		parts.append(_("Streaming"))
 	if "vision" in caps or "image_input" in caps:
-		parts.append("Vision")
+		parts.append(_("Vision"))
 	if "chat" in caps:
-		parts.append("Chat")
+		parts.append(_("Chat"))
 	if "completion" in caps:
-		parts.append("Completion")
+		parts.append(_("Completion"))
 	if "tools" in caps:
-		parts.append("Tools")
-	return ", ".join(parts) if parts else "Text"
+		parts.append(_("Tools"))
+	return ", ".join(parts) if parts else _("Text")
 
 
 def open_model_manager(parent: wx.Window, provider_id: str) -> None:
@@ -774,11 +853,11 @@ def open_model_manager(parent: wx.Window, provider_id: str) -> None:
 		model_cache=model_catalog_cache,
 		capability_cache=model_capability_cache,
 	)
-	dlg = ModelManagerDialog(
-		parent,
-		provider,
-		provider_display_name(provider_id),
-	)
+	if provider.features.configuration_management:
+		from .llama_model_manager import LlamaModelsDialog
+		dlg = LlamaModelsDialog(parent, provider)
+	else:
+		dlg = ModelManagerDialog(parent, provider, provider_display_name(provider_id))
 	try:
 		dlg.ShowModal()
 	finally:

@@ -24,13 +24,14 @@ from ..config.settings import (
 	get_num_ctx,
 )
 from ..config.model_config import get_all_model_sampling
+from ..service.chat.repository_worker import WorkerConversationRepository
 from ..embeddings import CandleEmbeddingAdapter
 from ..image.services import ImageEncoder, ImagePreprocessor
 from ..observability.reporter import FileMetricsReporter
 from ..ui import nvda_ui
 from ..providers.provider_proxy import ProviderProxy
 from ..providers.runtime.server import build_server_config, get_litert_supervisor
-from ..service.chat import ChatCoordinator, ConversationService, build_default_conversation_repository
+from ..service.chat import ChatCoordinator, ConversationService
 from ..service.llm import ProviderLLMService
 from ..tools import ToolDefinition, ToolExecutor, ToolRegistry
 from ..use_case.engine import UseCaseEngine
@@ -96,7 +97,7 @@ def build_plugin_services() -> PluginServices:
 		client=llm_service,
 		ui_port=nvda_ui,
 		metrics_reporter=metrics_reporter,
-		repository=build_default_conversation_repository(),
+		repository=WorkerConversationRepository(),
 		page_context_provider=page_context_provider,
 	)
 	conversation_service = ConversationService(chat_coordinator)
