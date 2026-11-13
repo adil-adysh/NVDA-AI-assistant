@@ -657,6 +657,75 @@ async fn global_invocation_capacity_rejects_without_dispatch_and_returns_after_c
 }
 
 #[tokio::test]
+async fn shutdown_remains_responsive_when_global_invocation_capacity_is_saturated() {
+    let manager = Manager::with_config(ManagerConfig {
+        max_active_invocations: 2,
+        max_invocations_per_server: 1,
+        ..ManagerConfig::default()
+    });
+    connect_stdio(&manager, "shutdown-saturated-a").await;
+    connect_stdio(&manager, "shutdown-saturated-b").await;
+    let marker_a = unique_marker("shutdown-saturated-a");
+    let marker_b = unique_marker("shutdown-saturated-b");
+    let first = tokio::spawn({
+        let manager = manager.clone();
+        let marker = marker_a.clone();
+        async move {
+            invoke_slow(
+                &manager,
+                "shutdown-saturated-call-a",
+                "shutdown-saturated-a",
+                &marker,
+            )
+            .await
+        }
+    });
+    let second = tokio::spawn({
+        let manager = manager.clone();
+        let marker = marker_b.clone();
+        async move {
+            invoke_slow(
+                &manager,
+                "shutdown-saturated-call-b",
+                "shutdown-saturated-b",
+                &marker,
+            )
+            .await
+        }
+    });
+    wait_for_exists(&marker_a).await;
+    wait_for_exists(&marker_b).await;
+
+    let started = Instant::now();
+    let shutdown = tokio::time::timeout(
+        Duration::from_millis(300),
+        manager.handle(Command::Shutdown {
+            id: "shutdown-under-saturation".into(),
+        }),
+    )
+    .await
+    .expect("shutdown was starved by saturated invocations");
+    assert_eq!(shutdown.body["shutdown"], true);
+    assert!(started.elapsed() < Duration::from_millis(300));
+
+    for result in [first.await.unwrap(), second.await.unwrap()] {
+        assert_eq!(result.body["ok"], false, "{:#}", result.body);
+        assert_eq!(result.body["uncertain"], true, "{:#}", result.body);
+        assert!(
+            ["cancelled", "disconnected"].contains(
+                &result.body["error"]["category"]
+                    .as_str()
+                    .unwrap_or_default()
+            ),
+            "{:#}",
+            result.body
+        );
+    }
+    let _ = tokio::fs::remove_file(marker_a).await;
+    let _ = tokio::fs::remove_file(marker_b).await;
+}
+
+#[tokio::test]
 async fn invocation_cancellation_returns_an_uncertain_result_without_retrying() {
     let manager = Manager::new();
     connect_stdio(&manager, "cancel-invocation").await;

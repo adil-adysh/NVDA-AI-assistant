@@ -379,6 +379,15 @@ impl Manager {
         self.handle_claimed(command).await
     }
 
+    fn try_acquire_command(&self, is_control: bool) -> Result<OwnedSemaphorePermit, ()> {
+        let slots = if is_control {
+            &self.control_slots
+        } else {
+            &self.command_slots
+        };
+        slots.clone().try_acquire_owned().map_err(|_| ())
+    }
+
     async fn claim_id(&self, id: &str) -> Result<(), Value> {
         if id.is_empty() || id.len() > 128 {
             return Err(error("invalid_request", "request id must be 1..128 bytes"));
@@ -964,14 +973,9 @@ pub async fn run_stdio() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
                                     | Command::Disconnect { .. }
                                     | Command::Shutdown { .. }
                             );
-                            let permit = if is_control {
-                                manager.control_slots.clone().try_acquire_owned()
-                            } else {
-                                manager.command_slots.clone().try_acquire_owned()
-                            };
-                            let permit = match permit {
+                            let permit = match manager.try_acquire_command(is_control) {
                                 Ok(permit) => permit,
-                                Err(_) => {
+                                Err(()) => {
                                     write_bounded(&mut output, &reply(id, error("capacity", "manager command limit reached"))).await?;
                                     continue;
                                 }
@@ -1039,6 +1043,30 @@ pub async fn run_stdio() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
         while tasks.join_next().await.is_some() {}
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod command_admission_tests {
+    use super::{Manager, ManagerConfig};
+
+    #[tokio::test]
+    async fn command_admission_is_bounded_and_keeps_control_capacity_reserved() {
+        let manager = Manager::with_config(ManagerConfig {
+            max_active_commands: 1,
+            max_control_commands: 1,
+            ..ManagerConfig::default()
+        });
+
+        let command = manager.try_acquire_command(false).unwrap();
+        assert!(manager.try_acquire_command(false).is_err());
+        let control = manager.try_acquire_command(true).unwrap();
+        assert!(manager.try_acquire_command(true).is_err());
+
+        drop(command);
+        assert!(manager.try_acquire_command(false).is_ok());
+        drop(control);
+        assert!(manager.try_acquire_command(true).is_ok());
+    }
 }
 
 #[derive(Default)]
