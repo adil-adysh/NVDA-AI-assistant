@@ -936,6 +936,29 @@ async fn invocation_cancellation_returns_an_uncertain_result_without_retrying() 
 }
 
 #[tokio::test]
+async fn invocation_timeout_after_fixture_side_effect_is_reported_uncertain() {
+    let manager = Manager::new();
+    connect_stdio(&manager, "timeout-after-effect").await;
+    let marker = unique_marker("timeout-after-effect");
+    let result = invoke_slow_with_timeout(
+        &manager,
+        "timeout-effect-call",
+        "timeout-after-effect",
+        &marker,
+        50,
+    )
+    .await;
+    assert_eq!(
+        result.body["error"]["category"], "timeout",
+        "{:#}",
+        result.body
+    );
+    assert_eq!(result.body["uncertain"], true, "{:#}", result.body);
+    assert!(marker.exists(), "fixture did not record its side effect");
+    let _ = tokio::fs::remove_file(marker).await;
+}
+
+#[tokio::test]
 async fn per_server_saturation_does_not_block_other_servers() {
     let manager = Manager::with_config(ManagerConfig {
         max_active_invocations: 2,
@@ -1081,6 +1104,16 @@ async fn invoke_slow(
     server_id: &str,
     marker: &Path,
 ) -> mcp_client_prototype::Reply {
+    invoke_slow_with_timeout(manager, id, server_id, marker, 5000).await
+}
+
+async fn invoke_slow_with_timeout(
+    manager: &Manager,
+    id: &str,
+    server_id: &str,
+    marker: &Path,
+    timeout_ms: u64,
+) -> mcp_client_prototype::Reply {
     let (manager_session_id, server_incarnation, catalog_generation) =
         identity(manager, server_id).await;
     manager
@@ -1095,7 +1128,7 @@ async fn invoke_slow(
                 "marker_path".to_owned(),
                 json!(marker.display().to_string()),
             )]),
-            timeout_ms: 5000,
+            timeout_ms,
             tool_call_id: Some(format!("tool-{id}")),
         })
         .await
