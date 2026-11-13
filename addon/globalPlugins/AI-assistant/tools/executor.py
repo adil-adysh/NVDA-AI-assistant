@@ -119,7 +119,9 @@ class ToolExecutor:
 			return self._finish(
 				self._error_result(tool_call, UnknownToolError(tool_call.name), started)
 			)
-		if not self._tool_registry.is_dispatch_available(binding.provider_id, binding.tool_id):
+		if not self._tool_registry.is_dispatch_available(
+			binding.provider_id, binding.tool_id, binding.incarnation
+		):
 			return self._finish(
 				self._error_result(
 					tool_call,
@@ -286,7 +288,9 @@ class ToolExecutor:
 			return (
 				revocation_event.is_set()
 				or (current is not None and current.cancelled)
-				or not self._tool_registry.is_dispatch_available(binding.provider_id, binding.tool_id)
+				or not self._tool_registry.is_dispatch_available(
+					binding.provider_id, binding.tool_id, binding.incarnation
+				)
 			)
 
 		return probe
@@ -340,7 +344,7 @@ class ToolExecutor:
 				self._policy.authorize(binding, arguments)
 				self._active_operations[operation_id] = (binding, dict(arguments), revocation_event)
 				started = self._tool_registry.dispatch_if_available(
-					binding.provider_id, binding.tool_id, thread.start
+					binding.provider_id, binding.tool_id, binding.incarnation, thread.start
 				)
 				if not started:
 					self._active_operations.pop(operation_id, None)

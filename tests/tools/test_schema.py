@@ -254,7 +254,6 @@ def test_nested_repetition_patterns_are_rejected_but_simple_patterns_work() -> N
 		{"properties": None},
 		{"properties": {"value": {"maximum": None}}},
 		{"properties": {"value": {"multipleOf": None}}},
-		{"maxContains": 1},
 	],
 )
 def test_present_validation_keywords_cannot_use_null_as_omission(schema) -> None:
@@ -267,6 +266,32 @@ def test_empty_prefix_items_is_a_valid_draft_2020_12_schema() -> None:
 		"type": "array",
 		"prefixItems": [],
 	}
+
+
+def test_min_max_contains_without_contains_are_valid_annotations() -> None:
+	schema = {"type": "array", "minContains": 2, "maxContains": 3}
+	assert normalize_output_schema(schema) == schema
+	assert validate_arguments({"type": "object", "properties": {"values": schema}}, {"values": []}) == ()
+
+
+def test_unknown_required_vocabulary_fails_closed() -> None:
+	with pytest.raises(ToolSchemaError, match="required vocabulary.*not supported"):
+		ToolDefinition(
+			name="vocabulary",
+			description="required vocabulary",
+			input_schema={
+				"type": "object",
+				"$vocabulary": {"https://example.invalid/vocab/custom": True},
+			},
+		)
+
+
+def test_schema_payload_size_is_bounded_for_input_and_output_schemas() -> None:
+	oversized = {"type": "object", "description": "x" * (256 * 1024 + 1)}
+	with pytest.raises(ToolSchemaError, match="schema exceeds.*byte limit"):
+		normalize_input_schema(oversized)
+	with pytest.raises(ToolSchemaError, match="schema exceeds.*byte limit"):
+		normalize_output_schema(oversized)
 
 
 def test_definition_schema_and_metadata_are_deeply_immutable() -> None:

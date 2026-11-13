@@ -42,6 +42,7 @@ class ToolBinding:
 	model_name: str
 	tool_id: str
 	generation: int
+	incarnation: int
 	_handler: ToolExecutorCallable | None = field(default=None, repr=False)
 	_backend: ToolProvider | None = field(default=None, repr=False)
 
@@ -118,6 +119,8 @@ class ToolRegistry:
 		self._entries: dict[str, _ToolEntry] = {}
 		self._provider_available: dict[str, bool] = {}
 		self._revoked_tool_ids: set[str] = set()
+		self._binding_incarnations: dict[str, int] = {}
+		self._next_binding_incarnation = 1
 		self._generation = 0
 		self._snapshot = ToolCatalogSnapshot(generation=0)
 
@@ -158,6 +161,7 @@ class ToolRegistry:
 			)
 			entries = dict(self._entries)
 			entries[entry.tool_id] = entry
+			self._ensure_binding_incarnation(entry.tool_id)
 			if entry.definition.available:
 				self._revoked_tool_ids.discard(entry.tool_id)
 			else:
@@ -197,6 +201,7 @@ class ToolRegistry:
 					original_name=definition.provider_tool_name or definition.name,
 				)
 				entries[entry.tool_id] = entry
+				self._ensure_binding_incarnation(entry.tool_id)
 				if entry.definition.available:
 					self._revoked_tool_ids.discard(entry.tool_id)
 				else:
@@ -254,11 +259,23 @@ class ToolRegistry:
 					original_name=definition.provider_tool_name or definition.name,
 				)
 				entries[entry.tool_id] = entry
-				if not entry.definition.available:
-					self._revoked_tool_ids.add(entry.tool_id)
-				elif self._provider_available.get(provider_id, True):
-					self._revoked_tool_ids.discard(entry.tool_id)
 				created.append(entry.definition)
+			old_provider_ids = {
+				tool_id for tool_id, entry in self._entries.items()
+				if entry.provider_id == provider_id
+			}
+			new_provider_ids = {
+				tool_id for tool_id, entry in entries.items()
+				if entry.provider_id == provider_id
+			}
+			for removed_tool_id in old_provider_ids - new_provider_ids:
+				self._revoke_binding(removed_tool_id)
+			for added_tool_id in new_provider_ids:
+				self._ensure_binding_incarnation(added_tool_id)
+				if entries[added_tool_id].definition.available and self._provider_available.get(provider_id, True):
+					self._revoked_tool_ids.discard(added_tool_id)
+				else:
+					self._revoked_tool_ids.add(added_tool_id)
 			self._publish(entries)
 			return tuple(created)
 
@@ -291,9 +308,11 @@ class ToolRegistry:
 			if available is not None:
 				new_definition = new_definition.with_availability(available)
 			if new_definition.available:
-				self._revoked_tool_ids.discard(tool_id)
+				if self._provider_available.get(existing.provider_id, True):
+					self._revoked_tool_ids.discard(tool_id)
 			else:
-				self._revoked_tool_ids.add(tool_id)
+				if existing.definition.available:
+					self._revoke_binding(tool_id)
 			used_names = self._used_names(exclude_tool_id=tool_id)
 			entry = self._build_entry(
 				definition=new_definition,
@@ -319,7 +338,7 @@ class ToolRegistry:
 				return False
 			entries = dict(self._entries)
 			entries.pop(tool_id, None)
-			self._revoked_tool_ids.add(tool_id)
+			self._revoke_binding(tool_id)
 			self._publish(entries)
 			return True
 
@@ -332,9 +351,9 @@ class ToolRegistry:
 			}
 			removed = len(self._entries) - len(entries)
 			if removed:
-				self._revoked_tool_ids.update(
-					tool_id for tool_id, entry in self._entries.items() if entry.provider_id == provider_id
-				)
+				for tool_id, entry in self._entries.items():
+					if entry.provider_id == provider_id:
+						self._revoke_binding(tool_id)
 				self._provider_available[provider_id] = False
 				self._publish(entries)
 			return removed
@@ -343,6 +362,14 @@ class ToolRegistry:
 		with self._lock:
 			if self._provider_available.get(provider_id) == available:
 				return
+			if not available:
+				for tool_id, entry in self._entries.items():
+					if entry.provider_id == provider_id:
+						self._revoke_binding(tool_id)
+			else:
+				for tool_id, entry in self._entries.items():
+					if entry.provider_id == provider_id and entry.definition.available:
+						self._revoked_tool_ids.discard(tool_id)
 			self._provider_available[provider_id] = available
 			self._publish(dict(self._entries))
 
@@ -357,23 +384,31 @@ class ToolRegistry:
 				entry, definition=entry.definition.with_availability(available)
 			)
 			if available:
-				self._revoked_tool_ids.discard(entry.tool_id)
+				if self._provider_available.get(entry.provider_id, True):
+					self._revoked_tool_ids.discard(entry.tool_id)
 			else:
-				self._revoked_tool_ids.add(entry.tool_id)
+				if entry.definition.available:
+					self._revoke_binding(entry.tool_id)
 			self._publish(entries)
 
 	def is_provider_available(self, provider_id: str) -> bool:
 		with self._lock:
 			return self._provider_available.get(provider_id, True)
 
-	def is_dispatch_available(self, provider_id: str, tool_id: str) -> bool:
+	def is_dispatch_available(self, provider_id: str, tool_id: str, incarnation: int) -> bool:
 		with self._lock:
-			return self._provider_available.get(provider_id, True) and tool_id not in self._revoked_tool_ids
+			return (
+				self._provider_available.get(provider_id, True)
+				and tool_id not in self._revoked_tool_ids
+				and self._binding_incarnations.get(tool_id) == incarnation
+			)
 
-	def dispatch_if_available(self, provider_id: str, tool_id: str, dispatch: Callable[[], None]) -> bool:
+	def dispatch_if_available(
+		self, provider_id: str, tool_id: str, incarnation: int, dispatch: Callable[[], None]
+	) -> bool:
 		"""Atomically check live availability and start a new backend operation."""
 		with self._lock:
-			if not self._provider_available.get(provider_id, True) or tool_id in self._revoked_tool_ids:
+			if not self.is_dispatch_available(provider_id, tool_id, incarnation):
 				return False
 			dispatch()
 			return True
@@ -482,6 +517,21 @@ class ToolRegistry:
 		binding = self._snapshot.resolve(tool_id_or_name)
 		return binding.tool_id if binding is not None else None
 
+	def _ensure_binding_incarnation(self, tool_id: str) -> int:
+		incarnation = self._binding_incarnations.get(tool_id)
+		if incarnation is None:
+			incarnation = self._next_binding_incarnation
+			self._next_binding_incarnation += 1
+			self._binding_incarnations[tool_id] = incarnation
+		return incarnation
+
+	def _revoke_binding(self, tool_id: str) -> None:
+		"""Advance the incarnation so every retained binding is permanently stale."""
+		self._ensure_binding_incarnation(tool_id)
+		self._binding_incarnations[tool_id] = self._next_binding_incarnation
+		self._next_binding_incarnation += 1
+		self._revoked_tool_ids.add(tool_id)
+
 	def _publish(self, entries: Mapping[str, _ToolEntry]) -> None:
 		self._entries = dict(entries)
 		self._generation += 1
@@ -505,6 +555,7 @@ class ToolRegistry:
 				model_name=entry.model_name,
 				tool_id=entry.tool_id,
 				generation=generation,
+				incarnation=self._ensure_binding_incarnation(entry.tool_id),
 				_handler=entry.handler,
 				_backend=entry.backend,
 			)

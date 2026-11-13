@@ -16,13 +16,14 @@
 - `uv run ruff check .`, Rust host `cargo check`, supervisor `cargo test` (24 passed), Web UI build (passed), Web UI tests (49 passed), `uv run scons --dry-run`, and `uv run scons` all passed.
 - Built `AIAssistant-0.14.0.nvda-addon` and inspected the archive: 1,031 entries; no tests, `test_*.py`, or `.pyc` files.
 - Differential checks covered `$ref` siblings, conditionals, dependent-required, dependent-schemas, property names, contains cardinality, integer floats and multiple-of arithmetic. One observed mismatch was Python-float `0.3 multipleOf 0.1`: the reference library performs binary float arithmetic while the implementation follows Draft 2020-12 decimal mathematical semantics; this is documented as a reference limitation.
+- Phase 3 follow-up: `minContains` and `maxContains` without `contains` are valid Draft 2020-12 keywords that have no effect. Removed a structural rejection and added a regression; null remains invalid when supplied as an actual keyword value.
 
 ## Findings
 
 ### H01 — JSON Schema semantics
 
 - **Claim:** Preserved validation keywords may not constrain arguments, and invalid schemas may be accepted.
-- **Actual implementation:** Addressed. Supported assertions now include `$ref` sibling application, conditionals, dependent-required/schemas, property-name constraints, contains cardinality, numeric equality/integer semantics, and complete validation of implemented schema keywords. Unsupported unevaluated/dynamic reference vocabularies and recursive/external refs fail closed. `format` remains annotation-only by default, as Draft 2020-12 permits; unknown keywords remain annotations.
+- **Actual implementation:** Addressed. Supported assertions include `$ref` sibling application, conditionals, dependent-required/schemas, property-name constraints, contains cardinality, numeric equality/integer semantics, and implemented schema keywords. `minContains`/`maxContains` without `contains` are preserved as valid no-op constraints. Unsupported unevaluated/dynamic reference vocabularies and recursive/external refs fail closed. `format` remains annotation-only by default; unknown keywords remain annotations.
 - **Reproduction:** Regression coverage in `tests/tools/test_schema.py`; differential checks against the official Draft 2020-12 behavior passed on the listed cases, with the Python-float reference limitation noted above.
 - **Impact:** An incomplete validator could otherwise accept arguments that violate a provider's advertised constraints.
 - **Severity:** P0.

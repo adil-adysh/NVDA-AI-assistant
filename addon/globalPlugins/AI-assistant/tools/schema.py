@@ -23,6 +23,7 @@ from typing import Any
 from urllib.parse import unquote
 
 MAX_SCHEMA_DEPTH = 64
+MAX_SCHEMA_BYTES = 256 * 1024
 MAX_ARGUMENT_DEPTH = 64
 MAX_REPORTED_VIOLATIONS = 20
 
@@ -112,6 +113,7 @@ def normalize_input_schema(schema: Mapping[str, Any] | None, *, path: str = "inp
 		return normalized
 	if not isinstance(schema, Mapping):
 		raise ToolSchemaError(f"{path}: schema must be a JSON object, got {type(schema).__name__}")
+	_validate_schema_payload_size(schema, path)
 	cloned = thaw_json(schema)
 	_validate_schema_node(cloned, path, depth=0, root=cloned)
 	_assert_no_ref_cycle(cloned, path)
@@ -146,6 +148,7 @@ def normalize_output_schema(
 		return schema
 	if not isinstance(schema, Mapping):
 		raise ToolSchemaError(f"{path}: schema must be a JSON object, got {type(schema).__name__}")
+	_validate_schema_payload_size(schema, path)
 	cloned = thaw_json(schema)
 	_validate_schema_node(cloned, path, depth=0, root=cloned)
 	_assert_no_ref_cycle(cloned, path)
@@ -219,9 +222,17 @@ def _validate_schema_node(schema: Any, path: str, *, depth: int, root: Mapping[s
 			f"{path}.{keyword}: this assertion is not supported by the tool validator; "
 			"remove it or use supported constraints"
 		)
-	vocabulary = schema.get("$vocabulary")
-	if isinstance(vocabulary, Mapping) and vocabulary.get("https://json-schema.org/draft/2020-12/vocab/format-assertion") is True:
-		raise ToolSchemaError(f"{path}.$vocabulary: format-assertion is not supported")
+	if "$vocabulary" in schema:
+		vocabulary = schema["$vocabulary"]
+		if not isinstance(vocabulary, Mapping):
+			raise ToolSchemaError(f"{path}.$vocabulary: must be a JSON object")
+		for vocabulary_uri, required in vocabulary.items():
+			if not isinstance(vocabulary_uri, str) or not isinstance(required, bool):
+				raise ToolSchemaError(f"{path}.$vocabulary: expected string URIs and boolean values")
+			if required:
+				raise ToolSchemaError(
+					f"{path}.$vocabulary: required vocabulary {vocabulary_uri!r} is not supported"
+				)
 
 	schema_type = schema.get("type")
 	if "type" in schema:
@@ -334,12 +345,61 @@ def _validate_schema_node(schema: Any, path: str, *, depth: int, root: Mapping[s
 	if isinstance(pattern_properties, Mapping):
 		for pattern in pattern_properties:
 			_validate_pattern(pattern, f"{path}.patternProperties[{pattern!r}]")
-	for keyword in ("minContains", "maxContains"):
-		if keyword in schema and "contains" not in schema:
-			raise ToolSchemaError(f"{path}.{keyword}: requires contains")
 	format_value = schema.get("format")
 	if "format" in schema and not isinstance(format_value, str):
 		raise ToolSchemaError(f"{path}.format: must be a string")
+
+
+def _validate_schema_payload_size(schema: Mapping[str, Any], path: str) -> None:
+	"""Reject oversized/cyclic/non-JSON schema data before copying it."""
+	used = 0
+	active: set[int] = set()
+
+	def charge(amount: int) -> None:
+		nonlocal used
+		used += amount
+		if used > MAX_SCHEMA_BYTES:
+			raise ToolSchemaError(
+				f"{path}: schema exceeds the {MAX_SCHEMA_BYTES}-byte limit"
+			)
+
+	def encoded_length(value: Any) -> int:
+		try:
+			return len(
+				json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+			)
+		except (TypeError, ValueError, OverflowError) as error:
+			raise ToolSchemaError(f"{path}: schema must contain only finite JSON values") from error
+
+	def visit(value: Any, depth: int) -> None:
+		if depth > MAX_SCHEMA_DEPTH:
+			raise ToolSchemaError(f"{path}: schema nesting exceeds {MAX_SCHEMA_DEPTH} levels")
+		if isinstance(value, Mapping):
+			identity = id(value)
+			if identity in active:
+				raise ToolSchemaError(f"{path}: schema contains a cycle")
+			active.add(identity)
+			charge(2)
+			for index, (key, child) in enumerate(value.items()):
+				if not isinstance(key, str):
+					raise ToolSchemaError(f"{path}: schema object keys must be strings")
+				charge(encoded_length(key) + 1 + int(index > 0))
+				visit(child, depth + 1)
+			active.remove(identity)
+		elif isinstance(value, (list, tuple)):
+			identity = id(value)
+			if identity in active:
+				raise ToolSchemaError(f"{path}: schema contains a cycle")
+			active.add(identity)
+			charge(2)
+			for index, child in enumerate(value):
+				charge(int(index > 0))
+				visit(child, depth + 1)
+			active.remove(identity)
+		else:
+			charge(encoded_length(value))
+
+	visit(schema, 0)
 
 
 def _validate_pattern(pattern: Any, path: str) -> None:

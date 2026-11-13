@@ -270,9 +270,132 @@ def test_provider_disable_revokes_dispatch_through_an_old_snapshot() -> None:
 	old_snapshot = registry.snapshot()
 	registry.set_provider_available("server-a", False)
 	started: list[bool] = []
-	assert registry.dispatch_if_available("server-a", "mcp:server-a:lookup", lambda: started.append(True)) is False
+	assert registry.dispatch_if_available("server-a", "mcp:server-a:lookup", 1, lambda: started.append(True)) is False
 	assert started == []
 	assert old_snapshot.resolve("mcp_server-a__lookup") is not None
+
+
+def test_unregister_then_reuse_tool_id_does_not_reactivate_old_binding() -> None:
+	calls: list[str] = []
+	registry = ToolRegistry()
+	tool_id = "native:reusable"
+	definition_a = ToolDefinition(
+		name="reusable",
+		description="old binding",
+		tool_id=tool_id,
+		executor=lambda arguments: calls.append("A") or "old",
+	)
+	registry.register(definition_a)
+	snapshot_a = registry.snapshot()
+	assert registry.unregister(tool_id)
+	definition_b = ToolDefinition(
+		name="reusable",
+		description="new binding",
+		tool_id=tool_id,
+		executor=lambda arguments: calls.append("B") or "new",
+	)
+	registry.register(definition_b)
+	policy = tools_module.DefaultToolPermissionPolicy(approved_tool_ids=frozenset({tool_id}))
+	executor = tools_module.ToolExecutor(registry, policy=policy)
+
+	old_result = executor.execute(ToolCall(name="reusable", arguments={}), snapshot=snapshot_a)
+	new_result = executor.execute(ToolCall(name="reusable", arguments={}))
+
+	assert not old_result.ok
+	assert old_result.error_category == "permission_denied"
+	assert new_result.ok
+	assert new_result.text == "new"
+	assert calls == ["B"]
+
+
+@pytest.mark.parametrize("transition", ["tool", "provider"])
+def test_reenable_does_not_reactivate_pre_disable_binding(transition: str) -> None:
+	calls: list[str] = []
+	registry = ToolRegistry()
+	tool_id = "mcp:server-a:lookup"
+	registry.register_external_tools(
+		"server-a",
+		[_external()],
+		backend=type("Backend", (), {"provider_id": "server-a", "execute": lambda self, *args: calls.append("old") or "old"})(),
+	)
+	old_snapshot = registry.snapshot()
+	if transition == "tool":
+		registry.set_tool_available(tool_id, False)
+		registry.set_tool_available(tool_id, True)
+	else:
+		registry.set_provider_available("server-a", False)
+		registry.set_provider_available("server-a", True)
+	new_result = tools_module.ToolExecutor(
+		registry,
+		policy=tools_module.DefaultToolPermissionPolicy(approved_provider_ids=frozenset({"server-a"})),
+	).execute(ToolCall(name="mcp_server-a__lookup", arguments={"key": "x"}), snapshot=old_snapshot)
+	assert not new_result.ok
+	assert new_result.error_category == "permission_denied"
+	assert calls == []
+
+
+def test_atomic_catalog_refresh_keeps_existing_incarnation_and_revokes_removed_one() -> None:
+	calls: list[str] = []
+	registry = ToolRegistry()
+	backend_a = type("Backend", (), {"provider_id": "server-a", "execute": lambda self, d, a, c: calls.append(f"A:{d.name}") or "A"})()
+	registry.register_external_tools("server-a", [_external("keep"), _external("remove")], backend=backend_a)
+	old_snapshot = registry.snapshot()
+	backend_b = type("Backend", (), {"provider_id": "server-a", "execute": lambda self, d, a, c: calls.append(f"B:{d.name}") or "B"})()
+	registry.replace_provider_catalog(
+		"server-a",
+		[
+			ToolDefinition.from_provider_payload(_external("keep"), provider_id="server-a"),
+			ToolDefinition.from_provider_payload(_external("new"), provider_id="server-a"),
+		],
+		backend=backend_b,
+	)
+	executor = tools_module.ToolExecutor(
+		registry,
+		policy=tools_module.DefaultToolPermissionPolicy(approved_provider_ids=frozenset({"server-a"})),
+	)
+	keep = executor.execute(ToolCall(name="mcp_server-a__keep", arguments={"key": "x"}), snapshot=old_snapshot)
+	removed = executor.execute(ToolCall(name="mcp_server-a__remove", arguments={"key": "x"}), snapshot=old_snapshot)
+	assert keep.ok and keep.text == "A"
+	assert not removed.ok
+	assert removed.error_category == "permission_denied"
+	assert calls == ["A:mcp_server-a__keep"]
+
+
+def test_concurrent_dispatch_and_unregister_reregister_never_revives_old_binding() -> None:
+	calls: list[str] = []
+	registry = ToolRegistry()
+	tool_id = "native:race"
+	registry.register(
+		ToolDefinition(name="race", description="A", tool_id=tool_id, executor=lambda args: calls.append("A") or "A")
+	)
+	old_snapshot = registry.snapshot()
+	policy = tools_module.DefaultToolPermissionPolicy(approved_tool_ids=frozenset({tool_id}))
+	executor = tools_module.ToolExecutor(registry, policy=policy)
+	start = threading.Event()
+	finished = threading.Event()
+	old_results = []
+
+	def dispatch_loop() -> None:
+		start.wait()
+		for _ in range(100):
+			old_results.append(executor.execute(ToolCall(name="race", arguments={}), snapshot=old_snapshot))
+		finished.set()
+
+	worker = threading.Thread(target=dispatch_loop)
+	worker.start()
+	start.set()
+	assert registry.unregister(tool_id)
+	registry.register(
+		ToolDefinition(name="race", description="B", tool_id=tool_id, executor=lambda args: calls.append("B") or "B")
+	)
+	assert finished.wait(2)
+	worker.join(2)
+	count_after_revocation = len(calls)
+	for _ in range(20):
+		assert not executor.execute(ToolCall(name="race", arguments={}), snapshot=old_snapshot).ok
+	assert len(calls) == count_after_revocation
+	assert all(result.ok or result.error_category == "permission_denied" for result in old_results)
+	assert "B" not in calls
 
 
 def test_catalog_refresh_does_not_reenable_disabled_provider() -> None:

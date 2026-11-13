@@ -204,6 +204,15 @@ policy changes revoke and signal affected active operations. The plugin
 composition root uses the deny-by-default policy; tests may inject
 `AllowAllToolPermissionPolicy`.
 
+Every published binding also carries a registry-assigned incarnation. Explicit
+disablement, removal, or provider revocation advances the live incarnation;
+dispatch checks provider availability, revocation, and binding incarnation
+atomically immediately before starting the worker thread. This prevents a
+saved snapshot from becoming valid again if the same stable `tool_id` is later
+registered for a different handler. Ordinary catalog refresh retains the
+incarnation for retained IDs, so already-authorized work stays bound to its
+original handler rather than being redirected.
+
 ## 9. JSON Schema support (`tools/schema.py`)
 
 The validator is dependency-free on purpose. `jsonschema`'s `rpds-py`
