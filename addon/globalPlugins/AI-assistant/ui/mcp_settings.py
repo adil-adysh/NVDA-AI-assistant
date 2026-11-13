@@ -17,6 +17,18 @@ from ..config.settings import (
 	set_mcp_servers,
 )
 from ..tools.policy import DefaultToolPermissionPolicy
+from .mcp_tool_view import (
+	FILTER_ALL,
+	FILTER_APPROVED,
+	FILTER_DENIED,
+	FILTER_READ_ONLY,
+	declares_destructive,
+	details_text,
+	safe_text,
+	tool_heading,
+	unapproved_read_only,
+	visible_definitions,
+)
 from .task_runner import TaskHandle, background_tasks
 
 addonHandler.initTranslation()
@@ -164,6 +176,10 @@ class McpSettingsPanel(wx.Panel):
 		self._approved = set(get_mcp_approved_tool_ids())
 		self._busy: TaskHandle[object] | None = None
 		self._tool_ids: list[str] = []
+		self._available_tools: list[object] = []
+		self._visible_tools: list[object] = []
+		self._visible_tool_ids: list[str] = []
+		self._filter_mode = FILTER_ALL
 		outer = wx.BoxSizer(wx.VERTICAL)
 		outer.Add(wx.StaticText(self, label=_("External MCP tools are denied until you approve each tool. Server annotations cannot grant permission.")), 0, wx.ALL | wx.EXPAND, 8)
 		outer.Add(wx.StaticText(self, label=_("Server and permission changes are saved immediately.")), 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -200,6 +216,24 @@ class McpSettingsPanel(wx.Panel):
 		columns.Add(left, 1, wx.ALL | wx.EXPAND, 8)
 		right = wx.BoxSizer(wx.VERTICAL)
 		right.Add(wx.StaticText(self, label=_("Discovered tools:")), 0, wx.BOTTOM, 4)
+		filter_row = wx.BoxSizer(wx.HORIZONTAL)
+		self.tool_search = wx.TextCtrl(self)
+		self.tool_search.SetHint(_("Search tools by name or description"))
+		self.tool_search.SetName(_("Search MCP tools by name or description"))
+		self.tool_filter = wx.Choice(
+			self,
+			choices=[
+				_("All tools"),
+				_("Approved only"),
+				_("Not approved"),
+				_("Server-declared read-only"),
+			],
+		)
+		self.tool_filter.SetSelection(0)
+		self.tool_filter.SetName(_("Filter MCP tools by approval or read-only claim"))
+		filter_row.Add(self.tool_search, 1, wx.EXPAND | wx.RIGHT, 4)
+		filter_row.Add(self.tool_filter, 0, wx.EXPAND)
+		right.Add(filter_row, 0, wx.EXPAND | wx.BOTTOM, 6)
 		self.tool_list = wx.ListBox(self, choices=[])
 		self.tool_list.SetName(_("Discovered MCP tools; selection shows approval state"))
 		right.Add(self.tool_list, 1, wx.EXPAND | wx.BOTTOM, 6)
@@ -209,11 +243,22 @@ class McpSettingsPanel(wx.Panel):
 		tool_buttons = wx.BoxSizer(wx.HORIZONTAL)
 		self.approve_button = wx.Button(self, label=_("&Approve selected tool"))
 		self.revoke_button = wx.Button(self, label=_("&Revoke selected tool"))
+		self.approve_all_read_only_button = wx.Button(self, label=_("Approve all read-&only"))
 		self.approve_button.Bind(wx.EVT_BUTTON, self._on_approve)
 		self.revoke_button.Bind(wx.EVT_BUTTON, self._on_revoke)
+		self.approve_all_read_only_button.Bind(wx.EVT_BUTTON, self._on_approve_read_only)
 		tool_buttons.Add(self.approve_button, 0, wx.RIGHT, 4)
-		tool_buttons.Add(self.revoke_button)
-		right.Add(tool_buttons, 0, wx.EXPAND)
+		tool_buttons.Add(self.revoke_button, 0, wx.RIGHT, 4)
+		tool_buttons.Add(self.approve_all_read_only_button)
+		right.Add(tool_buttons, 0, wx.EXPAND | wx.BOTTOM, 6)
+		right.Add(wx.StaticText(self, label=_("Selected tool details and input schema:")), 0, wx.BOTTOM, 4)
+		self.tool_details = wx.TextCtrl(
+			self,
+			style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP,
+		)
+		self.tool_details.SetMinSize((-1, 170))
+		self.tool_details.SetName(_("Selected MCP tool details and input schema"))
+		right.Add(self.tool_details, 0, wx.EXPAND)
 		columns.Add(right, 1, wx.ALL | wx.EXPAND, 8)
 		outer.Add(columns, 1, wx.EXPAND)
 		self.status = wx.StaticText(self, label=_("Disconnected"))
@@ -221,8 +266,12 @@ class McpSettingsPanel(wx.Panel):
 		outer.Add(self.status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 		self.SetSizer(outer)
 		self.server_list.Bind(wx.EVT_LISTBOX, self._on_server_selected)
+		self.tool_list.Bind(wx.EVT_LISTBOX, self._on_tool_selected)
+		self.tool_search.Bind(wx.EVT_TEXT, self._on_tool_filter_changed)
+		self.tool_filter.Bind(wx.EVT_CHOICE, self._on_tool_filter_changed)
 		self._refresh_servers()
 		self._refresh_tools()
+		self._update_tool_actions()
 
 	def collect(self, _values: dict[str, object]) -> None:
 		"""MCP configuration actions persist atomically when invoked."""
@@ -258,23 +307,93 @@ class McpSettingsPanel(wx.Panel):
 		selected = self._selected_config()
 		server_id = selected[1].server_id if selected else None
 		definitions = getattr(self._registry, "get_enabled_definitions")()
-		available = [definition for definition in definitions if definition.provider_id == f"mcp:{server_id}"]
-		self._tool_ids = [definition.tool_id for definition in available]
+		self._available_tools = [
+			definition for definition in definitions if definition.provider_id == f"mcp:{server_id}"
+		]
+		self._tool_ids = [definition.tool_id for definition in self._available_tools]
+		self._apply_tool_filter(selected_tool_id)
+
+	def _apply_tool_filter(self, selected_tool_id: str | None = None) -> None:
+		"""Rebuild the visible list without reconnecting or re-reading the server."""
+
+		filter_modes = [FILTER_ALL, FILTER_APPROVED, FILTER_DENIED, FILTER_READ_ONLY]
+		selection = self.tool_filter.GetSelection()
+		self._filter_mode = filter_modes[selection] if 0 <= selection < len(filter_modes) else FILTER_ALL
+		self._visible_tools = visible_definitions(
+			self._available_tools,
+			self._approved,
+			self.tool_search.GetValue(),
+			self._filter_mode,
+		)
+		self._visible_tool_ids = [str(getattr(tool, "tool_id", "")) for tool in self._visible_tools]
 		self.tool_list.Set([
-			f"{definition.provider_tool_name} — {_("approved") if definition.tool_id in self._approved else _("denied")} — {_("Description")}: {_safe_tool_description(definition.description)}" for definition in available
+			self._tool_label(definition)
+			for definition in self._visible_tools
 		])
 		approved_count = sum(1 for tool_id in self._tool_ids if tool_id in self._approved)
 		if self._tool_ids:
 			self.tool_summary.SetLabel(
-				_("{count} tools discovered; {approved} approved.").format(
-					count=len(self._tool_ids), approved=approved_count
+				_("{count} tools discovered; {approved} approved; showing {visible}.").format(
+					count=len(self._tool_ids),
+					approved=approved_count,
+					visible=len(self._visible_tools),
 				)
 			)
-			index = self._tool_ids.index(selected_tool_id) if selected_tool_id in self._tool_ids else 0
-			self.tool_list.SetSelection(index)
-			self.tool_list.EnsureVisible(index)
 		else:
 			self.tool_summary.SetLabel(_("No tools discovered."))
+		if self._visible_tool_ids:
+			index = (
+				self._visible_tool_ids.index(selected_tool_id)
+				if selected_tool_id in self._visible_tool_ids
+				else 0
+			)
+			self.tool_list.SetSelection(index)
+			self.tool_list.EnsureVisible(index)
+		self._on_tool_selected(None)
+		self._update_tool_actions()
+
+	def _tool_label(self, definition: object) -> str:
+		heading = tool_heading(definition)
+		name = safe_text(
+			getattr(definition, "provider_tool_name", "") or getattr(definition, "name", ""),
+			120,
+		)
+		label = heading if heading == name or not name else f"{heading} ({name})"
+		status = _("approved") if getattr(definition, "tool_id", "") in self._approved else _("denied")
+		description = _safe_tool_description(getattr(definition, "description", ""), 100)
+		return f"{label} — {status} — {description}" if description else f"{label} — {status}"
+
+	def _update_tool_actions(self) -> None:
+		selected = self._selected_tool_id()
+		self.approve_button.Enable(selected is not None and self._busy is None)
+		self.revoke_button.Enable(selected is not None and self._busy is None)
+		candidates = unapproved_read_only(self._available_tools, self._approved)
+		self.approve_all_read_only_button.Enable(bool(candidates) and self._busy is None)
+		self.approve_all_read_only_button.SetLabel(
+			_("Approve all read-&only ({count})").format(count=len(candidates))
+			if candidates
+			else _("Approve all read-&only")
+		)
+
+	def _on_tool_selected(self, _event: wx.CommandEvent | None) -> None:
+		tool_id = self._selected_tool_id()
+		definition = self._tool_by_id(tool_id)
+		if definition is None:
+			self.tool_details.SetValue("")
+			return
+		self.tool_details.SetValue(details_text(definition, tool_id in self._approved))
+		self.tool_details.SetInsertionPoint(0)
+
+	def _on_tool_filter_changed(self, _event: wx.CommandEvent) -> None:
+		self._apply_tool_filter(self._selected_tool_id())
+
+	def _tool_by_id(self, tool_id: str | None) -> object | None:
+		if not tool_id:
+			return None
+		return next(
+			(tool for tool in self._available_tools if getattr(tool, "tool_id", "") == tool_id),
+			None,
+		)
 
 	def _connected(self, server_id: str) -> bool:
 		is_connected = getattr(self._catalog, "is_connected", None)
@@ -379,6 +498,7 @@ class McpSettingsPanel(wx.Panel):
 			is_alive=self._alive,
 			task_name="MCP server configuration",
 		)
+		self._update_tool_actions()
 
 	def _on_connect(self, _event: wx.CommandEvent) -> None:
 		selected = self._selected_config()
@@ -429,17 +549,17 @@ class McpSettingsPanel(wx.Panel):
 
 	def _selected_tool_id(self) -> str | None:
 		index = self.tool_list.GetSelection()
-		return self._tool_ids[index] if 0 <= index < len(self._tool_ids) else None
+		return self._visible_tool_ids[index] if 0 <= index < len(self._visible_tool_ids) else None
 
 	def _on_approve(self, _event: wx.CommandEvent) -> None:
 		tool_id = self._selected_tool_id()
 		selected = self._selected_config()
 		if not tool_id or selected is None:
 			return
-		definition = next((item for item in getattr(self._registry, "get_enabled_definitions")() if item.tool_id == tool_id), None)
+		definition = self._tool_by_id(tool_id)
 		if definition is None:
 			return
-		description = _safe_tool_description(definition.description) or _("No description was provided.")
+		description = _safe_tool_description(getattr(definition, "description", "")) or _("No description was provided.")
 		prompt = _("Approve the external tool {tool} from server {server}?\n\nUntrusted tool description: {description}").format(
 			tool=definition.provider_tool_name,
 			server=selected[1].name,
@@ -457,6 +577,31 @@ class McpSettingsPanel(wx.Panel):
 			self._approved.discard(tool_id)
 			self._save_approvals()
 
+	def _on_approve_read_only(self, _event: wx.CommandEvent) -> None:
+		selected = self._selected_config()
+		if selected is None:
+			return
+		candidates = unapproved_read_only(self._available_tools, self._approved)
+		if not candidates:
+			return
+		names = [str(getattr(tool, "provider_tool_name", "") or getattr(tool, "name", "")) for tool in candidates]
+		shown = names[:12]
+		name_list = "\n".join(f"- {name}" for name in shown)
+		if len(names) > len(shown):
+			name_list += _("\n- …and {count} more").format(count=len(names) - len(shown))
+		prompt = _(
+			"Approve {count} tools that server {server} declares read-only?\n\n{names}\n\n"
+			"The server's read-only claim is untrusted. Approving still grants each tool "
+			"permission to run; review and revoke individual tools if you do not trust this server."
+		).format(count=len(candidates), server=selected[1].name, names=name_list)
+		if wx.MessageBox(prompt, _("Approve read-only MCP tools"), wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING, parent=self) != wx.YES:
+			return
+		for tool in candidates:
+			tool_id = str(getattr(tool, "tool_id", "") or "")
+			if tool_id:
+				self._approved.add(tool_id)
+		self._save_approvals()
+
 	def _save_approvals(self) -> None:
 		selected_tool_id = self._selected_tool_id()
 		set_mcp_approved_tool_ids(sorted(self._approved))
@@ -473,6 +618,7 @@ class McpSettingsPanel(wx.Panel):
 	def _operation_failed(self, error: Exception) -> None:
 		self._busy = None
 		self._refresh_servers(self._selected_config()[1].server_id if self._selected_config() else None)
+		self._update_tool_actions()
 		message = getattr(error, "safe_message", None)
 		if not isinstance(message, str) or not message.strip():
 			message = _("MCP operation failed. Review the server settings and try again.")
@@ -496,13 +642,9 @@ def _declares_destructive(definition: object) -> bool:
 	the user does not approve a state-changing bridge tool as if it were a
 	read-only query.
 	"""
-	annotations = getattr(definition, "annotations", None)
-	return getattr(annotations, "destructive_hint", None) is True
+	return declares_destructive(definition)
 
 
-def _safe_tool_description(value: str) -> str:
+def _safe_tool_description(value: str, limit: int = 160) -> str:
 	"""Bound and flatten an untrusted description before rendering or speaking."""
-	if not isinstance(value, str):
-		return ""
-	text = " ".join("".join(char if char.isprintable() else " " for char in value).split())
-	return text[:160]
+	return safe_text(value, limit)

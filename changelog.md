@@ -8,6 +8,7 @@ Added
 * Added configurable llama-server executable, endpoint, and models preset path.
 * Added API-backed llama model discovery using `/models` with `/v1/models` fallback.
 * Added capability discovery for text, image, and audio modalities plus context-window metadata.
+* Added MCP tool search, approval/read-only filters, a full details and input-schema preview, and one warning-led bulk approval for server-declared read-only tools.
 
 Changed
 -------

@@ -247,6 +247,25 @@ the persisted approval were present, and a second chat turn again returned NVDA
 `health_snapshot` action. The assistant's manager process owned a separate
 `nvda-mcp-server.exe` child.
 
+## Tool-discovery follow-up
+
+The settings page now supports search, approval/read-only filters, a full
+description and input-schema preview, and one warning-led bulk approval for
+non-destructive tools the server claims are read-only. Each approval remains
+individually revocable, and the bulk prompt states that the server's claim is
+untrusted.
+
+The bridge companion adds `find_tools` (compact summaries with required
+parameters) and `get_tool_schema` (one input schema on demand), so an agent can
+search before paying for a schema. The default Bridge catalog is now 33 tools
+(34 with developer mode) because those two tools are themselves discoverable.
+
+Validation: Assistant `uv run pytest` passed 1,335, skipped 3, deselected 40,
+with 60 subtests; Ruff clean; final package `AIAssistant-0.14.0.nvda-addon`
+is 24,346,457 bytes, SHA-256 `589C6CCB…`. Bridge `pytest` passed 601 with 19
+subtests; Rust `cargo test` passed 40; final package
+`nvdaMcpBridge-0.10.0.nvda-addon` is 4,616,151 bytes, SHA-256 `3832EF7E…`.
+
 ## Baseline
 
 The hardening baseline at `70eaaba60d246bce1728550b70fcc1fb1934d213` is recorded above. Phase 4 began from current HEAD `4a6e7ca`. The worktree also contains unrelated host JavaScript edits and untracked `.superpowers/`; these are user work and must be preserved.

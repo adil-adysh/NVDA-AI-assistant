@@ -102,10 +102,15 @@ server. External tools are denied until you approve each exact tool.
    `%LOCALAPPDATA%\Programs\NVDA MCP Bridge\bin\nvda-mcp-server.exe`.
 3. Choose **OK**, select the server, and choose **Connect**. The list changes
    from **enabled** to **connected** and the discovered tools appear.
-4. Select a tool and choose **Approve selected tool**. The confirmation labels
-   the server-provided description as untrusted; tools the server declares
-   destructive get an additional warning. Approval is per tool, not per server.
-5. Ask for the action in chat. Only approved, currently available tools are
+4. Use the search box or the filter choice to find a tool. Selecting it shows
+   the full description and input schema. Choose **Approve selected tool**;
+   the confirmation labels the server-provided description as untrusted, and
+   tools the server declares destructive get an additional warning. Approval
+   is per tool, not per server.
+5. **Approve all read-only** approves every non-destructive tool the server
+   *claims* is read-only in one deliberate step. That claim is untrusted:
+   review the list, and revoke any tool you do not trust.
+6. Ask for the action in chat. Only approved, currently available tools are
    executable.
 
 The server list and the tool summary show the current connection and approval

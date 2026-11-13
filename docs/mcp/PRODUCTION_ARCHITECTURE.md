@@ -122,6 +122,14 @@ The same live path found and fixed:
 - Approving a tool the server declares destructive adds a warning that the tool
   can change state. Annotations remain untrusted and never grant permission.
 
+The discovery follow-up adds a search box and approval/read-only filter to the
+tool list, a full description and input-schema preview for the selected tool,
+and a single **Approve all read-only** action. The bulk action only considers
+non-destructive tools the server claims are read-only, warns that the claim is
+untrusted, and leaves every tool individually revocable. The bridge side adds
+`find_tools` and `get_tool_schema` so the catalog can be searched before a
+schema is loaded; see the bridge's agent-experience document.
+
 Earlier fixes from the same phase: an inaccessible editor crash, focus loss on
 tab and server changes, an over-wide editor, and bridge defects in NVDA-menu
 state detection and scripted-key dispatch.

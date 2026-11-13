@@ -142,7 +142,7 @@ class SettingsPanelContractTests(unittest.TestCase):
 		self.assertNotIn("sizer.Add(buttons", methods["__init__"])
 		# Destructive confirmations must not default to the destructive answer.
 		self.assertIn("wx.NO_DEFAULT", mcp_source)
-		self.assertEqual(mcp_source.count("wx.NO_DEFAULT"), 2)
+		self.assertEqual(mcp_source.count("wx.NO_DEFAULT"), 3)
 
 	def test_mcp_approval_warns_about_server_declared_destructive_tools(self) -> None:
 		mcp_source = (ADDON_ROOT / "ui" / "mcp_settings.py").read_text(encoding="utf-8")
@@ -150,6 +150,24 @@ class SettingsPanelContractTests(unittest.TestCase):
 		self.assertIn("able to change state", mcp_source)
 		# The warning is an additional hint; annotations still cannot approve.
 		self.assertIn("annotations are untrusted", mcp_source.lower())
+
+	def test_mcp_tools_can_be_searched_filtered_and_previewed(self) -> None:
+		mcp_source = (ADDON_ROOT / "ui" / "mcp_settings.py").read_text(encoding="utf-8")
+		for label in (
+			'_("Search tools by name or description")',
+			'_("Filter MCP tools by approval or read-only claim")',
+			'_("Selected tool details and input schema:")',
+			'_("Approve all read-&only")',
+			"visible_definitions(",
+			"details_text(",
+		):
+			self.assertIn(label, mcp_source)
+
+	def test_bulk_read_only_approval_warns_that_the_claim_is_untrusted(self) -> None:
+		mcp_source = (ADDON_ROOT / "ui" / "mcp_settings.py").read_text(encoding="utf-8")
+		self.assertIn("_on_approve_read_only", mcp_source)
+		self.assertIn("unapproved_read_only(", mcp_source)
+		self.assertIn("The server's read-only claim is untrusted.", mcp_source)
 
 	def test_mcp_server_changes_return_focus_to_the_server_list(self) -> None:
 		mcp_tree = ast.parse((ADDON_ROOT / "ui" / "mcp_settings.py").read_text(encoding="utf-8"))
