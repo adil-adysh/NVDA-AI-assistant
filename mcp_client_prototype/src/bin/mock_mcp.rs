@@ -88,6 +88,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
         std::future::pending::<()>().await;
     }
+    if args
+        .first()
+        .is_some_and(|arg| arg == "--spawn-grandchild-and-serve")
+    {
+        let marker = std::path::PathBuf::from(&args[1]);
+        let _child = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--grandchild",
+                marker.to_str().ok_or("invalid marker path")?,
+            ])
+            .spawn()?;
+        std::fs::write(
+            marker.with_extension("parent"),
+            std::process::id().to_string(),
+        )?;
+    }
     if args.first().is_some_and(|arg| arg == "--hang-init") {
         std::fs::write(&args[1], std::process::id().to_string())?;
         std::future::pending::<()>().await;

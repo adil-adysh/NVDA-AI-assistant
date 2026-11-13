@@ -499,7 +499,7 @@ async fn wait_for_marker(marker: &Path) {
         }
     })
     .await
-    .expect("fixture child did not start");
+    .unwrap_or_else(|_| panic!("fixture child did not create marker {}", marker.display()));
 }
 
 #[cfg(windows)]
@@ -613,6 +613,60 @@ async fn cancelling_startup_kills_hostile_grandchild_in_manager_job_object() {
         connect.await.unwrap().body["error"]["category"],
         "cancelled"
     );
+    wait_for_windows_process_exit(parent_pid).await;
+    wait_for_windows_process_exit(grandchild_pid).await;
+    let _ = tokio::fs::remove_file(grandchild_marker).await;
+    let _ = tokio::fs::remove_file(parent_marker).await;
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn abrupt_manager_exit_cleans_up_connected_server_process_tree() {
+    let grandchild_marker = unique_marker("manager-crash-grandchild");
+    let parent_marker = grandchild_marker.with_extension("parent");
+    let mut manager = tokio::process::Command::new(env!("CARGO_BIN_EXE_mcp_manager"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = manager.stdin.take().unwrap();
+    let mut stdout = BufReader::new(manager.stdout.take().unwrap());
+    let hello = send_manager_command(
+        &mut stdin,
+        &mut stdout,
+        json!({"op":"hello", "id":"manager-crash-hello", "protocol_version":1}),
+    )
+    .await;
+    assert_eq!(hello["ok"], true);
+    let connected = send_manager_command(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "op":"connect_stdio", "id":"manager-crash-connect", "server_id":"tree",
+            "executable":env!("CARGO_BIN_EXE_mock_mcp"),
+            "args":["--spawn-grandchild-and-serve", grandchild_marker.display().to_string()], "env":{}
+        }),
+    )
+    .await;
+    assert_eq!(connected["ok"], true, "{connected:#}");
+    wait_for_marker(&grandchild_marker).await;
+    wait_for_marker(&parent_marker).await;
+    let grandchild_pid = tokio::fs::read_to_string(&grandchild_marker)
+        .await
+        .unwrap()
+        .parse()
+        .unwrap();
+    let parent_pid = tokio::fs::read_to_string(&parent_marker)
+        .await
+        .unwrap()
+        .parse()
+        .unwrap();
+
+    manager.start_kill().unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), manager.wait())
+        .await
+        .expect("manager process did not terminate after forced exit");
     wait_for_windows_process_exit(parent_pid).await;
     wait_for_windows_process_exit(grandchild_pid).await;
     let _ = tokio::fs::remove_file(grandchild_marker).await;
