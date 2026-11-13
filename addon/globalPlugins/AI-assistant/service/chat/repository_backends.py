@@ -50,7 +50,9 @@ def _part_to_dict(part: Part) -> dict[str, Any]:
 	if part.tool_args is not None:
 		payload["tool_args"] = dict(part.tool_args)
 	if part.tool_result is not None:
-		payload["tool_result"] = dict(part.tool_result)
+		payload["tool_result"] = part.tool_result
+	if part.tool_call_id is not None:
+		payload["tool_call_id"] = part.tool_call_id
 	return payload
 
 
@@ -72,7 +74,8 @@ def _part_from_dict(payload: dict[str, Any]) -> Part:
 		image=image_bytes,
 		tool_name=payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else None,
 		tool_args=payload.get("tool_args") if isinstance(payload.get("tool_args"), dict) else None,
-		tool_result=payload.get("tool_result") if isinstance(payload.get("tool_result"), dict) else None,
+		tool_result=payload.get("tool_result"),
+		tool_call_id=payload.get("tool_call_id") if isinstance(payload.get("tool_call_id"), str) else None,
 	)
 
 

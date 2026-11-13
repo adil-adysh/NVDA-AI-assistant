@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from typing import Protocol
 
@@ -8,10 +9,17 @@ from ..config.settings import is_streaming_enabled
 from ..core.cancellation import check_cancelled, record_partial
 from ..core.events import ProgressEvent, ProgressHandler
 from ..core.canonical import Message, Tool
-from ..core.message_transforms import build_assistant_message, build_tool_result_message
-from ..core.messages import LLMResponse, SummaryResponse, ToolExecutionResult
+from ..core.message_transforms import build_assistant_message, build_tool_result_message_from_result
+from ..core.messages import LLMResponse, SummaryResponse
+from ..core.translation import _
 from ..providers.interfaces import LLMProvider, PartialCallback, ProgressCallback, ProviderModelInfo
-from ..tools import ToolExecutor
+from ..tools import (
+	ToolBudgetExceeded,
+	ToolCatalogSnapshot,
+	ToolExecutionResult,
+	ToolExecutionTracker,
+	ToolExecutor,
+)
 from .chat.types import ConversationTurnResult
 
 
@@ -139,6 +147,8 @@ class ProviderLLMService:
 		tools: list[Tool] | None = None,
 		stream_handler: Callable[[str, int], None] | None = None,
 		progress: ProgressHandler | None = None,
+		tool_catalog: ToolCatalogSnapshot | None = None,
+		tracker: ToolExecutionTracker | None = None,
 	) -> ConversationTurnResult:
 		check_cancelled()
 		canonical_messages = list(messages)
@@ -159,19 +169,28 @@ class ProviderLLMService:
 
 		_use_streaming = _streaming_enabled and (stream_handler is not None or progress is not None)
 
+		def request() -> LLMResponse:
+			return self._request(lambda: self._provider.generate(
+				messages=canonical_messages,
+				tools=tools,
+				stream_handler=stream_adapter if _use_streaming else None,
+			))
+
 		emit("llm_request", f"Generating response with {self.provider_name()}...")
-		response = self._request(lambda: self._provider.generate(
-			messages=canonical_messages,
-			tools=tools,
-			stream_handler=stream_adapter if _use_streaming else None,
-		))
+		response = request()
 		assistant_message = build_assistant_message(text=response.text, tool_calls=response.tool_calls)
 		generated_messages.append(assistant_message)
 		if self._tool_executor is None:
 			return ConversationTurnResult(response=response, messages=tuple(generated_messages))
 
-		steps = 0
-		while response.tool_calls and steps < self.MAX_TOOL_STEPS:
+		effective_tracker = tracker or self._new_tracker()
+		loop_limit_reached = False
+		while response.tool_calls:
+			try:
+				effective_tracker.begin_iteration()
+			except ToolBudgetExceeded:
+				loop_limit_reached = True
+				break
 			check_cancelled()
 			# The assistant message carrying tool_calls must precede the tool
 			# results in the provider-visible history; otherwise OpenAI-compat
@@ -179,26 +198,31 @@ class ProviderLLMService:
 			# matching assistant tool-call message).
 			canonical_messages.append(assistant_message)
 			emit("tool_execution", f"Executing {len(response.tool_calls)} tool call(s)...")
-			tool_messages = []
+			tool_messages: list[ToolExecutionResult] = []
 			for tool_call in response.tool_calls:
 				check_cancelled()
-				tool_messages.extend(self._request(
-					lambda call=tool_call: self._tool_executor.execute_tool_calls([call])
-				))
+				tool_messages.extend(
+					self._request(
+						lambda call=tool_call: self._execute_tool_calls(
+							[call], tool_catalog, effective_tracker
+						)
+					)
+				)
 			check_cancelled()
 			canonical_tool_messages = self._convert_tool_messages(tool_messages)
 			canonical_messages.extend(canonical_tool_messages)
 			generated_messages.extend(canonical_tool_messages)
 			emit("tool_execution", "Tool execution complete.")
 			emit("llm_request", f"Continuing response with {self.provider_name()}...")
-			response = self._request(lambda: self._provider.generate(
-				messages=canonical_messages,
-				tools=tools,
-				stream_handler=stream_adapter if _use_streaming else None,
-			))
+			response = request()
 			assistant_message = build_assistant_message(text=response.text, tool_calls=response.tool_calls)
 			generated_messages.append(assistant_message)
-			steps += 1
+
+		if loop_limit_reached:
+			response, closing_messages = self._close_pending_tool_calls(response)
+			canonical_messages.extend(closing_messages)
+			generated_messages.extend(closing_messages)
+			generated_messages.append(build_assistant_message(text=response.text))
 
 		return ConversationTurnResult(response=response, messages=tuple(generated_messages))
 
@@ -226,15 +250,65 @@ class ProviderLLMService:
 			handler(text, count)
 		return callback
 
+	def _new_tracker(self) -> ToolExecutionTracker:
+		factory = getattr(self._tool_executor, "new_tracker", None)
+		if callable(factory):
+			return factory()
+		return ToolExecutionTracker()
+
+	def _execute_tool_calls(
+		self,
+		tool_calls: list,
+		tool_catalog: ToolCatalogSnapshot | None,
+		tracker: ToolExecutionTracker,
+	) -> list[ToolExecutionResult]:
+		executor = self._tool_executor
+		if executor is None:
+			return []
+		try:
+			signature = inspect.signature(executor.execute_tool_calls)
+		except (TypeError, ValueError):
+			return executor.execute_tool_calls(tool_calls)
+		kwargs = {}
+		if "snapshot" in signature.parameters:
+			kwargs["snapshot"] = tool_catalog
+		if "tracker" in signature.parameters:
+			kwargs["tracker"] = tracker
+		return executor.execute_tool_calls(tool_calls, **kwargs)
+
 	def close(self) -> None:
 		self._provider.close()
 
 	def _convert_tool_messages(self, tool_messages: list[ToolExecutionResult]) -> list[Message]:
-		return [
-			build_tool_result_message(
-				tool_message.tool_name,
-				tool_message.content,
-				tool_call_id=tool_message.tool_call_id,
+		return [build_tool_result_message_from_result(result) for result in tool_messages]
+
+	def _close_pending_tool_calls(
+		self,
+		response: LLMResponse,
+	) -> tuple[LLMResponse, list[Message]]:
+		"""Resolve outstanding tool calls after the iteration limit.
+
+		Leaving assistant ``tool_calls`` without matching tool results would make
+		the persisted transcript invalid for the next provider request.
+		"""
+		results = [
+			ToolExecutionResult(
+				tool_name=call.name,
+				tool_call_id=call.id,
+				ok=False,
+				error_category="budget_exceeded",
+				error_source="host",
+				error_message="Tool iteration limit reached; the call was not executed.",
 			)
-			for tool_message in tool_messages
+			for call in (response.tool_calls or [])
 		]
+		messages = self._convert_tool_messages(results)
+		message_text = response.text.strip() if isinstance(response.text, str) else ""
+		if not message_text:
+			message_text = _("Tool execution limit reached. Ask again with a narrower request.")
+		raw = dict(response.raw) if isinstance(response.raw, dict) else {"raw": response.raw}
+		raw["tool_loop_limit_reached"] = True
+		return (
+			LLMResponse(text=message_text, model=response.model, raw=raw, tool_calls=None),
+			messages,
+		)

@@ -33,7 +33,7 @@ from ..providers.provider_proxy import ProviderProxy
 from ..providers.runtime.server import build_server_config, get_litert_supervisor
 from ..service.chat import ChatCoordinator, ConversationService
 from ..service.llm import ProviderLLMService
-from ..tools import ToolDefinition, ToolExecutor, ToolRegistry
+from ..tools import ToolExecutor, ToolRegistry, register_default_tools
 from ..use_case.engine import UseCaseEngine
 from .types import PluginServices
 
@@ -90,7 +90,7 @@ def build_plugin_services() -> PluginServices:
 	)
 	page_context_provider = CurrentPageContext(context_reducer)
 	tool_registry = ToolRegistry()
-	_register_default_tools(tool_registry)
+	register_default_tools(tool_registry)
 	tool_executor = ToolExecutor(tool_registry)
 	llm_service = ProviderLLMService(provider, tool_executor=tool_executor)
 	chat_coordinator = ChatCoordinator(
@@ -119,16 +119,4 @@ def build_plugin_services() -> PluginServices:
 		chat_coordinator=chat_coordinator,
 		conversation_service=conversation_service,
 		use_case_engine=use_case_engine,
-	)
-
-
-def _register_default_tools(tool_registry: ToolRegistry) -> None:
-	tool_registry.register_tool(
-		ToolDefinition(
-			name="get_time",
-			description="Get the current local date and time.",
-			parameters={},
-			required=[],
-			executor=lambda args: __import__("datetime").datetime.now().isoformat(),
-		)
 	)

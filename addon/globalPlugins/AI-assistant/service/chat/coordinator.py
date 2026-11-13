@@ -12,6 +12,7 @@ from ..base import BaseCoordinator
 from ...core.cancellation import CancellationToken, RequestCancelled, cancellation_scope, check_cancelled
 from ...core.translation import _
 from ...core.canonical import Message, Tool
+from ...tools import ToolCatalogSnapshot
 from ...core.message_transforms import build_user_message
 from ...context.budget import (
 	ApproximateTokenCounter,
@@ -105,6 +106,7 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 		progress: ProgressHandler | None = None,
 		expected_conversation_id: str | None = None,
 		cancellation_token: CancellationToken | None = None,
+		tool_catalog: ToolCatalogSnapshot | None = None,
 	) -> LLMResponse:
 		with self._turn_lock, cancellation_scope(cancellation_token):
 			return self._send_message_locked(
@@ -114,6 +116,7 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 				tools=tools,
 				progress=progress,
 				expected_conversation_id=expected_conversation_id,
+				tool_catalog=tool_catalog,
 			)
 
 	def _send_message_locked(
@@ -124,6 +127,7 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 		tools: list[dict[str, Any]] | None,
 		progress: ProgressHandler | None,
 		expected_conversation_id: str | None,
+		tool_catalog: ToolCatalogSnapshot | None = None,
 	) -> LLMResponse:
 		if expected_conversation_id is not None:
 			with self._session_lock:
@@ -167,6 +171,7 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 			tools=canonical_tools,
 			stream_handler=progress_callback,
 			progress=progress,
+			tool_catalog=tool_catalog,
 		)
 		log.debug(
 			"ChatCoordinator.send_message finished: response_text=%r tool_calls=%s",
@@ -323,6 +328,7 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 		tools: list[Tool] | None = None,
 		stream_handler: Callable[[str, int], None] | None = None,
 		progress: ProgressHandler | None = None,
+		tool_catalog: ToolCatalogSnapshot | None = None,
 	) -> LLMResponse:
 		if threading.current_thread() is threading.main_thread():
 			log.warning(
@@ -332,11 +338,14 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 		try:
 			check_cancelled()
 			self._validate_transaction_budget(transaction)
+			if tool_catalog is not None and tools is None:
+				tools = self._convert_canonical_tools(tool_catalog)
 			turn_result = self._llm_service.generate_with_transcript(
 				messages=transaction.request_messages(),
 				tools=tools,
 				stream_handler=stream_handler,
 				progress=progress,
+				tool_catalog=tool_catalog,
 			)
 			check_cancelled()
 		except RequestCancelled as error:
@@ -426,12 +435,24 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 	def _build_user_message(self, text: str | None, image_base64: str | None) -> Message:
 		return build_user_message(text=text, image_base64=image_base64)
 
-	def _convert_tool_definitions(self, tools: list[dict[str, Any]] | None) -> list[Tool] | None:
+	@staticmethod
+	def _convert_canonical_tools(tool_catalog: ToolCatalogSnapshot) -> list[Tool]:
+		return tool_catalog.provider_tools()
+
+	def _convert_tool_definitions(
+		self,
+		tools: list[dict[str, Any]] | list[Tool] | None,
+	) -> list[Tool] | None:
 		if tools is None:
 			return None
 
 		canonical_tools: list[Tool] = []
 		for tool_def in tools:
+			if isinstance(tool_def, Tool):
+				canonical_tools.append(tool_def)
+				continue
+			if not isinstance(tool_def, dict):
+				continue
 			function_payload = None
 			if tool_def.get("type") == "function" and isinstance(tool_def.get("function"), dict):
 				function_payload = tool_def["function"]
@@ -451,12 +472,14 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 				if isinstance(parameters, dict)
 				else ()
 			)
+			properties = parameters.get("properties") if isinstance(parameters, dict) else {}
 			canonical_tools.append(
 				Tool(
 					name=name,
 					description=description,
-					parameters=parameters,
+					parameters=properties if isinstance(properties, dict) else {},
 					required=required,
+					input_schema=parameters,
 				)
 			)
 		return canonical_tools if canonical_tools else None

@@ -267,6 +267,7 @@ class UIAdapter:
 					threading.Thread(
 						target=self._handle_host_chat_submission,
 						args=(message, conversation_id, coordinator, event_payload, request_id, token),
+						kwargs={"tool_registry": tool_registry},
 						daemon=True,
 					).start()
 				except Exception:
@@ -385,6 +386,7 @@ class UIAdapter:
 		event_payload: dict[str, Any] | None = None,
 		request_id: str | None = None,
 		token: CancellationToken | None = None,
+		tool_registry: Any | None = None,
 	) -> None:
 		request_id = request_id or str((event_payload or {}).get("request_id") or uuid4().hex)
 		token = token or CancellationToken()
@@ -397,7 +399,15 @@ class UIAdapter:
 				self._latest_chat_requests[conversation_id] = request_id
 		try:
 			with cancellation_scope(token):
-				self._run_host_chat_submission(message, conversation_id, coordinator, event_payload, request_id, token)
+				self._run_host_chat_submission(
+					message,
+					conversation_id,
+					coordinator,
+					event_payload,
+					request_id,
+					token,
+					tool_registry,
+				)
 		finally:
 			with self._chat_requests_lock:
 				self._chat_requests.pop(request_id, None)
@@ -410,6 +420,7 @@ class UIAdapter:
 		event_payload: dict[str, Any] | None,
 		request_id: str,
 		token: CancellationToken,
+		tool_registry: Any | None = None,
 	) -> None:
 		conversation_id = conversation_id or None
 		use_case_id = None
@@ -467,12 +478,16 @@ class UIAdapter:
 					partial_text=token.partial_text, expected_conversation_id=conversation_id,
 				)
 			else:
+				# The Python registry remains authoritative: resolve one immutable
+				# catalog snapshot for this turn instead of trusting WebView state.
+				tool_catalog = tool_registry.snapshot() if tool_registry is not None else None
 				response = coordinator.send_message(
 					text=message_text or None,
 					image_base64=image_base64,
 					progress_callback=assistant_projection.update,
 					expected_conversation_id=conversation_id,
 					cancellation_token=token,
+					tool_catalog=tool_catalog,
 				)
 			if not coordinator.last_turn_committed():
 				# The conversation was switched/reset while the turn was in flight,

@@ -1,13 +1,272 @@
 # -*- coding: utf-8 -*-
+"""Provider-neutral tool-call and tool-result models.
+
+Everything in this module is core data: it must not import the ``tools``
+package or any provider adapter.
+"""
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
+from typing import Any, Literal
 
-ToolArguments = dict[str, object]
+ToolArguments = dict[str, Any]
+
+# Outcome classification.  The first eight categories are the required core
+# taxonomy; ``budget_exceeded`` and ``schema_error`` are host-side conditions
+# that still have to be distinguishable from a tool failure.
+ToolErrorCategory = Literal[
+	"invalid_arguments",
+	"unknown_tool",
+	"permission_denied",
+	"provider_failure",
+	"execution_error",
+	"timeout",
+	"cancelled",
+	"uncertain",
+	"budget_exceeded",
+	"schema_error",
+]
+
+ToolErrorSource = Literal["host", "provider", "tool"]
+
+MAX_TOOL_RESULT_CHARS = 20_000
+MAX_TOOL_ERROR_CHARS = 2_000
 
 
 @dataclass(slots=True)
 class ToolCall:
+	"""One model-requested tool invocation.
+
+	``parse_error`` records malformed provider arguments instead of silently
+	substituting ``{}``.  The executor refuses to run a call whose arguments
+	could not be parsed.
+	"""
+
 	name: str
 	arguments: ToolArguments
 	id: str | None = None
+	parse_error: str | None = None
+	raw_arguments: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ToolContentBlock:
+	"""A single piece of tool output.
+
+	Only ``text`` is directly representable by every current LLM provider.
+	Other kinds are kept losslessly for the internal contract and are converted
+	to an explicitly marked, bounded textual placeholder by adapters instead of
+	being disguised as real content.
+	"""
+
+	type: Literal["text", "json", "image", "audio", "resource"]
+	text: str | None = None
+	json_value: Any = None
+	data: str | None = None
+	mime_type: str | None = None
+	uri: str | None = None
+	metadata: Mapping[str, Any] = field(default_factory=dict)
+
+	@classmethod
+	def text_block(cls, text: str) -> "ToolContentBlock":
+		return cls(type="text", text=text)
+
+	@classmethod
+	def json_block(cls, value: Any) -> "ToolContentBlock":
+		return cls(type="json", json_value=value)
+
+	def to_model_text(self) -> str:
+		"""Deterministic, provider-safe textual rendering of this block."""
+		if self.type == "text":
+			return self.text or ""
+		if self.type == "json":
+			return _serialize_json(self.json_value)
+		label = self.mime_type or "data"
+		if self.type == "image":
+			return f"[image result omitted: {label}]"
+		if self.type == "audio":
+			return f"[audio result omitted: {label}]"
+		if self.type == "resource":
+			return f"[resource result omitted: {self.uri or label}]"
+		return f"[unsupported tool content: {self.type}]"
+
+	def to_dict(self) -> dict[str, Any]:
+		payload: dict[str, Any] = {"type": self.type}
+		if self.text is not None:
+			payload["text"] = self.text
+		if self.json_value is not None:
+			payload["json"] = _json_safe(self.json_value)
+		if self.data is not None:
+			payload["data"] = self.data
+		if self.mime_type is not None:
+			payload["mime_type"] = self.mime_type
+		if self.uri is not None:
+			payload["uri"] = self.uri
+		if self.metadata:
+			payload["metadata"] = _json_safe(dict(self.metadata))
+		return payload
+
+	@classmethod
+	def from_dict(cls, payload: Mapping[str, Any]) -> "ToolContentBlock":
+		block_type = str(payload.get("type", "text"))
+		if block_type not in {"text", "json", "image", "audio", "resource"}:
+			block_type = "text"
+		metadata = payload.get("metadata")
+		return cls(
+			type=block_type,  # type: ignore[arg-type]
+			text=payload.get("text") if isinstance(payload.get("text"), str) else None,
+			json_value=payload.get("json"),
+			data=payload.get("data") if isinstance(payload.get("data"), str) else None,
+			mime_type=payload.get("mime_type") if isinstance(payload.get("mime_type"), str) else None,
+			uri=payload.get("uri") if isinstance(payload.get("uri"), str) else None,
+			metadata=dict(metadata) if isinstance(metadata, Mapping) else {},
+		)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolExecutionResult:
+	"""Structured outcome of one tool invocation.
+
+	Failures are never represented as a successful result.  ``uncertain`` marks
+	an outcome that could not be confirmed (timeout or lost transport); such
+	calls must not be retried automatically.
+	"""
+
+	tool_name: str
+	tool_call_id: str | None = None
+	tool_id: str | None = None
+	provider_id: str | None = None
+	ok: bool = False
+	content: tuple[ToolContentBlock, ...] = ()
+	structured_content: Any = None
+	error_category: ToolErrorCategory | None = None
+	error_message: str | None = None
+	error_source: ToolErrorSource | None = None
+	duration_ms: float = 0.0
+	cancelled: bool = False
+	timed_out: bool = False
+	termination_confirmed: bool = True
+	uncertain: bool = False
+	metadata: Mapping[str, Any] = field(default_factory=dict)
+
+	@property
+	def text(self) -> str:
+		"""Bounded model-visible text assembled from the content blocks."""
+		parts = [block.to_model_text() for block in self.content]
+		return _bounded("\n".join(part for part in parts if part), MAX_TOOL_RESULT_CHARS)
+
+	def is_error_result(self) -> bool:
+		"""Whether this is a tool-level error, as opposed to a protocol failure."""
+		return not self.ok
+
+	def to_model_text(self, max_chars: int = MAX_TOOL_RESULT_CHARS) -> str:
+		if not self.ok:
+			return _bounded(self.error_message or f"Tool '{self.tool_name}' failed", max_chars)
+		return _bounded(self.text, max_chars)
+
+	def bounded(self, max_chars: int = MAX_TOOL_RESULT_CHARS) -> "ToolExecutionResult":
+		content = tuple(_bound_block(block, max_chars) for block in self.content)
+		message = self.error_message
+		if message is not None and len(message) > MAX_TOOL_ERROR_CHARS:
+			message = _bounded(message, MAX_TOOL_ERROR_CHARS)
+		return replace(self, content=content, error_message=message)
+
+	def to_dict(self) -> dict[str, Any]:
+		payload: dict[str, Any] = {
+			"tool_name": self.tool_name,
+			"ok": self.ok,
+			"content": [block.to_dict() for block in self.content],
+		}
+		if self.tool_call_id is not None:
+			payload["tool_call_id"] = self.tool_call_id
+		if self.tool_id is not None:
+			payload["tool_id"] = self.tool_id
+		if self.provider_id is not None:
+			payload["provider_id"] = self.provider_id
+		if self.structured_content is not None:
+			payload["structured_content"] = _json_safe(self.structured_content)
+		if self.error_category is not None:
+			payload["error_category"] = self.error_category
+		if self.error_message is not None:
+			payload["error_message"] = self.error_message
+		if self.error_source is not None:
+			payload["error_source"] = self.error_source
+		if self.duration_ms:
+			payload["duration_ms"] = round(self.duration_ms, 3)
+		if self.cancelled:
+			payload["cancelled"] = True
+		if self.timed_out:
+			payload["timed_out"] = True
+		if not self.termination_confirmed:
+			payload["termination_confirmed"] = False
+		if self.uncertain:
+			payload["uncertain"] = True
+		if self.metadata:
+			payload["metadata"] = _json_safe(dict(self.metadata))
+		return payload
+
+	@classmethod
+	def from_dict(cls, payload: Mapping[str, Any]) -> "ToolExecutionResult":
+		content_payload = payload.get("content")
+		blocks = tuple(
+			ToolContentBlock.from_dict(item)
+			for item in content_payload
+			if isinstance(item, Mapping)
+		) if isinstance(content_payload, list) else ()
+		metadata = payload.get("metadata")
+		return cls(
+			tool_name=str(payload.get("tool_name", "")),
+			tool_call_id=payload.get("tool_call_id") if isinstance(payload.get("tool_call_id"), str) else None,
+			tool_id=payload.get("tool_id") if isinstance(payload.get("tool_id"), str) else None,
+			provider_id=payload.get("provider_id") if isinstance(payload.get("provider_id"), str) else None,
+			ok=bool(payload.get("ok")),
+			content=blocks,
+			structured_content=payload.get("structured_content"),
+			error_category=payload.get("error_category") if isinstance(payload.get("error_category"), str) else None,
+			error_message=payload.get("error_message") if isinstance(payload.get("error_message"), str) else None,
+			error_source=payload.get("error_source") if isinstance(payload.get("error_source"), str) else None,
+			duration_ms=float(payload.get("duration_ms") or 0.0),
+			cancelled=bool(payload.get("cancelled")),
+			timed_out=bool(payload.get("timed_out")),
+			termination_confirmed=payload.get("termination_confirmed") is not False,
+			uncertain=bool(payload.get("uncertain")),
+			metadata=dict(metadata) if isinstance(metadata, Mapping) else {},
+		)
+
+
+def _serialize_json(value: Any) -> str:
+	try:
+		return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+	except (TypeError, ValueError):
+		return repr(value)
+
+
+def _bounded(text: str, limit: int) -> str:
+	if limit <= 0:
+		return ""
+	if len(text) <= limit:
+		return text
+	marker = "…[truncated]"
+	return text[: max(0, limit - len(marker))] + marker
+
+
+def _bound_block(block: ToolContentBlock, limit: int) -> ToolContentBlock:
+	if block.type == "text" and block.text is not None and len(block.text) > limit:
+		return replace(block, text=_bounded(block.text, limit))
+	return block
+
+
+def _json_safe(value: Any) -> Any:
+	"""Best-effort conversion to JSON-serializable data without losing structure."""
+	try:
+		json.dumps(value)
+		return value
+	except (TypeError, ValueError):
+		pass
+	if isinstance(value, Mapping):
+		return {str(key): _json_safe(item) for key, item in value.items()}
+	if isinstance(value, (list, tuple)):
+		return [_json_safe(item) for item in value]
+	return repr(value)

@@ -4,7 +4,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .tooling import ToolCall
+from .tooling import ToolCall, ToolExecutionResult
+
+__all__ = [
+	"ChatMessage",
+	"LLMResponse",
+	"SummaryResponse",
+	"ToolCall",
+	"ToolExecutionResult",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,13 +30,6 @@ class ChatMessage:
 	image_base64: str | None = None
 	tool_name: str | None = None
 	tool_calls: list[dict[str, Any]] | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ToolExecutionResult:
-	tool_name: str
-	content: str
-	tool_call_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -887,7 +887,9 @@ class OpenAICompatProvider(LLMProvider):
 					images.append(base64.b64encode(part.image).decode("ascii"))
 				elif part.type == "tool_result":
 					chat_msg["content"] = (
-						part.tool_result if part.tool_result is not None else part.text or ""
+						part.text if part.text is not None else (
+							json.dumps(part.tool_result) if part.tool_result is not None else ""
+						)
 					)
 					if part.tool_call_id:
 						chat_msg["tool_call_id"] = part.tool_call_id
@@ -1082,7 +1084,11 @@ class OpenAICompatProvider(LLMProvider):
 				content_parts.append({"type": "text", "text": part.text})
 			elif part.type == "tool_result":
 				tool_call_id = part.tool_call_id or tool_call_id
-				text = json.dumps(part.tool_result) if part.tool_result is not None else part.text or ""
+				# Bounded provider-facing text wins; structured envelopes are
+				# internal and must not be sent verbatim to the model.
+				text = part.text if part.text is not None else (
+					json.dumps(part.tool_result) if part.tool_result is not None else ""
+				)
 				text_parts.append(text)
 				content_parts.append({"type": "text", "text": text})
 			elif part.type == "image":
