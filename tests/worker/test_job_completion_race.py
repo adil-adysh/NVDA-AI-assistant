@@ -12,7 +12,7 @@ def test_submission_ack_preserves_completed_snapshot():
 	closed = threading.Event()
 	class EventPipe:
 		is_connected = True
-		def read_frame(self):
+		def read_frame(self, timeout_seconds=None):
 			closed.wait()
 			raise module.PipeDisconnectedError("closed")
 
@@ -23,7 +23,7 @@ def test_submission_ack_preserves_completed_snapshot():
 				result_data={"answer": 42}, generation=1,
 			).to_dict())
 
-		def read_frame(self):
+		def read_frame(self, timeout_seconds=None):
 			return {"type": "job_ack", "status": "accepted"}
 
 	jobs = module.NamedPipeJobClient(CommandPipe(), EventPipe())

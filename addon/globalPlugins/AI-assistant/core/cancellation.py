@@ -53,9 +53,6 @@ _current_token: ContextVar[CancellationToken | None] = ContextVar('inference_can
 
 @contextmanager
 def cancellation_scope(token: CancellationToken | None):
-	if token is None:
-		yield
-		return
 	marker = _current_token.set(token)
 	try:
 		yield
@@ -83,3 +80,20 @@ def record_partial(text: str, generated_chars: int) -> None:
 			token.partial_text += text
 		else:
 			token.partial_text = text
+
+
+@contextmanager
+def cancellation_event_scope(event):
+	"""Bridge a dialog's cancellation event into request-scoped worker waits."""
+	if event is None:
+		yield
+		return
+	parent = current_cancellation_token()
+	class EventToken(CancellationToken):
+		@property
+		def cancelled(self):
+			return event.is_set() or bool(parent and parent.cancelled)
+	token = EventToken()
+	with cancellation_scope(token):
+		check_cancelled()
+		yield

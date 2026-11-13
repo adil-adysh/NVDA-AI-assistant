@@ -43,3 +43,16 @@ def test_manager_rejects_components_without_starting_worker(artifact):
 	with pytest.raises(manager_module.LLMProviderError, match="single"):
 		manager.import_model(request, Mock())
 	supervisor.import_huggingface_model.assert_not_called()
+
+
+def test_cancelled_import_never_stages_or_launches():
+	import threading
+	cancel = threading.Event()
+	cancel.set()
+	supervisor, downloads = Mock(), Mock()
+	manager = manager_module.LiteRTModelManager(supervisor=supervisor, download_service=downloads)
+	request = requests.parse_model_import_source("owner/model#file=model.litertlm", "custom", "litert-lm")
+	with pytest.raises(manager_module.DownloadCancelledError):
+		manager.import_model(request, Mock(), cancel_event=cancel)
+	supervisor.import_huggingface_model.assert_not_called()
+	downloads.stage_local_file.assert_not_called()

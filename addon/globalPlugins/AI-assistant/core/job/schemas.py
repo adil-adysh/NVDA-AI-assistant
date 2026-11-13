@@ -85,6 +85,7 @@ HANDSHAKE_RESPONSE_SCHEMA: dict[str, Any] = {
 		"max_frame_bytes": {"type": "integer", "minimum": 1},
 		"error_message": {"type": ["string", "null"]},
 		"correlation_id": {"type": "string"},
+		"generation": {"type": "integer", "minimum": 1},
 	},
 	"additionalProperties": False,
 }

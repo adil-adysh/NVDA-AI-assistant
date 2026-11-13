@@ -4,7 +4,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from collections.abc import Sequence
 
-from ...core.canonical import Message
+try:
+	from ...core.canonical import Message
+except ImportError:
+	from core.canonical import Message
 
 
 @dataclass(slots=True)

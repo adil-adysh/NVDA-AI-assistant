@@ -343,6 +343,48 @@ class NamedPipeServer:
 		self.close()
 
 
+
+def _write_with_deadline(handle, data, timeout):
+	"""Cancel a stalled synchronous WriteFile on its issuing thread.
+
+	CancelSynchronousIo is required for synchronous handles. The watcher repeats
+	cancellation until completion to cover the deadline-before-WriteFile race,
+	and is joined before another operation can run on the same thread.
+	"""
+	import ctypes
+	from ctypes import wintypes
+	import win32api
+	import win32file
+	thread_handle = win32api.OpenThread(0x0001, False, threading.get_native_id())
+	finished, expired = threading.Event(), threading.Event()
+	cancel = ctypes.WinDLL("kernel32", use_last_error=True).CancelSynchronousIo
+	cancel.argtypes = (wintypes.HANDLE,)
+	cancel.restype = wintypes.BOOL
+	def watchdog():
+		if finished.wait(max(0.0, timeout)):
+			return
+		expired.set()
+		while not finished.is_set():
+			cancel(int(thread_handle))
+			finished.wait(0.001)
+	watcher = threading.Thread(target=watchdog, name="WorkerPipeWriteDeadline", daemon=True)
+	watcher.start()
+	try:
+		if timeout <= 0:
+			raise TimeoutError("Worker pipe write deadline expired")
+		try:
+			win32file.WriteFile(handle, data)
+		except Exception as error:
+			if expired.is_set():
+				raise TimeoutError("Timed out writing to worker pipe") from error
+			raise
+		if expired.is_set():
+			raise TimeoutError("Timed out writing to worker pipe")
+	finally:
+		finished.set()
+		watcher.join()
+		thread_handle.Close()
+
 class NamedPipeClient:
 	"""Windows Named Pipe Client connecting to server and exchanging NDJSON frames."""
 
@@ -533,31 +575,25 @@ class NamedPipeClient:
 		except Exception:
 			pass
 
-	def write_raw(self, data: bytes) -> None:
-		"""Write raw bytes to the pipe."""
+	def write_raw(self, data: bytes, timeout_seconds: float = 5.0) -> None:
 		if not self.is_connected or not self._handle:
 			raise PipeDisconnectedError("Client pipe is not connected")
+		deadline = time.monotonic() + timeout_seconds
+		if not self._lock.acquire(timeout=max(0.0, timeout_seconds)):
+			raise TimeoutError("Worker pipe write lock deadline expired")
+		try:
+			_write_with_deadline(self._handle, data, deadline - time.monotonic())
+		except TimeoutError:
+			raise
+		except Exception as exc:
+			self._is_connected = False
+			raise PipeDisconnectedError(f"Pipe write failed: {exc}") from exc
+		finally:
+			self._lock.release()
 
-		with self._lock:
-			try:
-				import win32file
-
-				win32file.WriteFile(self._handle, data)
-			except Exception as exc:
-				winerror = getattr(exc, "winerror", None)
-				if winerror in (
-					ERROR_BROKEN_PIPE,
-					ERROR_NO_DATA,
-					ERROR_PIPE_NOT_CONNECTED,
-				):
-					self._is_connected = False
-					raise PipeDisconnectedError(f"Pipe broken on write: {exc}") from exc
-				raise PipeDisconnectedError(f"Write error: {exc}") from exc
-
-	def write_frame(self, payload: dict[str, Any] | str) -> None:
-		"""Encode and write a single NDJSON frame."""
+	def write_frame(self, payload: dict[str, Any] | str, timeout_seconds: float = 5.0) -> None:
 		raw = encode_ndjson_frame(payload)
-		self.write_raw(raw)
+		self.write_raw(raw, timeout_seconds=timeout_seconds)
 
 	def close(self) -> None:
 		"""Close client handle and release resources."""

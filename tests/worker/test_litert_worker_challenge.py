@@ -324,7 +324,7 @@ class TestConcurrencyAndStressIPC(unittest.TestCase):
 		results = []
 
 		def query_status() -> None:
-			st = supervisor.status()
+			st = supervisor.status(refresh=True)
 			results.append(st.is_ready)
 
 		with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
@@ -347,7 +347,7 @@ class TestConcurrencyAndStressIPC(unittest.TestCase):
 			"success": False,
 		}
 		supervisor = LiteRTServerSupervisor(worker_client=mock_client)
-		st = supervisor.status()
+		st = supervisor.status(refresh=True)
 		self.assertEqual(st.state, "failed")
 		self.assertEqual(st.error_message, "Subprocess crashed with exit code 1")
 
@@ -642,7 +642,7 @@ class TestServerCrashAndBrokenPipe(unittest.TestCase):
 		server1.shutdown()
 
 		# Querying supervisor status during broken pipe must return idle without raising or hanging
-		st_dead = supervisor.status()
+		st_dead = supervisor.status(refresh=True)
 		self.assertEqual(st_dead.state, "stopped")
 
 		# Direct send_command must raise broken pipe promptly (< 0.5s)
@@ -663,7 +663,7 @@ class TestServerCrashAndBrokenPipe(unittest.TestCase):
 			self.assertTrue(resp2.get("success"))
 
 			# Supervisor recovers cleanly without deadlocks or leaked locks
-			st_recovered = supervisor.status()
+			st_recovered = supervisor.status(refresh=True)
 			self.assertEqual(st_recovered.state, "stopped")
 		finally:
 			client.disconnect()
@@ -687,7 +687,7 @@ class TestServerCrashAndBrokenPipe(unittest.TestCase):
 		# Query status multiple times; verify each finishes < 50ms and returns stopped
 		for _ in range(5):
 			t0 = time.perf_counter()
-			st = supervisor.status()
+			st = supervisor.status(refresh=True)
 			elapsed = time.perf_counter() - t0
 			self.assertEqual(st.state, "stopped")
 			self.assertLess(elapsed, 0.1)
@@ -735,7 +735,7 @@ class TestProcessCrashContainmentAndTypeSafety(unittest.TestCase):
 		try:
 			# Non-blocking status query across IPC
 			t0 = time.perf_counter()
-			status = supervisor.status()
+			status = supervisor.status(refresh=True)
 			elapsed = time.perf_counter() - t0
 
 			self.assertLess(elapsed, 0.5, "status() took too long")
@@ -808,7 +808,7 @@ class TestProcessCrashContainmentAndTypeSafety(unittest.TestCase):
 					self.assertIsNone(resolved)
 
 				# Test status() - MUST never raise TypeError
-				st = sup.status()
+				st = sup.status(refresh=True)
 				if expected_connected:
 					self.assertEqual(st.state, "ready")
 					self.assertTrue(st.is_ready)

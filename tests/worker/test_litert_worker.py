@@ -384,7 +384,7 @@ class TestLiteRTServerSupervisorProxyIntegration(unittest.TestCase):
 			"last_error": None,
 			"consecutive_crashes": 0,
 		}
-		status = self.proxy_supervisor.status()
+		status = self.proxy_supervisor.status(refresh=True)
 		self.assertEqual(status.state, "ready")
 		self.assertEqual(status.generation, 5)
 		self.assertEqual(status.pid, 1122)
@@ -424,7 +424,7 @@ class TestLiteRTServerSupervisorProxyIntegration(unittest.TestCase):
 	def test_uninitialized_worker_fallback(self) -> None:
 		"""Verify LiteRTServerSupervisor falls back cleanly when worker is not connected."""
 		supervisor = LiteRTServerSupervisor(worker_client=None)
-		status = supervisor.status()
+		status = supervisor.status(refresh=True)
 		self.assertEqual(status.state, "stopped")
 		self.assertFalse(status.is_ready)
 		self.assertEqual(status.generation, 0)
@@ -451,7 +451,7 @@ class TestLiteRTServerSupervisorProxyIntegration(unittest.TestCase):
 			"success": False,
 		}
 		supervisor = LiteRTServerSupervisor(worker_client=mock_client)
-		st = supervisor.status()
+		st = supervisor.status(refresh=True)
 		self.assertEqual(st.state, "failed")
 		self.assertEqual(st.error_code, "LITERT_CRASHED")
 		self.assertEqual(st.error_message, "Process failed")

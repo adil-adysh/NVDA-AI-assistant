@@ -5,7 +5,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from ...core.canonical import Message
+try:
+	from ...core.canonical import Message
+except ImportError:
+	from core.canonical import Message
 from .session import ConversationSession
 
 

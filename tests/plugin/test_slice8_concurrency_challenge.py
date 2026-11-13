@@ -70,7 +70,7 @@ class _LiteRTServerError(RuntimeError):
 
 
 sys.modules["addonHandler"] = types.SimpleNamespace(initTranslation=lambda: None)
-sys.modules["logHandler"] = types.SimpleNamespace(log=logging.getLogger("test"))
+sys.modules.setdefault("logHandler", types.SimpleNamespace(log=logging.getLogger("test")))
 
 _stub_module(
 	"providers.interfaces",
@@ -156,6 +156,7 @@ _stub_module(
 _stub_module("context.extractors.selection", safe_extract_selection=lambda: None)
 _stub_module("context.graph_store", save_accessibility_graph=lambda *a, **k: Path("test.json"))
 _stub_module("service", get_provider_display_name=str, provider_control_service=types.SimpleNamespace())
+sys.modules[f"{CHALLENGE_NAMESPACE}.service"].__path__ = [str(ADDON_ROOT / "service")]
 _stub_module("ui.host_process", stop_host=lambda: None)
 _stub_module("ui.adapter", ui_adapter=types.SimpleNamespace(register_provider_ready_handler=lambda h: None))
 _stub_module("utils.clipboard", safe_read_clipboard=lambda: None)

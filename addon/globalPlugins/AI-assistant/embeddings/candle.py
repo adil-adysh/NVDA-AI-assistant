@@ -3,20 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 
 class CandleEmbeddingAdapter:
 	"""Implement the context reducer's embedder port without hard coupling.
 
-	The extension is imported only on first embedding request.  This keeps NVDA
+	The worker is started only on the first embedding request.  This keeps NVDA
 	startup and all non-text/image use cases independent of the optional native
 	component.
 	"""
 
-	def __init__(self, model_id: str | None = None) -> None:
+	def __init__(self, model_id: str | None = None, worker_client=None) -> None:
 		self._model_id = model_id or "harrier-oss-v1-270m"
-		self._engine: Any | None = None
+		self._worker_client = worker_client
 
 	def _cache_dir(self) -> str:
 		from .manager import embedding_cache_dir
@@ -31,7 +30,6 @@ class CandleEmbeddingAdapter:
 			return
 		if selected and selected != self._model_id:
 			self._model_id = selected
-			self._engine = None
 
 	@property
 	def model_key(self) -> str:
@@ -42,16 +40,25 @@ class CandleEmbeddingAdapter:
 		self._sync_selected_model()
 		if not texts:
 			return ()
-		if self._engine is None:
-			try:
-				import embedding_engine
-			except ImportError as error:
-				raise RuntimeError("The optional embedding engine is unavailable") from error
-			try:
-				self._engine = embedding_engine.EmbeddingEngine(self._model_id, self._cache_dir())
-			except TypeError:
-				self._engine = embedding_engine.EmbeddingEngine(self._model_id)
-		return tuple(tuple(float(value) for value in vector) for vector in self._engine.embed_batch(list(texts)))
+		from ..core.translation import _
+		client = self._worker_client
+		if client is None:
+			from ..plugin.worker_supervisor import get_worker_client_for_operation
+			client = get_worker_client_for_operation()
+		if client is None:
+			raise RuntimeError(_("The local AI worker is unavailable."))
+		vectors = []
+		for offset in range(0, len(texts), 256):
+			batch = list(texts[offset:offset + 256])
+			response = client.run_job("embedding", {"operation": "embed", "model_id": self._model_id,
+				"texts": batch}, timeout=600.0)
+			if not response.get("success"):
+				raise RuntimeError(response.get("error_message") or _("Embedding operation failed."))
+			result = response.get("vectors", [])
+			if len(result) != len(batch):
+				raise RuntimeError(_("The embedding worker returned an incomplete batch."))
+			vectors.extend(result)
+		return tuple(tuple(float(value) for value in vector) for vector in vectors)
 
 	def embed_query(self, query: str, instruction: str) -> Sequence[float]:
 		"""Embed an instructed query while leaving document text untouched.

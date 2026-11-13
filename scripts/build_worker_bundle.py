@@ -127,7 +127,7 @@ def build_worker_bundle(*, allow_existing: bool = False) -> None:
 		shutil.copy2(site / "pywin32_system32" / "pywintypes313.dll", bundle)
 		shutil.copy2(ROOT / "scripts" / "licenses" / "pywin32-311.txt", bundle / "PYWIN32-LICENSE.txt")
 		shutil.copy2(ADDON_ROOT / "lib" / "runtime_supervisor.pyd", bundle)
-		(bundle / "python313._pth").write_text("python313.zip\n.\n..\n", encoding="utf-8")
+		(bundle / "python313._pth").write_text("python313.zip\n.\n..\n../lib\n", encoding="utf-8")
 		manifest = {
 			"python": PYTHON_VERSION, "pywin32": PYWIN32_VERSION,
 			"files": {file.name: hashlib.sha256(file.read_bytes()).hexdigest() for file in bundle.iterdir() if file.is_file()},

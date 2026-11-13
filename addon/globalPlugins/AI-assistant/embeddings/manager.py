@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,79 +27,51 @@ def embedding_cache_dir() -> Path:
 
 
 class EmbeddingModelService:
-	"""Own model lifecycle without exposing native runtime details to UI."""
+	"""NVDA-side model policy port; all native work belongs to the worker."""
+	def __init__(self, worker_client=None):
+		self._worker_client = worker_client
+
+	def _request(self, operation, model_id=None, *, progress=None, cancel_event=None):
+		from ..core.translation import _
+		client = self._worker_client
+		if client is None:
+			from ..plugin.worker_supervisor import get_worker_client_for_operation
+			client = get_worker_client_for_operation()
+		if client is None:
+			raise RuntimeError(_("The local AI worker is unavailable."))
+		response = client.run_job("embedding", {"operation": operation, "model_id": model_id},
+			timeout=600.0, on_progress=progress, cancel_event=cancel_event)
+		if not response.get("success"):
+			raise RuntimeError(response.get("error_message") or _("Embedding operation failed."))
+		return response
 
 	def list_models(self) -> tuple[EmbeddingModelInfo, ...]:
-		embedding_engine = self._load_native_engine()
-		models: list[EmbeddingModelInfo] = []
-		for model_id in sorted(embedding_engine.EmbeddingEngine.available_models()):
-			info = embedding_engine.EmbeddingEngine.model_info(model_id)
-			if not isinstance(info, dict):
-				continue
-			models.append(
-				EmbeddingModelInfo(
-					id=model_id,
-					name=str(info.get("name", model_id)),
-					dimensions=int(info["dimensions"]),
-					max_tokens=int(info["max_tokens"]),
-					size_mb=float(info.get("model_size_mb", 0.0)),
-					architecture=str(info.get("architecture", "")),
-				)
-			)
-		return tuple(models)
+		return tuple(EmbeddingModelInfo(**info) for info in self._request("list").get("models", []))
 
 	def get_model(self, model_id: str) -> EmbeddingModelInfo:
 		for model in self.list_models():
 			if model.id == model_id:
 				return model
-		raise ValueError(f"Unknown embedding model: {model_id}")
+		raise ValueError("Unknown embedding model: " + model_id)
 
-	def prepare(self, model_id: str, progress: Callable[[str], None] | None = None) -> None:
-		model = self.get_model(model_id)
+	def prepare(self, model_id: str, progress: Callable[[str], None] | None = None, cancel_event=None) -> None:
+		from ..core.translation import _
 		if progress:
-			progress(f"Preparing {model.name}…")
-		embedding_engine = self._load_native_engine()
-		engine = self._create_engine(embedding_engine, model.id)
-		# The native runtime owns download and artifact validation.
-		prepare = getattr(engine, "prepare", None)
-		if not callable(prepare):
-			raise RuntimeError("The installed embedding engine does not support model preparation")
-		prepare()
+			progress(_("Preparing embedding model..."))
+		from ..core.cancellation import RequestCancelled
+		from ..providers.interfaces import DownloadCancelledError
+		try:
+			self._request("prepare", model_id, progress=progress, cancel_event=cancel_event)
+		except RequestCancelled as exc:
+			raise DownloadCancelledError(_("Embedding preparation cancelled.")) from exc
 		if progress:
-			progress(f"{model.name} is ready.")
+			progress(_("Embedding model is ready."))
 
 	def is_cached(self, model_id: str) -> bool:
-		self.get_model(model_id)
-		embedding_engine = self._load_native_engine()
-		engine = self._create_engine(embedding_engine, model_id)
-		is_cached = getattr(engine, "is_cached", None)
-		if not callable(is_cached):
-			raise RuntimeError("The installed embedding engine does not support cache inspection")
-		return bool(is_cached())
+		return bool(self._request("cached", model_id).get("cached"))
 
 	def delete(self, model_id: str) -> None:
-		self.get_model(model_id)
-		embedding_engine = self._load_native_engine()
-		delete_cached = getattr(embedding_engine.EmbeddingEngine, "delete_cached", None)
-		if not callable(delete_cached):
-			raise RuntimeError("The installed embedding engine does not support cache deletion")
-		delete_cached(model_id, str(embedding_cache_dir()))
+		self._request("delete", model_id)
 
-	@staticmethod
-	def _load_native_engine() -> Any:
-		try:
-			import embedding_engine
-		except ImportError as error:
-			raise RuntimeError("The embedding engine is not installed") from error
-		return embedding_engine
-
-	def _create_engine(self, embedding_engine: Any, model_id: str) -> Any:
-		"""Construct old and new native engine APIs."""
-		try:
-			return embedding_engine.EmbeddingEngine(model_id, str(embedding_cache_dir()))
-		except TypeError:
-			# Current versions manage their own Hugging Face cache and accept only
-			# the model ID.
-			return embedding_engine.EmbeddingEngine(model_id)
 
 embedding_model_service = EmbeddingModelService()

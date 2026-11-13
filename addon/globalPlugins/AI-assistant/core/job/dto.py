@@ -96,6 +96,9 @@ class HandshakeRequest:
 	supported_schemas: tuple[str, ...] = ("job.v1", "session.v1", "health.v1")
 	requested_capabilities: tuple[str, ...] = (
 		"job.model_download",
+		"job.runtime_command",
+		"job.embedding",
+		"job.conversation",
 		"job.model_verify",
 		"job.inference",
 		"session.ocr",
@@ -151,6 +154,7 @@ class HandshakeResponse:
 	max_frame_bytes: int = 16 * 1024 * 1024
 	error_message: str | None = None
 	correlation_id: str = ""
+	generation: int = 1
 
 	def to_dict(self) -> dict[str, Any]:
 		"""Serialize HandshakeResponse into a JSON-compatible dictionary."""
@@ -164,6 +168,7 @@ class HandshakeResponse:
 			"max_frame_bytes": self.max_frame_bytes,
 			"error_message": self.error_message,
 			"correlation_id": self.correlation_id,
+			"generation": self.generation,
 		}
 
 	def to_json(self) -> str:
@@ -182,6 +187,7 @@ class HandshakeResponse:
 			max_frame_bytes=int(data.get("max_frame_bytes", 16 * 1024 * 1024)),
 			error_message=str(data["error_message"]) if data.get("error_message") is not None else None,
 			correlation_id=str(data.get("correlation_id", "")),
+			generation=int(data.get("generation", 1)),
 		)
 
 	@classmethod

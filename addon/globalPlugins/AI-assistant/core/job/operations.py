@@ -1,0 +1,3 @@
+"""Worker job command allowlist shared by producer and executor."""
+
+RUNTIME_COMMANDS = frozenset(('litert_get_status', 'litert_status', 'llama_get_status', 'llama_status', 'litert_ensure_ready', 'litert_finalize_upgrade', 'litert_stop', 'litert_restart', 'litert_adopt', 'litert_import_model', 'litert_import_huggingface_model', 'litert_delete_model', 'litert_rename_model', 'litert_list_models', 'llama_ensure_ready', 'llama_stop', 'llama_restart', 'llama_adopt', 'llama_configure_preset', 'llama_list_models', 'llama_delete_cache', 'llama_inspect_options', 'llama_discover_assets', 'llama_verify_asset', 'llama_prepare_model', 'llama_unload_model', 'llama_resolve_hf', 'llama_resolve_companions'))

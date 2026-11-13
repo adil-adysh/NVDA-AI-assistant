@@ -4,14 +4,10 @@ from __future__ import annotations
 
 import unittest
 
-from tests.support import ADDON_ROOT, load_module, register_package
+from tests.support import load_addon_module
 
-_ROOT = ADDON_ROOT / "context"
-_PACKAGE = "context_reduction_testpkg"
-register_package(_PACKAGE, _ROOT)
-types_module = load_module(f"{_PACKAGE}.types", _ROOT / "types.py")
-load_module(f"{_PACKAGE}.formatting", _ROOT / "formatting.py")
-reduction = load_module(f"{_PACKAGE}.reduction", _ROOT / "reduction.py")
+types_module = load_addon_module("context.types", namespace="context_reduction_testpkg")
+reduction = load_addon_module("context.reduction", namespace="context_reduction_testpkg")
 
 
 class _FakeEmbedder:

@@ -36,22 +36,9 @@ from .download import DownloadCancelledError, RuntimeDownloadService
 from .paths import get_runtime_path
 from ..interfaces import LLMProviderError
 from ...core.litert_contract import DEFAULT_LITERT_VERSION, validate_litert_artifact
+from ...core.cancellation import RequestCancelled, cancellation_event_scope
 from ...core.translation import _
-from ...core.runtime_upgrade import finalize_litert_upgrade
 from ...core.readiness_progress import run_with_readiness_progress
-
-try:
-	_addon_lib = Path(__file__).resolve().parent.parent.parent / "lib"
-	if _addon_lib.is_dir() and str(_addon_lib) not in sys.path:
-		sys.path.insert(0, str(_addon_lib))
-	import runtime_supervisor
-	if not hasattr(runtime_supervisor, "RuntimeSupervisor"):
-		sys.modules.pop("runtime_supervisor", None)
-		if str(_addon_lib) not in sys.path:
-			sys.path.insert(0, str(_addon_lib))
-		import runtime_supervisor
-except Exception:
-	runtime_supervisor = None
 
 _CONFIG_WRITE_LOCK = threading.Lock()
 
@@ -328,28 +315,8 @@ def _run_litert_cli(
 	    A ``Popen`` instance for long-running commands or a
 	    ``CompletedProcess`` for finite commands.
 	"""
-	cmd = [str(python_exe), "-m", "litert_lm_cli.main", *args]
-	flags = _subprocess_flags()
 
-	if timeout is not None:
-		return subprocess.run(
-			cmd,
-			capture_output=capture,
-			text=True,
-			timeout=timeout,
-			env=env,
-			creationflags=flags,
-			check=False,
-		)
-
-	return subprocess.Popen(
-		cmd,
-		stdout=subprocess.DEVNULL,
-		stderr=subprocess.DEVNULL,
-		text=True,
-		env=env,
-		creationflags=flags,
-	)
+	raise LiteRTServerError(_("LiteRT CLI operations must run in the local AI worker."))
 
 
 _real_run_litert_cli = _run_litert_cli
@@ -399,6 +366,8 @@ class LiteRTServerSupervisor:
 				is_connected = conn() if callable(conn) else bool(conn)
 				if is_connected:
 					return self._worker_client
+			except RequestCancelled:
+				raise
 			except Exception:
 				pass
 			return None
@@ -411,6 +380,8 @@ class LiteRTServerSupervisor:
 				is_connected = conn() if callable(conn) else bool(conn)
 				if is_connected:
 					return client
+		except RequestCancelled:
+			raise
 		except Exception as exc:
 			if start:
 				raise LiteRTServerError(_("Could not start local AI worker: {details}").format(details=exc)) from exc
@@ -422,13 +393,20 @@ class LiteRTServerSupervisor:
 			return self._native_supervisor
 		return None
 
-	def status(self) -> Any:
+	def status(self, *, refresh: bool = False) -> Any:
 		"""Return an immutable snapshot of supervisor status (non-blocking)."""
 		native = self._get_native()
 		if native is not None:
 			return native.status()
 		client = self._get_worker_client()
 		if client is not None:
+			if not refresh and threading.current_thread() is threading.main_thread() and callable(getattr(type(client), "get_runtime_status_snapshot", None)):
+				snapshot = client.get_runtime_status_snapshot("litert")
+				if snapshot:
+					return _status_dict_to_namespace(snapshot)
+				host, port = self._effective_host_port()
+				return _idle_runtime_status(host, port)
+
 			try:
 				resp = client.send_command(
 					{"type": "litert_get_status", "command": "litert_get_status"},
@@ -454,6 +432,8 @@ class LiteRTServerSupervisor:
 						running_model=None,
 						base_url=f"http://{url_host}:{port}",
 					)
+			except RequestCancelled:
+				raise
 			except Exception as exc:
 				log.debug("Worker litert_get_status query failed: %s", exc)
 		host, port = self._effective_host_port()
@@ -507,10 +487,19 @@ class LiteRTServerSupervisor:
 		identity = self._configuration_identity(config, host, port)
 		try:
 			return self._get_native().matches_startup_configuration(identity)
+		except RequestCancelled:
+			raise
 		except Exception:
 			return False
 
-	def install(
+	def install(self, on_progress=None, on_bytes_progress=None, cancel_event=None) -> Path:
+		try:
+			with cancellation_event_scope(cancel_event):
+				return self._install(on_progress, on_bytes_progress, cancel_event)
+		except RequestCancelled as exc:
+			raise DownloadCancelledError(_("Runtime installation cancelled.")) from exc
+
+	def _install(
 		self,
 		on_progress: Callable[[str], None] | None = None,
 		on_bytes_progress: Callable[[int, int], None] | None = None,
@@ -556,6 +545,8 @@ class LiteRTServerSupervisor:
 			)
 		except DownloadCancelledError:
 			raise
+		except RequestCancelled:
+			raise
 		except Exception as exc:
 			raise LiteRTServerError(f"Failed to download LiteRT-LM runtime {self._version}: {exc}") from exc
 
@@ -571,7 +562,9 @@ class LiteRTServerSupervisor:
 	def _finalize_upgrade(self, server_dir: Path, on_progress=None) -> None:
 		self._report(on_progress, _("Verifying LiteRT-LM runtime..."))
 		try:
-			client = self._get_worker_client()
+			client = self._get_worker_client(start=True)
+			if client is None:
+				raise RuntimeError(_("The local AI worker is unavailable."))
 			if client is not None:
 				response = client.send_command({
 					"type": "litert_finalize_upgrade", "command": "litert_finalize_upgrade",
@@ -580,12 +573,10 @@ class LiteRTServerSupervisor:
 				if not response.get("success"):
 					raise RuntimeError(response.get("error_message", "Runtime upgrade failed"))
 				pending = response.get("pending", [])
-			else:
-				status = self.status()
-				pending = finalize_litert_upgrade(server_dir, self._version,
-					busy=bool(getattr(status, "is_running", False) or getattr(status, "is_adopted", False)))
 			if pending:
 				self._report(on_progress, _("The previous runtime is in use. Cleanup will be retried on the next installation."))
+		except RequestCancelled:
+			raise
 		except Exception as exc:
 			raise LiteRTServerError(_("Unable to verify runtime upgrade: {error}").format(error=exc)) from exc
 
@@ -621,32 +612,13 @@ class LiteRTServerSupervisor:
 				if status.is_ready:
 					log.info("LiteRT server is ready at %s", self.base_url)
 				return status
+			except RequestCancelled:
+				raise
 			except RuntimeError as exc:
 				raise LiteRTServerError(str(exc)) from exc
 
 		client = self._get_worker_client(start=True)
 		if client is None:
-			if _run_litert_cli is not _real_run_litert_cli:
-				config = self._server_config_snapshot()
-				host, port = self._effective_host_port()
-				python_exe = _resolve_litert_python(self._server_python())
-				self._litert_dir().mkdir(parents=True, exist_ok=True)
-				self._write_server_config(config)
-				serve_args = _build_serve_args(host, port)
-				env = self._process_environment()
-				proc = _run_litert_cli(python_exe, serve_args, env=env)
-				return types.SimpleNamespace(
-					state="ready_owned",
-					is_ready=True,
-					is_running=True,
-					is_adopted=False,
-					pid=getattr(proc, "pid", None),
-					generation=1,
-					error_message=None,
-					startup_identity=None,
-					running_model=None,
-					base_url=self.base_url,
-				)
 			raise LiteRTServerError("Worker process is not available")
 
 		config = self._server_config_snapshot()
@@ -712,13 +684,13 @@ class LiteRTServerSupervisor:
 					startup_identity,
 					timeout_seconds=timeout,
 				)
+			except RequestCancelled:
+				raise
 			except RuntimeError as exc:
 				raise LiteRTServerError(str(exc)) from exc
 
 		client = self._get_worker_client(start=True)
 		if client is None:
-			if _run_litert_cli is not _real_run_litert_cli:
-				return self.ensure_ready(timeout=timeout, on_progress=on_progress)
 			raise LiteRTServerError("Worker process is not available")
 
 		config = self._server_config_snapshot()
@@ -750,6 +722,8 @@ class LiteRTServerSupervisor:
 				status = native.stop(timeout_seconds=timeout)
 				log.info("LiteRT server stopped")
 				return status
+			except RequestCancelled:
+				raise
 			except RuntimeError as exc:
 				raise LiteRTServerError(str(exc)) from exc
 
@@ -766,6 +740,8 @@ class LiteRTServerSupervisor:
 		try:
 			resp = client.send_command(cmd, timeout=timeout + 5.0)
 			return _status_dict_to_namespace(resp.get("status", {}))
+		except RequestCancelled:
+			raise
 		except Exception as exc:
 			raise LiteRTServerError(str(exc)) from exc
 
@@ -777,6 +753,8 @@ class LiteRTServerSupervisor:
 				status = native.adopt()
 				log.info("LiteRT server adopted (no process handle) at %s", self.base_url)
 				return status
+			except RequestCancelled:
+				raise
 			except RuntimeError as exc:
 				raise LiteRTServerError(str(exc)) from exc
 
@@ -788,6 +766,8 @@ class LiteRTServerSupervisor:
 		try:
 			resp = client.send_command(cmd, timeout=5.0)
 			return _status_dict_to_namespace(resp.get("status", {}))
+		except RequestCancelled:
+			raise
 		except Exception as exc:
 			raise LiteRTServerError(str(exc)) from exc
 
@@ -797,6 +777,8 @@ class LiteRTServerSupervisor:
 		if native is not None:
 			try:
 				native.shutdown()
+			except RequestCancelled:
+				raise
 			except Exception:
 				pass
 		client = self._get_worker_client()
@@ -806,6 +788,8 @@ class LiteRTServerSupervisor:
 					{"type": "litert_stop", "command": "litert_stop", "timeout_seconds": 5.0},
 					timeout=5.0,
 				)
+			except RequestCancelled:
+				raise
 			except Exception:
 				pass
 
@@ -816,7 +800,7 @@ class LiteRTServerSupervisor:
 		on_progress: Callable[[str], None] | None = None,
 	) -> bool:
 		"""Wait until the server is running and ready."""
-		status = self.status()
+		status = self.status(refresh=True)
 		if not status.is_running and not status.is_adopted:
 			raise LiteRTServerError("LiteRT server process exited unexpectedly. Check the server logs for details.")
 		if status.is_ready:
@@ -860,16 +844,20 @@ class LiteRTServerSupervisor:
 			)
 			with urllib.request.urlopen(req, timeout=timeout) as resp:
 				return resp.status == 200
+		except RequestCancelled:
+			raise
 		except Exception:
 			return False
 
-	def list_server_models(self) -> set[str]:
+	def list_server_models(self, *, strict: bool = False) -> set[str]:
 		"""Return the set of model IDs currently registered with the server.
 
 		Queries worker or /v1/models and extracts the id field from each entry.
 		Returns an empty set if the server is not reachable.
 		"""
-		client = self._get_worker_client()
+		client = self._get_worker_client(start=True) if strict else self._get_worker_client()
+		if strict and client is None:
+			raise LiteRTServerError(_("The local AI worker is unavailable. Try refreshing models again."))
 		if client is not None:
 			try:
 				resp = client.send_command(
@@ -878,8 +866,13 @@ class LiteRTServerSupervisor:
 				)
 				if resp.get("success", False) and "models" in resp:
 					return set(resp["models"])
-			except Exception:
-				pass
+			except RequestCancelled:
+				raise
+				if strict:
+					raise LiteRTServerError(resp.get("error_message") or _("Unable to discover LiteRT-LM models."))
+			except Exception as exc:
+				if strict:
+					raise LiteRTServerError(str(exc)) from exc
 
 		try:
 			req = urllib.request.Request(
@@ -888,6 +881,8 @@ class LiteRTServerSupervisor:
 			)
 			with urllib.request.urlopen(req, timeout=5.0) as resp:
 				data = json.loads(resp.read().decode("utf-8"))
+		except RequestCancelled:
+			raise
 		except Exception:
 			return set()
 
@@ -916,44 +911,6 @@ class LiteRTServerSupervisor:
 			raise LiteRTServerError(f"Model file does not exist: {model_path}")
 		model_id = _validate_model_id(model_id)
 
-		if _run_litert_cli is not _real_run_litert_cli:
-			python_exe = _resolve_litert_python(self._server_python())
-			self._report(
-				on_progress,
-				f"Registering model {model_id} with LiteRT-LM...",
-			)
-			import_args = _build_import_args(model_path, model_id)
-			try:
-				result = _run_litert_cli(
-					python_exe,
-					import_args,
-					env=self._process_environment(),
-					timeout=120,
-					capture=True,
-				)
-			except subprocess.TimeoutExpired as exc:
-				raise LiteRTServerError(f"Model import timed out for {model_id}") from exc
-			except Exception as exc:
-				raise LiteRTServerError(f"Failed to import model {model_id}: {exc}") from exc
-
-			if result.returncode != 0:
-				stderr = result.stderr.strip() or result.stdout.strip()
-				raise LiteRTServerError(f"Model import failed for {model_id}: {stderr}")
-
-			log.info("Model %s imported successfully", model_id)
-			catalog_dir = self.catalog_model_dir(model_id)
-			catalog_file = catalog_dir / "model.litertlm" if catalog_dir is not None else None
-			if delete_source and catalog_file is not None and catalog_file.is_file():
-				try:
-					if model_path.resolve() != catalog_file.resolve():
-						model_path.unlink(missing_ok=True)
-						log.debug("Deleted source model file %s after import", model_path)
-				except OSError:
-					log.debug("Could not delete source model file %s", model_path, exc_info=True)
-
-			if on_progress:
-				on_progress(_("Model {model} registered.").format(model=model_id))
-			return
 
 		client = self._get_worker_client(start=True)
 		if client is None:
@@ -1003,27 +960,6 @@ class LiteRTServerSupervisor:
 			raise LiteRTServerError(str(exc)) from exc
 		model_id = _validate_model_id(model_id)
 
-		if _run_litert_cli is not _real_run_litert_cli:
-			python_exe = _resolve_litert_python(self._server_python())
-			self._report(on_progress, _("Importing {artifact} from Hugging Face...").format(artifact=artifact))
-			try:
-				result = _run_litert_cli(
-					python_exe,
-					_build_huggingface_import_args(repository, artifact, model_id, huggingface_token),
-					env=self._process_environment(),
-					timeout=600,
-					capture=True,
-				)
-			except subprocess.TimeoutExpired as exc:
-				raise LiteRTServerError(f"Hugging Face import timed out for {repository}") from exc
-			except Exception as exc:
-				raise LiteRTServerError(f"Failed to import {repository}: {exc}") from exc
-			if result.returncode != 0:
-				stderr = result.stderr.strip() or result.stdout.strip()
-				raise LiteRTServerError(f"Hugging Face import failed for {repository}: {stderr}")
-			if on_progress:
-				on_progress(_("Model {model} registered.").format(model=model_id))
-			return
 
 		client = self._get_worker_client(start=True)
 		if client is None:
@@ -1051,35 +987,6 @@ class LiteRTServerSupervisor:
 		"""Unregister *model_id* from the LiteRT-LM catalog."""
 		model_id = _validate_model_id(model_id)
 
-		if _run_litert_cli is not _real_run_litert_cli:
-			python_exe = _resolve_litert_python(self._server_python())
-			log.debug("Unregistering model %s from LiteRT-LM catalog", model_id)
-			delete_args = _build_delete_args(model_id)
-			try:
-				result = _run_litert_cli(
-					python_exe,
-					delete_args,
-					env=self._process_environment(),
-					timeout=60,
-					capture=True,
-				)
-			except subprocess.TimeoutExpired as exc:
-				raise LiteRTServerError(
-					f"Model deletion timed out for {model_id}"
-				) from exc
-			except Exception as exc:
-				raise LiteRTServerError(
-					f"Failed to delete model {model_id}: {exc}"
-				) from exc
-
-			if result.returncode != 0:
-				stderr = result.stderr.strip() or result.stdout.strip()
-				raise LiteRTServerError(
-					f"Model deletion failed for {model_id}: {stderr}"
-				)
-
-			log.info("Model %s deleted from LiteRT-LM catalog", model_id)
-			return
 
 		client = self._get_worker_client(start=True)
 		if client is None:
@@ -1104,35 +1011,6 @@ class LiteRTServerSupervisor:
 		old_id = _validate_model_id(old_id)
 		new_id = _validate_model_id(new_id)
 
-		if _run_litert_cli is not _real_run_litert_cli:
-			python_exe = _resolve_litert_python(self._server_python())
-			log.debug("Renaming model %s → %s", old_id, new_id)
-			rename_args = _build_rename_args(old_id, new_id)
-			try:
-				result = _run_litert_cli(
-					python_exe,
-					rename_args,
-					env=self._process_environment(),
-					timeout=30,
-					capture=True,
-				)
-			except subprocess.TimeoutExpired as exc:
-				raise LiteRTServerError(
-					f"Model rename timed out for {old_id}"
-				) from exc
-			except Exception as exc:
-				raise LiteRTServerError(
-					f"Failed to rename model {old_id}: {exc}"
-				) from exc
-
-			if result.returncode != 0:
-				stderr = result.stderr.strip() or result.stdout.strip()
-				raise LiteRTServerError(
-					f"Model rename failed for {old_id} → {new_id}: {stderr}"
-				)
-
-			log.info("Model renamed from %s to %s", old_id, new_id)
-			return
 
 		client = self._get_worker_client(start=True)
 		if client is None:
@@ -1170,6 +1048,8 @@ class LiteRTServerSupervisor:
 			parsed = urllib.parse.urlparse(str(url or "").strip())
 			if parsed.hostname and parsed.port:
 				return parsed.hostname, parsed.port
+		except RequestCancelled:
+			raise
 		except Exception:
 			log.debug(
 				"Could not resolve LiteRT server URL from settings; using default host/port",
@@ -1301,5 +1181,7 @@ class LiteRTServerSupervisor:
 		if callback is not None:
 			try:
 				callback(message)
+			except RequestCancelled:
+				raise
 			except Exception:
 				pass

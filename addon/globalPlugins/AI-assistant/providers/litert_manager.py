@@ -16,13 +16,14 @@ import logging
 
 from ..core.litert_contract import validate_litert_artifact
 from ..core.translation import _
+from ..core.cancellation import cancellation_event_scope, RequestCancelled
 
 from ..config.settings import (
 	get_litert_model_name,
 	set_litert_model_name,
 )
 from .config import OpenAICompatConfig
-from .interfaces import LLMProviderError
+from .interfaces import LLMProviderError, DownloadCancelledError
 from .model_import import ModelImportRequest, ModelImportError, ModelSourceKind, parse_model_import_source
 from .litert_models import (
 	download_url,
@@ -172,7 +173,14 @@ class LiteRTModelManager(ModelManagerProvider):
 	# Download
 	# ------------------------------------------------------------------
 
-	def download_model(
+	def download_model(self, model_id, on_progress, cancel_event=None):
+		try:
+			with cancellation_event_scope(cancel_event):
+				return self._download_model(model_id, on_progress, cancel_event)
+		except RequestCancelled as exc:
+			raise DownloadCancelledError(_("Model download cancelled.")) from exc
+
+	def _download_model(
 		self,
 		model_id: str,
 		on_progress: DownloadProgressCallback,
@@ -223,7 +231,14 @@ class LiteRTModelManager(ModelManagerProvider):
 		finally:
 			self._invalidate_caches()
 
-	def import_model(
+	def import_model(self, request, on_progress, cancel_event=None):
+		try:
+			with cancellation_event_scope(cancel_event):
+				return self._import_model(request, on_progress, cancel_event)
+		except RequestCancelled as exc:
+			raise DownloadCancelledError(_("Model import cancelled.")) from exc
+
+	def _import_model(
 		self,
 		request: ModelImportRequest,
 		on_progress: DownloadProgressCallback,

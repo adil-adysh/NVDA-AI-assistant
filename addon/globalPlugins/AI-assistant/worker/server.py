@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import logging
+from dataclasses import replace
 import os
 import queue
 import sys
@@ -20,9 +21,9 @@ import time
 from typing import Any
 
 try:
-	from ..core.litert_contract import DEFAULT_LITERT_VERSION
 	from ..core.job.cancellation import CancellationToken
-	from ..core.readiness_progress import run_with_readiness_progress
+	from ..core.job.cancellation import JobCancelledError
+	from ..core.job.execution import job_execution_scope
 	from ..core.job.dto import (
 		HandshakeRequest,
 		JobProgress,
@@ -36,9 +37,9 @@ try:
 		validate_handshake,
 	)
 except (ImportError, ValueError):
-	from core.litert_contract import DEFAULT_LITERT_VERSION
 	from core.job.cancellation import CancellationToken  # type: ignore[no-redef]
-	from core.readiness_progress import run_with_readiness_progress
+	from core.job.cancellation import JobCancelledError
+	from core.job.execution import job_execution_scope
 	from core.job.dto import (  # type: ignore[no-redef]
 		HandshakeRequest,
 		JobProgress,
@@ -52,6 +53,7 @@ except (ImportError, ValueError):
 		validate_handshake,
 	)
 
+from .runtime_commands import execute_runtime_command
 from .ipc.security import build_user_only_security_attributes
 from .ipc.transport import NamedPipeServer, PipeDisconnectedError
 from .executors.model_download_job import (
@@ -106,9 +108,15 @@ class WorkerServer:
 		self._executor = ThreadPoolExecutor(
 			max_workers=workers, thread_name_prefix="worker_exec"
 		)
-		self._event_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1000)
+		self._event_queue: queue.Queue[dict[str, Any]] = queue.Queue()
 		self._active_jobs: dict[str, CancellationToken] = {}
+		self._control_jobs: set[str] = set()
 		self._registry_lock = threading.Lock()
+		self._runtime_locks = {"litert": threading.Lock(), "llama": threading.Lock()}
+		self._control_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="worker_control")
+		self._executor_lock = threading.Lock()
+		self._execution_lanes = {name: ThreadPoolExecutor(max_workers=1, thread_name_prefix="worker_" + name)
+			for name in ("litert", "llama", "embedding", "conversation")}
 
 		# Worker Threads
 		self._cmd_thread: threading.Thread | None = None
@@ -117,23 +125,36 @@ class WorkerServer:
 
 	def get_litert_executor(self) -> Any:
 		"""Return the LiteRT host executor, initializing if necessary."""
-		if self._litert_executor is None:
-			try:
-				from .executors.litert import LiteRTWorkerExecutor
-			except (ImportError, ValueError):
-				from worker.executors.litert import LiteRTWorkerExecutor  # type: ignore[no-redef]
-			self._litert_executor = LiteRTWorkerExecutor()
-		return self._litert_executor
+		with self._executor_lock:
+			if self._litert_executor is None:
+				try:
+					from .executors.litert import LiteRTWorkerExecutor
+				except (ImportError, ValueError):
+					from worker.executors.litert import LiteRTWorkerExecutor  # type: ignore[no-redef]
+				self._litert_executor = LiteRTWorkerExecutor()
+			return self._litert_executor
+
+	def get_model_asset_executor(self) -> Any:
+		with self._executor_lock:
+			if not hasattr(self, "_model_asset_executor"):
+				try:
+					from .executors.model_assets import ModelAssetExecutor, default_cache_roots
+				except ImportError:
+					from worker.executors.model_assets import ModelAssetExecutor, default_cache_roots
+				self._model_asset_executor = ModelAssetExecutor()
+				self._default_cache_roots = default_cache_roots
+			return self._model_asset_executor
 
 	def get_llama_executor(self) -> Any:
 		"""Return the llama.cpp host executor, initializing if necessary."""
-		if self._llama_executor is None:
-			try:
-				from .executors.llama import LlamaWorkerExecutor
-			except (ImportError, ValueError):
-				from worker.executors.llama import LlamaWorkerExecutor  # type: ignore[no-redef]
-			self._llama_executor = LlamaWorkerExecutor()
-		return self._llama_executor
+		with self._executor_lock:
+			if self._llama_executor is None:
+				try:
+					from .executors.llama import LlamaWorkerExecutor
+				except (ImportError, ValueError):
+					from worker.executors.llama import LlamaWorkerExecutor  # type: ignore[no-redef]
+				self._llama_executor = LlamaWorkerExecutor()
+			return self._llama_executor
 
 	def start(self) -> None:
 		"""Start command server, event broadcaster, and parent watchdog threads."""
@@ -197,12 +218,15 @@ class WorkerServer:
 
 		# Cancel all in-flight jobs
 		with self._registry_lock:
-			for token in self._active_jobs.values():
-				token.cancel()
-			self._active_jobs.clear()
+			tokens = tuple(self._active_jobs.values())
+		for token in tokens:
+			token.cancel("shutdown")
 
 		# Shutdown executor
 		self._executor.shutdown(wait=False, cancel_futures=True)
+		self._control_executor.shutdown(wait=False, cancel_futures=True)
+		for lane in self._execution_lanes.values():
+			lane.shutdown(wait=False, cancel_futures=True)
 
 		# Close servers to unblock listening threads
 		if self._cmd_server:
@@ -215,6 +239,8 @@ class WorkerServer:
 	def _emit_event(self, event_data: dict[str, Any]) -> None:
 		"""Queue an event for broadcasting over the Event Pipe."""
 		try:
+			if event_data.get("type") == "job_update" and self._event_queue.qsize() >= 1000:
+				return
 			self._event_queue.put_nowait(event_data)
 		except queue.Full:
 			logger.warning(
@@ -240,6 +266,8 @@ class WorkerServer:
 			except queue.Empty:
 				continue
 			except PipeDisconnectedError:
+				self._event_queue.put_nowait(event_dict)
+				self._event_queue.task_done()
 				logger.debug("Event pipe disconnected; waiting for reconnect")
 				if self._evt_server:
 					self._evt_server.disconnect()
@@ -284,6 +312,9 @@ class WorkerServer:
 					"job.trivial_compute",
 					"job.model_download",
 					"job.runtime_download",
+					"job.runtime_command",
+					"job.embedding",
+					"job.conversation",
 					"job.inference",
 					"session.ocr",
 					"session.transcription",
@@ -292,7 +323,7 @@ class WorkerServer:
 				),
 				worker_pid=os.getpid(),
 			)
-			self._cmd_server.write_frame(resp.to_dict())
+			self._cmd_server.write_frame(replace(resp, generation=self.active_generation).to_dict())
 
 		elif cmd_type in ("worker_health_ping", "ping"):
 			health = self._collect_health()
@@ -302,11 +333,9 @@ class WorkerServer:
 			job_id = str(frame.get("job_id", ""))
 			with self._registry_lock:
 				token = self._active_jobs.get(job_id)
-				if token:
-					token.cancel()
-					accepted = True
-				else:
-					accepted = False
+				accepted = token is not None
+			if token is not None:
+				token.cancel()
 			self._cmd_server.write_frame(
 				{
 					"type": "cancellation_ack",
@@ -322,8 +351,18 @@ class WorkerServer:
 		elif cmd_type in ("job_submission", "submit_job"):
 			spec = JobSpec.from_dict(frame)
 			token = CancellationToken(spec.job_id)
+			command = str(spec.payload.get("type", ""))
+			control = spec.job_type == "runtime_command" and command.endswith(("_stop", "_get_status", "_status"))
 			with self._registry_lock:
+				full = (len(self._control_jobs) >= 8 or self._event_queue.qsize() >= 1128) if control else (
+					len(self._active_jobs) - len(self._control_jobs) >= 128 or self._event_queue.qsize() >= 1000)
+				if spec.job_id in self._active_jobs or full:
+					self._cmd_server.write_frame({"type": "job_ack", "status": "rejected",
+						"error_message": "Duplicate job ID or worker queue is full", "job_id": spec.job_id})
+					return
 				self._active_jobs[spec.job_id] = token
+				if control:
+					self._control_jobs.add(spec.job_id)
 
 			# Send synchronous submission ack
 			self._cmd_server.write_frame(
@@ -336,603 +375,32 @@ class WorkerServer:
 			)
 
 			# Dispatch execution to thread pool
-			self._executor.submit(self._dispatch_job, spec, token)
-
-		# ── LiteRT Lifecycle & Model Management Commands ─────────────
-		elif cmd_type == "litert_ensure_ready":
-			try:
-				executor = self.get_litert_executor()
-				config = frame.get("config")
-				timeout = float(frame.get("timeout_seconds", 60.0))
-				python_exe = frame.get("python_exe") or frame.get("executable")
-				litert_dir = frame.get("litert_dir")
-				version = str(frame.get("version", DEFAULT_LITERT_VERSION))
-				host = frame.get("host")
-				raw_port = frame.get("port")
-				port = int(raw_port) if raw_port is not None else None
-				status = run_with_readiness_progress(lambda: executor.ensure_ready(
-					config=config,
-					timeout_seconds=timeout,
-					python_exe=python_exe,
-					litert_dir=litert_dir,
-					version=version,
-					host=host,
-					port=port,
-				), (lambda _text: None) if frame.get("report_readiness_progress") else None,
-					executor.get_status,
-					on_stage=lambda stage: self._cmd_server.write_frame({"type": "runtime_progress", "stage": stage}),
-				)
-				self._cmd_server.write_frame(
-					{
-						"type": "litert_status_response",
-						"command": "litert_ensure_ready",
-						"success": True,
-						"status": status,
-					}
-				)
-			except Exception as exc:
-				logger.error("litert_ensure_ready error: %s", exc)
-				self._cmd_server.write_frame(
-					{
-						"type": "error",
-						"command": "litert_ensure_ready",
-						"error_code": "LITERT_START_FAILED",
-						"error_message": str(exc),
-						"success": False,
-					}
-				)
-
-		elif cmd_type == "litert_finalize_upgrade":
-			try:
-				pending = self.get_litert_executor().finalize_upgrade(str(frame.get("version", DEFAULT_LITERT_VERSION)))
-				self._cmd_server.write_frame({"type": "litert_upgrade_response",
-					"command": cmd_type, "success": True, "pending": pending})
-			except Exception as exc:
-				self._cmd_server.write_frame({"type": "error", "command": cmd_type,
-					"success": False, "error_message": str(exc)})
-
-		elif cmd_type == "litert_stop":
-			try:
-				executor = self.get_litert_executor()
-				timeout = float(frame.get("timeout_seconds", 10.0))
-				status = executor.stop(timeout_seconds=timeout)
-				self._cmd_server.write_frame(
-					{
-						"type": "litert_status_response",
-						"command": "litert_stop",
-						"success": True,
-						"status": status,
-					}
-				)
-			except Exception as exc:
-				logger.error("litert_stop error: %s", exc)
-				self._cmd_server.write_frame(
-					{
-						"type": "error",
-						"command": "litert_stop",
-						"error_code": "LITERT_STOP_FAILED",
-						"error_message": str(exc),
-						"success": False,
-					}
-				)
-
-		elif cmd_type == "litert_restart":
-			try:
-				executor = self.get_litert_executor()
-				config = frame.get("config")
-				timeout = float(frame.get("timeout_seconds", 60.0))
-				python_exe = frame.get("python_exe") or frame.get("executable")
-				litert_dir = frame.get("litert_dir")
-				version = str(frame.get("version", DEFAULT_LITERT_VERSION))
-				host = frame.get("host")
-				raw_port = frame.get("port")
-				port = int(raw_port) if raw_port is not None else None
-				status = executor.restart(
-					config=config,
-					timeout_seconds=timeout,
-					python_exe=python_exe,
-					litert_dir=litert_dir,
-					version=version,
-					host=host,
-					port=port,
-				)
-				self._cmd_server.write_frame(
-					{
-						"type": "litert_status_response",
-						"command": "litert_restart",
-						"success": True,
-						"status": status,
-					}
-				)
-			except Exception as exc:
-				logger.error("litert_restart error: %s", exc)
-				self._cmd_server.write_frame(
-					{
-						"type": "error",
-						"command": "litert_restart",
-						"error_code": "LITERT_RESTART_FAILED",
-						"error_message": str(exc),
-						"success": False,
-					}
-				)
-
-		elif cmd_type in ("litert_get_status", "litert_status"):
-			try:
-				executor = self.get_litert_executor()
-				status = executor.get_status()
-				self._cmd_server.write_frame(
-					{
-						"type": "litert_status_response",
-						"command": "litert_get_status",
-						"success": True,
-						"status": status,
-					}
-				)
-			except Exception as exc:
-				logger.error("litert_get_status error: %s", exc)
-				self._cmd_server.write_frame(
-					{
-						"type": "error",
-						"command": "litert_get_status",
-						"error_code": "LITERT_STATUS_FAILED",
-						"error_message": str(exc),
-						"success": False,
-					}
-				)
-
-		elif cmd_type == "litert_adopt":
-			try:
-				executor = self.get_litert_executor()
-				status = executor.adopt()
-				self._cmd_server.write_frame(
-					{
-						"type": "litert_status_response",
-						"command": "litert_adopt",
-						"success": True,
-						"status": status,
-					}
-				)
-			except Exception as exc:
-				logger.error("litert_adopt error: %s", exc)
-				self._cmd_server.write_frame(
-					{
-						"type": "error",
-						"command": "litert_adopt",
-						"error_code": "LITERT_ADOPT_FAILED",
-						"error_message": str(exc),
-						"success": False,
-					}
-				)
-
-		elif cmd_type == "litert_import_model":
-			try:
-				executor = self.get_litert_executor()
-				model_path = frame.get("model_path") or frame.get("source_path")
-				model_id = str(frame.get("model_id", ""))
-				delete_source = bool(frame.get("delete_source", False))
-				timeout = float(frame.get("timeout_seconds", 120.0))
-				python_exe = frame.get("python_exe")
-				litert_dir = frame.get("litert_dir")
-				version = str(frame.get("version", DEFAULT_LITERT_VERSION))
-				res = executor.import_model(
-					model_path=model_path,
-					model_id=model_id,
-					delete_source=delete_source,
-					timeout_seconds=timeout,
-					python_exe=python_exe,
-					litert_dir=litert_dir,
-					version=version,
-				)
-				self._cmd_server.write_frame(
-					{
-						"type": "litert_import_response",
-						"command": "litert_import_model",
-						"success": True,
-						"model_id": model_id,
-						"imported_path": res.get("imported_path", ""),
-					}
-				)
-			except Exception as exc:
-				logger.error("litert_import_model error: %s", exc)
-				self._cmd_server.write_frame(
-					{
-						"type": "error",
-						"command": "litert_import_model",
-						"error_code": "LITERT_IMPORT_FAILED",
-						"error_message": str(exc),
-						"success": False,
-					}
-				)
-
-		elif cmd_type == "litert_import_huggingface_model":
-			try:
-				executor = self.get_litert_executor()
-				repository = str(frame.get("repository", ""))
-				artifact = str(frame.get("artifact", ""))
-				model_id = str(frame.get("model_id", ""))
-				token = frame.get("token") or frame.get("huggingface_token")
-				timeout = float(frame.get("timeout_seconds", 600.0))
-				python_exe = frame.get("python_exe")
-				litert_dir = frame.get("litert_dir")
-				version = str(frame.get("version", DEFAULT_LITERT_VERSION))
-				res = executor.import_huggingface_model(
-					repository=repository,
-					artifact=artifact,
-					model_id=model_id,
-					token=token,
-					timeout_seconds=timeout,
-					python_exe=python_exe,
-					litert_dir=litert_dir,
-					version=version,
-				)
-				self._cmd_server.write_frame(
-					{
-						"type": "litert_import_response",
-						"command": "litert_import_huggingface_model",
-						"success": True,
-						"model_id": model_id,
-					}
-				)
-			except Exception as exc:
-				logger.error("litert_import_huggingface_model error: %s", exc)
-				self._cmd_server.write_frame(
-					{
-						"type": "error",
-						"command": "litert_import_huggingface_model",
-						"error_code": "LITERT_IMPORT_FAILED",
-						"error_message": str(exc),
-						"success": False,
-					}
-				)
-
-		elif cmd_type == "litert_delete_model":
-			try:
-				executor = self.get_litert_executor()
-				model_id = str(frame.get("model_id", ""))
-				timeout = float(frame.get("timeout_seconds", 60.0))
-				python_exe = frame.get("python_exe")
-				litert_dir = frame.get("litert_dir")
-				version = str(frame.get("version", DEFAULT_LITERT_VERSION))
-				executor.delete_model(
-					model_id=model_id,
-					timeout_seconds=timeout,
-					python_exe=python_exe,
-					litert_dir=litert_dir,
-					version=version,
-				)
-				self._cmd_server.write_frame(
-					{
-						"type": "litert_delete_response",
-						"command": "litert_delete_model",
-						"success": True,
-						"model_id": model_id,
-					}
-				)
-			except Exception as exc:
-				logger.error("litert_delete_model error: %s", exc)
-				self._cmd_server.write_frame(
-					{
-						"type": "error",
-						"command": "litert_delete_model",
-						"error_code": "LITERT_DELETE_FAILED",
-						"error_message": str(exc),
-						"success": False,
-					}
-				)
-
-		elif cmd_type == "litert_rename_model":
-			try:
-				executor = self.get_litert_executor()
-				old_id = str(frame.get("old_id", ""))
-				new_id = str(frame.get("new_id", ""))
-				timeout = float(frame.get("timeout_seconds", 30.0))
-				python_exe = frame.get("python_exe")
-				litert_dir = frame.get("litert_dir")
-				version = str(frame.get("version", DEFAULT_LITERT_VERSION))
-				executor.rename_model(
-					old_id=old_id,
-					new_id=new_id,
-					timeout_seconds=timeout,
-					python_exe=python_exe,
-					litert_dir=litert_dir,
-					version=version,
-				)
-				self._cmd_server.write_frame(
-					{
-						"type": "litert_rename_response",
-						"command": "litert_rename_model",
-						"success": True,
-						"old_id": old_id,
-						"new_id": new_id,
-					}
-				)
-			except Exception as exc:
-				logger.error("litert_rename_model error: %s", exc)
-				self._cmd_server.write_frame(
-					{
-						"type": "error",
-						"command": "litert_rename_model",
-						"error_code": "LITERT_RENAME_FAILED",
-						"error_message": str(exc),
-						"success": False,
-					}
-				)
-
-		elif cmd_type == "litert_list_models":
-			try:
-				executor = self.get_litert_executor()
-				timeout = float(frame.get("timeout_seconds", 5.0))
-				litert_dir = frame.get("litert_dir")
-				models = executor.list_models(timeout_seconds=timeout, litert_dir=litert_dir)
-				self._cmd_server.write_frame(
-					{
-						"type": "litert_models_response",
-						"command": "litert_list_models",
-						"success": True,
-						"models": models,
-					}
-				)
-			except Exception as exc:
-				logger.error("litert_list_models error: %s", exc)
-				self._cmd_server.write_frame(
-					{
-						"type": "error",
-						"command": "litert_list_models",
-						"error_code": "LITERT_LIST_FAILED",
-						"error_message": str(exc),
-						"success": False,
-					}
-				)
-
-		# ── llama.cpp Lifecycle & Router Preset Commands ─────────────
-		elif cmd_type == "llama_ensure_ready":
-			try:
-				executor = self.get_llama_executor()
-				config = frame.get("config")
-				model_id = frame.get("model_id")
-				timeout = float(frame.get("timeout_seconds", 60.0))
-				host = frame.get("host")
-				raw_port = frame.get("port")
-				port = int(raw_port) if raw_port is not None else None
-				executable = frame.get("executable") or frame.get("server_executable")
-				model = frame.get("model")
-				models_preset = frame.get("models_preset") or frame.get("preset_path")
-				threads = int(frame.get("threads") or 0)
-				context = int(frame.get("context") or 0)
-				alias = frame.get("alias")
-				startup_identity = frame.get("startup_identity")
-				status = run_with_readiness_progress(lambda: executor.ensure_ready(
-					config=config,
-					model_id=model_id,
-					timeout_seconds=timeout,
-					host=host,
-					port=port,
-					executable=executable,
-					model=model,
-					models_preset=models_preset,
-					threads=threads,
-					context=context,
-					alias=alias,
-					startup_identity=startup_identity,
-				), (lambda _text: None) if frame.get("report_readiness_progress") else None,
-					executor.get_status,
-					on_stage=lambda stage: self._cmd_server.write_frame({"type": "runtime_progress", "stage": stage}),
-				)
-				self._cmd_server.write_frame(
-					{
-						"type": "llama_status_response",
-						"command": "llama_ensure_ready",
-						"success": True,
-						"status": status,
-					}
-				)
-			except Exception as exc:
-				logger.error("llama_ensure_ready error: %s", exc)
-				self._cmd_server.write_frame(
-					{
-						"type": "error",
-						"command": "llama_ensure_ready",
-						"error_code": "LLAMA_START_FAILED",
-						"error_message": str(exc),
-						"success": False,
-					}
-				)
-
-		elif cmd_type == "llama_stop":
-			try:
-				executor = self.get_llama_executor()
-				timeout = float(frame.get("timeout_seconds", 10.0))
-				status = executor.stop(timeout_seconds=timeout)
-				self._cmd_server.write_frame(
-					{
-						"type": "llama_status_response",
-						"command": "llama_stop",
-						"success": True,
-						"status": status,
-					}
-				)
-			except Exception as exc:
-				logger.error("llama_stop error: %s", exc)
-				self._cmd_server.write_frame(
-					{
-						"type": "error",
-						"command": "llama_stop",
-						"error_code": "LLAMA_STOP_FAILED",
-						"error_message": str(exc),
-						"success": False,
-					}
-				)
-
-		elif cmd_type == "llama_restart":
-			try:
-				executor = self.get_llama_executor()
-				config = frame.get("config")
-				model_id = frame.get("model_id")
-				timeout = float(frame.get("timeout_seconds", 60.0))
-				host = frame.get("host")
-				raw_port = frame.get("port")
-				port = int(raw_port) if raw_port is not None else None
-				executable = frame.get("executable") or frame.get("server_executable")
-				model = frame.get("model")
-				models_preset = frame.get("models_preset") or frame.get("preset_path")
-				threads = int(frame.get("threads") or 0)
-				context = int(frame.get("context") or 0)
-				alias = frame.get("alias")
-				startup_identity = frame.get("startup_identity")
-				status = executor.restart(
-					config=config,
-					model_id=model_id,
-					timeout_seconds=timeout,
-					host=host,
-					port=port,
-					executable=executable,
-					model=model,
-					models_preset=models_preset,
-					threads=threads,
-					context=context,
-					alias=alias,
-					startup_identity=startup_identity,
-				)
-				self._cmd_server.write_frame(
-					{
-						"type": "llama_status_response",
-						"command": "llama_restart",
-						"success": True,
-						"status": status,
-					}
-				)
-			except Exception as exc:
-				logger.error("llama_restart error: %s", exc)
-				self._cmd_server.write_frame(
-					{
-						"type": "error",
-						"command": "llama_restart",
-						"error_code": "LLAMA_RESTART_FAILED",
-						"error_message": str(exc),
-						"success": False,
-					}
-				)
-
-		elif cmd_type in ("llama_get_status", "llama_status"):
-			try:
-				executor = self.get_llama_executor()
-				status = executor.get_status()
-				self._cmd_server.write_frame(
-					{
-						"type": "llama_status_response",
-						"command": "llama_get_status",
-						"success": True,
-						"status": status,
-					}
-				)
-			except Exception as exc:
-				logger.error("llama_get_status error: %s", exc)
-				self._cmd_server.write_frame(
-					{
-						"type": "error",
-						"command": "llama_get_status",
-						"error_code": "LLAMA_STATUS_FAILED",
-						"error_message": str(exc),
-						"success": False,
-					}
-				)
-
-		elif cmd_type == "llama_adopt":
-			try:
-				executor = self.get_llama_executor()
-				model_id = frame.get("model_id")
-				status = executor.adopt(model_id=model_id)
-				self._cmd_server.write_frame(
-					{
-						"type": "llama_status_response",
-						"command": "llama_adopt",
-						"success": True,
-						"status": status,
-					}
-				)
-			except Exception as exc:
-				logger.error("llama_adopt error: %s", exc)
-				self._cmd_server.write_frame(
-					{
-						"type": "error",
-						"command": "llama_adopt",
-						"error_code": "LLAMA_ADOPT_FAILED",
-						"error_message": str(exc),
-						"success": False,
-					}
-				)
-
-		elif cmd_type == "llama_configure_preset":
-			try:
-				executor = self.get_llama_executor()
-				models = frame.get("models", [])
-				default_model = frame.get("default_model")
-				preset_path = frame.get("preset_path")
-				res = executor.configure_preset(
-					models=models,
-					default_model=default_model,
-					preset_path=preset_path,
-				)
-				self._cmd_server.write_frame(
-					{
-						"type": "llama_configure_preset_response",
-						"command": "llama_configure_preset",
-						"success": True,
-						"preset_path": res.get("preset_path", ""),
-						"sha256": res.get("sha256", ""),
-					}
-				)
-			except Exception as exc:
-				logger.error("llama_configure_preset error: %s", exc)
-				self._cmd_server.write_frame(
-					{
-						"type": "error",
-						"command": "llama_configure_preset",
-						"error_code": "LLAMA_PRESET_FAILED",
-						"error_message": str(exc),
-						"success": False,
-					}
-				)
-
-		elif cmd_type == "llama_list_models":
-			try:
-				executor = self.get_llama_executor()
-				timeout = float(frame.get("timeout_seconds", 2.0))
-				preset_path = frame.get("preset_path")
-				models = executor.list_models(timeout_seconds=timeout, preset_path=preset_path)
-				self._cmd_server.write_frame(
-					{
-						"type": "llama_models_response",
-						"command": "llama_list_models",
-						"success": True,
-						"models": models,
-					}
-				)
-			except Exception as exc:
-				logger.error("llama_list_models error: %s", exc)
-				self._cmd_server.write_frame(
-					{
-						"type": "error",
-						"command": "llama_list_models",
-						"error_code": "LLAMA_LIST_FAILED",
-						"error_message": str(exc),
-						"success": False,
-					}
-				)
+			command = str(spec.payload.get("type", ""))
+			if spec.job_type == "runtime_command":
+				if command.endswith(("_stop", "_get_status", "_status")):
+					pool = self._control_executor
+				else:
+					pool = self._execution_lanes.get(command.split("_", 1)[0], self._executor)
+			else:
+				pool = self._execution_lanes.get(spec.job_type, self._executor)
+			pool.submit(self._dispatch_job, spec, token)
 
 		else:
-			self._cmd_server.write_frame(
-				{
-					"type": "error",
-					"error_code": "UNKNOWN_COMMAND",
-					"error_message": f"Unknown command type '{cmd_type}'",
-				}
-			)
+			# Legacy command support for older clients; current clients submit jobs.
+			execute_runtime_command(self, frame, self._cmd_server.write_frame)
 
 	def _dispatch_job(self, spec: JobSpec, token: CancellationToken) -> None:
 		"""Execute job asynchronously on thread pool."""
 		try:
-			if spec.job_type == "echo":
+			if spec.job_type == "runtime_command":
+				self._execute_runtime_job(spec, token)
+			elif spec.job_type == "conversation":
+				from .executors.conversation import execute_conversation_job
+				self._emit_event(execute_conversation_job(spec, token).to_dict())
+			elif spec.job_type == "embedding":
+				from .executors.embedding import execute_embedding_job
+				self._emit_event(execute_embedding_job(spec, token).to_dict())
+			elif spec.job_type == "echo":
 				self._execute_echo(spec, token)
 			elif spec.job_type == "trivial_compute":
 				self._execute_trivial_compute(spec, token)
@@ -955,6 +423,9 @@ class WorkerServer:
 					generation=spec.generation,
 				)
 				self._emit_event(res.to_dict())
+		except JobCancelledError:
+			self._emit_event(JobResult(job_id=spec.job_id, status=JobStatus.CANCELLED,
+				generation=spec.generation).to_dict())
 		except Exception as exc:
 			logger.exception("Unexpected error executing job %s: %s", spec.job_id, exc)
 			res = JobResult(
@@ -968,6 +439,68 @@ class WorkerServer:
 		finally:
 			with self._registry_lock:
 				self._active_jobs.pop(spec.job_id, None)
+				self._control_jobs.discard(spec.job_id)
+
+	def _execute_runtime_job(self, spec, token):
+		command = str(spec.payload.get("type", ""))
+		family = command.split("_", 1)[0]
+		try:
+			from ..core.job.operations import RUNTIME_COMMANDS
+		except ImportError:
+			from core.job.operations import RUNTIME_COMMANDS
+		if command not in RUNTIME_COMMANDS:
+			raise ValueError("Unsupported runtime command")
+		response = {}
+		def write(frame):
+			if frame.get("type") == "runtime_progress":
+				self._emit_event(JobProgress(job_id=spec.job_id, status=JobStatus.RUNNING,
+					status_message=str(frame.get("stage", "")), generation=spec.generation).to_dict())
+			else:
+				response.update(frame)
+		lock = None if command.endswith(("_stop", "_get_status", "_status")) else self._runtime_locks[family]
+		acquired = False
+		finished = threading.Event()
+		watcher = None
+		try:
+			if lock is not None:
+				while not lock.acquire(timeout=0.05):
+					token.check_cancelled()
+				acquired = True
+			token.check_cancelled()
+			if command.endswith(("_ensure_ready", "_restart")):
+				executor = self.get_litert_executor() if family == "litert" else self.get_llama_executor()
+				before = executor.get_status()
+				def cancel_owned_startup():
+					status = executor.get_status()
+					owned = not status.get("is_adopted") and (status.get("is_running") or status.get("state") in ("starting", "restarting"))
+					changed = status.get("generation") != before.get("generation") or not before.get("is_running") or command.endswith("_restart")
+					if owned and changed:
+						try:
+							executor.stop(timeout_seconds=2.0)
+						except Exception:
+							logger.exception("Could not stop cancelled startup")
+				def cancel_startup():
+					while not finished.wait(0.05):
+						if token.is_cancelled:
+							cancel_owned_startup()
+
+				watcher = threading.Thread(target=cancel_startup, name="WorkerStartupCancellation", daemon=True)
+				watcher.start()
+			with job_execution_scope(token):
+				execute_runtime_command(self, spec.payload, write)
+			token.check_cancelled()
+		finally:
+			if watcher is not None and token.is_cancelled:
+				cancel_owned_startup()
+			finished.set()
+			if watcher is not None:
+				watcher.join(timeout=3.0)
+			if acquired:
+				lock.release()
+		status = JobStatus.COMPLETED if response.get("success", False) else JobStatus.FAILED
+		self._emit_event(JobResult(job_id=spec.job_id, status=status, result_data=response,
+			error_code=response.get("error_code"), error_message=response.get("error_message"),
+			generation=spec.generation).to_dict())
 
 	def _execute_echo(self, spec: JobSpec, token: CancellationToken) -> None:
 		"""Execute built-in echo job."""

@@ -8,7 +8,7 @@ from unittest.mock import patch
 from tests.support import load_addon_module
 
 
-manager_module = load_addon_module("embeddings.manager", namespace="embedding_manager_tests")
+manager_module = load_addon_module("worker.executors.embedding", namespace="embedding_manager_tests")
 EmbeddingModelService = manager_module.EmbeddingModelService
 
 

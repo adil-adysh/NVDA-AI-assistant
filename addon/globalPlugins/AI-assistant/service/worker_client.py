@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
+from uuid import uuid4
+from dataclasses import replace
 import threading
 import time
 from typing import Any, Callable
@@ -61,10 +64,14 @@ class NamedPipeJobClient(JobClient):
 		cmd_client: NamedPipeClient,
 		evt_client: NamedPipeClient,
 		cmd_lock: threading.Lock | None = None,
+		command_sender=None,
+		generation: int = 1,
 	) -> None:
 		self._cmd_client = cmd_client
 		self._evt_client = evt_client
 		self._cmd_lock = cmd_lock or threading.Lock()
+		self._command_sender = command_sender
+		self.generation = generation
 
 		self._snapshots: dict[str, JobSnapshot] = {}
 		self._result_events: dict[str, threading.Event] = {}
@@ -137,6 +144,8 @@ class NamedPipeJobClient(JobClient):
 			job_id = progress.job_id
 			with self._lock:
 				snap = self._snapshots.get(job_id)
+				if snap is None or progress.generation != snap.spec.generation or snap.state.is_terminal:
+					return
 				if snap:
 					self._snapshots[job_id] = JobSnapshot(
 						spec=snap.spec,
@@ -158,7 +167,8 @@ class NamedPipeJobClient(JobClient):
 			result = JobResult.from_dict(frame)
 			job_id = result.job_id
 			with self._lock:
-				if job_id in self._results:
+				snapshot = self._snapshots.get(job_id)
+				if job_id in self._results or snapshot is None or result.generation != snapshot.spec.generation:
 					return
 				self._results[job_id] = result
 				snap = self._snapshots.get(job_id)
@@ -184,9 +194,12 @@ class NamedPipeJobClient(JobClient):
 
 	def submit_job(self, spec: JobSpec) -> str:
 		"""Submit a job specification over the command pipe."""
+		spec = replace(spec, generation=self.generation)
 		with self._lock:
 			if not self._running:
 				raise RuntimeError("Local AI worker is disconnected")
+			if spec.job_id in self._snapshots:
+				raise ValueError("Duplicate job ID")
 			self._snapshots[spec.job_id] = JobSnapshot(
 				spec=spec,
 				state=JobStatus.SUBMITTED,
@@ -195,12 +208,15 @@ class NamedPipeJobClient(JobClient):
 			)
 			self._result_events[spec.job_id] = threading.Event()
 
-		with self._cmd_lock:
-			self._cmd_client.write_frame(spec.to_dict())
-			ack = self._cmd_client.read_frame()
+		try:
+			ack = self._control_transaction(spec.to_dict())
+		except Exception:
+			self.forget_job(spec.job_id)
+			raise
 
 		if ack.get("type") != "job_ack" or ack.get("status") != "accepted":
 			err_msg = ack.get("error_message", "Job submission rejected")
+			self.forget_job(spec.job_id)
 			raise RuntimeError(f"Submission failed for {spec.job_id}: {err_msg}")
 
 		with self._lock:
@@ -215,19 +231,29 @@ class NamedPipeJobClient(JobClient):
 
 		return spec.job_id
 
-	def cancel_job(self, job_id: str, reason: str = "user_cancelled") -> bool:
-		"""Request cooperative cancellation of a job."""
-		with self._cmd_lock:
-			self._cmd_client.write_frame(
-				{
-					"type": "job_cancellation_request",
-					"job_id": job_id,
-					"reason": reason,
-				}
-			)
-			ack = self._cmd_client.read_frame()
+	def _control_transaction(self, frame, timeout=5.0):
+		if self._command_sender is not None:
+			return self._command_sender(frame, timeout=timeout)
+		deadline = time.monotonic() + timeout
+		if not self._cmd_lock.acquire(timeout=timeout):
+			raise TimeoutError("Worker control channel is busy")
+		try:
+			self._cmd_client.write_frame(frame)
+			return self._cmd_client.read_frame(timeout_seconds=max(0.001, deadline - time.monotonic()))
+		finally:
+			self._cmd_lock.release()
 
+	def cancel_job(self, job_id: str, reason: str = "user_cancelled") -> bool:
+		ack = self._control_transaction({"type": "job_cancellation_request",
+			"job_id": job_id, "reason": reason})
 		return bool(ack.get("accepted", False))
+
+	def forget_job(self, job_id):
+		"""Release completed/abandoned job state; late events are ignored."""
+		with self._lock:
+			for mapping in (self._snapshots, self._results, self._result_events,
+				self._progress_callbacks, self._result_callbacks):
+				mapping.pop(job_id, None)
 
 	def get_job_snapshot(self, job_id: str) -> JobSnapshot | None:
 		"""Retrieve a point-in-time snapshot of the job state."""
@@ -338,11 +364,16 @@ class NamedPipeWorkerClient(WorkerClient):
 		self._job_client: NamedPipeJobClient | None = None
 		self._handshake_response: HandshakeResponse | None = handshake_response
 		self._needs_cmd_reconnect = False
+		self._runtime_status_lock = threading.Lock()
+		self._runtime_statuses = {}
+		self._runtime_status_refreshing = set()
+		self._runtime_status_times = {}
 		if handshake_response is not None and handshake_response.accepted:
 			self._job_client = NamedPipeJobClient(
 				self._cmd_client,
 				self._evt_client,
-				self._cmd_lock,
+				self._cmd_lock, command_sender=self._send_control_command,
+				generation=handshake_response.generation,
 			)
 
 	@property
@@ -376,7 +407,8 @@ class NamedPipeWorkerClient(WorkerClient):
 		self._job_client = NamedPipeJobClient(
 			self._cmd_client,
 			self._evt_client,
-			self._cmd_lock,
+			self._cmd_lock, command_sender=self._send_control_command,
+			generation=self._handshake_response.generation,
 		)
 		return self._handshake_response
 
@@ -422,16 +454,89 @@ class NamedPipeWorkerClient(WorkerClient):
 		self._needs_cmd_reconnect = False
 
 	def poll_health(self) -> WorkerHealth:
-		"""Request worker health snapshot."""
-		with self._cmd_lock:
-			if self._needs_cmd_reconnect:
-				self._reconnect_cmd(timeout=5.0)
-			self._cmd_client.write_frame({"type": "worker_health_ping"})
-			resp = self._cmd_client.read_frame()
+		return WorkerHealth.from_dict(self._send_control_command({"type": "worker_health_ping"}, timeout=5.0))
 
-		return WorkerHealth.from_dict(resp)
+	def get_runtime_status_snapshot(self, runtime):
+		"""Never block the NVDA event thread; refresh through a control job."""
+		with self._runtime_status_lock:
+			snapshot = self._runtime_statuses.get(runtime)
+			refresh = runtime not in self._runtime_status_refreshing and time.monotonic() - self._runtime_status_times.get(runtime, 0) > 0.5
+			if refresh:
+				self._runtime_status_refreshing.add(runtime)
+		if refresh:
+			def update():
+				try:
+					self.send_command({"type": runtime + "_get_status"}, timeout=5.0)
+				except Exception:
+					logger.debug("Passive runtime status refresh failed", exc_info=True)
+				finally:
+					with self._runtime_status_lock:
+						self._runtime_status_refreshing.discard(runtime)
+						self._runtime_status_times[runtime] = time.monotonic()
+			threading.Thread(target=update, name="WorkerStatusRefresh", daemon=True).start()
+		return dict(snapshot) if snapshot else None
 
-	def send_command(
+	def send_command(self, cmd, timeout=10.0, on_progress=None):
+		command = str(cmd.get("type", "") or cmd.get("command", ""))
+		capabilities = self._handshake_response.negotiated_capabilities if self._handshake_response else ()
+		from ..core.job.operations import RUNTIME_COMMANDS
+		if command in RUNTIME_COMMANDS and "job.runtime_command" in capabilities:
+			response = self.run_job("runtime_command", cmd, timeout=timeout, on_progress=on_progress)
+		else:
+			response = self._send_control_command(cmd, timeout=timeout, on_progress=on_progress)
+		status = response.get("status")
+		if isinstance(status, dict) and command in RUNTIME_COMMANDS:
+			with self._runtime_status_lock:
+				self._runtime_statuses[command.split("_", 1)[0]] = dict(status)
+		return response
+
+	def run_job(self, job_type, payload, *, timeout=300.0, on_progress=None, cancel_event=None):
+		"""Wait off the NVDA thread; release the control channel immediately after ack."""
+		from ..core.cancellation import current_cancellation_token, RequestCancelled
+		from ..core.readiness_progress import render_readiness_stage
+		request_token = current_cancellation_token()
+		jobs = self.get_job_client()
+		job_id = str(uuid4())
+		progress = queue.SimpleQueue()
+		unsubscribe = jobs.subscribe_progress(job_id, progress.put)
+		deadline = time.monotonic() + timeout
+		try:
+			if (request_token and request_token.cancelled) or (cancel_event and cancel_event.is_set()):
+				raise RequestCancelled()
+			jobs.submit_job(JobSpec(job_id=job_id, job_type=job_type, payload=payload,
+				timeout_seconds=timeout, generation=jobs.generation))
+			while True:
+				cancelled = (request_token and request_token.cancelled) or (cancel_event and cancel_event.is_set())
+				if cancelled:
+					jobs.cancel_job(job_id)
+					raise RequestCancelled(request_token.partial_text if request_token else "")
+				remaining = deadline - time.monotonic()
+				if remaining <= 0:
+					jobs.cancel_job(job_id, reason="deadline_exceeded")
+					raise TimeoutError("Timed out waiting for worker job")
+				while not progress.empty():
+					update = progress.get()
+					message = render_readiness_stage(update.status_message) if job_type == "runtime_command" else update.status_message
+					if message and on_progress:
+						try:
+							on_progress(message)
+						except Exception:
+							logger.exception("Worker progress callback failed")
+				try:
+					result = jobs.wait_for_job(job_id, timeout_seconds=min(0.05, remaining))
+				except TimeoutError:
+					continue
+				if result.status == JobStatus.CANCELLED:
+					raise RequestCancelled()
+				if result.status == JobStatus.FAILED:
+					return {**result.result_data, "type": "error", "success": False,
+						"error_code": result.error_code, "error_message": result.error_message}
+				return result.result_data
+		finally:
+			unsubscribe()
+			jobs.forget_job(job_id)
+
+	def _send_control_command(
 		self,
 		cmd: dict[str, Any],
 		timeout: float = 10.0,
@@ -452,7 +557,11 @@ class NamedPipeWorkerClient(WorkerClient):
 			elif not self._cmd_client.is_connected:
 				raise RuntimeError("WorkerClient command pipe is not connected")
 
-			self._cmd_client.write_frame(cmd)
+			try:
+				self._cmd_client.write_frame(cmd, timeout_seconds=max(0.001, deadline - time.monotonic()))
+			except TypeError:
+				# Legacy injected transports in tests do not implement write deadlines.
+				self._cmd_client.write_frame(cmd)
 			while True:
 				remaining = deadline - time.monotonic()
 				if remaining <= 0:

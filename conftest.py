@@ -115,3 +115,26 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 		for item in items:
 			if "nvda_integration" in item.keywords:
 				item.add_marker(skip_marker)
+
+
+def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool:
+	"""Keep the built-NVDA tier free of standalone GUI module replacements.
+
+	Deselection occurs after module import. Collecting pure GUI tests first can
+	therefore replace wx/process surfaces before real NVDA integration imports.
+	The explicit integration-only command must isolate collection as well as tests.
+	"""
+	if config.option.markexpr.strip() != "nvda_integration":
+		return False
+	try:
+		collection_path.relative_to(PROJECT_ROOT / "tests")
+	except ValueError:
+		return False
+	eligible = getattr(config, "_nvda_integration_files", None)
+	if eligible is None:
+		eligible = {path for path in (PROJECT_ROOT / "tests").rglob("test_*.py")
+			if "pytest.mark.nvda_integration" in path.read_text(encoding="utf-8")}
+		config._nvda_integration_files = eligible
+	if collection_path.is_dir():
+		return not any(path.is_relative_to(collection_path) for path in eligible)
+	return collection_path not in eligible

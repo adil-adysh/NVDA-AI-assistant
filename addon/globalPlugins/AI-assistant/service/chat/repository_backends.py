@@ -12,8 +12,12 @@ from typing import Any
 
 import logging
 
-from ...config.defaults import DEFAULT_CONFIG_PATH
-from ...core.canonical import Message, Part
+try:
+	from ...config.defaults import DEFAULT_CONFIG_PATH
+	from ...core.canonical import Message, Part
+except ImportError:
+	from config.defaults import DEFAULT_CONFIG_PATH
+	from core.canonical import Message, Part
 from .repository import ConversationRepository, ConversationSummary
 from .session import ConversationSession
 

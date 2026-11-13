@@ -36,9 +36,11 @@ except Exception:
 	runtime_supervisor = None
 
 try:
+	from ...core.job.execution import check_job_cancelled, current_job_token
 	from ...core.runtime_upgrade import finalize_litert_upgrade
 	from ...core.litert_contract import DEFAULT_LITERT_VERSION, validate_litert_artifact
 except ImportError:
+	from core.job.execution import check_job_cancelled, current_job_token
 	from core.runtime_upgrade import finalize_litert_upgrade
 	from core.litert_contract import DEFAULT_LITERT_VERSION, validate_litert_artifact
 
@@ -212,6 +214,7 @@ class LiteRTWorkerExecutor:
 		cmd_args = ["-m", "litert_lm_cli.main", "serve", "--host", self.host, "--port", str(self.port)]
 		env = {**os.environ, "LITERT_LM_DIR": str(lt_dir)}
 
+		check_job_cancelled()
 		status = sup.ensure_ready(
 			str(py_path),
 			cmd_args,
@@ -265,6 +268,7 @@ class LiteRTWorkerExecutor:
 		cmd_args = ["-m", "litert_lm_cli.main", "serve", "--host", self.host, "--port", str(self.port)]
 		env = {**os.environ, "LITERT_LM_DIR": str(lt_dir)}
 
+		check_job_cancelled()
 		status = sup.restart(
 			str(py_path),
 			cmd_args,
@@ -279,7 +283,7 @@ class LiteRTWorkerExecutor:
 			raise ValueError("Unsupported runtime upgrade version")
 		status = self.get_status()
 		return finalize_litert_upgrade(default_runtime_dir(version), version,
-			busy=bool(status.get("is_running") or status.get("is_adopted")))
+			busy=bool(status.get("is_running") or status.get("is_adopted")), check_cancelled=check_job_cancelled)
 
 	def stop(self, timeout_seconds: float = 10.0) -> dict[str, Any]:
 		"""Stop the server process gracefully, then forcefully if needed."""
@@ -310,8 +314,12 @@ class LiteRTWorkerExecutor:
 		env = {**os.environ, "LITERT_LM_DIR": str(lt_dir)}
 
 		cmd = [str(py_path), "-m", "litert_lm_cli.main", *args]
-		logger.debug("Executing LiteRT CLI command: %s", cmd)
+		logger.debug("Executing LiteRT CLI operation: %s", args[0] if args else "")
 
+		if current_job_token() is not None:
+			from .process import run_cancellable
+			return run_cancellable(cmd, env=env, timeout=timeout_seconds,
+				creationflags=subprocess_flags(), token=current_job_token())
 		return subprocess.run(
 			cmd,
 			env=env,

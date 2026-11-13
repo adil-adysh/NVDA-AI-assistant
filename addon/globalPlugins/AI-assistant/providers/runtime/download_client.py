@@ -144,6 +144,9 @@ class WorkerDownloadClient:
 			out_path = Path(res.result_data.get("path", str(dest)))
 			return out_path
 		finally:
+			forget = getattr(client, "forget_job", None)
+			if callable(forget):
+				forget(job_id)
 			if unsub_prog:
 				unsub_prog()
 			if unsub_res:
@@ -226,6 +229,9 @@ class WorkerDownloadClient:
 			out_path = Path(res.result_data.get("path", str(dest)))
 			return out_path
 		finally:
+			forget = getattr(client, "forget_job", None)
+			if callable(forget):
+				forget(job_id)
 			if unsub_prog:
 				unsub_prog()
 			if unsub_res:

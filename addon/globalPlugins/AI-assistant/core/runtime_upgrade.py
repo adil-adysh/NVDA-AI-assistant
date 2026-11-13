@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 
 
-def finalize_litert_upgrade(target: Path, version: str, *, busy: bool = False) -> list[str]:
+def finalize_litert_upgrade(target: Path, version: str, *, busy: bool = False, check_cancelled=lambda: None) -> list[str]:
 	"""Verify the replacement before retiring known obsolete versions.
 
 	Locked/in-use packages are retained and retried on the next installation.
@@ -29,11 +29,16 @@ def finalize_litert_upgrade(target: Path, version: str, *, busy: bool = False) -
 	if not isinstance(files, dict) or "python.exe" not in files:
 		raise ValueError("Runtime manifest has no executable checksum")
 	for name, expected in files.items():
+		check_cancelled()
 		file = target / name
 		if not file.resolve().is_relative_to(target.resolve()):
 			raise ValueError("Runtime manifest path escapes package")
 		with file.open("rb") as stream:
-			actual = hashlib.file_digest(stream, "sha256").hexdigest()
+			digest = hashlib.sha256()
+			while chunk := stream.read(1024 * 1024):
+				check_cancelled()
+				digest.update(chunk)
+			actual = digest.hexdigest()
 		if actual != expected:
 			raise ValueError("Runtime package checksum mismatch: " + name)
 	pending = []
@@ -53,6 +58,7 @@ def finalize_litert_upgrade(target: Path, version: str, *, busy: bool = False) -
 			if busy:
 				pending.append(obsolete)
 				continue
+			check_cancelled()
 			shutil.rmtree(candidate)
 		except (OSError, ValueError):
 			pending.append(obsolete)

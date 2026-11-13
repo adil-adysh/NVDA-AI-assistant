@@ -124,8 +124,9 @@ impl EmbeddingEngine {
     }
 
     /// Download and validate the selected model.
-    fn prepare(&mut self) -> PyResult<()> {
-        self.embed("embedding model readiness check").map(|_| ())
+    fn prepare(&mut self, py: Python<'_>) -> PyResult<()> {
+        self.embed(py, "embedding model readiness check")
+            .map(|_| ())
     }
 
     /// Return the explicit cache directory used by this engine.
@@ -136,11 +137,11 @@ impl EmbeddingEngine {
     /// Delete one known model's cached artifacts from an explicit cache root.
     #[staticmethod]
     #[pyo3(signature = (model_id, cache_dir=None))]
-    fn delete_cached(model_id: &str, cache_dir: Option<String>) -> PyResult<()> {
+    fn delete_cached(py: Python<'_>, model_id: &str, cache_dir: Option<String>) -> PyResult<()> {
         let registry = cache_dir
             .map(|path| ModelRegistry::with_cache_dir(PathBuf::from(path)))
             .unwrap_or_default();
-        registry.delete_cached(model_id).map_err(to_py_err)
+        py.allow_threads(|| registry.delete_cached(model_id).map_err(to_py_err))
     }
 
     /// Produce an embedding vector for a single text.
@@ -148,13 +149,13 @@ impl EmbeddingEngine {
     /// Returns a ``list[float]`` of length ``self.dimensions()``.
     ///
     /// Raises ``ValueError`` for empty or whitespace-only input.
-    fn embed(&mut self, text: &str) -> PyResult<Vec<f32>> {
+    fn embed(&mut self, py: Python<'_>, text: &str) -> PyResult<Vec<f32>> {
         if text.trim().is_empty() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "Input text is empty or whitespace-only",
             ));
         }
-        let results = self.embed_batch(vec![text.to_string()])?;
+        let results = self.embed_batch(py, vec![text.to_string()])?;
         results
             .into_iter()
             .next()
@@ -166,7 +167,7 @@ impl EmbeddingEngine {
     /// Returns ``list[list[float]]`` — one vector per input text.
     ///
     /// Raises ``ValueError`` if any text is empty or whitespace-only.
-    fn embed_batch(&mut self, texts: Vec<String>) -> PyResult<Vec<Vec<f32>>> {
+    fn embed_batch(&mut self, py: Python<'_>, texts: Vec<String>) -> PyResult<Vec<Vec<f32>>> {
         for (i, text) in texts.iter().enumerate() {
             if text.trim().is_empty() {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -180,12 +181,13 @@ impl EmbeddingEngine {
             .ok_or_else(|| PyRuntimeError::new_err("No model selected"))?
             .clone();
 
-        let model = self
-            .registry
-            .load_initialized(&model_id)
-            .map_err(to_py_err)?;
-
-        model.embed(&texts).map_err(to_py_err)
+        py.allow_threads(|| {
+            let model = self
+                .registry
+                .load_initialized(&model_id)
+                .map_err(to_py_err)?;
+            model.embed(&texts).map_err(to_py_err)
+        })
     }
 
     /// Number of dimensions in each embedding vector.
@@ -198,10 +200,7 @@ impl EmbeddingEngine {
             .registry
             .model_metadata(model_id)
             .ok_or_else(|| PyRuntimeError::new_err(format!("Unknown model: {model_id}")))?;
-        Ok(meta
-            .get("dimensions")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize)
+        Ok(meta.get("dimensions").and_then(|v| v.as_u64()).unwrap_or(0) as usize)
     }
 
     /// Maximum number of tokens the model can accept for a single input.
@@ -214,10 +213,7 @@ impl EmbeddingEngine {
             .registry
             .model_metadata(model_id)
             .ok_or_else(|| PyRuntimeError::new_err(format!("Unknown model: {model_id}")))?;
-        Ok(meta
-            .get("max_tokens")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize)
+        Ok(meta.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as usize)
     }
 }
 

@@ -526,7 +526,7 @@ class WorkerSupervisor:
 			acquired = self._cmd_lock.acquire(timeout=0.1)
 			try:
 				if acquired and self._cmd_client and self._cmd_client.is_connected:
-					self._cmd_client.write_frame({"type": "shutdown_command"})
+					self._cmd_client.write_frame({"type": "shutdown_command"}, timeout_seconds=0.5)
 			finally:
 				if acquired:
 					self._cmd_lock.release()

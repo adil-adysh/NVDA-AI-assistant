@@ -44,6 +44,10 @@ def render_readiness_stage(stage: str) -> str:
 		"starting": _("Starting local AI server…"),
 		"restarting": _("Restarting local AI server…"),
 		"delayed": _("Still preparing local AI. Please wait."),
+		"checking_companions": _("Checking companion files…"),
+		"downloading_companion": _("Downloading a companion file. Use Stop to cancel."),
+		"loading_model": _("Loading model into memory…"),
+		"unloading_model": _("Unloading model from memory…"),
 	}.get(stage, "")
 
 

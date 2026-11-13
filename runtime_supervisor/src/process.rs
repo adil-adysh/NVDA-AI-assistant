@@ -87,6 +87,12 @@ mod diagnostic_tests {
     fn preserves_unknown_options_for_server_validation() {
         assert!(validate_preset("[*]\nfuture-option=yes\n[model]\nload-mode=mlock\n").is_ok());
     }
+
+    #[test]
+    fn rejects_unknown_preset_version_before_spawn() {
+        assert!(validate_preset("version = 2\n[model]\nhf-repo=owner/model\n").unwrap_err().contains("version"));
+        assert!(validate_preset("version = 1\n[model]\nhf-repo=owner/model\n").is_ok());
+    }
 }
 
 #[cfg(windows)]
@@ -181,7 +187,10 @@ fn validate_preset(text: &str) -> Result<(), String> {
         if line.is_empty() || line.starts_with('#') || line.starts_with(';') { continue; }
         if line.starts_with('[') && line.ends_with(']') {
             section = &line[1..line.len()-1];
-        } else if let Some((key, _)) = line.split_once('=') {
+        } else if let Some((key, value)) = line.split_once('=') {
+            if key.trim() == "version" && value.trim() != "1" {
+                return Err(format!("Unsupported llama-server preset version '{}' at line {}; expected version 1", value.trim(), index + 1));
+            }
             if key.trim() == "mlock" {
                 return Err(format!("Invalid llama-server preset [{}], line {}: 'mlock' is not a preset option; use 'load-mode=mlock' instead", section, index+1));
             }
