@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+import time
 
 import pytest
 
@@ -24,6 +26,7 @@ load_addon_module("tools")
 llm_module = load_addon_module("service.llm")
 coordinator_module = load_addon_module("service.chat.coordinator")
 repository_module = load_addon_module("service.chat.repository_backends")
+cancellation_module = load_addon_module("core.cancellation")
 
 
 class _Worker:
@@ -128,15 +131,25 @@ def test_chat_tool_loop_executes_mcp_and_persists_correlated_result(tmp_path, mo
             if self.calls == 1:
                 target = next(tool for tool in tools if tool.name.endswith("__echo"))
                 return messages_module.LLMResponse(
-                    text="", tool_calls=[tooling.ToolCall(
-                        name=target.name,
-                        arguments={"value": {"answer": 42}},
-                        id="chat-mcp-call",
-                    )], model=self.model,
+                    text="", tool_calls=[
+                        tooling.ToolCall(
+                            name=target.name,
+                            arguments={"value": {"answer": 42}},
+                            id="chat-mcp-call-1",
+                        ),
+                        tooling.ToolCall(
+                            name=target.name,
+                            arguments={"value": {"answer": 43}},
+                            id="chat-mcp-call-2",
+                        ),
+                    ], model=self.model,
                 )
-            result_part = next(part for part in messages[-1].parts if part.type == "tool_result")
+            result_parts = [
+                part for message in messages[-2:] for part in message.parts
+                if part.type == "tool_result"
+            ]
             return messages_module.LLMResponse(
-                text=f"fixture={result_part.text}", model=self.model,
+                text="fixture=" + ",".join(part.text for part in result_parts), model=self.model,
             )
 
         def close(self):
@@ -159,11 +172,56 @@ def test_chat_tool_loop_executes_mcp_and_persists_correlated_result(tmp_path, mo
         assert response.text.startswith("fixture=")
         saved = repository.load("mcp-chat").snapshot()
         tool_messages = [message for message in saved if message.role == "tool"]
-        assert len(tool_messages) == 1
-        part = tool_messages[0].parts[0]
-        assert part.tool_call_id == "chat-mcp-call"
-        assert part.tool_result["tool_id"] == echo.tool_id
-        assert part.tool_result["structured_content"]["value"]["answer"] == 42
+        assert len(tool_messages) == 2
+        parts = [message.parts[0] for message in tool_messages]
+        assert [part.tool_call_id for part in parts] == ["chat-mcp-call-1", "chat-mcp-call-2"]
+        assert all(part.tool_result["tool_id"] == echo.tool_id for part in parts)
+        assert [part.tool_result["structured_content"]["value"]["answer"] for part in parts] == [42, 43]
+    finally:
+        catalog.close()
+        client.close()
+
+
+def test_tool_executor_cancellation_reaches_rust_and_keeps_outcome_uncertain(tmp_path):
+    client = mcp_manager.McpManagerClient((str(Path(MANAGER)),))
+    client.start()
+    worker = _Worker(client)
+
+    def dispatch(frame, timeout, cancelled):
+        output = []
+        runtime_commands.execute_runtime_command(
+            worker, frame, output.append, cancellation_requested=cancelled,
+        )
+        return output[-1]
+
+    registry = registry_module.ToolRegistry()
+    catalog = catalog_module.McpCatalogService(registry, dispatch)
+    marker = tmp_path / "mcp-slow-started.marker"
+    try:
+        definitions = catalog.connect_stdio("fixture-cancel", str(Path(FIXTURE)), timeout=15)
+        slow = next(item for item in definitions if item.provider_tool_name == "slow")
+        executor = executor_module.ToolExecutor(registry)
+        executor.set_policy(policy_module.DefaultToolPermissionPolicy().with_approval(tool_id=slow.tool_id))
+        token = cancellation_module.CancellationToken()
+        call = tooling.ToolCall(
+            name=slow.name, arguments={"marker_path": str(marker)}, id="mcp-cancel-call",
+        )
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(executor.execute, call, snapshot=registry.snapshot(), cancellation_token=token)
+            deadline = time.monotonic() + 3
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            if not marker.exists():
+                outcome = pending.result(timeout=1)
+                pytest.fail(f"MCP fixture did not begin its side effect: {outcome.to_dict()}")
+            token.cancel()
+            result = pending.result(timeout=2)
+
+        assert result.error_category == "cancelled"
+        assert result.tool_call_id == "mcp-cancel-call"
+        assert result.uncertain is True
+        assert result.termination_confirmed is False
     finally:
         catalog.close()
         client.close()

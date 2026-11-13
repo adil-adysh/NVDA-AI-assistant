@@ -81,12 +81,16 @@ accessibility and installed add-on reload/uninstall checks remain open.
   keyboard approval journey, screen-reader announcements and add-on reload have
   not been run.
 - The latest packaged manager is 4,476,416 bytes and the rebuilt
-  `.nvda-addon` is 24,338,811 bytes (1,038 entries) with no tests, test modules
+  `.nvda-addon` is 24,338,831 bytes (1,038 entries) with no tests, test modules
   or bytecode entries. Packaged worker smoke tests passed 5/5; the packaged
   manager passed both Python/Rust fixture integration tests.
 - `rmcp` transport cancellation is best effort. A server may ignore it or
   finish a side effect before cancellation arrives. The application cannot
   roll back a remote operation.
+- Cancellation after tool dispatch is classified as uncertain with
+  `termination_confirmed=false`; cancellation before dispatch is confirmed and
+  non-uncertain. The Python/Rust fixture regression records a side effect
+  before cancellation to verify this distinction.
 - Worker event-queue overflow emits `resync_required`; the Python catalog
   poller consumes it and reconciles manager status, retiring absent servers and
   refreshing active catalogs. Notification stream loss uses the same recovery

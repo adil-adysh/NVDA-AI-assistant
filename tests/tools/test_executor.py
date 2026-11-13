@@ -156,7 +156,8 @@ def test_cancellation_before_execution() -> None:
 	assert not result.ok
 	assert result.error_category == "cancelled"
 	assert result.cancelled
-	assert not result.termination_confirmed
+	assert not result.uncertain
+	assert result.termination_confirmed
 	assert calls == []
 
 
@@ -181,6 +182,7 @@ def test_cancellation_during_execution_returns_promptly() -> None:
 	result = executor.execute(_call(), cancellation_token=token)
 	assert time.monotonic() - started < 0.4
 	assert result.error_category == "cancelled"
+	assert result.uncertain
 	assert not result.termination_confirmed
 	assert finished.wait(1)
 
@@ -478,6 +480,7 @@ def test_permission_revocation_cancels_active_cooperative_backend() -> None:
 	assert not thread.is_alive()
 	assert observed_cancel.is_set()
 	assert results[0].error_category == "cancelled"
+	assert results[0].uncertain
 	assert not results[0].termination_confirmed
 	assert finished.wait(1)
 
@@ -515,6 +518,7 @@ def test_provider_disable_cancels_active_cooperative_backend() -> None:
 	assert not thread.is_alive()
 	assert observed_cancel.is_set()
 	assert results[0].error_category == "cancelled"
+	assert results[0].uncertain
 	assert finished.wait(1)
 
 

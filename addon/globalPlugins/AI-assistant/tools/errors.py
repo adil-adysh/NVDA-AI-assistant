@@ -74,7 +74,11 @@ class ToolTimeoutError(ToolError):
 
 class ToolCancelledError(ToolError):
 	category = "cancelled"
-	termination_confirmed = False
+
+	def __init__(self, message: str, *, uncertain: bool = False) -> None:
+		super().__init__(message)
+		self.uncertain = uncertain
+		self.termination_confirmed = not uncertain
 
 
 class ToolBudgetExceeded(ToolError):

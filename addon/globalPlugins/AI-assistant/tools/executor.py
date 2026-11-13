@@ -213,7 +213,7 @@ class ToolExecutor:
 			return self._finish(
 				self._error_result(
 					tool_call,
-					ToolCancelledError(f"Tool '{binding.model_name}' was cancelled"),
+					ToolCancelledError(f"Tool '{binding.model_name}' was cancelled", uncertain=True),
 					started,
 					binding=binding,
 				)
@@ -524,7 +524,7 @@ def _classify(
 			bool(getattr(error, "termination_confirmed", True)),
 		)
 	if isinstance(error, RequestCancelled):
-		return "cancelled", f"Tool '{tool_name}' was cancelled", "host", False, False
+		return "cancelled", f"Tool '{tool_name}' was cancelled", "host", True, False
 	if error is None:
 		return "execution_error", f"Tool '{tool_name}' failed without an error", "tool", False, True
 	return (
