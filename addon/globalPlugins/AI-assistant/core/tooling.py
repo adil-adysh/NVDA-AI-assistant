@@ -41,6 +41,11 @@ MAX_TOOL_RESULT_JSON_BYTES = 64 * 1024
 MAX_TOOL_RESULT_MEDIA_BYTES = 128 * 1024
 MAX_TOOL_RESULT_METADATA_BYTES = 16 * 1024
 MAX_TOOL_RESULT_DEPTH = 32
+_TOOL_ERROR_CATEGORIES = frozenset({
+	"invalid_arguments", "unknown_tool", "permission_denied", "provider_failure",
+	"execution_error", "timeout", "cancelled", "uncertain", "budget_exceeded", "schema_error",
+})
+_TOOL_ERROR_SOURCES = frozenset({"host", "provider", "tool"})
 
 
 class _ToolResultLimitError(ValueError):
@@ -180,6 +185,14 @@ class ToolExecutionResult:
 
 	def bounded(self, max_chars: int = MAX_TOOL_RESULT_CHARS) -> "ToolExecutionResult":
 		try:
+			if not isinstance(self.ok, bool):
+				raise _ToolResultLimitError("result outcome must be a boolean")
+			if any(not isinstance(flag, bool) for flag in (self.cancelled, self.timed_out, self.termination_confirmed, self.uncertain)):
+				raise _ToolResultLimitError("result flags must be booleans")
+			if self.error_category is not None and self.error_category not in _TOOL_ERROR_CATEGORIES:
+				raise _ToolResultLimitError("result has an unknown error category")
+			if self.error_source is not None and self.error_source not in _TOOL_ERROR_SOURCES:
+				raise _ToolResultLimitError("result has an unknown error source")
 			if not isinstance(self.content, (list, tuple)) or len(self.content) > MAX_TOOL_RESULT_BLOCKS:
 				raise _ToolResultLimitError("too many content blocks")
 			content = tuple(_bound_block(block, max_chars) for block in self.content)
@@ -249,17 +262,47 @@ class ToolExecutionResult:
 
 	@classmethod
 	def from_dict(cls, payload: Mapping[str, Any]) -> "ToolExecutionResult":
-		content_payload = payload.get("content")
-		if isinstance(content_payload, list) and len(content_payload) > MAX_TOOL_RESULT_BLOCKS:
+		if not isinstance(payload, Mapping):
+			payload = {}
+		if not isinstance(payload.get("ok"), bool):
 			return _resource_limit_failure(
 				cls(
-					tool_name=str(payload.get("tool_name", "unknown tool")),
+					tool_name=payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else "unknown tool",
 					tool_call_id=payload.get("tool_call_id") if isinstance(payload.get("tool_call_id"), str) else None,
 					tool_id=payload.get("tool_id") if isinstance(payload.get("tool_id"), str) else None,
 					provider_id=payload.get("provider_id") if isinstance(payload.get("provider_id"), str) else None,
 				),
 				MAX_TOOL_RESULT_CHARS,
 			)
+		content_payload = payload.get("content")
+		if content_payload is not None and not isinstance(content_payload, list):
+			return _invalid_result_envelope(cls, payload)
+		if "metadata" in payload and not isinstance(payload["metadata"], Mapping):
+			return _invalid_result_envelope(cls, payload)
+		if isinstance(content_payload, list) and len(content_payload) > MAX_TOOL_RESULT_BLOCKS:
+			return _invalid_result_envelope(cls, payload)
+		for item in content_payload or ():
+			if not isinstance(item, Mapping):
+				return _invalid_result_envelope(cls, payload)
+			block_type = item.get("type", "text")
+			if not isinstance(block_type, str) or block_type not in {"text", "json", "image", "audio", "resource"}:
+				return _invalid_result_envelope(cls, payload)
+			if any(key in item and not isinstance(item[key], str) for key in ("text", "data", "mime_type", "uri")):
+				return _invalid_result_envelope(cls, payload)
+			if "metadata" in item and not isinstance(item["metadata"], Mapping):
+				return _invalid_result_envelope(cls, payload)
+		for flag in ("cancelled", "timed_out", "termination_confirmed", "uncertain"):
+			if flag in payload and not isinstance(payload[flag], bool):
+				return _invalid_result_envelope(cls, payload)
+		duration = payload.get("duration_ms", 0.0)
+		if isinstance(duration, bool) or not isinstance(duration, (int, float)):
+			return _invalid_result_envelope(cls, payload)
+		try:
+			duration_ms = float(duration)
+		except (OverflowError, ValueError):
+			return _invalid_result_envelope(cls, payload)
+		if not math.isfinite(duration_ms) or duration_ms < 0:
+			return _invalid_result_envelope(cls, payload)
 		blocks = tuple(
 			ToolContentBlock.from_dict(item)
 			for item in content_payload
@@ -277,7 +320,7 @@ class ToolExecutionResult:
 			error_category=payload.get("error_category") if isinstance(payload.get("error_category"), str) else None,
 			error_message=payload.get("error_message") if isinstance(payload.get("error_message"), str) else None,
 			error_source=payload.get("error_source") if isinstance(payload.get("error_source"), str) else None,
-			duration_ms=float(payload.get("duration_ms") or 0.0),
+			duration_ms=duration_ms,
 			cancelled=bool(payload.get("cancelled")),
 			timed_out=bool(payload.get("timed_out")),
 			termination_confirmed=payload.get("termination_confirmed") is not False,
@@ -285,6 +328,20 @@ class ToolExecutionResult:
 			metadata=metadata if isinstance(metadata, Mapping) else {},
 		)
 		return restored.bounded()
+
+
+def _invalid_result_envelope(
+	result_type: type[ToolExecutionResult], payload: Mapping[str, Any]
+) -> ToolExecutionResult:
+	return _resource_limit_failure(
+		result_type(
+			tool_name=payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else "unknown tool",
+			tool_call_id=payload.get("tool_call_id") if isinstance(payload.get("tool_call_id"), str) else None,
+			tool_id=payload.get("tool_id") if isinstance(payload.get("tool_id"), str) else None,
+			provider_id=payload.get("provider_id") if isinstance(payload.get("provider_id"), str) else None,
+		),
+		MAX_TOOL_RESULT_CHARS,
+	)
 
 
 def _serialize_json(value: Any) -> str:
@@ -306,6 +363,8 @@ def _bounded(text: str, limit: int) -> str:
 def _bound_block(block: ToolContentBlock, limit: int) -> ToolContentBlock:
 	if not isinstance(block, ToolContentBlock):
 		raise _ToolResultLimitError("invalid content block")
+	if block.type not in {"text", "json", "image", "audio", "resource"}:
+		raise _ToolResultLimitError("content block has an unsupported type")
 	text = block.text
 	if text is not None:
 		text = _bounded(text, limit)
@@ -435,14 +494,20 @@ def _resource_limit_failure(result: ToolExecutionResult, max_chars: int) -> Tool
 		error_message="Tool result exceeded resource limits; content was discarded.",
 		error_source="host",
 		duration_ms=_safe_duration(result.duration_ms),
-		termination_confirmed=result.termination_confirmed,
-		uncertain=result.uncertain,
+		termination_confirmed=(result.termination_confirmed if isinstance(result.termination_confirmed, bool) else False),
+		uncertain=(result.uncertain if isinstance(result.uncertain, bool) else True),
 		metadata={},
 	)
 
 
 def _safe_duration(value: Any) -> float:
-	return value if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0 else 0.0
+	if isinstance(value, bool) or not isinstance(value, (int, float)):
+		return 0.0
+	try:
+		numeric = float(value)
+	except (OverflowError, ValueError):
+		return 0.0
+	return numeric if math.isfinite(numeric) and numeric >= 0 else 0.0
 
 
 def _json_safe(value: Any) -> Any:

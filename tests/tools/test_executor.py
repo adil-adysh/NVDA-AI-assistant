@@ -355,6 +355,52 @@ def test_oversized_media_and_excessive_content_blocks_are_rejected() -> None:
 	assert deep_result.error_category == "execution_error"
 
 
+def test_invalid_content_block_kind_becomes_a_structured_failure() -> None:
+	invalid_block = ToolContentBlock(type="video")
+	result = ToolExecutor(_registry(lambda arguments: invalid_block)).execute(_call(call_id="invalid-block"))
+	assert not result.ok
+	assert result.error_category == "execution_error"
+	assert result.tool_call_id == "invalid-block"
+	assert "resource limits" in (result.error_message or "")
+
+
+def test_invalid_result_envelope_cannot_turn_string_false_into_success() -> None:
+	result = ToolExecutionResult.from_dict(
+		{
+			"tool_name": "remote",
+			"ok": "false",
+			"content": [{"type": "text", "text": "untrusted result"}],
+			"tool_call_id": "bad-envelope",
+		}
+	)
+	assert not result.ok
+	assert result.error_category == "execution_error"
+	assert result.tool_call_id == "bad-envelope"
+	assert "untrusted result" not in result.text
+	invalid_block = ToolExecutionResult.from_dict(
+		{"tool_name": "remote", "ok": True, "content": [{"type": "video"}]}
+	)
+	assert not invalid_block.ok
+	assert invalid_block.error_category == "execution_error"
+	invalid_duration = ToolExecutionResult.from_dict(
+		{"tool_name": "remote", "ok": True, "duration_ms": 10**1000}
+	)
+	assert not invalid_duration.ok
+	assert invalid_duration.error_category == "execution_error"
+	invalid_metadata = ToolExecutionResult.from_dict(
+		{"tool_name": "remote", "ok": True, "metadata": "not-an-object"}
+	)
+	assert not invalid_metadata.ok
+	assert invalid_metadata.error_category == "execution_error"
+	invalid_flag = ToolExecutionResult(
+		tool_name="remote", ok=True, uncertain="false", termination_confirmed="false"
+	).bounded()
+	assert not invalid_flag.ok
+	assert invalid_flag.uncertain is True
+	assert invalid_flag.termination_confirmed is False
+	assert invalid_flag.to_dict()["uncertain"] is True
+
+
 def test_cyclic_structured_result_becomes_a_correlated_failure() -> None:
 	cyclic = {}
 	cyclic["self"] = cyclic
