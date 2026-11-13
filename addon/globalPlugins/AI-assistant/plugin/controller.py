@@ -75,7 +75,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		"""Open the tabbed AI Assistant settings dialog."""
 		from ..ui.settings_panel import open_settings_dialog
 		gui.mainFrame.prePopup()
-		open_settings_dialog(gui.mainFrame)
+		open_settings_dialog(gui.mainFrame, self._app.services)
 		gui.mainFrame.postPopup()
 
 	def _on_tools_stop_requests(self, _event: wx.CommandEvent) -> None:

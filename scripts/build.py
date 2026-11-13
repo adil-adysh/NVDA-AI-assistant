@@ -16,6 +16,8 @@ MEMORY_ENGINE_DIR = ROOT_DIR / "memory_engine"
 LLM_CLIENT_DIR = ROOT_DIR / "llm_client"
 EMBEDDING_ENGINE_DIR = ROOT_DIR / "embedding_engine"
 RUNTIME_SUPERVISOR_DIR = ROOT_DIR / "runtime_supervisor"
+MCP_MANAGER_DIR = ROOT_DIR / "mcp_client_prototype"
+MCP_MANAGER_DESTINATION = ROOT_DIR / "addon" / "globalPlugins" / "AI-assistant" / "mcp_manager.exe"
 ADDON_LIB_DIR = ROOT_DIR / "addon" / "globalPlugins" / "AI-assistant" / "lib"
 NPM_EXECUTABLE = "npm.cmd" if os.name == "nt" else "npm"
 
@@ -103,6 +105,30 @@ def build_host(*, release: bool = True) -> None:
 	print("Building NVDA UI host:", " ".join(args))
 	env = _filtered_rust_environment()
 	subprocess.run(args, cwd=HOST_DIR, env=env, check=True)
+
+
+def build_mcp_manager(*, release: bool = True) -> None:
+	args = _cargo_build_args(manifest_path=MCP_MANAGER_DIR / "Cargo.toml", release=release)
+	args.extend(("--bin", "mcp_manager"))
+	print("Building Rust MCP manager:", " ".join(args))
+	subprocess.run(args, cwd=ROOT_DIR, env=_filtered_rust_environment(), check=True)
+
+
+def install_mcp_manager(*, release: bool, allow_existing_install: bool = False) -> None:
+	profile = "release" if release else "debug"
+	candidates = sorted(
+		MCP_MANAGER_DIR.glob(f"target/**/{profile}/mcp_manager.exe"),
+		key=lambda path: path.stat().st_mtime,
+		reverse=True,
+	)
+	if not candidates:
+		if allow_existing_install and MCP_MANAGER_DESTINATION.is_file():
+			print(f"Using existing MCP manager at {MCP_MANAGER_DESTINATION}")
+			return
+		raise FileNotFoundError(f"Built MCP manager executable not found under {MCP_MANAGER_DIR / 'target'}.")
+	MCP_MANAGER_DESTINATION.parent.mkdir(parents=True, exist_ok=True)
+	shutil.copy2(candidates[0], MCP_MANAGER_DESTINATION)
+	print(f"Copied Rust MCP manager to {MCP_MANAGER_DESTINATION}")
 
 
 def _find_host_binary() -> Path:
@@ -414,11 +440,13 @@ def main() -> int:
 		build_webui()
 		if not args.install_only:
 			build_host(release=not args.debug)
+			build_mcp_manager(release=not args.debug)
 			build_memory_engine(release=not args.debug)
 			build_llm_client(release=not args.debug)
 			build_embedding_engine(release=not args.debug)
 			build_runtime_supervisor(release=not args.debug)
 		install_host_binary(allow_existing_install=args.install_only)
+		install_mcp_manager(release=not args.debug, allow_existing_install=args.install_only)
 		install_host_assets()
 		install_memory_engine_extension(release=not args.debug, allow_existing_install=args.install_only)
 		install_llm_client_extension(release=not args.debug, allow_existing_install=args.install_only)

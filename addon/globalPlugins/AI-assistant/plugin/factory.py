@@ -21,6 +21,8 @@ from ..config.settings import (
 	get_litert_cache,
 	get_litert_cpu_threads,
 	get_litert_server_url,
+	get_mcp_approved_tool_ids,
+	get_mcp_server_token,
 	get_num_ctx,
 )
 from ..config.model_config import get_all_model_sampling
@@ -34,6 +36,9 @@ from ..providers.runtime.server import build_server_config, get_litert_superviso
 from ..service.chat import ChatCoordinator, ConversationService
 from ..service.llm import ProviderLLMService
 from ..tools import ToolExecutor, ToolRegistry, register_default_tools
+from ..tools.mcp_catalog import McpCatalogService
+from ..tools.policy import DefaultToolPermissionPolicy
+from ..service.mcp_dispatch import dispatch_mcp_worker_command
 from ..use_case.engine import UseCaseEngine
 from .types import PluginServices
 
@@ -91,7 +96,15 @@ def build_plugin_services() -> PluginServices:
 	page_context_provider = CurrentPageContext(context_reducer)
 	tool_registry = ToolRegistry()
 	register_default_tools(tool_registry)
-	tool_executor = ToolExecutor(tool_registry)
+	mcp_catalog = McpCatalogService(
+		tool_registry,
+		dispatch_mcp_worker_command,
+		credential_resolver=get_mcp_server_token,
+	)
+	tool_executor = ToolExecutor(
+		tool_registry,
+		policy=DefaultToolPermissionPolicy(approved_tool_ids=get_mcp_approved_tool_ids()),
+	)
 	llm_service = ProviderLLMService(provider, tool_executor=tool_executor)
 	chat_coordinator = ChatCoordinator(
 		client=llm_service,
@@ -115,6 +128,7 @@ def build_plugin_services() -> PluginServices:
 		context_pipeline=context_pipeline,
 		tool_registry=tool_registry,
 		tool_executor=tool_executor,
+		mcp_catalog=mcp_catalog,
 		llm_service=llm_service,
 		chat_coordinator=chat_coordinator,
 		conversation_service=conversation_service,

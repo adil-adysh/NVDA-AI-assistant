@@ -21,7 +21,7 @@ class SettingsPanelContractTests(unittest.TestCase):
 		cls.tree = ast.parse(SETTINGS_SOURCE.read_text(encoding="utf-8"))
 		cls.source = SETTINGS_SOURCE.read_text(encoding="utf-8")
 
-	def test_five_tabs_are_declared_in_user_facing_order(self) -> None:
+	def test_six_tabs_are_declared_in_user_facing_order(self) -> None:
 		classes = {
 			node.name: node
 			for node in self.tree.body
@@ -47,8 +47,40 @@ class SettingsPanelContractTests(unittest.TestCase):
 		)
 		self.assertEqual(
 			[elt.id for elt in panel_tuple.elts if isinstance(elt, ast.Name)],
-			[class_name for class_name, _title in expected],
+			[class_name for class_name, _title in expected] + ["McpSettingsPanel"],
 		)
+
+	def test_mcp_settings_exposes_keyboard_accessible_per_tool_controls(self) -> None:
+		mcp_source = (ADDON_ROOT / "ui" / "mcp_settings.py").read_text(encoding="utf-8")
+		for label in (
+			'_("Configured MCP servers")',
+			'_("Discovered MCP tools; selection shows approval state")',
+			'_("&Approve selected tool")',
+			'_("&Revoke selected tool")',
+			'_("MCP connection status")',
+			'_("Refresh &tools")',
+			'_("Approve the external tool {tool} from server {server}?\\n\\nUntrusted tool description: {description}")',
+		):
+			self.assertIn(label, mcp_source)
+		self.assertIn("background_tasks.submit", mcp_source)
+
+	def test_mcp_status_announcement_helper_is_a_panel_method(self) -> None:
+		mcp_tree = ast.parse((ADDON_ROOT / "ui" / "mcp_settings.py").read_text(encoding="utf-8"))
+		panel = next(
+			node for node in mcp_tree.body
+			if isinstance(node, ast.ClassDef) and node.name == "McpSettingsPanel"
+		)
+		panel_methods = {node.name for node in panel.body if isinstance(node, ast.FunctionDef)}
+		self.assertIn("_announce", panel_methods)
+
+	def test_toggling_http_server_preserves_credential_reference(self) -> None:
+		mcp_tree = ast.parse((ADDON_ROOT / "ui" / "mcp_settings.py").read_text(encoding="utf-8"))
+		panel = next(
+			node for node in mcp_tree.body
+			if isinstance(node, ast.ClassDef) and node.name == "McpSettingsPanel"
+		)
+		toggle = next(node for node in panel.body if isinstance(node, ast.FunctionDef) and node.name == "_on_toggle_enabled")
+		self.assertIn("credential_ref=config.credential_ref", ast.unparse(toggle))
 
 	def test_dialog_uses_notebook_and_apply_cancel_lifecycle(self) -> None:
 		self.assertIn("wx.Notebook", self.source)

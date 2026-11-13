@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+import logging
+import re
 from typing import Any, TYPE_CHECKING
 
 from . import defaults
@@ -16,12 +18,14 @@ from .state import (
 )
 from .yaml_store import YamlConfigStore
 from .provider_specs import get_provider_config_spec, get_provider_ids
+from .mcp_servers import McpServerConfig
 
 if TYPE_CHECKING:
 	from ..providers.config import OpenAICompatConfig, ProviderConfig
 
 
 _language_resolver: Callable[[], str] | None = None
+logger = logging.getLogger(__name__)
 
 
 def register_language_resolver(resolver: Callable[[], str] | None) -> None:
@@ -56,6 +60,80 @@ def _set_values(values: dict[str, Any], notify: bool = False) -> None:
 def save() -> None:
 	"""Persist current configuration to storage."""
 	_config_store.save()
+
+
+def get_mcp_servers() -> tuple[McpServerConfig, ...]:
+	"""Read validated server records; malformed persisted entries stay disabled."""
+	raw = _get_raw_setting("mcpServers", [])
+	if not isinstance(raw, list):
+		return ()
+	servers: list[McpServerConfig] = []
+	seen: set[str] = set()
+	for item in raw[:128]:
+		try:
+			server = McpServerConfig.from_dict(item)
+			if server.server_id in seen:
+				raise ValueError("duplicate MCP server_id")
+			seen.add(server.server_id)
+			servers.append(server)
+		except (TypeError, ValueError) as error:
+			logger.warning("Ignoring invalid saved MCP server configuration: %s", error)
+	return tuple(servers)
+
+
+def set_mcp_servers(servers: Sequence[McpServerConfig | dict[str, Any]]) -> None:
+	"""Persist a bounded, validated set of MCP server configurations."""
+	if len(servers) > 128:
+		raise ValueError("At most 128 MCP servers may be configured")
+	validated = tuple(
+		server if isinstance(server, McpServerConfig) else McpServerConfig.from_dict(server)
+		for server in servers
+	)
+	identities = [server.server_id for server in validated]
+	if len(identities) != len(set(identities)):
+		raise ValueError("MCP server IDs must be unique")
+	_set_value("mcpServers", [server.to_dict() for server in validated])
+
+
+def get_mcp_approved_tool_ids() -> frozenset[str]:
+	"""Return persisted narrow approvals; invalid entries fail closed."""
+	raw = _get_raw_setting("mcpApprovedToolIds", [])
+	if not isinstance(raw, list):
+		return frozenset()
+	return frozenset(
+		item for item in raw
+		if isinstance(item, str) and item.startswith("mcp:") and len(item) <= 256
+	)
+
+
+def set_mcp_approved_tool_ids(tool_ids: Sequence[str]) -> None:
+	"""Persist explicit per-tool approvals; provider-wide approvals are unsupported."""
+	if len(tool_ids) > 4096:
+		raise ValueError("At most 4096 MCP tool approvals may be stored")
+	if any(not isinstance(tool_id, str) or not tool_id.startswith("mcp:") or len(tool_id) > 256 for tool_id in tool_ids):
+		raise ValueError("MCP approvals must use a valid MCP tool ID")
+	_set_value("mcpApprovedToolIds", sorted(set(tool_ids)))
+
+
+def _mcp_credential_key(server_id: str) -> str:
+	if not isinstance(server_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", server_id):
+		raise ValueError("Invalid MCP server ID")
+	return f"mcpServer_{server_id}ApiToken"
+
+
+def get_mcp_server_token(server_id: str) -> str:
+	"""Read a server bearer token from its DPAPI-protected config value."""
+	value = _read_string(_mcp_credential_key(server_id), "")
+	if len(value) > 8192 or not value.isascii() or "\r" in value or "\n" in value:
+		return ""
+	return value
+
+
+def set_mcp_server_token(server_id: str, token: str) -> None:
+	"""Store a bearer token under a top-level DPAPI-encrypted config key."""
+	if not isinstance(token, str) or len(token) > 8192 or not token.isascii() or "\r" in token or "\n" in token:
+		raise ValueError("MCP bearer token must be at most 8192 characters and contain no line breaks")
+	_set_value(_mcp_credential_key(server_id), token.strip())
 
 
 def _read_string(key: str, default: str) -> str:

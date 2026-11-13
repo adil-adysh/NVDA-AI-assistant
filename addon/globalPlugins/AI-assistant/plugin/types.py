@@ -12,6 +12,7 @@ from ..providers.provider_proxy import ProviderProxy
 from ..service.chat import ChatCoordinator, ConversationService
 from ..service.llm import ProviderLLMService
 from ..tools import ToolExecutor, ToolRegistry
+from ..tools.mcp_catalog import McpCatalogService
 from ..use_case.engine import UseCaseEngine
 
 
@@ -25,6 +26,7 @@ class PluginServices:
 	context_pipeline: ContextPipeline
 	tool_registry: ToolRegistry
 	tool_executor: ToolExecutor
+	mcp_catalog: McpCatalogService
 	llm_service: ProviderLLMService
 	chat_coordinator: ChatCoordinator
 	conversation_service: ConversationService

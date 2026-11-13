@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Mapping
+import time
 
 try:
 	from ..core.litert_contract import DEFAULT_LITERT_VERSION
@@ -13,8 +15,11 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-def execute_runtime_command(server, frame, write):
+def execute_runtime_command(server, frame, write, *, cancellation_requested: Callable[[], bool] | None = None):
 	cmd_type = str(frame.get("type", "") or frame.get("command", ""))
+	if cmd_type.startswith("mcp_"):
+		_execute_mcp_command(server, frame, write, cancellation_requested=cancellation_requested)
+		return
 	last_stage = None
 	def report_stage(stage):
 		nonlocal last_stage
@@ -45,6 +50,7 @@ def execute_runtime_command(server, frame, write):
 				executor.get_status,
 				on_stage=lambda stage: write({"type": "runtime_progress", "stage": stage}),
 			)
+
 			write(
 				{
 					"type": "litert_status_response",
@@ -658,3 +664,113 @@ def execute_runtime_command(server, frame, write):
 				"error_message": f"Unknown command type '{cmd_type}'",
 			}
 		)
+
+
+def _execute_mcp_command(server, frame, write, *, cancellation_requested):
+	"""Run one allowlisted MCP manager command from the private worker lane."""
+	command = str(frame.get("type", "") or frame.get("command", ""))
+	manager = None
+	deadline = time.monotonic() + max(0.001, min(float(frame.get("timeout_seconds", 300.0)), 300.0))
+	try:
+		if command == "mcp_manager_status":
+			manager = server._mcp_manager_client
+			if manager is None or not manager.running:
+				write({"type": "mcp_manager_response", "command": command, "success": True,
+					"reply": {"ok": True, "manager_state": "stopped", "servers": []}})
+				return
+			payload = {"op": "status"}
+		elif command == "mcp_poll_events":
+			manager = server._mcp_manager_client
+			if manager is None or not manager.running:
+				write({"type": "mcp_manager_response", "command": command, "success": True,
+					"reply": {"ok": True, "manager_state": "stopped", "events": []}})
+				return
+			write({"type": "mcp_manager_response", "command": command, "success": True,
+				"reply": {"ok": True, "manager_state": "running", "events": manager.drain_events()}})
+			return
+		elif command == "mcp_connect_stdio":
+			server_id = _required_text(frame, "server_id")
+			executable = _required_text(frame, "executable")
+			args = frame.get("args", [])
+			env = frame.get("env", {})
+			if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
+				raise ValueError("MCP stdio arguments must be a list of strings")
+			if not isinstance(env, Mapping) or not all(isinstance(key, str) and isinstance(value, str) for key, value in env.items()):
+				raise ValueError("MCP stdio environment must be a string mapping")
+			payload = {"op": "connect_stdio", "server_id": server_id,
+				"executable": executable, "args": args, "env": dict(env)}
+		elif command == "mcp_connect_http":
+			auth_token = frame.get("auth_token", "")
+			if not isinstance(auth_token, str) or len(auth_token) > 8192 or not auth_token.isascii() or "\r" in auth_token or "\n" in auth_token:
+				raise ValueError("MCP HTTP bearer token is invalid")
+			payload = {"op": "connect_http", "server_id": _required_text(frame, "server_id"),
+				"url": _required_text(frame, "url"), "auth_token": auth_token}
+		elif command == "mcp_disconnect":
+			payload = {"op": "disconnect", "server_id": _required_text(frame, "server_id")}
+		elif command == "mcp_list_tools":
+			payload = {"op": "list_tools", "server_id": _required_text(frame, "server_id")}
+		elif command == "mcp_invoke":
+			arguments = frame.get("arguments", {})
+			if not isinstance(arguments, Mapping):
+				raise ValueError("MCP invocation arguments must be an object")
+			payload = {
+				"op": "invoke",
+				"server_id": _required_text(frame, "server_id"),
+				"manager_session_id": _required_text(frame, "manager_session_id"),
+				"server_incarnation": _required_int(frame, "server_incarnation"),
+				"catalog_generation": _required_int(frame, "catalog_generation"),
+				"tool_name": _required_text(frame, "tool_name"),
+				"arguments": dict(arguments),
+				"timeout_ms": _required_int(frame, "timeout_ms"),
+				"tool_call_id": frame.get("tool_call_id"),
+			}
+		else:
+			raise ValueError("Unsupported MCP worker operation")
+
+		manager = server.get_mcp_manager()
+		startup_remaining = deadline - time.monotonic()
+		if startup_remaining <= 0:
+			raise TimeoutError("MCP manager startup exceeded the operation deadline")
+		manager.start(timeout=min(startup_remaining, 10.0), cancellation_requested=cancellation_requested)
+		remaining = deadline - time.monotonic()
+		if remaining <= 0:
+			raise TimeoutError("MCP manager startup exceeded the operation deadline")
+		if cancellation_requested is not None and cancellation_requested():
+			raise _McpOperationCancelled("MCP operation cancelled before dispatch")
+		if command == "mcp_invoke":
+			payload["timeout_ms"] = min(payload["timeout_ms"], max(1, int(remaining * 1000)))
+		reply = manager.request(payload, timeout=remaining, cancellation_requested=cancellation_requested)
+		write({"type": "mcp_manager_response", "command": command, "success": True, "reply": reply})
+	except Exception as exc:
+		category = getattr(exc, "category", None)
+		if category is None:
+			category = "timeout" if isinstance(exc, TimeoutError) else (
+				"cancelled" if isinstance(exc, _McpOperationCancelled) else "manager_error"
+			)
+		if command in {"mcp_connect_stdio", "mcp_connect_http"} and manager is not None \
+				and category in {"cancelled", "timeout"} and manager.running:
+			try:
+				manager.request({"op": "disconnect", "server_id": frame.get("server_id", "")}, timeout=1.0)
+			except Exception:
+				logger.debug("MCP connect cleanup after %s did not complete", category, exc_info=True)
+		write({"type": "mcp_manager_response", "command": command, "success": False,
+			"error_code": str(category), "error_message": str(exc),
+			"uncertain": bool(getattr(exc, "uncertain", False))})
+
+
+class _McpOperationCancelled(Exception):
+	"""Cancellation observed before an MCP operation was sent to the manager."""
+
+
+def _required_text(frame, key):
+	value = frame.get(key)
+	if not isinstance(value, str) or not value.strip():
+		raise ValueError(f"MCP command requires '{key}'")
+	return value
+
+
+def _required_int(frame, key):
+	value = frame.get(key)
+	if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+		raise ValueError(f"MCP command requires a non-negative integer '{key}'")
+	return value

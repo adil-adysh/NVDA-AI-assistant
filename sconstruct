@@ -140,6 +140,8 @@ rust_build_sources = [
 	Path("embedding_engine/pyproject.toml"),
 	Path("runtime_supervisor/Cargo.toml"),
 	Path("runtime_supervisor/Cargo.lock"),
+	Path("mcp_client_prototype/Cargo.toml"),
+	Path("mcp_client_prototype/Cargo.lock"),
 ]
 rust_build_sources.extend(Path("nvda_ui_host/src").glob("**/*.rs"))
 rust_build_sources.extend(Path("nvda_ui_host/webui/src").glob("**/*"))
@@ -148,11 +150,14 @@ rust_build_sources.extend(Path("memory_engine/src").glob("**/*.rs"))
 rust_build_sources.extend(Path("llm_client/src").glob("**/*.rs"))
 rust_build_sources.extend(Path("embedding_engine/src").glob("**/*.rs"))
 rust_build_sources.extend(Path("runtime_supervisor/src").glob("**/*.rs"))
+rust_build_sources.extend(Path("mcp_client_prototype/src").glob("**/*.rs"))
+rust_build_sources.extend(Path("mcp_client_prototype/tests").glob("**/*.rs"))
 
 worker_bundle_outputs = [
 	str(Path("addon/globalPlugins/AI-assistant/worker_host") / name)
 	for name in worker_bundle_files
 ]
+worker_bundle_outputs.append("addon/globalPlugins/AI-assistant/mcp_manager.exe")
 
 rust_bundle = env.Command(
 	[str(rust_build_stamp), *worker_bundle_outputs],

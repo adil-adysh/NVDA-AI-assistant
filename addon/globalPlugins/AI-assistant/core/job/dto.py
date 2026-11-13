@@ -97,6 +97,7 @@ class HandshakeRequest:
 	requested_capabilities: tuple[str, ...] = (
 		"job.model_download",
 		"job.runtime_command",
+		"runtime.mcp",
 		"job.embedding",
 		"job.conversation",
 		"job.model_verify",

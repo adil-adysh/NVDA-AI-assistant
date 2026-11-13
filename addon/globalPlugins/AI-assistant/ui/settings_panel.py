@@ -38,6 +38,7 @@ from ..providers.registry import (
 )
 from ..service.model_cache import model_capability_cache, model_catalog_cache
 from .task_runner import TaskHandle, background_tasks
+from .mcp_settings import McpSettingsPanel
 
 addonHandler.initTranslation()
 _ = cast(Callable[[str], str], getattr(builtins, "_", lambda value: value))
@@ -488,17 +489,23 @@ class AIAssistantDiagnosticsPanel(_SettingsTab):
 class AIAssistantSettingsDialog(SettingsDialog):
 	title = _("AI Assistant Settings")
 	helpId = "AIAssistantSettings"
-	_panel_classes = (AIAssistantGeneralPanel, AIAssistantModelsContextPanel, AIAssistantBehaviorOutputPanel, AIAssistantRuntimePanel, AIAssistantDiagnosticsPanel)
+	_panel_classes = (AIAssistantGeneralPanel, AIAssistantModelsContextPanel, AIAssistantBehaviorOutputPanel, AIAssistantRuntimePanel, AIAssistantDiagnosticsPanel, McpSettingsPanel)
 
-	def __init__(self, parent: wx.Window) -> None:
-		self.tabs: list[_SettingsTab] = []
+	def __init__(self, parent: wx.Window, *, mcp_catalog: object = None, tool_registry: object = None, tool_executor: object = None) -> None:
+		self.tabs: list[wx.Window] = []
+		self._mcp_dependencies = (mcp_catalog, tool_registry, tool_executor)
 		super().__init__(parent, resizeable=True, buttons={wx.OK, wx.CANCEL, wx.APPLY})
 
 	def makeSettings(self, settingsSizer: wx.BoxSizer) -> None:
 		self.notebook = wx.Notebook(self)
 		settingsSizer.Add(self.notebook, flag=wx.EXPAND, proportion=1)
 		for panel_class in self._panel_classes:
-			panel = panel_class(self.notebook, self)
+			if panel_class is McpSettingsPanel:
+				if not all(self._mcp_dependencies):
+					continue
+				panel = panel_class(self.notebook, *self._mcp_dependencies)
+			else:
+				panel = panel_class(self.notebook, self)
 			self.tabs.append(panel)
 			self.notebook.AddPage(panel, panel_class.title)
 		self.notebook.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self._on_page_changed)
@@ -508,7 +515,7 @@ class AIAssistantSettingsDialog(SettingsDialog):
 		if event is not None:
 			event.Skip()
 		if self.tabs:
-			self.tabs[self.notebook.GetSelection()].SetFocus()
+			self.notebook.GetPage(self.notebook.GetSelection()).SetFocus()
 
 	def show_validation_error(self, message: str, control: wx.Window, tab: wx.Window) -> None:
 		wx.MessageBox(message, _("Invalid configuration"), wx.OK | wx.ICON_ERROR, parent=self)
@@ -521,7 +528,7 @@ class AIAssistantSettingsDialog(SettingsDialog):
 	def _collect_values(self) -> _SettingsValues:
 		values: dict[str, object] = {}
 		for tab in self.tabs:
-			tab.collect(values)
+			getattr(tab, "collect")(values)
 		return _SettingsValues(**values)
 
 	def _persist(self, values: _SettingsValues) -> None:
@@ -580,8 +587,13 @@ class AIAssistantSettingsDialog(SettingsDialog):
 AIAssistantSettingsPanel = AIAssistantGeneralPanel
 
 
-def open_settings_dialog(parent: wx.Window) -> AIAssistantSettingsDialog:
-	dialog = AIAssistantSettingsDialog(parent)
+def open_settings_dialog(parent: wx.Window, services: object = None) -> AIAssistantSettingsDialog:
+	dialog = AIAssistantSettingsDialog(
+		parent,
+		mcp_catalog=getattr(services, "mcp_catalog", None),
+		tool_registry=getattr(services, "tool_registry", None),
+		tool_executor=getattr(services, "tool_executor", None),
+	)
 	try:
 		dialog.ShowModal()
 	finally:

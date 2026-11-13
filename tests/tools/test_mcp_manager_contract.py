@@ -23,10 +23,11 @@ def test_rust_manager_json_lines_contract() -> None:
 	if os.environ.get("CARGO_BUILD_TARGET"):
 		cargo_target_triple = os.environ["CARGO_BUILD_TARGET"]
 	debug = cargo_target / cargo_target_triple / "debug" if cargo_target_triple else cargo_target / "debug"
-	manager = debug / ("mcp-client-prototype.exe" if os.name == "nt" else "mcp-client-prototype")
+	manager = debug / ("mcp_manager.exe" if os.name == "nt" else "mcp_manager")
 	fixture = debug / ("mock_mcp.exe" if os.name == "nt" else "mock_mcp")
 	built = subprocess.run(
-		["cargo", "build", "--locked", "--features", "fixture-server", "--manifest-path", str(manifest)],
+		["cargo", "build", "--locked", "--features", "fixture-server", "--manifest-path", str(manifest),
+			"--bin", "mcp_manager", "--bin", "mock_mcp"],
 		cwd=root,
 		capture_output=True,
 		text=True,
@@ -85,6 +86,9 @@ def test_rust_manager_json_lines_contract() -> None:
 			"op": "invoke",
 			"id": "invoke",
 			"server_id": "fixture",
+			"manager_session_id": listed["manager_session_id"],
+			"server_incarnation": listed["server_incarnation"],
+			"catalog_generation": listed["catalog_generation"],
 			"tool_name": "echo",
 			"arguments": {"value": {"source": "python"}},
 			"timeout_ms": 5000,
@@ -100,6 +104,9 @@ def test_rust_manager_json_lines_contract() -> None:
 			"op": "invoke",
 			"id": "slow-call",
 			"server_id": "fixture",
+			"manager_session_id": listed["manager_session_id"],
+			"server_incarnation": listed["server_incarnation"],
+			"catalog_generation": listed["catalog_generation"],
 			"tool_name": "slow",
 			"arguments": {"marker_path": str(marker)},
 			"timeout_ms": 120000,

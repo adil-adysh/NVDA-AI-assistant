@@ -176,6 +176,10 @@ class AIAssistantApplication:
 	def terminate(self) -> None:
 		from ..service.llama_operations import shutdown_model_operations
 		shutdown_model_operations()
+		try:
+			self._services.mcp_catalog.close()
+		except Exception:
+			log.exception("Error closing MCP catalog event service during terminate")
 		shutdown_worker_owner()
 		try:
 			self.background.close()

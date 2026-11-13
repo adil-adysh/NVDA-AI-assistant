@@ -95,6 +95,7 @@ class WorkerServer:
 		self._shutdown_event = threading.Event()
 		self._litert_executor = litert_executor
 		self._llama_executor = llama_executor
+		self._mcp_manager_client = None
 
 		# Security attributes
 		self._security_attributes = build_user_only_security_attributes()
@@ -117,6 +118,7 @@ class WorkerServer:
 		self._executor_lock = threading.Lock()
 		self._execution_lanes = {name: ThreadPoolExecutor(max_workers=1, thread_name_prefix="worker_" + name)
 			for name in ("litert", "llama", "embedding", "conversation")}
+		self._execution_lanes["mcp"] = ThreadPoolExecutor(max_workers=8, thread_name_prefix="worker_mcp")
 
 		# Worker Threads
 		self._cmd_thread: threading.Thread | None = None
@@ -155,6 +157,24 @@ class WorkerServer:
 					from worker.executors.llama import LlamaWorkerExecutor  # type: ignore[no-redef]
 				self._llama_executor = LlamaWorkerExecutor()
 			return self._llama_executor
+
+	def get_mcp_manager(self):
+		"""Lazily create the Rust manager client inside the private worker."""
+		with self._executor_lock:
+			if self._shutdown_event.is_set():
+				raise RuntimeError("Worker shutdown has fenced MCP manager startup")
+			if self._mcp_manager_client is not None and self._mcp_manager_client.failed:
+				self._mcp_manager_client.close(timeout=0.1)
+				self._mcp_manager_client = None
+			if self._mcp_manager_client is None:
+				try:
+					from .mcp_manager import McpManagerClient
+				except (ImportError, ValueError):
+					from worker.mcp_manager import McpManagerClient  # type: ignore[no-redef]
+				from pathlib import Path
+				manager_path = Path(__file__).resolve().parents[1] / "mcp_manager.exe"
+				self._mcp_manager_client = McpManagerClient((str(manager_path),))
+			return self._mcp_manager_client
 
 	def start(self) -> None:
 		"""Start command server, event broadcaster, and parent watchdog threads."""
@@ -221,6 +241,11 @@ class WorkerServer:
 			tokens = tuple(self._active_jobs.values())
 		for token in tokens:
 			token.cancel("shutdown")
+		if self._mcp_manager_client is not None:
+			try:
+				self._mcp_manager_client.close(timeout=3.0)
+			except Exception:
+				logger.exception("MCP manager shutdown failed")
 
 		# Shutdown executor
 		self._executor.shutdown(wait=False, cancel_futures=True)
@@ -320,6 +345,7 @@ class WorkerServer:
 					"session.transcription",
 					"runtime.litert",
 					"runtime.llama",
+					"runtime.mcp",
 				),
 				worker_pid=os.getpid(),
 			)
@@ -352,7 +378,7 @@ class WorkerServer:
 			spec = JobSpec.from_dict(frame)
 			token = CancellationToken(spec.job_id)
 			command = str(spec.payload.get("type", ""))
-			control = spec.job_type == "runtime_command" and command.endswith(("_stop", "_get_status", "_status"))
+			control = spec.job_type == "runtime_command" and (command.endswith(("_stop", "_get_status", "_status")) or command == "mcp_manager_status")
 			with self._registry_lock:
 				full = (len(self._control_jobs) >= 8 or self._event_queue.qsize() >= 1128) if control else (
 					len(self._active_jobs) - len(self._control_jobs) >= 128 or self._event_queue.qsize() >= 1000)
@@ -379,6 +405,8 @@ class WorkerServer:
 			if spec.job_type == "runtime_command":
 				if command.endswith(("_stop", "_get_status", "_status")):
 					pool = self._control_executor
+				elif command.startswith("mcp_"):
+					pool = self._execution_lanes["mcp"]
 				else:
 					pool = self._execution_lanes.get(command.split("_", 1)[0], self._executor)
 			else:
@@ -457,7 +485,7 @@ class WorkerServer:
 					status_message=str(frame.get("stage", "")), generation=spec.generation).to_dict())
 			else:
 				response.update(frame)
-		lock = None if command.endswith(("_stop", "_get_status", "_status")) else self._runtime_locks[family]
+		lock = None if command.startswith("mcp_") or command.endswith(("_stop", "_get_status", "_status")) else self._runtime_locks[family]
 		acquired = False
 		finished = threading.Event()
 		watcher = None
@@ -487,7 +515,8 @@ class WorkerServer:
 				watcher = threading.Thread(target=cancel_startup, name="WorkerStartupCancellation", daemon=True)
 				watcher.start()
 			with job_execution_scope(token):
-				execute_runtime_command(self, spec.payload, write)
+				execute_runtime_command(self, spec.payload, write,
+					cancellation_requested=lambda: token.is_cancelled)
 			token.check_cancelled()
 		finally:
 			if watcher is not None and token.is_cancelled:
