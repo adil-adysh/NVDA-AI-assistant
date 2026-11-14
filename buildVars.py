@@ -39,24 +39,13 @@ The add-on includes a WebView-based chat interface with streaming responses, con
 	"""
 	),
 	# version
-	addon_version="0.14.0",
+	addon_version="0.14.1",
 	# Brief changelog for this version
 	# Translators: what's new content for this add-on version to be shown in the add-on store
 	addon_changelog=_(
 		"""
-New Features
-• LiteRT-LM local inference provider with on-demand runtime install and one-click model download
-• llama.cpp server integration with router presets, automatic startup, and API-backed model discovery
-• Manage AI Providers dialog with provider enable/disable, install, and active-provider selection
-• Per-model sampling settings (context window, temperature, top-k, top-p, max tokens, repetition penalty)
-• Digit-based provider and model selection in the assistant layer (press T or M, then a number)
-• Add to chat / Open in new chat actions for summaries and image descriptions
-• Soft-dismiss chat window — Escape hides the window while streaming continues in the background
-Improved
-• Faster model listing with background preloading and caching
-• Healthy llama-server routers switch models without restarting
 Fixed
-• WebView focus handling, preventing NVDA from reading the pane role on programmatic activation
+• MCP tool search and approval filter now have visible labels, so NVDA announces "Search tools" and "Show" instead of "Discovered tools" and an unnamed combo box
 		"""
 	),
 	# Author(s)

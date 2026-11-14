@@ -1,3 +1,13 @@
+v0.14.1
+========
+
+Fixed
+-----
+
+* MCP tool search and approval filter now have visible labels, so NVDA
+  announces "Search tools:" and "Show:" instead of "Discovered tools:" and an
+  unnamed combo box.
+
 v0.14.0
 ========
 

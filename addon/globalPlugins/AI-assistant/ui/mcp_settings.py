@@ -217,9 +217,15 @@ class McpSettingsPanel(wx.Panel):
 		right = wx.BoxSizer(wx.VERTICAL)
 		right.Add(wx.StaticText(self, label=_("Discovered tools:")), 0, wx.BOTTOM, 4)
 		filter_row = wx.BoxSizer(wx.HORIZONTAL)
+		# Create each label immediately before its control: Windows derives an
+		# edit/choice accessible name from the preceding static sibling, and
+		# window creation order is what puts that sibling immediately before the
+		# control. Creating both labels first made the search box announce "Show:".
+		search_label = wx.StaticText(self, label=_("Search tools:"))
 		self.tool_search = wx.TextCtrl(self)
 		self.tool_search.SetHint(_("Search tools by name or description"))
 		self.tool_search.SetName(_("Search MCP tools by name or description"))
+		show_label = wx.StaticText(self, label=_("Show:"))
 		self.tool_filter = wx.Choice(
 			self,
 			choices=[
@@ -231,7 +237,9 @@ class McpSettingsPanel(wx.Panel):
 		)
 		self.tool_filter.SetSelection(0)
 		self.tool_filter.SetName(_("Filter MCP tools by approval or read-only claim"))
+		filter_row.Add(search_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 4)
 		filter_row.Add(self.tool_search, 1, wx.EXPAND | wx.RIGHT, 4)
+		filter_row.Add(show_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 4)
 		filter_row.Add(self.tool_filter, 0, wx.EXPAND)
 		right.Add(filter_row, 0, wx.EXPAND | wx.BOTTOM, 6)
 		self.tool_list = wx.ListBox(self, choices=[])
