@@ -262,9 +262,9 @@ search before paying for a schema. The default Bridge catalog is now 33 tools
 
 Validation: Assistant `uv run pytest` passed 1,335, skipped 3, deselected 40,
 with 60 subtests; Ruff clean; final package `AIAssistant-0.14.0.nvda-addon`
-is 24,346,457 bytes, SHA-256 `589C6CCB…`. Bridge `pytest` passed 601 with 19
+is 24,346,457 bytes, SHA-256 `589C6CCB…`. Bridge `pytest` passed 602 with 19
 subtests; Rust `cargo test` passed 40; final package
-`nvdaMcpBridge-0.10.0.nvda-addon` is 4,616,151 bytes, SHA-256 `3832EF7E…`.
+`nvdaMcpBridge-0.10.0.nvda-addon` is 4,616,152 bytes, SHA-256 `C00F2CFB…`.
 
 ## Baseline
 
