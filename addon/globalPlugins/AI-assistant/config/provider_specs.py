@@ -23,8 +23,6 @@ class ProviderConfigSpec:
 	base_url_default: str
 	executable_key: str | None = None
 	executable_default: str = ""
-	models_preset_key: str | None = None
-	models_preset_default: str = ""
 	api_key_key: str | None = None
 	api_token_key: str | None = None
 	chat_path_key: str | None = None
@@ -77,7 +75,6 @@ PROVIDER_CONFIG_SPECS: dict[str, ProviderConfigSpec] = {
 		base_url_default=defaults.DEFAULT_LLAMA_CPP_URL,
 		executable_key="llamaCppExecutable",
 		executable_default=defaults.DEFAULT_LLAMA_CPP_EXECUTABLE,
-		models_preset_key="llamaCppModelsPreset",
 	),
 }
 

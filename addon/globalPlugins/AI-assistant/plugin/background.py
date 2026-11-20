@@ -112,9 +112,11 @@ def ensure_provider_server_ready(on_progress: Callable[[str], None] | None = Non
 	config = get_active_provider_config()
 	manager = LlamaCppModelManager(config=config)
 	model_name = str(config.model_name or "").strip()
-	record = manager.find_record(model_name) if model_name else None
+	if not model_name:
+		raise LLMProviderError(_("No llama.cpp model is selected. Add or select one in the llama.cpp model manager."))
+	record = manager.find_record(model_name)
 	if record is None:
-		raise LLMProviderError(f"Unknown llama.cpp model: {config.model_name}")
+		raise LLMProviderError(_("Unknown llama.cpp model: {model_id}").format(model_id=model_name))
 	manager.ensure_running(record, on_progress=on_progress)
 	from ..service.model_cache import model_catalog_cache
 
@@ -350,7 +352,7 @@ class BackgroundTaskRunner:
 				readiness = self._readiness_service.evaluate_active()
 				provider = readiness.provider
 				check_cancelled()
-				if not readiness.can_infer:
+				if not readiness.can_infer or not getattr(readiness, "is_ready", True):
 					log.debug("Skipping model preload for %s; provider is not ready", provider)
 					return
 				provider_name = get_provider_display_name(provider)

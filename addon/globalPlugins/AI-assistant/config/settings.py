@@ -437,7 +437,7 @@ def get_litert_cpu_threads() -> int:
 	)
 
 
-LOCAL_STARTUP_MODES = ("lazy", "worker", "server")
+LOCAL_STARTUP_MODES = ("lazy", "server")
 _LOCAL_STARTUP_KEYS = {"litert-lm": "litert", "llama-cpp-server": "llama"}
 
 
@@ -447,6 +447,8 @@ def get_local_startup_mode(provider: str) -> str:
 	if prefix is None:
 		return "lazy"
 	mode = _read_string(prefix + "StartupMode", "").strip().lower()
+	if mode == "worker":
+		return "lazy"
 	if mode in LOCAL_STARTUP_MODES:
 		return mode
 	return "server" if _read_bool(prefix + "StartOnStartup", False) else "lazy"

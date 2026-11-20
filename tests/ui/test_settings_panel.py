@@ -21,7 +21,7 @@ class SettingsPanelContractTests(unittest.TestCase):
 		cls.tree = ast.parse(SETTINGS_SOURCE.read_text(encoding="utf-8"))
 		cls.source = SETTINGS_SOURCE.read_text(encoding="utf-8")
 
-	def test_six_tabs_are_declared_in_user_facing_order(self) -> None:
+	def test_five_tabs_are_declared_in_user_facing_order(self) -> None:
 		classes = {
 			node.name: node
 			for node in self.tree.body
@@ -31,12 +31,12 @@ class SettingsPanelContractTests(unittest.TestCase):
 			("AIAssistantGeneralPanel", "General"),
 			("AIAssistantModelsContextPanel", "Models & Context"),
 			("AIAssistantBehaviorOutputPanel", "Behavior & Output"),
-			("AIAssistantRuntimePanel", "Runtime"),
 			("AIAssistantDiagnosticsPanel", "Diagnostics"),
 		]
 		for class_name, title in expected:
 			self.assertIn(class_name, classes)
 			self.assertIn(title, ast.unparse(classes[class_name]))
+		self.assertNotIn("AIAssistantRuntimePanel", classes)
 
 		dialog = classes["AIAssistantSettingsDialog"]
 		panel_tuple = next(
@@ -185,7 +185,7 @@ class SettingsPanelContractTests(unittest.TestCase):
 		self.assertIn('title = _("MCP Servers and Tools")', mcp_source)
 		self.assertNotIn('title = _("MCP Servers & Tools")', mcp_source)
 
-	def test_tab_switching_focuses_the_first_usable_control(self) -> None:
+	def test_initial_focus_helper_is_not_used_when_switching_tabs(self) -> None:
 		dialog = next(
 			node for node in self.tree.body
 			if isinstance(node, ast.ClassDef) and node.name == "AIAssistantSettingsDialog"
@@ -198,6 +198,7 @@ class SettingsPanelContractTests(unittest.TestCase):
 		self.assertIn("_first_focusable", methods)
 		self.assertIn("_focus_current_page", methods)
 		self.assertIn("_first_focusable", methods["_focus_current_page"])
+		self.assertNotIn("CallAfter", methods["_on_page_changed"])
 		self.assertNotIn("GetPage(self.notebook.GetSelection()).SetFocus()", methods["_on_page_changed"])
 
 	def test_settings_menu_item_is_present(self) -> None:

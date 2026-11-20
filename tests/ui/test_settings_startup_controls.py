@@ -3,6 +3,7 @@ import pytest
 import wx
 
 from tests.support.settings_ui import load_settings_ui
+from types import SimpleNamespace
 
 
 @pytest.fixture
@@ -18,21 +19,55 @@ def settings_ui(monkeypatch):
 		app.ProcessPendingEvents()
 
 
-def test_startup_choices_collect_separate_policies_and_expose_help(settings_ui, monkeypatch):
+def test_page_change_does_not_queue_focus_or_override_validation(settings_ui, monkeypatch):
+	module, _frame = settings_ui
+	queued = []
+	skipped = []
+	monkeypatch.setattr(wx, "CallAfter", lambda *args: queued.append(args))
+	dialog = SimpleNamespace(tabs=[object()], _focus_current_page=lambda: None)
+	event = SimpleNamespace(Skip=lambda: skipped.append(True))
+	module.AIAssistantSettingsDialog._on_page_changed(dialog, event)
+	assert skipped == [True]
+	assert queued == []
+
+
+def test_tool_call_limit_is_an_accessible_unsaved_draft(settings_ui, monkeypatch):
 	module, frame = settings_ui
-	monkeypatch.setattr(module, "get_local_startup_mode", lambda provider: "worker" if provider == "litert-lm" else "server")
-	panel = module.AIAssistantRuntimePanel(frame, dialog=None)
-	assert panel.litert_startup.GetSelection() == 1
-	assert panel.llama_startup.GetSelection() == 2
-	assert panel.litert_startup.GetName().startswith("LiteRT-LM startup.")
-	assert "first inference" in panel.litert_startup.GetName()
-	assert panel.litert_startup.GetToolTip().GetTip()
-	panel.llama_startup.SetSelection(0)
+	monkeypatch.setattr(module, "get_max_tool_calls", lambda: 250)
+	panel = module.AIAssistantBehaviorOutputPanel(frame, dialog=None)
+	assert panel.max_tool_calls.GetValue() == "250"
+	assert "Maximum tool calls" in panel.max_tool_calls.GetName()
+	assert "individual" in panel.max_tool_calls.GetName()
+	assert "next response" in panel.max_tool_calls.GetToolTip().GetTip()
+	panel.max_tool_calls.SetValue("600")
 	values = {}
 	panel.collect(values)
-	assert values["litert_startup"] == "worker"
-	assert values["llama_startup"] == "lazy"
-	panel.litert_startup.SetSelection(wx.NOT_FOUND)
+	assert values["max_tool_calls"] == 600
+	assert module.get_max_tool_calls() == 250
+	for invalid in ("0", "1001", "1.5", ""):
+		panel.max_tool_calls.SetValue(invalid)
+		with pytest.raises(module._InvalidSetting) as error:
+			panel.collect({})
+		assert error.value.control is panel.max_tool_calls
+
+
+def test_general_timeout_collects_an_unsaved_draft_and_validates(settings_ui, monkeypatch):
+	module, frame = settings_ui
+	monkeypatch.setattr(module, "get_timeout_seconds", lambda: 450)
+	monkeypatch.setattr(module, "get_provider", lambda: "ollama")
+	monkeypatch.setattr(module, "get_enabled_providers", lambda: ("ollama",))
+	monkeypatch.setattr(module.AIAssistantGeneralPanel, "_update_active_state", lambda *_: None)
+	monkeypatch.setattr(module, "build_model_manager", lambda *_args, **_kwargs: None)
+	panel = module.AIAssistantGeneralPanel(frame, dialog=None)
+	panel.model_combo.SetValue("draft-model")
+	assert panel.timeout.GetValue() == "450"
+	assert "Request timeout" in panel.timeout.GetName()
+	panel.timeout.SetValue("90")
+	values = {}
+	panel.collect(values)
+	assert values["timeout_seconds"] == 90
+	assert module.get_timeout_seconds() == 450
+	panel.timeout.SetValue("0")
 	with pytest.raises(module._InvalidSetting):
 		panel.collect({})
 

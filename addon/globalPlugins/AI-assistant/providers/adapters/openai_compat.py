@@ -24,9 +24,11 @@ from typing import Any
 from ...core.canonical import Message, Tool
 from ...core.messages import LLMResponse, SummaryResponse
 from ...core.tooling import ToolCall
+from ...core.translation import _
 from ...config.model_config import ModelSamplingConfig, resolve_model_sampling
 from ...tools import build_function_tool_definition, normalize_tool_calls
 from ..config import OpenAICompatConfig
+from ..policy import get_provider_policy
 from ...config.settings import get_image_mime_type
 from ..endpoints import EndpointConfigurationError, resolve_openai_endpoints
 from ..interfaces import (
@@ -67,6 +69,12 @@ _OLLAMA_CAPABILITY_MAP = {
 	"vision": "image_input",
 	"tools": "tools",
 	"thinking": "thinking",
+	"reasoning": "thinking",
+	"chat": "chat",
+	"streaming": "streaming",
+	"image_input": "image_input",
+	"text_input": "text_input",
+	"text_output": "text_output",
 }
 
 # Ollama ``details.families`` architecture families that imply a vision
@@ -89,7 +97,7 @@ def _extract_advertised_capabilities(item: dict[str, Any]) -> set[str] | None:
 		mapped = _OLLAMA_CAPABILITY_MAP.get(str(token).lower().strip())
 		if mapped:
 			caps.add(mapped)
-	return caps or None
+	return caps
 
 # OpenAI model families that support image input.
 _OPENAI_VISION_FAMILIES = (
@@ -98,6 +106,7 @@ _OPENAI_VISION_FAMILIES = (
 	"gpt-4.1",
 	"gpt-4.5",
 	"gpt-5",
+	"gpt-6",
 	"gpt-4-turbo",
 	"gpt-4-vision-preview",
 	"o1",
@@ -106,7 +115,7 @@ _OPENAI_VISION_FAMILIES = (
 )
 
 # OpenAI model families that support thinking/reasoning.
-_OPENAI_THINKING_FAMILIES = ("gpt-5", "o1", "o3", "o4")
+_OPENAI_THINKING_FAMILIES = ("gpt-5", "gpt-6", "o1", "o3", "o4")
 
 # Gemini model families that support image (vision) input.  Gemini's
 # native and OpenAI-compat model listings expose NO per-model modality
@@ -220,6 +229,19 @@ class OpenAICompatProvider(LLMProvider):
 
 		# 2. Fall back to /v1/models + name inference.
 		return self._list_models_openai_compat()
+
+	def check_connection(self) -> int:
+		"""Check the draft's HTTP endpoint, independently of managed catalogs."""
+		try:
+			models = self._client.list_models()
+		except Exception as exc:
+			raise LLMProviderError(str(exc)) from exc
+		if not isinstance(models, list) or any(
+			not isinstance(item, dict) or not str(item.get("id") or "").strip()
+			for item in models
+		):
+			raise LLMProviderError(_("Invalid models response from the configured endpoint"))
+		return len(models)
 
 	def _list_models_litert_server(self) -> tuple[ProviderModelInfo, ...]:
 		"""List models registered in the add-on-managed LiteRT server."""
@@ -413,6 +435,8 @@ class OpenAICompatProvider(LLMProvider):
 		yet started, brief network blip) must not permanently disable the
 		Ollama-native path for the instance lifetime.
 		"""
+		if self._provider_id != "ollama":
+			return False
 		if self._is_ollama is True:
 			return True
 		try:
@@ -545,6 +569,9 @@ class OpenAICompatProvider(LLMProvider):
 			model_id = str(item.get("id", "")).strip()
 			if not model_id:
 				continue
+			policy = get_provider_policy(self._provider_id)
+			if policy is not None and not policy.supports_model(model_id):
+				continue
 			result.append(
 				self._capabilities_for_model(
 					model_id,
@@ -567,6 +594,9 @@ class OpenAICompatProvider(LLMProvider):
 		   endpoints expose no capability metadata (OpenAI/Gemini).
 		"""
 		lowered = model_id.lower().strip()
+		policy = get_provider_policy(self._provider_id)
+		if policy is not None and not policy.supports_model(model_id):
+			return ProviderModelInfo(id=model_id, provider=self.provider_name(), display_name=model_id)
 		capabilities: set[str] = {"completion", "text_input", "text_output"}
 
 		# Nearly everything supports chat + streaming.
@@ -587,15 +617,16 @@ class OpenAICompatProvider(LLMProvider):
 			capabilities.update(advertised)
 
 		# GPT/OpenAI family.
-		if any(t in lowered for t in ("gpt", "chatgpt", "o1", "o3", "o4")):
+		if advertised is None and any(t in lowered for t in ("gpt", "chatgpt", "o1", "o3", "o4")):
 			capabilities.add("tools")
-		if lowered.startswith(_OPENAI_THINKING_FAMILIES):
+		if advertised is None and lowered.startswith(_OPENAI_THINKING_FAMILIES):
 			capabilities.add("thinking")
-		if lowered.startswith(_OPENAI_VISION_FAMILIES):
+		if (advertised is None and lowered.startswith(_OPENAI_VISION_FAMILIES)
+			and not lowered.startswith(("o1-mini", "o1-preview", "o3-mini"))):
 			capabilities.add("image_input")
 
 		# Generic image-input detection for known vision model families.
-		if any(t in lowered for t in _OLLAMA_VISION_TOKENS):
+		if advertised is None and any(t in lowered for t in _OLLAMA_VISION_TOKENS):
 			capabilities.add("image_input")
 
 		# Gemini models: tools for all; vision only for curated multimodal
@@ -604,7 +635,7 @@ class OpenAICompatProvider(LLMProvider):
 		# the ``models/`` prefix stripped, rather than loose substring matching
 		# (which would mis-classify ``gemini-flash-latest`` and other aliases).
 		gemini_name = _strip_models_prefix(lowered)
-		if gemini_name.startswith("gemini"):
+		if advertised is None and gemini_name.startswith("gemini"):
 			capabilities.add("tools")
 			if gemini_name.startswith(_GEMINI_VISION_FAMILIES):
 				capabilities.add("image_input")

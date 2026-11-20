@@ -223,7 +223,7 @@ class ProviderManagementDialog(wx.Dialog):
 		)
 		self._configure_btn.Show(ProviderAction.CONFIGURE in actions)
 		self._manage_btn.SetLabel(
-			_("Manage {name} Models").format(name=info.name),
+			_("Manage {name} models").format(name=info.name),
 		)
 		self._manage_btn.Show(ProviderAction.MANAGE_MODELS in actions)
 

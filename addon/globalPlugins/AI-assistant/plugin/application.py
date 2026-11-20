@@ -13,16 +13,20 @@ from logHandler import log
 from ..config.state import ProviderState, subscribe_provider_state_change, unsubscribe_provider_state_change
 from ..config.settings import (
 	get_enabled_providers,
+	get_active_provider_config,
 	get_local_startup_mode,
 	get_provider,
 	get_provider_state,
+	get_mcp_servers,
 )
 from ..context.extractors.selection import safe_extract_selection
+from ..core.runtime_selection import set_runtime_selection_gate
 from ..context.graph_store import save_accessibility_graph
 from ..service import get_provider_display_name, provider_control_service
 from ..service.error_reporter import ErrorContext, error_reporter
 from ..service.model_cache import model_catalog_cache
-from ..ui.host_process import stop_host
+from ..service.local_provider_lifecycle import LocalProviderLifecycle
+from ..ui.host_process import configure_host_lifecycle, fence_host_startup, stop_host
 from ..ui.adapter import ui_adapter
 from ..ui import nvda_ui
 from ..ui.session_state import build_provider_status_message
@@ -70,6 +74,19 @@ class AIAssistantApplication:
 			pass
 		log.debug("Browser Assistant plugin initializing")
 		self._host = host
+		self._terminating = threading.Event()
+		configure_host_lifecycle()
+		from ..providers.runtime.server import get_litert_supervisor
+		from ..providers.runtime.llama_server import get_llama_supervisor
+
+		self._local_lifecycle = LocalProviderLifecycle(
+			get_provider=get_provider,
+			stop_servers={
+				"litert-lm": lambda: get_litert_supervisor().stop(),
+				"llama-cpp-server": lambda: get_llama_supervisor().stop(),
+			},
+		)
+		set_runtime_selection_gate(self._local_lifecycle.gate)
 		from ..service.llama_operations import initialize_model_operations
 		initialize_model_operations()
 		self._worker_owner = configure_worker_owner()
@@ -124,6 +141,10 @@ class AIAssistantApplication:
 				ErrorContext(operation="model catalog preload", origin="application startup", optional=True),
 			)
 		log.debug("Browser Assistant plugin initialized")
+		try:
+			self._services.mcp_catalog.start_configured(get_mcp_servers())
+		except Exception:
+			log.exception("Error scheduling MCP server startup")
 
 	@property
 	def services(self) -> PluginServices:
@@ -140,6 +161,13 @@ class AIAssistantApplication:
 		try:
 			provider = get_provider()
 			startup_mode = get_local_startup_mode(provider)
+			if startup_mode != "server":
+				return
+			# A llama server without a selected configuration has nothing to
+			# start. Keep model management available without raising a startup error.
+			if provider == "llama-cpp-server" and startup_mode == "server" and not str(get_active_provider_config().model_name or "").strip():
+				log.debug("Skipping llama.cpp server startup because no model is configured")
+				return
 			litert_installed = True
 			if provider == "litert-lm" and startup_mode == "server":
 				from ..providers.runtime.server import get_litert_supervisor
@@ -150,12 +178,12 @@ class AIAssistantApplication:
 				provider=provider,
 				litert_installed=litert_installed,
 				startup_mode=startup_mode,
-				prepare_worker=self._worker_owner.ensure_client,
-				ensure_ready=ensure_provider_server_ready,
+				ensure_ready=lambda: self._local_lifecycle.run_selected(provider, ensure_provider_server_ready),
+				should_start=lambda: not self._terminating.is_set() and get_provider() == provider,
 				report_error=lambda error, active_provider: error_reporter.report(
 					error,
 					ErrorContext(
-						operation="background worker startup" if startup_mode == "worker" else "provider server startup",
+						operation="provider server startup",
 						provider=active_provider,
 						origin="application startup",
 					),
@@ -174,17 +202,26 @@ class AIAssistantApplication:
 		return count
 
 	def terminate(self) -> None:
-		from ..service.llama_operations import shutdown_model_operations
-		shutdown_model_operations()
+		self._terminating.set()
+		fence_host_startup()
+		self._local_lifecycle.close()
+		try:
+			from ..service.llama_operations import shutdown_model_operations
+			shutdown_model_operations()
+		except Exception:
+			log.exception("Error closing model operations during terminate")
 		try:
 			self._services.mcp_catalog.close()
 		except Exception:
 			log.exception("Error closing MCP catalog event service during terminate")
-		shutdown_worker_owner()
 		try:
 			self.background.close()
 		except Exception:
 			log.exception("Error closing background tasks during terminate")
+		try:
+			shutdown_worker_owner()
+		except Exception:
+			log.exception("Error closing worker owner during terminate")
 		try:
 			self.presenter.close()
 		except Exception:
@@ -224,6 +261,13 @@ class AIAssistantApplication:
 		).start()
 
 	def _handle_provider_state_change(self, provider_state: ProviderState) -> None:
+		self._local_lifecycle.run_selected(
+			provider_state.provider, lambda: self._present_provider_state_change(provider_state),
+		)
+
+	def _present_provider_state_change(self, provider_state: ProviderState) -> None:
+		if provider_state != get_provider_state():
+			return
 		previous_state = self._last_provider_state
 		self._last_provider_state = provider_state
 		self.presenter.update_provider_state(provider_state)

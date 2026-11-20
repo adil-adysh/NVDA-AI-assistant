@@ -39,6 +39,20 @@ class ThreadFactory:
 		return thread
 
 
+def test_queued_startup_is_skipped_after_provider_change_or_shutdown():
+	factory = ThreadFactory()
+	allowed = True
+	calls = []
+	thread = startup.schedule_active_local_provider_start(
+		provider="litert-lm", litert_installed=True, startup_mode="server",
+		ensure_ready=lambda: calls.append("server"),
+		should_start=lambda: allowed, report_error=lambda *_args: None, thread_factory=factory,
+	)
+	allowed = False
+	thread.run()
+	assert calls == []
+
+
 @pytest.mark.parametrize(
 	("provider", "expected_name"),
 	[
@@ -139,14 +153,13 @@ def test_litert_with_existing_process_still_enters_readiness_path() -> None:
 
 
 @pytest.mark.parametrize("provider", ["litert-lm", "llama-cpp-server"])
-@pytest.mark.parametrize("mode,expected", [("lazy", []), ("worker", ["worker"]), ("server", ["server"])])
+@pytest.mark.parametrize("mode,expected", [("lazy", []), ("worker", []), ("server", ["server"])])
 def test_explicit_startup_mode_routes_only_the_requested_operation(provider, mode, expected):
 	factory = ThreadFactory()
 	calls = []
 	thread = startup.schedule_active_local_provider_start(
 		provider=provider, litert_enabled=False, llama_enabled=False,
 		litert_installed=True, startup_mode=mode,
-		prepare_worker=lambda: calls.append("worker"),
 		ensure_ready=lambda: calls.append("server"),
 		report_error=lambda *_args: None, thread_factory=factory,
 	)
@@ -156,15 +169,14 @@ def test_explicit_startup_mode_routes_only_the_requested_operation(provider, mod
 	assert calls == expected
 
 
-def test_worker_preparation_does_not_require_installed_litert_server():
+def test_removed_worker_policy_does_not_start_background_processes():
 	factory = ThreadFactory()
 	calls = []
 	thread = startup.schedule_active_local_provider_start(
 		provider="litert-lm", litert_enabled=False, llama_enabled=False,
 		litert_installed=False, startup_mode="worker",
-		prepare_worker=lambda: calls.append("worker"), ensure_ready=lambda: calls.append("server"),
+		ensure_ready=lambda: calls.append("server"),
 		report_error=lambda *_args: None, thread_factory=factory,
 	)
-	assert thread is not None
-	thread.run()
-	assert calls == ["worker"]
+	assert thread is None
+	assert calls == []

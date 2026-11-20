@@ -13,12 +13,32 @@ def load_settings_ui(monkeypatch):
 		def __init__(self, parent, orientation=None, *, sizer=None):
 			self.sizer = sizer if sizer is not None else wx.BoxSizer(orientation)
 
-		def addItem(self, item):
-			self.sizer.Add(item.sizer if isinstance(item, BoxSizerHelper) else item, flag=wx.EXPAND)
+		def addItem(self, item, **kwargs):
+			self.sizer.Add(item.sizer if isinstance(item, BoxSizerHelper) else item, **({"flag": wx.EXPAND} | kwargs))
 			return item
 
+		def addDialogDismissButtons(self, buttons, separated=False):
+			self.sizer.Add(buttons.sizer)
+
+	class LabeledControlHelper:
+		def __init__(self, parent, label, control_class, **kwargs):
+			self.sizer = wx.BoxSizer(wx.HORIZONTAL)
+			self.sizer.Add(wx.StaticText(parent, label=label))
+			self.control = control_class(parent, **kwargs)
+			self.sizer.Add(self.control)
+
+	class ButtonHelper:
+		def __init__(self, orientation):
+			self.sizer = wx.BoxSizer(orientation)
+
+		def addButton(self, parent, button_id, label):
+			button = wx.Button(parent, button_id, label=label)
+			self.sizer.Add(button)
+			return button
+
 	gui = types.ModuleType("gui")
-	gui.guiHelper = types.SimpleNamespace(BoxSizerHelper=BoxSizerHelper)
+	gui.guiHelper = types.SimpleNamespace(BoxSizerHelper=BoxSizerHelper,
+		LabeledControlHelper=LabeledControlHelper, ButtonHelper=ButtonHelper)
 	settings_dialogs = types.ModuleType("gui.settingsDialogs")
 	settings_dialogs.SettingsDialog = wx.Dialog
 	monkeypatch.setitem(sys.modules, "gui", gui)

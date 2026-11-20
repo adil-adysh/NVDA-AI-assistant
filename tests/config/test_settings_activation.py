@@ -76,8 +76,9 @@ def test_startup_mode_preserves_legacy_preference_and_round_trips(monkeypatch, p
 	assert settings_module.get_local_startup_mode(provider) == "lazy"
 	store.set(prefix + "StartOnStartup", True)
 	assert settings_module.get_local_startup_mode(provider) == "server"
-	settings_module.set_local_startup_mode(provider, "worker")
-	assert settings_module.get_local_startup_mode(provider) == "worker"
+	store.set(prefix + "StartupMode", "worker")
+	assert settings_module.get_local_startup_mode(provider) == "lazy"
+	settings_module.set_local_startup_mode(provider, "lazy")
 	assert store.get(prefix + "StartOnStartup") is False
 	settings_module.set_local_startup_mode(provider, "server")
 	assert store.get(prefix + "StartOnStartup") is True
@@ -90,12 +91,14 @@ def test_startup_mode_preserves_legacy_preference_and_round_trips(monkeypatch, p
 def test_legacy_setter_replaces_worker_policy(monkeypatch, provider, prefix):
 	store = _FakeStore()
 	monkeypatch.setattr(settings_module, "_config_store", store)
-	settings_module.set_local_startup_mode(provider, "worker")
+	store.set(prefix + "StartupMode", "worker")
 	setter = getattr(settings_module, "set_" + prefix + "_start_on_startup")
 	setter(True)
 	assert settings_module.get_local_startup_mode(provider) == "server"
 	setter(False)
 	assert settings_module.get_local_startup_mode(provider) == "lazy"
+	with pytest.raises(ValueError):
+		settings_module.set_local_startup_mode(provider, "worker")
 
 
 def test_corrupt_startup_mode_retains_valid_legacy_server_preference(monkeypatch):

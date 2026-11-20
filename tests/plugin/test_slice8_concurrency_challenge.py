@@ -33,6 +33,7 @@ import ast
 import logging
 import sys
 import threading
+import pytest
 import time
 import types
 import unittest
@@ -122,6 +123,7 @@ _stub_module(
 	get_llama_start_on_startup=lambda: False,
 	get_litert_start_on_startup=lambda: False,
 	get_local_startup_mode=lambda _provider: "lazy",
+	get_mcp_servers=lambda: (),
 	get_provider_state=lambda: types.SimpleNamespace(provider="litert-lm", model_name="model-1", backend_url=""),
 	register_language_resolver=lambda _cb: None,
 )
@@ -157,7 +159,7 @@ _stub_module("context.extractors.selection", safe_extract_selection=lambda: None
 _stub_module("context.graph_store", save_accessibility_graph=lambda *a, **k: Path("test.json"))
 _stub_module("service", get_provider_display_name=str, provider_control_service=types.SimpleNamespace())
 sys.modules[f"{CHALLENGE_NAMESPACE}.service"].__path__ = [str(ADDON_ROOT / "service")]
-_stub_module("ui.host_process", stop_host=lambda: None)
+_stub_module("ui.host_process", stop_host=lambda: None, configure_host_lifecycle=lambda: None, fence_host_startup=lambda: None)
 _stub_module("ui.adapter", ui_adapter=types.SimpleNamespace(register_provider_ready_handler=lambda h: None))
 _stub_module("utils.clipboard", safe_read_clipboard=lambda: None)
 _stub_module("plugin.factory", build_plugin_services=lambda: types.SimpleNamespace(
@@ -165,6 +167,7 @@ _stub_module("plugin.factory", build_plugin_services=lambda: types.SimpleNamespa
 	llm_service=types.SimpleNamespace(ensure_model_available=lambda on_progress=None: "model-1"),
 	use_case_engine=types.SimpleNamespace(execute=lambda u, progress=None: types.SimpleNamespace(message="ok")),
 	provider=types.SimpleNamespace(close=MagicMock()),
+	mcp_catalog=types.SimpleNamespace(start_configured=MagicMock(), close=MagicMock()),
 ))
 _stub_module("plugin.layer_mode", AssistantLayerController=lambda **k: types.SimpleNamespace(activate=lambda: None))
 _stub_module("plugin.local_provider_startup", schedule_active_local_provider_start=lambda **k: None)
@@ -185,7 +188,33 @@ app_mod = load_module(
 )
 
 
-def test_application_worker_policy_does_not_check_or_start_server(monkeypatch):
+def test_model_cleanup_failure_does_not_skip_worker_or_host_shutdown(monkeypatch):
+	import importlib
+	operations = importlib.import_module(f"{CHALLENGE_NAMESPACE}.service.llama_operations")
+	app = app_mod.AIAssistantApplication(host=MagicMock())
+	calls = []
+	def fail():
+		raise RuntimeError("cleanup failed")
+	monkeypatch.setattr(operations, "shutdown_model_operations", fail)
+	monkeypatch.setattr(app_mod, "fence_host_startup", lambda: calls.append("fence"))
+	monkeypatch.setattr(app_mod, "shutdown_worker_owner", lambda: calls.append("worker"))
+	monkeypatch.setattr(app_mod, "stop_host", lambda: calls.append("host"))
+	app.terminate()
+	assert calls == ["fence", "worker", "host"]
+
+
+def test_application_schedules_saved_mcp_connections_on_load(monkeypatch):
+	records = [object()]
+	monkeypatch.setattr(app_mod, "get_mcp_servers", lambda: records)
+	app = app_mod.AIAssistantApplication(host=MagicMock())
+	try:
+		app.services.mcp_catalog.start_configured.assert_called_once_with(records)
+	finally:
+		app.terminate()
+
+
+@pytest.mark.parametrize("provider", ["litert-lm", "llama-cpp-server"])
+def test_application_removed_worker_policy_does_not_prepare_or_start(monkeypatch, provider):
 	from tests.support.bootstrap import load_addon_module
 	startup = load_addon_module("plugin.local_provider_startup", namespace="startup_composition_testpkg")
 	calls = []
@@ -203,17 +232,18 @@ def test_application_worker_policy_does_not_check_or_start_server(monkeypatch):
 		return startup.schedule_active_local_provider_start(**kwargs, thread_factory=ControlledThread)
 
 	monkeypatch.setattr(app_mod, "get_local_startup_mode", lambda _provider: "worker")
+	monkeypatch.setattr(app_mod, "get_provider", lambda: provider)
+	monkeypatch.setattr(app_mod, "get_active_provider_config", lambda: types.SimpleNamespace(model_name=""))
 	monkeypatch.setattr(app_mod, "schedule_active_local_provider_start", schedule)
 	monkeypatch.setattr(app_mod, "ensure_provider_server_ready", lambda: calls.append("server"))
 	server_module = sys.modules[f"{CHALLENGE_NAMESPACE}.providers.runtime.server"]
 	monkeypatch.setattr(server_module, "get_litert_supervisor", lambda: calls.append("server probe"))
 	application = object.__new__(app_mod.AIAssistantApplication)
+	application._terminating = threading.Event()
 	application._worker_owner = types.SimpleNamespace(ensure_client=lambda: calls.append("worker"))
 	application._auto_start_active_local_provider()
 	assert calls == []
-	assert len(threads) == 1
-	threads[0].target()
-	assert calls == ["worker"]
+	assert len(threads) == 0
 
 
 def test_selecting_local_provider_preserves_lazy_server_startup(monkeypatch):
@@ -513,7 +543,9 @@ class TestInvariantA14AdversarialValidation(unittest.TestCase):
 					with self.assertRaises(bg_mod.LLMProviderError) as ctx:
 						bg_mod.ensure_provider_server_ready()
 
-					self.assertIn("Unknown llama.cpp model", str(ctx.exception))
+					self.assertIn("llama.cpp model", str(ctx.exception))
+					if not str(bad_name or "").strip():
+						self.assertIn("No llama.cpp model is selected", str(ctx.exception))
 					# Must never attempt to start server
 					mock_manager.ensure_running.assert_not_called()
 					# Must never silently mutate user settings

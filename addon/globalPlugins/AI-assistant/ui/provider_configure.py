@@ -26,8 +26,12 @@ from gui.guiHelper import (
 )
 from logHandler import log
 
-from ..config.settings import build_provider_config, set_openai_compat_config
-from ..providers.adapters.openai_compat import OpenAICompatProvider
+from ..config.settings import (
+	LOCAL_STARTUP_MODES, build_provider_config, get_local_startup_mode,
+	set_local_startup_mode, set_openai_compat_config,
+)
+from ..service.provider_connection import ProviderConnectionService
+from . import nvda_ui
 from ..providers.registry import (
 	ConfigureFieldSpec,
 	configure_dialog_title,
@@ -83,6 +87,7 @@ class ProviderConfigureDialog(wx.Dialog):
 		#: Per-field LabeledControlHelper keyed by spec.id.
 		self._lch: dict[str, LabeledControlHelper] = {}
 		self._secret_cbs: dict[str, wx.CheckBox] = {}
+		self._startup_choice: wx.Choice | None = None
 
 		self._build_ui()
 		self._populate_fields()
@@ -129,6 +134,8 @@ class ProviderConfigureDialog(wx.Dialog):
 		for spec in self._fields:
 			self._add_field_row(s_helper, spec)
 			s_helper.sizer.AddSpacer(4)
+		if self._provider_id in ("litert-lm", "llama-cpp-server"):
+			self._add_startup_choice(s_helper)
 
 		s_helper.sizer.AddSpacer(8)
 
@@ -156,6 +163,34 @@ class ProviderConfigureDialog(wx.Dialog):
 
 	def scaleSize(self, size: tuple[int, int]) -> wx.Size:
 		return wx.Size(*size)
+
+	def _add_startup_choice(self, helper: Any) -> None:
+		labeled = LabeledControlHelper(self, _("Startup:"), wx.Choice, choices=[
+			_("Start when needed (default)"), _("Start when NVDA starts"),
+		])
+		self._startup_choice = choice = labeled.control
+		choice.SetSelection(LOCAL_STARTUP_MODES.index(get_local_startup_mode(self._provider_id)))
+		helper.addItem(labeled.sizer, flag=wx.EXPAND)
+		help_text = wx.StaticText(self, label="")
+		helper.addItem(help_text)
+		descriptions = [
+			_("Starts the server on the first AI request. Background services start automatically when needed."),
+			_("Starts the server only if this is the active provider when NVDA starts. Model loading depends on the runtime."),
+		]
+		def update_help(event=None):
+			index = choice.GetSelection()
+			description = descriptions[index if index in (0, 1) else 0]
+			text = _("{description} Changes apply the next time NVDA starts.").format(description=description)
+			choice.SetName(_("Startup. {description}").format(description=text))
+			choice.SetHelpText(text)
+			choice.SetToolTip(text)
+			help_text.SetLabel(text)
+			help_text.Wrap(self.FromDIP(480))
+			self.Layout()
+			if event is not None:
+				event.Skip()
+		choice.Bind(wx.EVT_CHOICE, update_help)
+		update_help()
 
 	def _add_field_row(self, s_helper: Any, spec: ConfigureFieldSpec) -> None:
 		# Use NVDA's LabeledControlHelper so the label and control are
@@ -230,18 +265,6 @@ class ProviderConfigureDialog(wx.Dialog):
 		finally:
 			dialog.Destroy()
 		lch.control.SetValue(selected)
-		if field_id != "models_preset":
-			return
-		# Preset selection is intentionally durable immediately. Only this field
-		# is persisted so unrelated edits in the open dialog remain cancelable.
-		try:
-			values = {**vars(self._config), "provider": self._provider_id, "models_preset": selected.strip()}
-			persisted = type(self._config)(**values)
-			set_openai_compat_config(persisted, activate=False)
-			self._config = persisted
-		except Exception as exc:
-			lch.control.SetValue(current)
-			self._report_error(exc, "save llama-server preset path")
 
 	def _populate_fields(self) -> None:
 		"""Fill the fields from the persisted provider configuration."""
@@ -253,7 +276,6 @@ class ProviderConfigureDialog(wx.Dialog):
 			"backend": str(getattr(self._config, "litert_backend", "") or ""),
 			"cache": str(getattr(self._config, "litert_cache", "") or ""),
 			"cpu_thread_count": int(getattr(self._config, "litert_cpu_threads", 0) or 0),
-			"models_preset": str(getattr(self._config, "models_preset", "") or ""),
 		}
 		for spec in self._fields:
 			lch = self._lch.get(spec.id)
@@ -298,7 +320,6 @@ class ProviderConfigureDialog(wx.Dialog):
 			"backend": "litert_backend",
 			"cache": "litert_cache",
 			"cpu_thread_count": "litert_cpu_threads",
-			"models_preset": "models_preset",
 		}
 		for spec in self._fields:
 			lch = self._lch.get(spec.id)
@@ -334,6 +355,7 @@ class ProviderConfigureDialog(wx.Dialog):
 		self._test_btn.Disable()
 		# TRANSLATORS: Message shown while a provider connection test is running.
 		self._test_result.SetLabel(_("Testing connection..."))
+		nvda_ui.message(_("Testing connection..."))
 		self.Layout()
 		# Snapshot the current field values on the main thread: wx controls
 		# must never be read from a worker thread.
@@ -359,12 +381,7 @@ class ProviderConfigureDialog(wx.Dialog):
 
 	def _run_test(self, config: Any) -> tuple[bool, str]:
 		"""Run the blocking connection test; never touch wx from this method."""
-		provider = OpenAICompatProvider(config)
-		try:
-			models = provider.list_models()
-		finally:
-			provider.close()
-		count = len(models)
+		count = ProviderConnectionService().check(config)
 		message = _("{name} connection successful. Found {count} model(s).").format(
 			name=self._provider_name,
 			count=count,
@@ -372,16 +389,28 @@ class ProviderConfigureDialog(wx.Dialog):
 		return True, message
 
 	def _test_done(self, _success: bool, message: str) -> None:
+		if self._destroyed:
+			return
 		self._test_task = None
 		self._test_result.SetLabel(message)
 		self._test_btn.Enable()
 		self.Layout()
+		if self.IsActive():
+			nvda_ui.message(message)
 
 	# ------------------------------------------------------------------
 	# Save / cancel
 	# ------------------------------------------------------------------
 
 	def _on_save(self, _event: wx.CommandEvent) -> None:
+		startup_mode = None
+		if self._startup_choice is not None:
+			index = self._startup_choice.GetSelection()
+			if not 0 <= index < len(LOCAL_STARTUP_MODES):
+				wx.MessageBox(_("Choose a startup option."), _("Invalid configuration"), wx.OK | wx.ICON_ERROR, parent=self)
+				self._startup_choice.SetFocus()
+				return
+			startup_mode = LOCAL_STARTUP_MODES[index]
 		for spec in self._fields:
 			if not spec.required:
 				continue
@@ -400,6 +429,8 @@ class ProviderConfigureDialog(wx.Dialog):
 			# the user and the dialog stays open for correction.
 			# pylint: disable=broad-exception-caught
 			set_openai_compat_config(self._draft_config(), activate=False)
+			if startup_mode is not None:
+				set_local_startup_mode(self._provider_id, startup_mode)
 		except Exception as exc:
 			self._report_error(exc, "save provider configuration")
 			return
@@ -453,6 +484,9 @@ class ProviderConfigureDialog(wx.Dialog):
 			if lch is not None and lch.control.IsEnabled():
 				lch.control.SetFocus()
 				return
+		if self._startup_choice is not None:
+			self._startup_choice.SetFocus()
+			return
 		ok = self.FindWindowById(wx.ID_OK)
 		if ok is not None:
 			ok.SetFocus()

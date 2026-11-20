@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .config import RuntimeConfig
+from ...core.runtime_selection import runtime_launch
 from .download import DownloadCancelledError, RuntimeDownloadService
 from .paths import get_runtime_path
 from ..interfaces import LLMProviderError
@@ -580,6 +581,7 @@ class LiteRTServerSupervisor:
 		except Exception as exc:
 			raise LiteRTServerError(_("Unable to verify runtime upgrade: {error}").format(error=exc)) from exc
 
+	@runtime_launch("litert-lm")
 	def ensure_ready(
 		self,
 		timeout: float = 60.0,
@@ -647,6 +649,7 @@ class LiteRTServerSupervisor:
 			log.info("LiteRT server is ready at %s", self.base_url)
 		return status
 
+	@runtime_launch("litert-lm")
 	def start(
 		self,
 		*,
@@ -655,6 +658,7 @@ class LiteRTServerSupervisor:
 		"""Start the ``litert-lm serve`` process."""
 		self.ensure_ready(on_progress=on_progress)
 
+	@runtime_launch("litert-lm")
 	def restart(
 		self,
 		on_progress: Callable[[str], None] | None = None,
@@ -715,7 +719,7 @@ class LiteRTServerSupervisor:
 		return _status_dict_to_namespace(resp.get("status", {}))
 
 	def stop(self, timeout: float = 10.0) -> Any:
-		"""Stop the server process gracefully, then forcefully if needed."""
+		"""Stop the owned server through the native supervisor; leave adopted servers alone."""
 		native = self._get_native()
 		if native is not None:
 			try:
@@ -745,6 +749,7 @@ class LiteRTServerSupervisor:
 		except Exception as exc:
 			raise LiteRTServerError(str(exc)) from exc
 
+	@runtime_launch("litert-lm")
 	def adopt(self) -> Any:
 		"""Acknowledge a server running on our host:port without a process handle."""
 		native = self._get_native()

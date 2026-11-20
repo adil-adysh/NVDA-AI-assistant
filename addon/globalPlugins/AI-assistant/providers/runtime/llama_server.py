@@ -24,6 +24,7 @@ from typing import Any, Callable
 
 from ..interfaces import LLMProviderError
 from ...core.cancellation import RequestCancelled
+from ...core.runtime_selection import runtime_launch
 from ...core.translation import _
 from ...core.readiness_progress import run_with_readiness_progress
 
@@ -263,6 +264,7 @@ class LlamaServerSupervisor:
 		alive = bool(status.is_running)
 		return alive and getattr(status, "startup_identity", None) == startup_identity
 
+	@runtime_launch("llama-cpp-server")
 	def ensure_ready(
 		self,
 		model: str,
@@ -346,6 +348,7 @@ class LlamaServerSupervisor:
 			self._models_cache = None
 		return _status_dict_to_namespace(resp.get("status", {}))
 
+	@runtime_launch("llama-cpp-server")
 	def restart(
 		self,
 		model: str,
@@ -424,6 +427,7 @@ class LlamaServerSupervisor:
 			self._models_cache = None
 		return _status_dict_to_namespace(resp.get("status", {}))
 
+	@runtime_launch("llama-cpp-server")
 	def start(
 		self,
 		model: str,
@@ -443,6 +447,7 @@ class LlamaServerSupervisor:
 			on_progress=on_progress,
 		)
 
+	@runtime_launch("llama-cpp-server")
 	def adopt(self, model_id: str | None = None) -> Any:
 		native = self._get_native()
 		if native is not None:

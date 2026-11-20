@@ -19,16 +19,17 @@ from ..config.settings import (
 	build_provider_config, get_enabled_providers, get_embedding_enabled, get_embedding_model,
 	get_embedding_page_chat_enabled, get_embedding_page_summary_enabled, get_generate_max_tokens,
 	get_generate_temperature, get_generate_top_p, get_image_format, get_image_max_side, get_image_quality,
-	get_language, get_local_startup_mode, LOCAL_STARTUP_MODES, get_num_ctx, get_progress_enabled,
+	get_language, get_num_ctx, get_progress_enabled,
 	get_provider, get_request_metrics_log_path, get_request_metrics_logging_enabled, get_streaming_enabled,
 	get_streaming_tone_enabled, get_timeout_seconds, set_embedding_enabled, set_embedding_model,
 	set_embedding_page_chat_enabled, set_embedding_page_summary_enabled, set_generate_max_tokens,
 	set_generate_temperature, set_generate_top_p, set_image_format, set_image_max_side, set_image_quality,
-	set_language, set_local_startup_mode, set_model_name, set_num_ctx,
+	set_language, set_model_name, set_num_ctx,
 	set_progress_enabled, set_provider, set_request_metrics_log_path, set_request_metrics_logging_enabled,
 	set_streaming_enabled, set_streaming_tone_enabled, set_timeout_seconds,
 	get_one_shot_output_mode, set_one_shot_output_mode, ONE_SHOT_OUTPUT_MODES,
 	get_chat_auto_read, set_chat_auto_read, get_chat_status_announcements, set_chat_status_announcements,
+	get_max_tool_calls, set_max_tool_calls,
 )
 from ..config.enabled_models import ModelVisibilityStore
 from ..embeddings.manager import embedding_model_service
@@ -59,6 +60,7 @@ class _SettingsValues:
 	streaming: bool
 	progress: bool
 	streaming_tone: bool
+	max_tool_calls: int
 	one_shot_output_mode: str
 	chat_auto_read: bool
 	chat_status_announcements: bool
@@ -67,8 +69,6 @@ class _SettingsValues:
 	image_format: str
 	image_quality: int
 	timeout_seconds: float
-	litert_startup: str
-	llama_startup: str
 	metrics_enabled: bool
 	metrics_path: str
 
@@ -161,6 +161,8 @@ class AIAssistantGeneralPanel(_SettingsTab):
 		self.provider_choice.Bind(wx.EVT_CHOICE, self._on_provider_choice)
 		self.manage_providers.Bind(wx.EVT_BUTTON, self._on_manage_providers)
 		self.configure_model.Bind(wx.EVT_BUTTON, self._on_configure_model)
+		helper = self.add_group(_("Requests"))
+		self.timeout = self.add_labeled_text(helper, _("Request timeout (seconds):"), get_timeout_seconds())
 		self._model_choice_task: TaskHandle[list[str]] | None = None
 		self._model_choice_generation = 0
 		self._model_choice_provider: str | None = None
@@ -295,7 +297,8 @@ class AIAssistantGeneralPanel(_SettingsTab):
 			model_name = manager.resolve_model_identity(model_name)
 		except Exception:
 			pass
-		values.update(provider=provider_id, model_name=model_name)
+		values.update(provider=provider_id, model_name=model_name,
+			timeout_seconds=self.parse_float(self.timeout, _("Timeout seconds must be a positive number."), 0.000001))
 
 
 class AIAssistantModelsContextPanel(_SettingsTab):
@@ -363,6 +366,12 @@ class AIAssistantBehaviorOutputPanel(_SettingsTab):
 		self.streaming.SetValue(get_streaming_enabled())
 		self.progress.SetValue(get_progress_enabled())
 		self.streaming_tone.SetValue(get_streaming_tone_enabled())
+		self.max_tool_calls = self.add_labeled_text(helper, _("Maximum tool calls per response (1–1000):"), get_max_tool_calls())
+		tool_help = _("Counts individual tool calls, including calls grouped in one response. Applies to the next response after saving. Tool timeouts still apply.")
+		self.max_tool_calls.SetName(_("Maximum tool calls per response (1–1000). ") + tool_help)
+		self.max_tool_calls.SetHelpText(tool_help)
+		self.max_tool_calls.SetToolTip(tool_help)
+		helper.addItem(wx.StaticText(self, label=tool_help))
 		helper.addItem(wx.StaticText(self, label=_("One-shot response output:")))
 		self.one_shot_output = helper.addItem(wx.Choice(self, choices=[
 			_("Speak, then display"), _("Display only"), _("Speak only"),
@@ -399,6 +408,10 @@ class AIAssistantBehaviorOutputPanel(_SettingsTab):
 
 	def collect(self, values: dict[str, object]) -> None:
 		index = self.image_format.GetSelection()
+		tool_limit_error = _("Maximum tool calls must be an integer between 1 and 1000.")
+		tool_limit = self.parse_int(self.max_tool_calls, tool_limit_error, 1)
+		if tool_limit > defaults.MAX_TOOL_CALLS:
+			raise _InvalidSetting(tool_limit_error, self.max_tool_calls, self)
 		output_index = self.one_shot_output.GetSelection()
 		if output_index not in range(len(ONE_SHOT_OUTPUT_MODES)):
 			raise _InvalidSetting(_("Select a one-shot response output mode."), self.one_shot_output, self)
@@ -411,62 +424,12 @@ class AIAssistantBehaviorOutputPanel(_SettingsTab):
 		language = next((option for option, option_label in self.language_options if option_label == label), label)
 		values.update(
 			streaming=self.streaming.GetValue(), progress=self.progress.GetValue(), streaming_tone=self.streaming_tone.GetValue(), language=language,
+			max_tool_calls=tool_limit,
 			one_shot_output_mode=ONE_SHOT_OUTPUT_MODES[output_index],
 			chat_auto_read=self.chat_auto_read.GetValue(), chat_status_announcements=self.chat_status_announcements.GetValue(),
 			image_max_side=self.parse_int(self.image_max_side, _("Image max side length must be an integer of at least 128."), 128),
 			image_format=["PNG", "JPEG"][index], image_quality=quality,
 		)
-
-
-class AIAssistantRuntimePanel(_SettingsTab):
-	title = _("Runtime")
-
-	def __init__(self, parent: wx.Window, dialog: "AIAssistantSettingsDialog") -> None:
-		super().__init__(parent, dialog)
-		helper = self.add_group(_("Runtime"))
-		self.timeout = self.add_labeled_text(helper, _("Request timeout (seconds):"), get_timeout_seconds() or defaults.DEFAULT_TIMEOUT_SECONDS)
-		self.litert_startup = self._add_startup_choice(helper, "litert-lm", _("LiteRT-LM startup"))
-		self.llama_startup = self._add_startup_choice(helper, "llama-cpp-server", _("llama-server startup"))
-		helper.addItem(wx.StaticText(self, label=_("Applies to the active provider the next time NVDA starts.")))
-
-	def _add_startup_choice(self, helper: guiHelper.BoxSizerHelper, provider: str, label: str) -> wx.ComboBox:
-		labels = [_("Start when needed (default)"), _("Prepare background worker at startup"), _("Start local server at startup")]
-		descriptions = [
-			_("Starts the worker on the first model operation and the server on the first inference request."),
-			_("Prepares the background worker. The server starts on the first inference request."),
-			_("Starts the background worker and local server. Model loading depends on the runtime."),
-		]
-		mode = get_local_startup_mode(provider)
-		control = self.add_labeled_combo(helper, label, labels, labels[LOCAL_STARTUP_MODES.index(mode)])
-		control.SetName(label)
-		help_text = helper.addItem(wx.StaticText(self, label=""))
-
-		def update_help(event=None):
-			selection = control.GetSelection()
-			text = descriptions[selection if 0 <= selection < len(descriptions) else 0]
-			help_text.SetLabel(text)
-			help_text.Wrap(self.FromDIP(560))
-			# wx help text depends on a global help provider; include the
-			# explanation in the accessible name so NVDA can announce it.
-			control.SetName(f"{label}. {text}")
-			control.SetHelpText(text)
-			control.SetToolTip(text)
-			self.Layout()
-			if event is not None:
-				event.Skip()
-
-		control.Bind(wx.EVT_COMBOBOX, update_help)
-		update_help()
-		return control
-
-	def _startup_mode(self, control: wx.ComboBox) -> str:
-		selection = control.GetSelection()
-		if not 0 <= selection < len(LOCAL_STARTUP_MODES):
-			raise _InvalidSetting(_("Choose a startup option."), control, self)
-		return LOCAL_STARTUP_MODES[selection]
-
-	def collect(self, values: dict[str, object]) -> None:
-		values.update(timeout_seconds=self.parse_float(self.timeout, _("Timeout seconds must be a positive number."), 0.000001), litert_startup=self._startup_mode(self.litert_startup), llama_startup=self._startup_mode(self.llama_startup))
 
 
 class AIAssistantDiagnosticsPanel(_SettingsTab):
@@ -489,7 +452,7 @@ class AIAssistantDiagnosticsPanel(_SettingsTab):
 class AIAssistantSettingsDialog(SettingsDialog):
 	title = _("AI Assistant Settings")
 	helpId = "AIAssistantSettings"
-	_panel_classes = (AIAssistantGeneralPanel, AIAssistantModelsContextPanel, AIAssistantBehaviorOutputPanel, AIAssistantRuntimePanel, AIAssistantDiagnosticsPanel, McpSettingsPanel)
+	_panel_classes = (AIAssistantGeneralPanel, AIAssistantModelsContextPanel, AIAssistantBehaviorOutputPanel, AIAssistantDiagnosticsPanel, McpSettingsPanel)
 
 	def __init__(self, parent: wx.Window, *, mcp_catalog: object = None, tool_registry: object = None, tool_executor: object = None) -> None:
 		self.tabs: list[wx.Window] = []
@@ -518,15 +481,12 @@ class AIAssistantSettingsDialog(SettingsDialog):
 			self.tabs.append(panel)
 			self.notebook.AddPage(panel, panel_class.title)
 		self.notebook.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self._on_page_changed)
-		self._on_page_changed(None)
 
 	def _on_page_changed(self, event: wx.BookCtrlEvent | None) -> None:
+		# Let the native notebook preserve tab-strip focus and keyboard traversal.
+		# A deferred focus move also overrides validation's explicit field focus.
 		if event is not None:
 			event.Skip()
-		if self.tabs:
-			# Focus a panel is not focusable; move to its first usable control so
-			# switching tabs with the keyboard does not drop focus on the floor.
-			wx.CallAfter(self._focus_current_page)
 
 	@staticmethod
 	def _first_focusable(window: wx.Window) -> wx.Window | None:
@@ -575,13 +535,12 @@ class AIAssistantSettingsDialog(SettingsDialog):
 		set_language(values.language)
 		set_streaming_enabled(values.streaming)
 		set_streaming_tone_enabled(values.streaming_tone)
+		set_max_tool_calls(values.max_tool_calls)
 		set_progress_enabled(values.progress)
 		set_one_shot_output_mode(values.one_shot_output_mode)
 		set_chat_auto_read(values.chat_auto_read)
 		set_chat_status_announcements(values.chat_status_announcements)
 		set_timeout_seconds(values.timeout_seconds)
-		set_local_startup_mode("litert-lm", values.litert_startup)
-		set_local_startup_mode("llama-cpp-server", values.llama_startup)
 		set_request_metrics_logging_enabled(values.metrics_enabled)
 		set_request_metrics_log_path(values.metrics_path)
 
