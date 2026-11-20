@@ -16,6 +16,46 @@ _build_import_candidates = litert_models._build_import_candidates
 
 
 class BuildImportCandidatesTests(unittest.TestCase):
+	def test_vision_community_catalog_has_complete_verified_inventory(self) -> None:
+		expected_repositories = {
+			"litert-community/LFM3-VL-2B-LiteRT",
+			"litert-community/WeVisOne-VL-4B",
+			"litert-community/WeVisOne-VL-2B",
+			"litert-community/MiniCPM-V-4.7-1B",
+			"litert-community/LFM2.5-VL-3B",
+			"litert-community/LFM2.5-VL-1.6B",
+			"litert-community/LFM2.5-VL-450M",
+			"litert-community/North-Micro-Vision-Instruct",
+			"litert-community/Qwen2-VL-2B",
+			"litert-community/Ovis2.5-2B",
+			"litert-community/InternVL3_5-4B",
+			"litert-community/InternVL3_5-2B",
+			"litert-community/InternVL3_5-1B",
+			"litert-community/InternVL3-2B",
+			"litert-community/InternVL3-1B",
+			"litert-community/SmolVLM2-2.2B",
+			"litert-community/SmolVLM2-500M",
+			"litert-community/LLaVA-OneVision-0.5B",
+			"litert-community/Mage-VL",
+			"litert-community/Qwen3.5-0.8B",
+			"litert-community/Qwen3.5-2B",
+		}
+		models = litert_models.VISION_COMMUNITY_MODELS
+		self.assertEqual({model.model_id for model in models}, expected_repositories)
+		self.assertEqual(len({model.friendly_name for model in models}), len(models))
+		self.assertEqual(len({model.local_filename for model in models}), len(models))
+		for model in models:
+			with self.subTest(model=model.model_id):
+				self.assertTrue(model.filename.endswith(".litertlm"))
+				self.assertTrue(model.size_hint_human)
+				self.assertTrue(model.description)
+				self.assertTrue(model.license_)
+				self.assertTrue(model.vision)
+			self.assertEqual(
+				litert_models.lookup_by_friendly_name(model.friendly_name),
+				(model, None),
+			)
+
 	def test_none_definition_returns_empty_list(self) -> None:
 		self.assertEqual(build_import_candidates(None), [])
 		self.assertEqual(_build_import_candidates(None), [])

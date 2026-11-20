@@ -215,6 +215,14 @@ class DeleteModelCoordinationTests(unittest.TestCase):
 			self._catalog_dir / "models" / "nonexistent"
 		)
 
+	def test_download_uses_unique_cache_name_for_shared_huggingface_filename(self) -> None:
+		self.manager._download_model("internvl3-5-2b", lambda *_args: None)
+
+		self.mock_download_svc.download.assert_called_once()
+		kwargs = self.mock_download_svc.download.call_args.kwargs
+		self.assertEqual(kwargs["model_name"], "InternVL3_5-2B-model.litertlm")
+		self.assertTrue(kwargs["url"].endswith("/resolve/main/model.litertlm"))
+
 	# ── Normal deletion (both catalog + cache exist) ─────────────
 
 	def test_delete_both_catalog_and_cache(self) -> None:

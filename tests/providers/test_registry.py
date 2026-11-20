@@ -288,6 +288,41 @@ class ProviderInfoActionMatrixTests(unittest.TestCase):
 			(ProviderAction.CONFIGURE, ProviderAction.MANAGE_MODELS),
 		)
 
+	def test_litert_upgrade_action_when_old_runtime_is_detected(self) -> None:
+		info = ProviderInfo(
+			id="litert-lm",
+			name="LiteRT-LM",
+			kind=ProviderKind.LOCAL,
+			state=ProviderLifecycleState.NOT_INSTALLED,
+			installable=True,
+			upgrade_available=True,
+		)
+		self.assertEqual(info.actions, (ProviderAction.UPGRADE,))
+		installed = ProviderInfo(
+			id="litert-lm",
+			name="LiteRT-LM",
+			kind=ProviderKind.LOCAL,
+			state=ProviderLifecycleState.INSTALLED,
+			installable=True,
+			upgrade_available=True,
+		)
+		self.assertEqual(
+			installed.actions,
+			(ProviderAction.UPGRADE,),
+		)
+		cleanup = ProviderInfo(
+			id="litert-lm",
+			name="LiteRT-LM",
+			kind=ProviderKind.LOCAL,
+			state=ProviderLifecycleState.INSTALLED,
+			installable=True,
+			cleanup_pending=True,
+		)
+		self.assertEqual(
+			cleanup.actions,
+			(ProviderAction.RETRY_CLEANUP, ProviderAction.CONFIGURE, ProviderAction.MANAGE_MODELS),
+		)
+
 	def test_local_configured_configure_and_models(self) -> None:
 		info = ProviderInfo(
 			id="litert-lm",

@@ -103,6 +103,8 @@ class ProviderAction(str, Enum):
 	"""Operations a provider supports in its current state."""
 
 	INSTALL = "install"
+	UPGRADE = "upgrade"
+	RETRY_CLEANUP = "retry_cleanup"
 	CONFIGURE = "configure"
 	MANAGE_MODELS = "manage_models"
 
@@ -124,6 +126,8 @@ class ProviderInfo:
 	enabled: bool = True
 	#: Whether the provider is currently the active AI provider.
 	active: bool = False
+	upgrade_available: bool = False
+	cleanup_pending: bool = False
 
 	@property
 	def actions(self) -> tuple[ProviderAction, ...]:
@@ -136,6 +140,10 @@ class ProviderInfo:
 			if self.state is ProviderLifecycleState.CONFIGURED or self.kind is ProviderKind.LOCAL:
 				return (ProviderAction.CONFIGURE, ProviderAction.MANAGE_MODELS)
 			return (ProviderAction.CONFIGURE,)
+		if self.upgrade_available:
+			return (ProviderAction.UPGRADE,)
+		if self.cleanup_pending:
+			return (ProviderAction.RETRY_CLEANUP, ProviderAction.CONFIGURE, ProviderAction.MANAGE_MODELS)
 		if self.state in (
 			ProviderLifecycleState.AVAILABLE,
 			ProviderLifecycleState.NOT_INSTALLED,
@@ -261,6 +269,18 @@ def _litert_install_check() -> bool:
 	return get_litert_supervisor().is_installed
 
 
+def _litert_upgrade_available() -> bool:
+	from .runtime.server import get_litert_supervisor
+
+	return bool(getattr(get_litert_supervisor(), "upgrade_available", False))
+
+
+def _litert_cleanup_pending() -> bool:
+	from .runtime.server import get_litert_supervisor
+
+	return bool(getattr(get_litert_supervisor(), "cleanup_pending", False))
+
+
 #: Provider capabilities keyed by canonical provider ID.
 ProviderCapabilities = ProviderPolicy
 _PROVIDER_CAPABILITIES = PROVIDER_POLICIES
@@ -371,6 +391,8 @@ def get_provider_info(provider_id: str) -> ProviderInfo:
 		installable=is_installable(normalized),
 		enabled=normalized in get_enabled_providers(),
 		active=normalized == get_provider(),
+		upgrade_available=normalized == "litert-lm" and _litert_upgrade_available(),
+		cleanup_pending=normalized == "litert-lm" and _litert_cleanup_pending(),
 	)
 
 

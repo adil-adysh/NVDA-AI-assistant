@@ -29,6 +29,7 @@ from ..config.settings import get_enabled_providers
 from ..providers.registry import (
 	ProviderAction,
 	ProviderInfo,
+	get_provider_info,
 	get_provider_infos,
 	install_provider,
 	provider_display_name,
@@ -129,6 +130,11 @@ class ProviderManagementDialog(wx.Dialog):
 		self._install_btn.Bind(wx.EVT_BUTTON, self._on_install)
 		button_sizer.Add(self._install_btn, flag=wx.RIGHT, border=5)
 
+		# TRANSLATORS: Button that upgrades an older managed LiteRT-LM runtime.
+		self._upgrade_btn = wx.Button(self, label="")
+		self._upgrade_btn.Bind(wx.EVT_BUTTON, self._on_upgrade)
+		button_sizer.Add(self._upgrade_btn, flag=wx.RIGHT, border=5)
+
 		# TRANSLATORS: Button that configures the selected provider; {name} is the provider name.
 		self._configure_btn = wx.Button(self, label="")
 		self._configure_btn.Bind(wx.EVT_BUTTON, self._on_configure)
@@ -204,6 +210,7 @@ class ProviderManagementDialog(wx.Dialog):
 		if info is None:
 			for btn in (
 				self._install_btn,
+				self._upgrade_btn,
 				self._configure_btn,
 				self._manage_btn,
 				self._set_active_btn,
@@ -218,6 +225,15 @@ class ProviderManagementDialog(wx.Dialog):
 			_("Install {name}").format(name=info.name),
 		)
 		self._install_btn.Show(ProviderAction.INSTALL in actions)
+		if ProviderAction.UPGRADE in actions:
+			# TRANSLATORS: Button label for replacing an older LiteRT-LM runtime with the current bundled version.
+			self._upgrade_btn.SetLabel(_("Upgrade LiteRT-LM Runtime"))
+		elif ProviderAction.RETRY_CLEANUP in actions:
+			# TRANSLATORS: Button label for retrying removal of an older LiteRT-LM runtime after an upgrade.
+			self._upgrade_btn.SetLabel(_("Retry LiteRT-LM Cleanup"))
+		self._upgrade_btn.Show(
+			ProviderAction.UPGRADE in actions or ProviderAction.RETRY_CLEANUP in actions,
+		)
 		self._configure_btn.SetLabel(
 			_("Configure {name}").format(name=info.name),
 		)
@@ -348,34 +364,24 @@ class ProviderManagementDialog(wx.Dialog):
 		info = self._selected_info()
 		if info is None or ProviderAction.INSTALL not in info.actions:
 			return
-		provider_id = info.id
-		provider_name = info.name
+		self._run_install(info, upgrading=False)
 
-		def worker(dlg: DownloadProgressDialog) -> None:
-			def progress(msg: str) -> None:
-				dlg.update_message(msg)
+	def _on_upgrade(self, _event: wx.CommandEvent) -> None:
+		info = self._selected_info()
+		if info is None:
+			return
+		if ProviderAction.UPGRADE in info.actions:
+			self._run_install(info, upgrading=True)
+		elif ProviderAction.RETRY_CLEANUP in info.actions:
+			self._run_install(info, upgrading=False, retry_cleanup=True)
 
-			def bytes_progress(downloaded: int, total: int) -> None:
-				dlg.update_progress(downloaded, total)
-
-			install_provider(
-				provider_id,
-				on_progress=progress,
-				on_bytes_progress=bytes_progress,
-				cancel_event=dlg.cancel_event,
-			)
-			# TRANSLATORS: Success message after installing a provider runtime; {name} is the provider name.
-			dlg.signal_complete(
-				True,
-				_("{name} installed successfully.").format(name=provider_name),
-			)
-
-		DownloadProgressDialog.run(
+	def _run_install(self, info: ProviderInfo, *, upgrading: bool, retry_cleanup: bool = False) -> None:
+		_run_provider_install(
 			self,
-			title=_("Provider Installation"),
-			worker=worker,
+			info,
+			upgrading=upgrading,
+			retry_cleanup=retry_cleanup,
 			on_complete=self._refresh_provider_list,
-			initial_message=_("Installing {name}...").format(name=provider_name),
 		)
 
 	def _on_close(self, _event: wx.Event) -> None:
@@ -389,3 +395,61 @@ def open_provider_dialog(parent: wx.Window) -> None:
 		dlg.ShowModal()
 	finally:
 		dlg.Destroy()
+
+
+def run_litert_runtime_action(parent: wx.Window, *, cleanup_pending: bool = False) -> None:
+	"""Start the requested LiteRT-LM upgrade or cleanup action directly."""
+	info = get_provider_info("litert-lm")
+	action = ProviderAction.RETRY_CLEANUP if cleanup_pending else ProviderAction.UPGRADE
+	if action not in info.actions:
+		return
+	_run_provider_install(
+		parent,
+		info,
+		upgrading=not cleanup_pending,
+		retry_cleanup=cleanup_pending,
+	)
+
+
+def _run_provider_install(
+	parent: wx.Window,
+	info: ProviderInfo,
+	*,
+	upgrading: bool,
+	retry_cleanup: bool = False,
+	on_complete: Callable[[], object] | None = None,
+) -> None:
+	provider_name = info.name
+
+	def worker(dlg: DownloadProgressDialog) -> None:
+		def progress(msg: str) -> None:
+			dlg.update_message(msg)
+
+		def bytes_progress(downloaded: int, total: int) -> None:
+			dlg.update_progress(downloaded, total)
+
+		install_provider(
+			info.id,
+			on_progress=progress,
+			on_bytes_progress=bytes_progress,
+			cancel_event=dlg.cancel_event,
+		)
+		# TRANSLATORS: Success message after installing, upgrading, or cleaning up a provider runtime; {name} is the provider name.
+		completion_message = (
+			_("{name} runtime cleanup completed.") if retry_cleanup
+			else _("{name} runtime upgraded successfully.") if upgrading
+			else _("{name} installed successfully.")
+		)
+		dlg.signal_complete(True, completion_message.format(name=provider_name))
+
+	DownloadProgressDialog.run(
+		parent,
+		title=_("Runtime Cleanup") if retry_cleanup else _("Runtime Upgrade") if upgrading else _("Provider Installation"),
+		worker=worker,
+		on_complete=on_complete,
+		initial_message=(
+			_("Retrying {name} runtime cleanup...") if retry_cleanup
+			else _("Upgrading {name} runtime...") if upgrading
+			else _("Installing {name}...")
+		).format(name=provider_name),
+	)

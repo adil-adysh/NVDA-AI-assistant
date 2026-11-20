@@ -6,6 +6,36 @@ import json
 import shutil
 from pathlib import Path
 
+PREVIOUS_LITERT_VERSIONS = ("0.15.0", "0.18.0")
+
+
+def has_previous_litert_runtime(root: Path, current_version: str) -> bool:
+	"""Return whether a recognized older managed LiteRT package is present."""
+	root = Path(root)
+	try:
+		resolved_root = root.resolve()
+	except OSError:
+		return False
+	for version in PREVIOUS_LITERT_VERSIONS:
+		if version == current_version:
+			continue
+		candidate = root / version
+		try:
+			if not candidate.is_dir() or candidate.is_symlink() or candidate.is_junction():
+				continue
+			if candidate.resolve().parent != resolved_root:
+				continue
+			manifest = json.loads((candidate / "manifest.json").read_text(encoding="utf-8"))
+			if not isinstance(manifest, dict):
+				continue
+			if (
+				manifest.get("runtime"), manifest.get("version"), manifest.get("platform")
+			) == ("litert-lm", version, "windows-x64") and (candidate / "python.exe").is_file():
+				return True
+		except (OSError, ValueError, json.JSONDecodeError):
+			continue
+	return False
+
 
 def finalize_litert_upgrade(target: Path, version: str, *, busy: bool = False, check_cancelled=lambda: None) -> list[str]:
 	"""Verify the replacement before retiring known obsolete versions.
@@ -43,7 +73,7 @@ def finalize_litert_upgrade(target: Path, version: str, *, busy: bool = False, c
 			raise ValueError("Runtime package checksum mismatch: " + name)
 	pending = []
 	# Explicit migration avoids deleting arbitrary/custom runtime installations.
-	for obsolete in ("0.15.0",):
+	for obsolete in PREVIOUS_LITERT_VERSIONS:
 		if obsolete == version:
 			continue
 		candidate = root / obsolete
@@ -53,6 +83,9 @@ def finalize_litert_upgrade(target: Path, version: str, *, busy: bool = False, c
 			continue
 		try:
 			old = json.loads((candidate / "manifest.json").read_text(encoding="utf-8"))
+			if not isinstance(old, dict):
+				pending.append(obsolete)
+				continue
 			if old.get("runtime") != "litert-lm" or old.get("version") != obsolete:
 				continue
 			if busy:

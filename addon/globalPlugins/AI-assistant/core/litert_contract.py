@@ -6,7 +6,7 @@ import re
 
 from .translation import _
 
-DEFAULT_LITERT_VERSION = "0.18.0"
+DEFAULT_LITERT_VERSION = "0.19.1"
 _SHARD = re.compile(r"(?:-\d+-of-\d+|[._-]part\d+)", re.IGNORECASE)
 
 

@@ -21,6 +21,7 @@ addon/doc/en/
 manifest.ini
 *.mo
 *.pot
+!AIAssistant.pot
 *.nvda-addon
 .sconsign.dblite
 

@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import quote
 
+from ..core.translation import _
+
 
 @dataclass(frozen=True)
 class ModelVariant:
@@ -67,8 +69,7 @@ class LiteRTModelDef:
 	        unique across all models.
 	    filename: Name of the primary ``.litertlm`` file.  When
 	        ``variants`` is non-empty this is the default/CPU variant
-	        and is kept for backward compatibility with code that
-	        reads ``model.filename`` directly.
+	        and the exact artifact filename inside the Hugging Face repo.
 	    display_name: Human-readable label shown in the UI.
 	    description: Short summary of the model.
 	    size_hint_human: Human-readable size (e.g. ``"~2.1 GB"``).
@@ -86,6 +87,8 @@ class LiteRTModelDef:
 	    variants: Tuple of :class:`ModelVariant` entries describing
 	        platform-specific builds.  When empty the model has a
 	        single file (``filename``).
+	    cache_filename: Optional unique local filename when multiple
+	        repositories publish an artifact with the same filename.
 	"""
 
 	model_id: str
@@ -102,6 +105,12 @@ class LiteRTModelDef:
 	license_: str = "apache-2.0"
 	platform_hint: Literal["cpu", "gpu", "universal"] = "universal"
 	variants: tuple[ModelVariant, ...] = ()
+	cache_filename: str = ""
+
+	@property
+	def local_filename(self) -> str:
+		"""Unique local cache name, distinct from the repository artifact if needed."""
+		return self.cache_filename or self.filename
 
 	# ── Derived properties ──────────────────────────────────────
 
@@ -401,6 +410,127 @@ QWEN3_14B = LiteRTModelDef(
 	variants=_QWEN3_14B_VARIANTS,
 )
 
+# ── Vision-language community models ────────────────────────────────
+# Single-file builds verified against their Hugging Face model cards and
+# repository file listings (2026-11-20). Keep filenames exact: the runtime
+# import path accepts one .litertlm container per model.
+
+def _vision_model(
+	model_id: str,
+	friendly_name: str,
+	filename: str,
+	display_name: str,
+	description: str,
+	size_hint_human: str,
+	*,
+	priority: int,
+	license_: str = "apache-2.0",
+	thinking: bool = False,
+	cache_filename: str = "",
+) -> LiteRTModelDef:
+	return LiteRTModelDef(
+		model_id=model_id,
+		friendly_name=friendly_name,
+		filename=filename,
+		display_name=_(display_name),
+		description=_(description),
+		size_hint_human=size_hint_human,
+		vision=True,
+		thinking=thinking,
+		priority=priority,
+		license_=license_,
+		cache_filename=cache_filename,
+	)
+
+
+VISION_COMMUNITY_MODELS: tuple[LiteRTModelDef, ...] = (
+	_vision_model("litert-community/LFM3-VL-2B-LiteRT", "lfm3-vl-2b",
+		"LFM3-VL-2B_int4.litertlm", "LFM3-VL 2B",
+		"General image understanding and visual reasoning; fixed 512×512 input, 2,048-token context.",
+		"~1.93 GB", thinking=True, priority=35, license_="lfm-open-license-v1.0"),
+	_vision_model("litert-community/WeVisOne-VL-4B", "wevisone-vl-4b",
+		"WeVisOne-VL-4B_int4.litertlm", "WeVisOne-VL 4B",
+		"Visual question answering, grounding, object counting and localization.",
+		"~3.27 GB", priority=55),
+	_vision_model("litert-community/WeVisOne-VL-2B", "wevisone-vl-2b",
+		"WeVisOne-VL-2B_int8.litertlm", "WeVisOne-VL 2B",
+		"Compact visual question answering, grounding, object counting and localization.",
+		"~2.71 GB", priority=40),
+	_vision_model("litert-community/MiniCPM-V-4.7-1B", "minicpm-v-4-7-1b",
+		"MiniCPM-V-4.7-1B-VL_int8.litertlm", "MiniCPM-V 4.7 1B",
+		"Compact single-image understanding; int8 vision encoder and decoder, 4,096-token context.",
+		"~2.06 GB", priority=30),
+	_vision_model("litert-community/LFM2.5-VL-3B", "lfm2-5-vl-3b",
+		"LFM2.5-VL-3B_int4_fixB.litertlm", "LFM2.5-VL 3B",
+		"General image question answering; use the repaired fixB artifact for the image-position adapter.",
+		"~2.19 GB", priority=50, license_="lfm-open-license-v1.0"),
+	_vision_model("litert-community/LFM2.5-VL-1.6B", "lfm2-5-vl-1-6b",
+		"LFM2.5-VL-1.6B_int4_fixB.litertlm", "LFM2.5-VL 1.6B",
+		"Smaller general image-description model; use the repaired fixB artifact for the image-position adapter.",
+		"~1.21 GB", priority=35, license_="lfm-open-license-v1.0"),
+	_vision_model("litert-community/LFM2.5-VL-450M", "lfm2-5-vl-450m",
+		"LFM2.5-VL-450M_int4_fixB.litertlm", "LFM2.5-VL 450M",
+		"Very small image-question model for low-memory devices; use the repaired fixB artifact.",
+		"~0.38 GB", priority=25, license_="lfm-open-license-v1.0"),
+	_vision_model("litert-community/North-Micro-Vision-Instruct", "north-micro-vision-2-4b",
+		"North-Micro-Vision-Instruct_int4.litertlm", "North Micro Vision 2.4B",
+		"Multilingual image understanding and visual question answering; int4 build.",
+		"~2.04 GB", priority=45),
+	_vision_model("litert-community/Qwen2-VL-2B", "qwen2-vl-2b",
+		"Qwen2-VL-2B.litertlm", "Qwen2-VL 2B",
+		"General image question answering and description with dynamic-resolution vision.",
+		"~1.66 GB", priority=35),
+	_vision_model("litert-community/Ovis2.5-2B", "ovis2-5-2b",
+		"Ovis2.5-2B.litertlm", "Ovis 2.5 2B",
+		"General image understanding and visual question answering; 2,048-token context.",
+		"~2.00 GB", priority=45),
+	_vision_model("litert-community/InternVL3_5-4B", "internvl3-5-4b",
+		"model.litertlm", "InternVL 3.5 4B",
+		"Higher-capacity general visual reasoning; 2,048-token context.",
+		"~2.79 GB", priority=55, cache_filename="InternVL3_5-4B-model.litertlm"),
+	_vision_model("litert-community/InternVL3_5-2B", "internvl3-5-2b",
+		"model.litertlm", "InternVL 3.5 2B",
+		"Compact general image understanding; 2,048-token context.",
+		"~1.50 GB", priority=40, cache_filename="InternVL3_5-2B-model.litertlm"),
+	_vision_model("litert-community/InternVL3_5-1B", "internvl3-5-1b",
+		"model.litertlm", "InternVL 3.5 1B",
+		"Lightweight general image understanding; 2,048-token context.",
+		"~0.76 GB", priority=30, cache_filename="InternVL3_5-1B-model.litertlm"),
+	_vision_model("litert-community/InternVL3-2B", "internvl3-2b",
+		"InternVL3-2B.litertlm", "InternVL 3 2B",
+		"General image question answering with a Qwen2.5-based decoder; 2,048-token context.",
+		"~1.33 GB", priority=35),
+	_vision_model("litert-community/InternVL3-1B", "internvl3-1b",
+		"InternVL3-1B.litertlm", "InternVL3 1B",
+		"Small, fast general image question answering; 2,048-token context.",
+		"~0.69 GB", priority=25),
+	_vision_model("litert-community/SmolVLM2-2.2B", "smolvlm2-2-2b",
+		"SmolVLM2-2.2B.litertlm", "SmolVLM2 2.2B",
+		"General image question answering and description; single image per conversation recommended.",
+		"~1.41 GB", priority=40),
+	_vision_model("litert-community/SmolVLM2-500M", "smolvlm2-500m",
+		"SmolVLM2-500M.litertlm", "SmolVLM2 500M",
+		"Very small general image question answering model for low-memory devices.",
+		"~0.34 GB", priority=20),
+	_vision_model("litert-community/LLaVA-OneVision-0.5B", "llava-onevision-0-5b",
+		"LLaVA-OneVision-0.5B.litertlm", "LLaVA OneVision 0.5B",
+		"Lightweight single-image question answering; accented and non-ASCII tokenization fixed in current artifact.",
+		"~0.77 GB", priority=35),
+	_vision_model("litert-community/Mage-VL", "mage-vl-4-7b",
+		"Mage-VL.litertlm", "Mage-VL 4.7B",
+		"General image description and visual question answering; 2,048-token context.",
+		"~2.62 GB", priority=50),
+	_vision_model("litert-community/Qwen3.5-0.8B", "qwen3-5-vl-0-8b",
+		"Qwen3.5-0.8B-VL_int8.litertlm", "Qwen3.5 0.8B Vision",
+		"Lightweight hybrid vision-language model; text-and-image input, Apache 2.0.",
+		"~1.21 GB", thinking=True, priority=25),
+	_vision_model("litert-community/Qwen3.5-2B", "qwen3-5-vl-2b",
+		"Qwen3.5-2B-VL_int8.litertlm", "Qwen3.5 2B Vision",
+		"Hybrid vision-language model with a larger decoder; text-and-image input, Apache 2.0.",
+		"~2.94 GB", thinking=True, priority=40),
+)
+
+
 # ── All known models (full catalog) ─────────────────────────────────
 
 ALL_MODELS: tuple[LiteRTModelDef, ...] = (
@@ -413,7 +543,7 @@ ALL_MODELS: tuple[LiteRTModelDef, ...] = (
 	QWEN3_4B,
 	QWEN3_8B,
 	QWEN3_14B,
-)
+) + VISION_COMMUNITY_MODELS
 
 # CPU-only models — GPU models excluded for size/compatibility.
 # This is the default recommended set; call :func:`recommended_models`

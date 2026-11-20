@@ -125,7 +125,7 @@ class LiteRTModelManager(ModelManagerProvider):
 			else:
 				fn = model.friendly_name
 				registered = fn.lower() in server_ids_lower
-				in_cache = svc.is_downloaded(model.filename)
+				in_cache = svc.is_downloaded(model.local_filename)
 				caps = effective_capabilities_for(model)
 				result.append(ManagedModel(
 					id=fn,
@@ -198,10 +198,12 @@ class LiteRTModelManager(ModelManagerProvider):
 		model_def, variant = parsed
 		if variant is not None:
 			fn = variant.friendly_name
+			artifact_filename = variant.filename
 			dl_filename = variant.filename
 		else:
 			fn = model_def.friendly_name
-			dl_filename = model_def.filename
+			artifact_filename = model_def.filename
+			dl_filename = model_def.local_filename
 
 		svc = self._download_service or ModelDownloadService()
 
@@ -215,7 +217,7 @@ class LiteRTModelManager(ModelManagerProvider):
 
 		svc.download(
 			model_name=dl_filename,
-			url=download_url(model_def, dl_filename),
+			url=download_url(model_def, artifact_filename),
 			on_progress=None,
 			on_bytes_progress=_on_bytes,
 			cancel_event=cancel_event,
@@ -342,7 +344,7 @@ class LiteRTModelManager(ModelManagerProvider):
 			if path.exists():
 				path.unlink()
 				log.info("Deleted cache: %s", path)
-		path = svc.model_path(model_def.filename)
+		path = svc.model_path(model_def.local_filename)
 		if path.exists():
 			path.unlink()
 			log.info("Deleted cache: %s", path)
@@ -366,7 +368,7 @@ class LiteRTModelManager(ModelManagerProvider):
 
 		model_def, variant = parsed
 		fn = variant.friendly_name if variant else model_def.friendly_name
-		dl_filename = variant.filename if variant else model_def.filename
+		dl_filename = variant.filename if variant else model_def.local_filename
 		supervisor = self._get_supervisor()
 		server_ids_lower = {s.lower() for s in supervisor.list_server_models()}
 
@@ -413,7 +415,7 @@ class LiteRTModelManager(ModelManagerProvider):
 						available.append(fn)
 			else:
 				fn = model.friendly_name
-				if fn.lower() in server_ids_lower or svc.is_downloaded(model.filename):
+				if fn.lower() in server_ids_lower or svc.is_downloaded(model.local_filename):
 					available.append(fn)
 		return available
 

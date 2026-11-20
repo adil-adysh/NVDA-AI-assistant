@@ -472,6 +472,23 @@ class LiteRTServerSupervisor:
 		return self._server_python().exists()
 
 	@property
+	def upgrade_available(self) -> bool:
+		"""True when an older add-on-managed LiteRT runtime can be upgraded."""
+		if self.is_installed:
+			return False
+		return self._has_previous_runtime()
+
+	@property
+	def cleanup_pending(self) -> bool:
+		"""True when an installed replacement still has a recognized old package."""
+		return self.is_installed and self._has_previous_runtime()
+
+	def _has_previous_runtime(self) -> bool:
+		from ...core.runtime_upgrade import has_previous_litert_runtime
+
+		return has_previous_litert_runtime(self._server_dir().parent, self._version)
+
+	@property
 	def is_running(self) -> bool:
 		"""True when the server process is alive."""
 		return bool(self.status().is_running)
@@ -567,6 +584,16 @@ class LiteRTServerSupervisor:
 			if client is None:
 				raise RuntimeError(_("The local AI worker is unavailable."))
 			if client is not None:
+				if self._has_previous_runtime():
+					self._report(on_progress, _("Stopping the previous LiteRT-LM server before upgrading..."))
+					stopped = client.send_command({
+						"type": "litert_stop", "command": "litert_stop", "timeout_seconds": 15.0,
+					}, timeout=20.0)
+					if not stopped.get("success"):
+						raise RuntimeError(stopped.get("error_message", "Unable to stop the previous LiteRT-LM server"))
+					status = stopped.get("status", {})
+					if status.get("is_running") and not status.get("is_adopted"):
+						raise RuntimeError(_("The previous LiteRT-LM server is still running; the old runtime was preserved."))
 				response = client.send_command({
 					"type": "litert_finalize_upgrade", "command": "litert_finalize_upgrade",
 					"version": self._version,
