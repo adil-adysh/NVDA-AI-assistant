@@ -129,6 +129,7 @@ def build_llama_server_args(
 def build_startup_identity(
 	model: str | None = None,
 	*,
+	executable: str | Path | None = None,
 	model_id: str | None = None,
 	models_preset: str | Path | None = None,
 	threads: int = 0,
@@ -144,6 +145,7 @@ def build_startup_identity(
 			digest = ""
 		preset_identity = (os.path.normcase(str(path)), digest)
 	identity_data = {
+		"executable": str(executable) if executable is not None else DEFAULT_LLAMA_SERVER,
 		"model": None if preset_identity is not None else (model_id or model),
 		"preset": preset_identity,
 		"threads": max(0, int(threads)),
@@ -286,6 +288,7 @@ class LlamaWorkerExecutor:
 
 		identity = startup_identity or build_startup_identity(
 			model=model,
+			executable=exe_str,
 			model_id=model_id,
 			models_preset=models_preset,
 			threads=threads,
@@ -353,6 +356,7 @@ class LlamaWorkerExecutor:
 
 		identity = startup_identity or build_startup_identity(
 			model=model,
+			executable=exe_str,
 			model_id=model_id,
 			models_preset=models_preset,
 			threads=threads,

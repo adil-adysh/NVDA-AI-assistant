@@ -215,13 +215,31 @@ class LlamaModelsDialog(wx.Dialog):
 		record = self._selected()
 		if record is None:
 			return
-		if wx.MessageBox(_("Remove preset {name}? Model files in the Hugging Face cache are kept.").format(
-				name=record.display_name or record.model_id), _("Remove preset"),
+		confirmation = _(
+			"Remove preset {name}? Model files in the Hugging Face cache are kept. "
+			"Any add-on-owned llama.cpp server will be stopped."
+		).format(name=record.display_name or record.model_id)
+		if wx.MessageBox(confirmation, _("Remove preset"),
 				wx.YES_NO | wx.ICON_QUESTION, parent=self) != wx.YES:
 			return
-		try:
+		self._status.SetLabel(_("Removing preset and stopping any add-on-owned server..."))
+
+		def work(_cancel):
 			self._provider.delete_model(record.model_id)
-		except Exception as error:
+
+		def failed(error):
 			wx.MessageBox(str(error), _("Remove preset"), wx.OK | wx.ICON_ERROR, parent=self)
-			return
-		self._refresh()
+
+		def finished():
+			self._task = None
+			if not self._closed:
+				self._refresh()
+
+		self._task = background_tasks.submit(
+			work,
+			on_error=failed,
+			on_finally=finished,
+			is_alive=lambda: not self._closed,
+			task_name="remove llama.cpp preset",
+		)
+		self._selection_changed()

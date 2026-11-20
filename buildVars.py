@@ -45,22 +45,22 @@ The add-on includes a WebView-based chat interface with streaming responses, con
 	addon_changelog=_(
 		"""
 	Added
-	• page-structure summaries, accessibility-graph capture, and focused-text proofreading
-	• external MCP tools in chat, with search, per-tool approval, and automatic startup for enabled servers
-	• configurable tool-call limits for each response
-	• advanced llama.cpp presets with exact Hugging Face model files, speculative drafts, and runtime settings
-	• 21 community LiteRT-LM vision-language models and a guided runtime upgrade
-	• provider connection tests and per-provider local-server startup choices
+	• press NVDA+Shift+A, then O for a page outline or G to correct spelling and grammar in the focused edit box
+	• connect external MCP servers under Settings > MCP Servers and Tools, then review and approve tools before using them in chat; the NVDA MCP Bridge add-on and its companion server can expose NVDA actions
+	• set a maximum number of tool calls for each response
+	• copy chat responses as plain text or formatted Markdown with the buttons or Alt+T and Alt+K
+	• browse 21 LiteRT-LM vision-language models, see download progress, and choose one exact .litertlm file from Hugging Face
+	• create llama.cpp Hugging Face presets with exact model files, draft models, and supported runtime options
 
 	Changed
-	• choose whether LiteRT-LM and llama.cpp servers start when needed or with NVDA
-	• choose whether one-shot results are displayed, spoken, or both
-	• thinking controls appear only for models that support them
+	• open Manage AI Providers from Settings or directly under Tools > AI Assistant to enable providers, choose the active provider, and manage models
+	• filter model lists by enabled state and model status, and combine both filters; screen readers can read text status and use separate Enable and Disable buttons
+	• choose whether local servers start on the first request or with NVDA, and whether one-shot results are displayed or spoken
+	• upgrade LiteRT-LM from the startup notice or its explicit action in Manage AI Providers
 
 	Fixed
-	• chat keeps its input caret and keyboard focus when a response finishes
-	• chat window titles and conversation content stay in sync when switching views
-	• MCP tool search and filter controls have accessible labels
+	• keep chat focus and content synchronized, and strip internal thinking traces from proofreading results
+	• apply llama-server executable changes on the next managed start; removing a preset stops only the add-on-owned server and preserves model files
 		"""
 	),
 	# Author(s)

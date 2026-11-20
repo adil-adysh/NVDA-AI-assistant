@@ -4,38 +4,72 @@ v0.15.0
 Added
 -----
 
-* Summarize page structure, including headings, links, and interactive elements;
-  proofread focused text; and save accessibility graphs for inspection.
-* Connect external MCP tools to chat. Search and filter tools, review their
-  details, approve tools individually, or approve read-only tools together.
-  Enabled saved servers reconnect when NVDA starts.
-* Set a maximum number of tool calls for each response.
-* Manage llama.cpp models as Hugging Face presets. Choose a repository or an
-  exact cached model file, configure speculative draft models and runtime
-  options, and review the generated preset before saving.
-* Choose from 21 community LiteRT-LM vision-language models, including LFM3-VL,
-  MiniCPM-V, and Qwen3.5 Vision.
-* Test provider connections and choose local-server startup behavior for LiteRT-LM and llama.cpp.
+* Press `NVDA+Shift+A`, then `O`, to get a page outline with headings, links,
+  and interactive elements. This helps you understand a page before reading
+  or asking follow-up questions in chat.
+* Press `NVDA+Shift+A`, then `G`, to correct spelling and grammar in the
+  focused edit box and review the suggested correction in the result window.
+* Use external MCP tools in chat to ask AI Assistant to work with connected
+  services, including NVDA through the NVDA MCP Bridge add-on and its separate
+  companion MCP server. Install both, then add and connect the server under
+  **NVDA menu → Tools → AI Assistant → Settings... → MCP Servers and Tools**.
+  Review tool descriptions and input schemas, then approve tools individually
+  or approve the server's read-only tools together. Enabled saved servers
+  reconnect when NVDA starts.
+* Set a maximum number of tool calls for each response to limit how many tool
+  actions it can request.
+* Copy a chat response as plain text or formatted Markdown with the copy
+  buttons, or use `Alt+T` and `Alt+K` in the chat window.
+* Download from a catalog of 21 community LiteRT-LM vision-language models,
+  including LFM3-VL, MiniCPM-V, and Qwen3.5 Vision. The model manager shows
+  download progress. When importing from Hugging Face, choose one exact
+  `.litertlm` file; repositories with multiple files are supported when you
+  specify the file to import.
+* Create and edit llama.cpp Hugging Face presets, select an exact cached model
+  file, add a speculative draft model, and set supported runtime options.
+  Presets keep model sources portable without managing or deleting the shared
+  Hugging Face cache.
 
 Changed
 -------
 
-* Configure local servers to start on the first request or when NVDA starts. Only the active local provider starts with NVDA.
-* Choose whether one-shot results are displayed, spoken, or both. Configure chat
-  status announcements and automatic reading of completed answers.
-* Show the thinking control only when the selected model supports it.
-* Upgrade LiteRT-LM to version 0.19.1 from a dismissible startup notice, or retry
-  cleanup of an older managed installation.
-* Keep chat requests and drafts available when hiding or switching views. Stop
-  response cancels generation while retaining the partial answer.
+* Open provider and model management from **NVDA menu → Tools → AI Assistant
+  → Settings... → Manage AI Providers...**. The same provider manager is also
+  available directly from **Tools → AI Assistant → Manage AI Providers...**.
+  Select a provider to enable or disable it, make it active, configure it, or
+  manage its models. For model lists, combine the **Enabled state** and **Model
+  status** filters to find available, not downloaded, downloading, or failed
+  models. Text state labels and separate Enable and Disable buttons make the
+  list easier to use with a screen reader.
+* Choose whether LiteRT-LM and llama.cpp start on the first request or when
+  NVDA starts. Only the active local provider starts with NVDA.
+* Choose whether one-shot results are displayed, spoken, or both. Chat status
+  announcements and automatic reading of completed answers have separate
+  settings.
+* Use think mode only with models that support it; the control is shown only
+  for those models.
+* Upgrade LiteRT-LM to version 0.19.1 from its startup notice or the
+  **Upgrade LiteRT-LM Runtime** action in Manage AI Providers. If an older
+  managed runtime could not be removed because it was in use, retry cleanup
+  from the same manager.
+* Hide the chat window with `Escape` while requests continue in the
+  background. **Stop response** cancels generation and keeps the partial answer;
+  drafts and attachments remain available when switching conversations.
 
 Fixed
 -----
 
-* Preserve the chat input caret and keyboard focus when a response finishes;
-  keep the window title synchronized with the active view.
-* Give MCP tool search and filter controls accessible labels for screen readers.
-* Improve local-provider connection feedback and recovery when a server is unavailable or changes configuration.
+* Keep chat input focus and the caret in place when a response finishes, and
+  keep the window title and conversation content in sync when changing views.
+* Remove internal thinking traces from spelling and grammar corrections.
+* Show clear local-provider connection feedback and recover when a server is
+  unavailable or its configuration changes.
+* Keep provider and model list selection and screen-reader focus usable while
+  filtering and refreshing.
+* Apply a changed llama-server executable the next time the managed server is
+  started. Removing a preset stops an add-on-owned server, keeps model files
+  and the shared Hugging Face cache, and leaves servers already running outside
+  the add-on untouched.
 
 v0.14.1
 ========

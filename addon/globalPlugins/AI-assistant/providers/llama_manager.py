@@ -328,6 +328,10 @@ class LlamaCppModelManager(ModelManagerProvider):
 		record = self._catalog.find_exact(model_id)
 		if record is None:
 			raise LLMProviderError(_("This preset is not registered."))
+		# The running router loaded the previous generated preset catalog. Stop
+		# only our owned process before changing the catalog; adopted servers are
+		# deliberately left untouched.
+		self._stop_owned_router()
 		active = self.active_model_id
 		was_active = active == record.model_id or (active and record.matches_server_id(active))
 		cleared = False
