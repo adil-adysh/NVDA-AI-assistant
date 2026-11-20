@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 import logging
 import copy
 import threading
@@ -52,6 +52,28 @@ class McpCatalogService:
 		with self._state_lock:
 			return server_id in self._connected_servers
 
+	def start_configured(self, servers: Sequence[McpServerConfig]) -> tuple[Future, ...]:
+		"""Connect enabled saved servers using the bounded off-thread catalog pool."""
+		with self._state_lock:
+			if self._closed:
+				return ()
+			return tuple(self._refresh_pool.submit(self._connect_on_startup, server, self._server_revisions.get(server.server_id, 0))
+				for server in servers if server.enabled)
+
+	def invalidate_startup(self, server_id: str) -> None:
+		"""Supersede queued startup when a user edits, removes or disables a server."""
+		with self._state_lock:
+			self._server_revisions[server_id] = self._server_revisions.get(server_id, 0) + 1
+
+	def _connect_on_startup(self, server: McpServerConfig, revision: int) -> None:
+		if self._event_stop.is_set():
+			return
+		try:
+			self.connect_config(server, _expected_revision=revision)
+		except Exception as error:
+			if not self._event_stop.is_set():
+				logger.warning("MCP startup connection failed for %s (%s)", server.server_id, type(error).__name__)
+
 	def close(self) -> None:
 		"""Fence and join the event poller before the private worker shuts down."""
 		with self._state_lock:
@@ -78,6 +100,7 @@ class McpCatalogService:
 		env: Mapping[str, str] | None = None,
 		*,
 		timeout: float = 20.0,
+		_expected_revision: int | None = None,
 	) -> tuple[ToolDefinition, ...]:
 		return self._connect({
 			"type": "mcp_connect_stdio",
@@ -85,7 +108,7 @@ class McpCatalogService:
 			"executable": executable,
 			"args": list(args),
 			"env": dict(env or {}),
-		}, timeout=timeout)
+		}, timeout=timeout, _expected_revision=_expected_revision)
 
 	def connect_http(
 		self,
@@ -94,15 +117,16 @@ class McpCatalogService:
 		*,
 		auth_token: str = "",
 		timeout: float = 20.0,
+		_expected_revision: int | None = None,
 	) -> tuple[ToolDefinition, ...]:
 		return self._connect({
 			"type": "mcp_connect_http",
 			"server_id": server_id,
 			"url": url,
 			"auth_token": auth_token,
-		}, timeout=timeout)
+		}, timeout=timeout, _expected_revision=_expected_revision)
 
-	def connect_config(self, server: McpServerConfig, *, timeout: float = 20.0) -> tuple[ToolDefinition, ...]:
+	def connect_config(self, server: McpServerConfig, *, timeout: float = 20.0, _expected_revision: int | None = None) -> tuple[ToolDefinition, ...]:
 		"""Connect one already-validated user configuration record."""
 		if not isinstance(server, McpServerConfig):
 			to_dict = getattr(server, "to_dict", None)
@@ -114,23 +138,25 @@ class McpCatalogService:
 			return ()
 		if server.transport == "stdio":
 			return self.connect_stdio(
-				server.server_id, server.command, server.args, timeout=timeout,
+				server.server_id, server.command, server.args, timeout=timeout, _expected_revision=_expected_revision,
 			)
 		if server.transport == "streamable_http":
 			auth_token = self._credential_resolver(server.credential_ref) if server.credential_ref else ""
-			return self.connect_http(server.server_id, server.url, auth_token=auth_token, timeout=timeout)
+			return self.connect_http(server.server_id, server.url, auth_token=auth_token, timeout=timeout, _expected_revision=_expected_revision)
 		raise ValueError("Unsupported MCP transport")
 
-	def _connect(self, command: dict[str, Any], *, timeout: float) -> tuple[ToolDefinition, ...]:
+	def _connect(self, command: dict[str, Any], *, timeout: float, _expected_revision: int | None = None) -> tuple[ToolDefinition, ...]:
 		self._ensure_open()
 		provider_id = self.provider_id(command["server_id"])
 		with self._state_lock:
+			if self._closed or (_expected_revision is not None and self._server_revisions.get(command["server_id"], 0) != _expected_revision):
+				raise ToolProviderError("MCP startup was superseded", safe_message="The external tool connection changed.")
 			revision = self._server_revisions.get(command["server_id"], 0) + 1
 			self._server_revisions[command["server_id"]] = revision
 			self._blocked_servers.add(command["server_id"])
 			self._connected_servers.discard(command["server_id"])
 			self._registry.set_provider_available(provider_id, False)
-		response = self._dispatch(command, timeout, lambda: False)
+		response = self._dispatch(command, timeout, self._event_stop.is_set)
 		self._require_manager_success(response)
 		try:
 			definitions = self.refresh(command["server_id"], timeout=timeout, _revision=revision, _allow_blocked=True)

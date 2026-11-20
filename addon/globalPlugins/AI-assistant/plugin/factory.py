@@ -24,6 +24,7 @@ from ..config.settings import (
 	get_mcp_approved_tool_ids,
 	get_mcp_server_token,
 	get_num_ctx,
+	get_max_tool_calls,
 )
 from ..config.model_config import get_all_model_sampling
 from ..service.chat.repository_worker import WorkerConversationRepository
@@ -35,7 +36,7 @@ from ..providers.provider_proxy import ProviderProxy
 from ..providers.runtime.server import build_server_config, get_litert_supervisor
 from ..service.chat import ChatCoordinator, ConversationService
 from ..service.llm import ProviderLLMService
-from ..tools import ToolExecutor, ToolRegistry, register_default_tools
+from ..tools import ToolExecutionBudget, ToolExecutor, ToolRegistry, register_default_tools
 from ..tools.mcp_catalog import McpCatalogService
 from ..tools.policy import DefaultToolPermissionPolicy
 from ..service.mcp_dispatch import dispatch_mcp_worker_command
@@ -104,6 +105,7 @@ def build_plugin_services() -> PluginServices:
 	tool_executor = ToolExecutor(
 		tool_registry,
 		policy=DefaultToolPermissionPolicy(approved_tool_ids=get_mcp_approved_tool_ids()),
+		budget_provider=_configured_tool_budget,
 	)
 	llm_service = ProviderLLMService(provider, tool_executor=tool_executor)
 	chat_coordinator = ChatCoordinator(
@@ -134,3 +136,8 @@ def build_plugin_services() -> PluginServices:
 		conversation_service=conversation_service,
 		use_case_engine=use_case_engine,
 	)
+
+
+def _configured_tool_budget() -> ToolExecutionBudget:
+	limit = get_max_tool_calls()
+	return ToolExecutionBudget(max_tool_calls=limit, max_iterations=limit)

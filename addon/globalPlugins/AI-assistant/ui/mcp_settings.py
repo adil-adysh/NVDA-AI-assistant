@@ -451,6 +451,7 @@ class McpSettingsPanel(wx.Panel):
 				self._configs.append(updated)
 			else:
 				old = self._configs[index]
+				self._catalog.invalidate_startup(old.server_id)
 				if (old.transport, old.command, old.args, old.url) != (updated.transport, updated.command, updated.args, updated.url):
 					self._approved = {tool_id for tool_id in self._approved if not tool_id.startswith(f"mcp:mcp:{old.server_id}:")}
 					set_mcp_approved_tool_ids(sorted(self._approved))
@@ -477,6 +478,7 @@ class McpSettingsPanel(wx.Panel):
 		if wx.MessageBox(_("Remove {name} and its saved tool approvals?").format(name=config.name), _("Remove MCP server"), wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION, parent=self) != wx.YES:
 			return
 		self._configs.pop(index)
+		self._catalog.invalidate_startup(config.server_id)
 		self._approved = {tool_id for tool_id in self._approved if not tool_id.startswith(f"mcp:mcp:{config.server_id}:")}
 		set_mcp_server_token(config.server_id, "")
 		set_mcp_servers(self._configs)
@@ -534,6 +536,7 @@ class McpSettingsPanel(wx.Panel):
 		if selected is None:
 			return
 		index, config = selected
+		self._catalog.invalidate_startup(config.server_id)
 		updated = McpServerConfig(
 			server_id=config.server_id,
 			name=config.name,

@@ -62,6 +62,19 @@ def save() -> None:
 	_config_store.save()
 
 
+def get_max_tool_calls() -> int:
+	value = _get_raw_setting("maxToolCalls", defaults.DEFAULT_MAX_TOOL_CALLS)
+	if type(value) is not int or not 1 <= value <= defaults.MAX_TOOL_CALLS:
+		return defaults.DEFAULT_MAX_TOOL_CALLS
+	return value
+
+
+def set_max_tool_calls(value: int) -> None:
+	if type(value) is not int or not 1 <= value <= defaults.MAX_TOOL_CALLS:
+		raise ValueError("Maximum tool calls must be an integer between 1 and 1000")
+	_set_value("maxToolCalls", value)
+
+
 def get_mcp_servers() -> tuple[McpServerConfig, ...]:
 	"""Read validated server records; malformed persisted entries stay disabled."""
 	raw = _get_raw_setting("mcpServers", [])

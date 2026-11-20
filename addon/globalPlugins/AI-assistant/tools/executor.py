@@ -63,12 +63,14 @@ class ToolExecutor:
 		*,
 		policy: ToolPermissionPolicy | None = None,
 		budget: ToolExecutionBudget | None = None,
+		budget_provider: Callable[[], ToolExecutionBudget] | None = None,
 	) -> None:
 		self._tool_registry = tool_registry
 		self._policy = policy or DefaultToolPermissionPolicy()
 		self._policy_lock = threading.RLock()
 		self._active_operations: dict[object, tuple[ToolBinding, dict[str, Any], threading.Event]] = {}
 		self._budget = budget or ToolExecutionBudget()
+		self._budget_provider = budget_provider
 		self._diagnostics_lock = threading.Lock()
 		self._diagnostics: dict[str, Any] = {
 			"calls": 0,
@@ -79,7 +81,7 @@ class ToolExecutor:
 		}
 
 	def new_tracker(self) -> ToolExecutionTracker:
-		return ToolExecutionTracker(self._budget)
+		return ToolExecutionTracker(self._budget_provider() if self._budget_provider is not None else self._budget)
 
 	def set_policy(self, policy: ToolPermissionPolicy) -> None:
 		"""Replace host authorization policy and cancel newly unauthorized work."""

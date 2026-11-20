@@ -84,6 +84,56 @@ def _answer_with_time(messages, tools_arg=None) -> LLMResponse:
 	return LLMResponse(text=f"time={last_tool.text}", model="deterministic-model")
 
 
+def test_configured_budget_is_snapshotted_for_each_new_turn():
+	registry, _executor = _build_stack()
+	limit = [7]
+	executor = tools.ToolExecutor(registry, budget_provider=lambda: tools.ToolExecutionBudget(
+		max_tool_calls=limit[0], max_iterations=limit[0]))
+	first = executor.new_tracker()
+	limit[0] = 9
+	assert first.budget.max_tool_calls == 7
+	assert executor.new_tracker().budget.max_tool_calls == 9
+
+
+def test_call_limit_stops_repeated_model_requests_before_round_cap(monkeypatch):
+	monkeypatch.setattr(llm_module, "is_streaming_enabled", lambda: False)
+	registry, _executor = _build_stack()
+	executor = tools.ToolExecutor(registry, budget=tools.ToolExecutionBudget(max_tool_calls=1, max_iterations=8))
+	provider = ScriptedProvider([lambda *_: LLMResponse(text="", tool_calls=[_time_call()])])
+	service = llm_module.ProviderLLMService(provider, tool_executor=executor)
+	turn = service.generate_with_transcript([], tool_catalog=registry.snapshot())
+	assert len(provider.calls) == 2
+	assert turn.response.raw["tool_loop_limit_reached"]
+	assert turn.response.tool_calls is None
+	assert "AI Assistant settings" in turn.response.text
+
+
+def test_configured_budget_allows_more_than_five_sequential_calls(monkeypatch):
+	monkeypatch.setattr(llm_module, "is_streaming_enabled", lambda: False)
+	registry, _executor = _build_stack()
+	executor = tools.ToolExecutor(registry, budget_provider=lambda: tools.ToolExecutionBudget(max_tool_calls=7, max_iterations=7))
+	provider = ScriptedProvider([lambda *_: LLMResponse(text="", tool_calls=[_time_call()])] * 7 +
+		[lambda *_: LLMResponse(text="finished")])
+	turn = llm_module.ProviderLLMService(provider, tool_executor=executor).generate_with_transcript([], tool_catalog=registry.snapshot())
+	assert turn.response.text == "finished"
+	assert len(provider.calls) == 8
+
+
+def test_saving_limit_during_generation_only_changes_the_next_response(monkeypatch):
+	monkeypatch.setattr(llm_module, "is_streaming_enabled", lambda: False)
+	registry, _executor = _build_stack()
+	limit = [1]
+	executor = tools.ToolExecutor(registry, budget_provider=lambda: tools.ToolExecutionBudget(max_tool_calls=limit[0], max_iterations=limit[0]))
+	def generate(*_args):
+		limit[0] = 7
+		return LLMResponse(text="", tool_calls=[_time_call()])
+	provider = ScriptedProvider([generate])
+	service = llm_module.ProviderLLMService(provider, tool_executor=executor)
+	service.generate_with_transcript([], tool_catalog=registry.snapshot())
+	assert len(provider.calls) == 2
+	assert executor.new_tracker().budget.max_tool_calls == 7
+
+
 def test_get_time_through_normal_chat_path(monkeypatch, tmp_path) -> None:
 	monkeypatch.setattr(llm_module, "is_streaming_enabled", lambda: False)
 	registry, executor = _build_stack()

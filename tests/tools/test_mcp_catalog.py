@@ -2,10 +2,92 @@ from __future__ import annotations
 
 from tests.support.bootstrap import load_addon_module
 from threading import Event
+import pytest
 
 catalog_module = load_addon_module("tools.mcp_catalog")
 registry_module = load_addon_module("tools.registry")
 config_module = load_addon_module("config.mcp_servers")
+
+
+def test_startup_connects_enabled_servers_off_thread_and_isolates_failures(monkeypatch):
+    import threading
+    service = catalog_module.McpCatalogService(registry_module.ToolRegistry(), lambda *_: None)
+    caller = threading.get_ident()
+    calls = []
+    def connect(server, **kwargs):
+        assert threading.get_ident() != caller
+        calls.append(server.server_id)
+        if server.server_id == "bad":
+            raise RuntimeError("unavailable")
+    monkeypatch.setattr(service, "connect_config", connect)
+    records = [config_module.McpServerConfig.from_dict({"server_id": name, "name": name,
+        "transport": "stdio", "command": "server.exe", "enabled": name != "disabled"})
+        for name in ("bad", "good", "disabled")]
+    try:
+        futures = service.start_configured(records)
+        for future in futures:
+            future.result(timeout=2)
+        assert sorted(calls) == ["bad", "good"]
+    finally:
+        service.close()
+
+
+def test_closed_catalog_rejects_startup_connections():
+    service = catalog_module.McpCatalogService(registry_module.ToolRegistry(), lambda *_: None)
+    service.close()
+    assert service.start_configured([]) == ()
+
+
+def test_shutdown_cancels_queued_startup_connections(monkeypatch):
+    import threading
+    service = catalog_module.McpCatalogService(registry_module.ToolRegistry(), lambda *_: None)
+    release, busy = Event(), Event()
+    calls = []
+    lock = threading.Lock()
+    def connect(server, **kwargs):
+        with lock:
+            calls.append(server.server_id)
+            if len(calls) == 4:
+                busy.set()
+        assert release.wait(2)
+    monkeypatch.setattr(service, "connect_config", connect)
+    records = [config_module.McpServerConfig.from_dict({"server_id": f"server{index}", "name": "server",
+        "transport": "stdio", "command": "server.exe", "enabled": True}) for index in range(8)]
+    futures = service.start_configured(records)
+    try:
+        assert busy.wait(2)
+        service.close()
+    finally:
+        release.set()
+    for future in futures:
+        if not future.cancelled():
+            future.result(timeout=2)
+    assert len(calls) == 4
+
+
+@pytest.mark.parametrize("action", ["disconnect", "invalidate_startup"])
+def test_queued_startup_cannot_override_a_later_user_action(monkeypatch, action):
+    from concurrent.futures import Future
+    from types import SimpleNamespace
+    calls, queued = [], []
+    def dispatch(command, *_args):
+        calls.append(command["type"])
+        return {"success": True, "reply": {"ok": True}}
+    service = catalog_module.McpCatalogService(registry_module.ToolRegistry(), dispatch)
+    original_pool = service._refresh_pool
+    def submit(function, *args):
+        queued.append(lambda: function(*args))
+        return Future()
+    monkeypatch.setattr(service, "_refresh_pool", SimpleNamespace(submit=submit, shutdown=lambda **_: None))
+    server = config_module.McpServerConfig.from_dict({"server_id": "later", "name": "later", "transport": "stdio", "command": "server.exe"})
+    try:
+        service.start_configured([server])
+        getattr(service, action)("later")
+        queued[0]()
+        assert calls == (["mcp_disconnect"] if action == "disconnect" else [])
+    finally:
+        service.close()
+        original_pool.shutdown(wait=True)
 
 
 def test_refresh_registers_server_identity_and_atomically_replaces_catalog():
