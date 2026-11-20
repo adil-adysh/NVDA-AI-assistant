@@ -30,12 +30,12 @@ jobs:
       codeQLResults: ${{ steps.setSecurityAnalysisStatus.outputs.codeQLResults }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.branchName }}
 
       - name: Download add-on
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: addon
 
@@ -108,12 +108,12 @@ jobs:
       codeQLResults: ${{ steps.setSecurityAnalysisStatus.outputs.codeQLResults }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.branchName }}
 
       - name: Download add-on
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: addon
 

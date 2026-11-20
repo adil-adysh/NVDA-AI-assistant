@@ -29,10 +29,10 @@ jobs:
       run:
         working-directory: NVDA-AI-assistant
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: NVDA-AI-assistant
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: nvaccess/nvda
           ref: 797a881381f8bedabc13456d3aa76bdd77d71503
@@ -71,10 +71,10 @@ jobs:
       run:
         working-directory: NVDA-AI-assistant
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: NVDA-AI-assistant
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: nvaccess/nvda
           ref: 797a881381f8bedabc13456d3aa76bdd77d71503
