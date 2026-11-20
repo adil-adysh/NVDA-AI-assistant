@@ -51,7 +51,6 @@ impl HttpClient {
 
         Ok(parsed
             .data
-            .unwrap_or_default()
             .into_iter()
             .map(|m| serde_json::to_value(m).unwrap_or(Value::Null))
             .collect())

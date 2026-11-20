@@ -141,7 +141,7 @@ pub(crate) struct UsageInfo {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct ModelListResponse {
     pub object: Option<String>,
-    pub data: Option<Vec<ModelInfo>>,
+    pub data: Vec<ModelInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,6 +150,31 @@ pub(crate) struct ModelInfo {
     pub object: Option<String>,
     pub created: Option<i64>,
     pub owned_by: Option<String>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+#[cfg(test)]
+mod model_listing_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn advertised_capabilities_survive_model_roundtrip() {
+        let source = json!({"id": "example", "capabilities": ["vision", "tools"],
+            "context_length": 8192});
+        let model: ModelInfo = serde_json::from_value(source).unwrap();
+        let exported = serde_json::to_value(model).unwrap();
+        assert_eq!(exported["capabilities"], json!(["vision", "tools"]));
+        assert_eq!(exported["context_length"], 8192);
+    }
+
+    #[test]
+    fn wrong_endpoint_is_not_an_empty_model_list() {
+        assert!(serde_json::from_value::<ModelListResponse>(json!({"status": "ok"})).is_err());
+        assert!(serde_json::from_value::<ModelListResponse>(json!({"data": null})).is_err());
+        assert!(serde_json::from_value::<ModelListResponse>(json!({"data": []})).is_ok());
+    }
 }
 
 /// Error response from OpenAI-compatible endpoints.
