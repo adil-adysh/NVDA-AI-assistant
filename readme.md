@@ -18,11 +18,116 @@ The add-on combines quick actions with a persistent chat workflow, allowing summ
 
 For fully local inference it can also run **LiteRT-LM** or **llama-server**. LiteRT-LM is downloaded on demand; llama-server is discovered on `PATH` or can be configured with an explicit executable path.
 
----
+## Quick start
 
-# Features
+### Requirements
 
-## Summaries
+* NVDA installed
+* One configured AI provider:
+
+  * Ollama
+  * OpenAI-compatible API
+  * Gemini
+  * LiteRT-LM (local — runtime downloaded on demand)
+  * llama.cpp server (`llama-server`)
+
+### Using Ollama
+
+Install Ollama:
+
+```powershell id="55n8ws"
+winget install Ollama.Ollama
+```
+
+Download a model:
+
+```powershell id="oaq6xv"
+ollama pull gemma4:e4b
+```
+
+or:
+
+```powershell id="b7xti3"
+ollama pull ministral-3:3b
+```
+
+List installed models:
+
+```powershell id="d62g3n"
+ollama ls
+```
+
+### Install and configure
+
+1. Install the NVDA AI Assistant add-on.
+2. Open **NVDA menu → Tools → AI Assistant → Settings...**.
+3. In Settings, choose **Manage AI Providers...** to enable a provider, install
+   or upgrade LiteRT-LM, set the active provider, and manage models. You can
+   also open the provider manager directly from **Tools → AI Assistant →
+   Manage AI Providers...**.
+4. Choose a model or endpoint.
+5. Press `NVDA+Shift+A` to start using the assistant.
+
+Tip: Use **Configure Active Model** to tune per-model sampling settings (context window, temperature, top-k, top-p, max tokens, repetition penalty).
+
+## Commands
+
+Press:
+
+```text id="7h19nm"
+NVDA+Shift+A
+```
+
+Then press:
+
+| Key | Action                             |
+| --- | ---------------------------------- |
+| `C` | Open chat                          |
+| `S` | Summarize current content          |
+| `O` | Summarize page structure           |
+| `G` | Correct spelling and grammar in the focused edit box |
+| `I` | Describe current window            |
+| `F` | Describe focused object            |
+| `P` | Attach page content to chat        |
+| `X` | Attach screenshot to chat          |
+| `Z` | Attach focused object image to chat|
+| `V` | Attach selected text to chat       |
+| `B` | Attach clipboard content to chat   |
+| `T` | Select provider (then a digit)     |
+| `M` | Select model (then a digit)        |
+| `H` | Help                               |
+
+Press `T` or `M` to hear the available providers or models announced with numbers, then press the number to switch instantly.
+
+## Chat keyboard shortcuts
+
+The following shortcuts are available inside the chat window:
+
+| Shortcut | Action |
+| -------- | ------ |
+| `Escape` | Hide the chat window (streaming continues in the background) |
+| `Alt+I` | Focus the message input box |
+| `Alt+S` | Send the current message, or stop the response being generated |
+| `Shift+Enter` | Insert a new line in the message input |
+| `Alt+T` | Copy response text to clipboard |
+| `Alt+K` | Copy response as formatted markdown |
+| `Alt+R` | Clear the current view |
+| `Alt+L` | Focus the response content area |
+| `Alt+P` | Focus the provider selector |
+| `Alt+M` | Focus the model selector |
+| `Alt+A` | Attach an image file |
+
+The Send button becomes Stop response while an answer is being generated. You can prepare your next message during generation; pressing Enter will not send a second request until the current response finishes. Stop keeps the partial answer, marked stopped. Unsent drafts and attachments are retained when switching conversations during the current UI session.
+
+After sending, the status confirms “Message sent. Generating response.” Completion, cancellation, and failures also update the status. Failed sends preserve your draft and attachments for retry.
+
+Under **Behavior & Output → Chat responses**, **Announce chat status changes** is enabled by default and controls spoken status feedback. **Automatically read completed chat responses** is disabled by default; when enabled, the completed answer is read after it is displayed and receives keyboard focus. Stopping speech does not cancel generation. These settings are independent of one-shot output preferences.
+
+Routine local-server readiness checks are silent. Observable startup or restart is announced once; preparation lasting 10 seconds produces one “Still preparing local AI” notice. Preparation feedback follows chat status announcements, and is silent for display-only one-shot output. Model loading is not inferred from a slow request: runtimes without loading telemetry receive generic preparation feedback.
+
+## Features
+
+### Summaries
 
 Summarize:
 
@@ -33,9 +138,12 @@ Summarize:
 
 Quick actions can continue directly into chat for follow-up interaction, or open the result in a brand-new conversation (`Add to chat` / `Open in new chat` actions).
 
----
+### Spelling and grammar
 
-## Images and screenshots
+Correct spelling and grammar in the focused edit box. Activate the assistant
+command layer with `NVDA+Shift+A`, then press `G`.
+
+### Images and screenshots
 
 * Describe the current foreground window
 * Describe the focused NVDA object — captures only the currently focused element's screen region
@@ -53,9 +161,7 @@ Supported formats:
 * BMP
 * SVG
 
----
-
-## Chat
+### Chat
 
 The WebView-based chat UI supports:
 
@@ -87,12 +193,15 @@ focus unchanged. These preferences do not change chat or error feedback.
 Use **Show last result** in Tools, or `NVDA+Shift+A`, then `L`, to reopen the latest
 successful one-shot answer for the current session.
 
----
-
-## External MCP tools
+### External MCP tools
 
 AI Assistant can use tools exposed by a local or remote Model Context Protocol
 server. External tools are denied until you approve each exact tool.
+
+To connect NVDA actions, install the [NVDA MCP Bridge add-on](https://github.com/adil-adysh/nvda-mcp-bridge)
+in NVDA and install its separate companion MCP server. The add-on exposes NVDA
+functionality to the companion server; AI Assistant connects to that server and
+lets you review and approve the tools it provides.
 
 1. Open **NVDA menu → Tools → AI Assistant → Settings... → MCP Servers and
    Tools**.
@@ -122,13 +231,11 @@ For the NVDA MCP Bridge, do not put its token in the stdio arguments. The
 companion reads the add-on's protected token file automatically; if you use an
 environment-only token, start the server through a wrapper that supplies it.
 
----
-
-## Context injection
+### Context injection
 
 Attach additional context into an active conversation.
 
-### Page content
+#### Page content
 
 Inject:
 
@@ -139,13 +246,13 @@ Inject:
 
 directly into chat.
 
-### Screenshot chat
+#### Screenshot chat
 
 Capture the current screen and attach it to the active conversation.
 
----
+## Providers
 
-## Provider support
+### Supported providers
 
 Supports:
 
@@ -172,9 +279,7 @@ Features include:
 
 Providers and models can be changed directly from the chat interface without restarting the conversation, or from the assistant layer with `T` / `M` followed by a number.
 
----
-
-## LiteRT-LM (local inference)
+### LiteRT-LM (local inference)
 
 LiteRT-LM is a self-contained local inference runtime. The add-on downloads it on demand, so you can run models on your own machine without installing Python or Ollama:
 
@@ -186,11 +291,9 @@ LiteRT-LM is a self-contained local inference runtime. The add-on downloads it o
 
 Recommended LiteRT-LM models include Gemma 4 E2B/E4B and Qwen3 1.7B/4B/8B.
 
-LiteRT-LM uses runtime **0.18.0**. Model imports accept one self-contained `.litertlm` file, either a local file or an explicit Hugging Face artifact such as `owner/repository#file=model.litertlm`. Directories, raw `.tflite`/tokenizer components, and split or sharded models are unsupported. Multiple independent `.litertlm` variants in a repository are allowed: select the single variant to import. Hugging Face imports currently use the `main` revision.
+LiteRT-LM uses runtime **0.19.1**. Model imports accept one self-contained `.litertlm` file, either a local file or an explicit Hugging Face artifact such as `owner/repository#file=model.litertlm`. Directories, raw `.tflite`/tokenizer components, and split or sharded models are unsupported. Multiple independent `.litertlm` variants in a repository are allowed: select the single variant to import. Hugging Face imports currently use the `main` revision.
 
----
-
-## llama.cpp server (local inference)
+### llama.cpp server (local inference)
 
 The addon integrates with `llama-server` in router mode. It starts the server with a models preset and keeps one server process alive while model selection is sent in each OpenAI-compatible request. Startup can be disabled in the Advanced settings.
 
@@ -225,179 +328,21 @@ The addon queries `/models` and falls back to `/v1/models`. Successful responses
 
 Model switching does not restart a healthy router. The selected canonical model ID is sent with the chat request, and the server routes the request to that model. See [the llama-server integration guide](docs/llama-cpp-server.md) for the complete lifecycle and troubleshooting details.
 
----
+Removing a preset stops an add-on-owned llama-server before updating the preset
+catalog. It keeps downloaded model files and the shared Hugging Face cache, and
+does not stop a server that was already running outside the add-on.
 
-## Think mode
+### Think mode
 
 Some providers and models (including most LiteRT-LM and Qwen3 models) support optional think mode for extended reasoning workflows.
 
----
-
-# Quick start
-
-## Requirements
-
-* NVDA installed
-* One configured AI provider:
-
-  * Ollama
-  * OpenAI-compatible API
-  * Gemini
-  * LiteRT-LM (local — runtime downloaded on demand)
-  * llama.cpp server (`llama-server`)
-
----
-
-## Using Ollama
-
-Install Ollama:
-
-```powershell id="55n8ws"
-winget install Ollama.Ollama
-```
-
-Download a model:
-
-```powershell id="oaq6xv"
-ollama pull gemma4:e4b
-```
-
-or:
-
-```powershell id="b7xti3"
-ollama pull ministral-3:3b
-```
-
-List installed models:
-
-```powershell id="d62g3n"
-ollama ls
-```
-
----
-
-# Setup
-
-1. Install the NVDA AI Assistant add-on.
-2. Open the AI Assistant settings panel.
-3. Use **Manage AI Providers** to enable a provider, install the LiteRT-LM runtime if needed, and set the active provider.
-4. Choose a model or endpoint.
-5. Press `NVDA+Shift+A` to start using the assistant.
-
-Tip: Use **Configure Active Model** to tune per-model sampling settings (context window, temperature, top-k, top-p, max tokens, repetition penalty).
-
-## Git-explain developer workflow
-
-This repository is configured to use the local `git-explain` tool for understanding changed source code with the Unsloth llama.cpp model.
-
-Configuration is stored locally in:
-
-```text
-.git\git-explain.toml
-```
-
-The active model profile is:
-
-```text
-Provider: llama_cpp
-Model: git-explain-unsloth35b
-Endpoint: http://127.0.0.1:8083/v1
-```
-
-The `git-explain` release binary is installed at:
-
-```text
-C:\Users\adilh\.local\bin\git-explain.exe
-```
-
-That directory is on the user `PATH`, so from this repository you can run:
-
-```powershell
-git explain
-```
-
-The command opens a browser view of changed supported source units immediately. Select **Generate explanation** for normal explanations or **Explain this code in depth** for deep explanations. Results are cached per source unit in:
-
-```text
-.git\git-explain\cache.sqlite
-```
-
-Useful maintenance commands:
-
-```powershell
-git explain config show
-git explain cache status
-git explain cache clear
-```
-
-The current Git-explain integration analyzes supported tracked or staged changes. Untracked files, including the local `prompts/` directory, are not included yet.
-
----
-
-# Commands
-
-Press:
-
-```text id="7h19nm"
-NVDA+Shift+A
-```
-
-Then press:
-
-| Key | Action                             |
-| --- | ---------------------------------- |
-| `C` | Open chat                          |
-| `S` | Summarize current content          |
-| `O` | Summarize page structure           |
-| `I` | Describe current window            |
-| `F` | Describe focused object            |
-| `P` | Attach page content to chat        |
-| `X` | Attach screenshot to chat          |
-| `Z` | Attach focused object image to chat|
-| `V` | Attach selected text to chat       |
-| `B` | Attach clipboard content to chat   |
-| `T` | Select provider (then a digit)     |
-| `M` | Select model (then a digit)        |
-| `H` | Help                               |
-
-Press `T` or `M` to hear the available providers or models announced with numbers, then press the number to switch instantly.
-
----
-
-# Chat keyboard shortcuts
-
-The following shortcuts are available inside the chat window:
-
-| Shortcut | Action |
-| -------- | ------ |
-| `Escape` | Hide the chat window (streaming continues in the background) |
-| `Alt+I` | Focus the message input box |
-| `Alt+S` | Send the current message, or stop the response being generated |
-| `Shift+Enter` | Insert a new line in the message input |
-| `Alt+T` | Copy response text to clipboard |
-| `Alt+K` | Copy response as formatted markdown |
-| `Alt+R` | Clear the current view |
-| `Alt+L` | Focus the response content area |
-| `Alt+P` | Focus the provider selector |
-| `Alt+M` | Focus the model selector |
-| `Alt+A` | Attach an image file |
-
-The Send button becomes Stop response while an answer is being generated. You can prepare your next message during generation; pressing Enter will not send a second request until the current response finishes. Stop keeps the partial answer, marked stopped. Unsent drafts and attachments are retained when switching conversations during the current UI session.
-
-After sending, the status confirms “Message sent. Generating response.” Completion, cancellation, and failures also update the status. Failed sends preserve your draft and attachments for retry.
-
-Under **Behavior & Output → Chat responses**, **Announce chat status changes** is enabled by default and controls spoken status feedback. **Automatically read completed chat responses** is disabled by default; when enabled, the completed answer is read after it is displayed and receives keyboard focus. Stopping speech does not cancel generation. These settings are independent of one-shot output preferences.
-
-Routine local-server readiness checks are silent. Observable startup or restart is announced once; preparation lasting 10 seconds produces one “Still preparing local AI” notice. Preparation feedback follows chat status announcements, and is silent for display-only one-shot output. Model loading is not inferred from a slow request: runtimes without loading telemetry receive generic preparation feedback.
-
----
-
-# Configuration
+## Configuration
 
 The settings panel allows you to:
 
 * choose the active provider and model
 * manage AI providers (enable / disable, install the LiteRT-LM runtime, set active provider)
+* filter the model catalog by enabled state and model status, and combine both filters to narrow results (available, not downloaded, downloading, or failed)
 * configure per-model sampling settings (context window, temperature, top-k, top-p, max tokens, repetition penalty)
 * set global model defaults
 * configure API keys and endpoints
@@ -408,11 +353,9 @@ The settings panel allows you to:
 * enable optional think mode
 * log request metrics to a file
 
----
+## Recommended local models
 
-# Recommended local models
-
-## Ollama
+### Ollama
 
 | Model            | Usage                                      |
 | ---------------- | ------------------------------------------ |
@@ -427,7 +370,7 @@ Inspect model details with:
 ollama show gemma4:e4b
 ```
 
-## LiteRT-LM
+### LiteRT-LM
 
 Download these from the model manager (Hugging Face). CPU and GPU/NPU variants are available where noted.
 
@@ -439,16 +382,7 @@ Download these from the model manager (Hugging Face). CPU and GPU/NPU variants a
 | `qwen3-4b`      | Balanced model, competitive with Gemma 4 E4B          |
 | `qwen3-8b`      | Stronger reasoning on larger desktops                 |
 
----
-
-# Technical notes
-
-* A dedicated UI host keeps NVDA responsive during AI operations.
-* Chat sessions maintain contextual continuity during interaction.
-
----
-
-# Troubleshooting
+## Troubleshooting
 
 * Verify provider configuration if requests fail.
 * Ensure Ollama is running for local inference.
@@ -456,14 +390,10 @@ Download these from the model manager (Hugging Face). CPU and GPU/NPU variants a
 * For llama.cpp, verify `llama-server` is on `PATH` or configure its full executable path, verify the endpoint and preset path, and inspect `GET /models` for the canonical model IDs. Its startup option is also available in Advanced settings.
 * Download required models before use.
 
----
-
-# Open source and contributions
+## Open source and contributions
 
 Issues, suggestions, accessibility feedback, and pull requests are welcome.
 
----
-
-# License
+## License
 
 See `COPYING.txt` for license details.
