@@ -1,10 +1,56 @@
 """Long runtime jobs must leave the control plane available."""
 import threading
+import pytest
 
 from tests.support import load_addon_module
 
 server_mod = load_addon_module("worker.server")
 dto = load_addon_module("core.job.dto")
+
+
+def test_shutdown_stops_initialized_runtimes_once_despite_cleanup_error():
+	calls = []
+	class Runtime:
+		def __init__(self, name):
+			self.name = name
+		def shutdown(self, timeout_seconds):
+			calls.append((self.name, timeout_seconds))
+			if self.name == "litert":
+				raise RuntimeError("stop failed")
+	server = server_mod.WorkerServer(litert_executor=Runtime("litert"), llama_executor=Runtime("llama"))
+	server._running = True
+	server.shutdown()
+	server.shutdown()
+	assert calls == [("litert", 0.3), ("llama", 0.3)]
+	for get_executor in (server.get_litert_executor, server.get_llama_executor):
+		with pytest.raises(RuntimeError, match="shutdown"):
+			get_executor()
+
+
+def test_shutdown_does_not_create_idle_runtime_executors():
+	server = server_mod.WorkerServer()
+	server._running = True
+	server.shutdown()
+	assert server._litert_executor is None
+	assert server._llama_executor is None
+	with pytest.raises(RuntimeError, match="shutdown"):
+		server.get_litert_executor()
+
+
+@pytest.mark.parametrize("module_name,class_name", [("litert", "LiteRTWorkerExecutor"), ("llama", "LlamaWorkerExecutor")])
+def test_executor_shutdown_fences_borrowed_native_owner_and_rejects_new_access(module_name, class_name):
+	from types import SimpleNamespace
+	module = load_addon_module(f"worker.executors.{module_name}")
+	calls = []
+	native = SimpleNamespace(fence_startup=lambda: calls.append("fence"),
+		stop=lambda **kwargs: calls.append("stop"))
+	executor = getattr(module, class_name)(supervisor=native)
+	borrowed = executor._get_supervisor()
+	executor.shutdown(timeout_seconds=0.3)
+	assert borrowed is native
+	assert calls == ["fence", "stop"]
+	with pytest.raises(RuntimeError, match="shutdown"):
+		executor._get_supervisor()
 
 
 class Pipe:
@@ -42,35 +88,6 @@ def test_slow_runtime_job_keeps_health_and_cancel_responsive():
 		server._control_executor.shutdown(wait=True)
 	frames = list(server._event_queue.queue)
 	assert frames[-1]["status"] == "cancelled"
-
-
-def test_asset_scan_keeps_health_cancellation_and_shutdown_responsive():
-	from types import SimpleNamespace
-	started, release = threading.Event(), threading.Event()
-	class Assets:
-		def discover_model_assets(self, roots, generation):
-			started.set()
-			assert release.wait(3)
-			return SimpleNamespace(to_dict=lambda: {"generation": generation, "assets": [], "errors": {}, "scanned_at": 0})
-	server = server_mod.WorkerServer(max_workers=1)
-	server._cmd_server = Pipe()
-	server._model_asset_executor = Assets()
-	server._running = True
-	server._default_cache_roots = lambda: []
-	try:
-		server._handle_command(dto.JobSpec(job_id="scan", job_type="runtime_command", payload={"type": "llama_discover_assets"}).to_dict())
-		assert started.wait(1)
-		server._handle_command({"type": "worker_health_ping"})
-		assert server._cmd_server.frames[-1]["type"] == "worker_health"
-		server._handle_command({"type": "cancel_job", "job_id": "scan"})
-		assert server._cmd_server.frames[-1]["accepted"]
-		server._handle_command({"type": "shutdown"})
-		assert server._cmd_server.frames[-1]["type"] == "shutdown_ack"
-	finally:
-		release.set()
-		server.shutdown()
-		for lane in server._execution_lanes.values():
-			lane.shutdown(wait=True)
 
 
 def test_stale_generation_event_is_ignored():

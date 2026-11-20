@@ -64,6 +64,96 @@ struct FakeProcessDriver {
     spawn_delay_ms: Arc<AtomicU64>,
 }
 
+#[test]
+fn shutdown_rejects_launches_from_previously_borrowed_supervisor() {
+    let driver = Arc::new(FakeProcessDriver::new());
+    let health = Arc::new(FakeHealthChecker::new(false, true));
+    let supervisor = SupervisorCore::with_drivers(
+        "test".into(),
+        "127.0.0.1".into(),
+        9999,
+        driver.clone(),
+        health,
+    );
+    supervisor.shutdown().unwrap();
+    let env = HashMap::new();
+    let timeout = Duration::from_millis(100);
+    assert!(supervisor
+        .ensure_ready("fake", &[], &env, "config", None, timeout)
+        .unwrap_err()
+        .contains("shutdown"));
+    assert!(supervisor
+        .restart("fake", &[], &env, "config", None, timeout)
+        .unwrap_err()
+        .contains("shutdown"));
+    assert!(supervisor.adopt(None).unwrap_err().contains("shutdown"));
+    assert_eq!(driver.spawns.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn shutdown_fences_in_flight_spawn_and_terminates_late_child() {
+    let driver = Arc::new(FakeProcessDriver::new());
+    driver.spawn_delay_ms.store(100, Ordering::SeqCst);
+    let health = Arc::new(FakeHealthChecker::new(true, false));
+    let supervisor = Arc::new(create_test_supervisor(driver.clone(), health));
+    let borrowed = supervisor.clone();
+    let task = thread::spawn(move || {
+        borrowed.ensure_ready(
+            "fake",
+            &[],
+            &HashMap::new(),
+            "config",
+            None,
+            Duration::from_secs(2),
+        )
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while driver.spawns.load(Ordering::SeqCst) == 0 {
+        assert!(std::time::Instant::now() < deadline);
+        thread::yield_now();
+    }
+    supervisor.shutdown().unwrap();
+    assert!(task.join().unwrap().is_err());
+    assert!(!driver.current_alive.load(Ordering::SeqCst));
+    assert_eq!(supervisor.status().state, "stopped");
+}
+
+#[test]
+fn shutdown_prevents_in_flight_adoption_from_republishing_ready() {
+    struct BlockingHealth {
+        entered: std::sync::Barrier,
+        release: std::sync::Barrier,
+    }
+    impl HealthChecker for BlockingHealth {
+        fn check_health(&self, _: &str, _: Duration) -> bool {
+            true
+        }
+        fn check_compatible(&self, _: &str, _: Duration) -> bool {
+            self.entered.wait();
+            self.release.wait();
+            true
+        }
+    }
+    let health = Arc::new(BlockingHealth {
+        entered: std::sync::Barrier::new(2),
+        release: std::sync::Barrier::new(2),
+    });
+    let supervisor = Arc::new(SupervisorCore::with_drivers(
+        "test".into(),
+        "127.0.0.1".into(),
+        9999,
+        Arc::new(FakeProcessDriver::new()),
+        health.clone(),
+    ));
+    let borrowed = supervisor.clone();
+    let task = thread::spawn(move || borrowed.adopt(None));
+    health.entered.wait();
+    supervisor.shutdown().unwrap();
+    health.release.wait();
+    assert!(task.join().unwrap().is_err());
+    assert_eq!(supervisor.status().state, "stopped");
+}
+
 impl FakeProcessDriver {
     fn new() -> Self {
         Self {
@@ -630,9 +720,7 @@ fn test_ensure_ready_blocks_and_waits_if_stopping() {
 
     // 3. Thread A initiates stop()
     let sup_a = Arc::clone(&supervisor);
-    let stop_thread = thread::spawn(move || {
-        sup_a.stop(Duration::from_millis(500))
-    });
+    let stop_thread = thread::spawn(move || sup_a.stop(Duration::from_millis(500)));
 
     // Wait until supervisor enters Stopping state
     while supervisor.status().state != "stopping" {
@@ -695,9 +783,7 @@ fn test_stop_generation_guard_preserves_concurrent_epoch() {
     driver.wait_delay_ms.store(120, Ordering::SeqCst);
 
     let sup_clone = Arc::clone(&supervisor);
-    let stop_thread = thread::spawn(move || {
-        sup_clone.stop(Duration::from_millis(500))
-    });
+    let stop_thread = thread::spawn(move || sup_clone.stop(Duration::from_millis(500)));
 
     while supervisor.status().state != "stopping" {
         thread::sleep(Duration::from_millis(5));
@@ -881,7 +967,13 @@ fn test_os_process_handle_job_object_containment() {
     let mut handle = driver
         .spawn(
             "cmd.exe",
-            &["/C".into(), "ping".into(), "127.0.0.1".into(), "-n".into(), "4".into()],
+            &[
+                "/C".into(),
+                "ping".into(),
+                "127.0.0.1".into(),
+                "-n".into(),
+                "4".into(),
+            ],
             &HashMap::new(),
         )
         .expect("Failed to spawn OS test process");
@@ -893,8 +985,16 @@ fn test_os_process_handle_job_object_containment() {
     unsafe {
         #[link(name = "kernel32")]
         extern "system" {
-            fn OpenProcess(dwDesiredAccess: u32, bInheritHandle: i32, dwProcessId: u32) -> *mut std::ffi::c_void;
-            fn IsProcessInJob(hProcess: *mut std::ffi::c_void, hJob: *mut std::ffi::c_void, lpResult: *mut i32) -> i32;
+            fn OpenProcess(
+                dwDesiredAccess: u32,
+                bInheritHandle: i32,
+                dwProcessId: u32,
+            ) -> *mut std::ffi::c_void;
+            fn IsProcessInJob(
+                hProcess: *mut std::ffi::c_void,
+                hJob: *mut std::ffi::c_void,
+                lpResult: *mut i32,
+            ) -> i32;
             fn CloseHandle(hObject: *mut std::ffi::c_void) -> i32;
         }
 
@@ -926,7 +1026,21 @@ fn test_os_process_handle_job_object_containment() {
 #[test]
 fn test_real_child_stderr_survives_startup_failure() {
     let driver = crate::process::OsProcessDriver;
-    let mut process = driver.spawn("cmd.exe", &["/C".into(), "echo invalid preset option mlock 1>&2 & exit /b 42".into()], &HashMap::new()).unwrap();
-    assert_eq!(process.wait_timeout(Duration::from_secs(3)).unwrap(), Some(42));
-    assert!(process.diagnostics().contains("invalid preset option mlock"));
+    let mut process = driver
+        .spawn(
+            "cmd.exe",
+            &[
+                "/C".into(),
+                "echo invalid preset option mlock 1>&2 & exit /b 42".into(),
+            ],
+            &HashMap::new(),
+        )
+        .unwrap();
+    assert_eq!(
+        process.wait_timeout(Duration::from_secs(3)).unwrap(),
+        Some(42)
+    );
+    assert!(process
+        .diagnostics()
+        .contains("invalid preset option mlock"));
 }

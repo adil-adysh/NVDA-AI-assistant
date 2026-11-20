@@ -15,6 +15,7 @@ struct ActiveConfig {
 }
 
 struct InnerState {
+    closed: bool,
     state: LifecycleState,
     process: Option<Box<dyn ProcessHandle>>,
     generation: u64,
@@ -60,6 +61,7 @@ impl SupervisorCore {
         };
 
         let initial_state = InnerState {
+            closed: false,
             state: LifecycleState::Stopped,
             process: None,
             generation: 0,
@@ -179,34 +181,51 @@ impl SupervisorCore {
             }
 
             let mut state = self.state.lock().unwrap();
+            if state.closed {
+                return Err(format!(
+                    "{} supervisor shutdown has fenced startup",
+                    self.runtime_name
+                ));
+            }
             self.refresh_process_state_locked(&mut state);
 
             // 0. Stopping or Restarting: wait until supervisor finishes teardown (RS-02, RS-03)
-            if state.state == LifecycleState::Stopping || state.state == LifecycleState::Restarting {
+            if state.state == LifecycleState::Stopping || state.state == LifecycleState::Restarting
+            {
                 let my_gen = state.generation;
                 let remaining = timeout.saturating_sub(start_time.elapsed());
                 if remaining.is_zero() {
                     return Err(format!(
                         "Timed out waiting for {} server to finish {}",
                         self.runtime_name,
-                        if state.state == LifecycleState::Stopping { "stopping" } else { "restarting" }
+                        if state.state == LifecycleState::Stopping {
+                            "stopping"
+                        } else {
+                            "restarting"
+                        }
                     ));
                 }
                 let (new_state, wait_res) = self
                     .condvar
                     .wait_timeout_while(state, remaining, |s| {
-                        (s.state == LifecycleState::Stopping || s.state == LifecycleState::Restarting)
+                        (s.state == LifecycleState::Stopping
+                            || s.state == LifecycleState::Restarting)
                             && s.generation == my_gen
                     })
                     .unwrap();
                 state = new_state;
                 if wait_res.timed_out()
-                    && (state.state == LifecycleState::Stopping || state.state == LifecycleState::Restarting)
+                    && (state.state == LifecycleState::Stopping
+                        || state.state == LifecycleState::Restarting)
                 {
                     return Err(format!(
                         "Timed out waiting for {} server to complete {}",
                         self.runtime_name,
-                        if state.state == LifecycleState::Stopping { "teardown" } else { "restart" }
+                        if state.state == LifecycleState::Stopping {
+                            "teardown"
+                        } else {
+                            "restart"
+                        }
                     ));
                 }
                 continue 'outer;
@@ -467,7 +486,9 @@ impl SupervisorCore {
                         s.state = LifecycleState::Failed;
                         let err_msg = format!(
                             "{} server process exited unexpectedly with code {}: {}",
-                            self.runtime_name, code, proc.diagnostics()
+                            self.runtime_name,
+                            code,
+                            proc.diagnostics()
                         );
                         s.last_error = Some(err_msg.clone());
                         self.condvar.notify_all();
@@ -507,6 +528,12 @@ impl SupervisorCore {
         // 1. Enter Restarting state under lock
         let old_proc = {
             let mut state = self.state.lock().unwrap();
+            if state.closed {
+                return Err(format!(
+                    "{} supervisor shutdown has fenced restart",
+                    self.runtime_name
+                ));
+            }
             state.generation += 1;
             state.state = LifecycleState::Restarting;
             state.startup_identity = None;
@@ -640,13 +667,30 @@ impl SupervisorCore {
 
     /// Shutdown the server safely.
     pub fn shutdown(&self) -> Result<(), String> {
+        self.fence_startup();
         let _ = self.stop(Duration::from_secs(5));
         Ok(())
+    }
+
+    /// Permanently reject launches, including calls using borrowed references.
+    pub fn fence_startup(&self) {
+        let mut state = self.state.lock().unwrap();
+        if !state.closed {
+            state.closed = true;
+            state.generation += 1;
+        }
+        self.condvar.notify_all();
     }
 
     /// Explicitly adopt a server running on the endpoint.
     pub fn adopt(&self, model_id: Option<&str>) -> Result<RuntimeStatus, String> {
         let mut state = self.state.lock().unwrap();
+        if state.closed {
+            return Err(format!(
+                "{} supervisor shutdown has fenced adoption",
+                self.runtime_name
+            ));
+        }
         self.refresh_process_state_locked(&mut state);
         if state.state == LifecycleState::ReadyOwned {
             let pid = state.process.as_ref().map(|p| p.pid());
@@ -667,6 +711,12 @@ impl SupervisorCore {
             .check_compatible(&self.base_url, Duration::from_secs(2))
         {
             let mut s = self.state.lock().unwrap();
+            if s.closed {
+                return Err(format!(
+                    "{} supervisor shutdown has fenced adoption",
+                    self.runtime_name
+                ));
+            }
             s.generation += 1;
             s.state = LifecycleState::ReadyAdopted;
             s.running_model = model_id.map(|m| m.to_string());

@@ -128,6 +128,8 @@ class WorkerServer:
 	def get_litert_executor(self) -> Any:
 		"""Return the LiteRT host executor, initializing if necessary."""
 		with self._executor_lock:
+			if self._shutdown_event.is_set():
+				raise RuntimeError("Worker shutdown has fenced LiteRT executor access")
 			if self._litert_executor is None:
 				try:
 					from .executors.litert import LiteRTWorkerExecutor
@@ -136,20 +138,11 @@ class WorkerServer:
 				self._litert_executor = LiteRTWorkerExecutor()
 			return self._litert_executor
 
-	def get_model_asset_executor(self) -> Any:
-		with self._executor_lock:
-			if not hasattr(self, "_model_asset_executor"):
-				try:
-					from .executors.model_assets import ModelAssetExecutor, default_cache_roots
-				except ImportError:
-					from worker.executors.model_assets import ModelAssetExecutor, default_cache_roots
-				self._model_asset_executor = ModelAssetExecutor()
-				self._default_cache_roots = default_cache_roots
-			return self._model_asset_executor
-
 	def get_llama_executor(self) -> Any:
 		"""Return the llama.cpp host executor, initializing if necessary."""
 		with self._executor_lock:
+			if self._shutdown_event.is_set():
+				raise RuntimeError("Worker shutdown has fenced llama executor access")
 			if self._llama_executor is None:
 				try:
 					from .executors.llama import LlamaWorkerExecutor
@@ -231,16 +224,26 @@ class WorkerServer:
 
 	def shutdown(self) -> None:
 		"""Signal shutdown, cancel active jobs, and close named pipe servers."""
-		if not self._running:
-			return
-		self._running = False
-		self._shutdown_event.set()
+		with self._executor_lock:
+			if self._shutdown_event.is_set():
+				return
+			self._running = False
+			self._shutdown_event.set()
+			runtimes = (self._litert_executor, self._llama_executor)
 
 		# Cancel all in-flight jobs
 		with self._registry_lock:
 			tokens = tuple(self._active_jobs.values())
 		for token in tokens:
 			token.cancel("shutdown")
+		# Stop only initialized owners. Native stop never terminates an adopted
+		# external server. Job containment remains the forced-exit fallback.
+		for runtime in runtimes:
+			if runtime is not None:
+				try:
+					runtime.shutdown(timeout_seconds=0.3)
+				except Exception:
+					logger.exception("Managed runtime shutdown failed")
 		if self._mcp_manager_client is not None:
 			try:
 				self._mcp_manager_client.close(timeout=3.0)

@@ -130,6 +130,12 @@ impl RuntimeSupervisor {
     }
 
     /// Cleanly shutdown runtime during add-on termination.
+    pub fn fence_startup(&self, py: Python<'_>) {
+        let core = Arc::clone(&self.core);
+        py.allow_threads(move || core.fence_startup());
+    }
+
+    /// Permanently fence and stop the runtime during add-on termination.
     pub fn shutdown(&self, py: Python<'_>) -> PyResult<()> {
         let core = Arc::clone(&self.core);
         py.allow_threads(move || core.shutdown())

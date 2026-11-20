@@ -14,7 +14,22 @@ logger = logging.getLogger(__name__)
 _host_process: Optional[subprocess.Popen] = None
 _host_logger_thread: Optional[threading.Thread] = None
 _process_lock = threading.Lock()
+_shutdown = False
 _HOST_COMMAND_PIPE_NAME = r"\\.\pipe\nvda_ai_assistant_ui_cmd"
+
+
+def configure_host_lifecycle() -> None:
+	"""Enable launches for a new application lifecycle."""
+	global _shutdown
+	with _process_lock:
+		_shutdown = False
+
+
+def fence_host_startup() -> None:
+	"""Reject late presentation launches before other owners begin teardown."""
+	global _shutdown
+	with _process_lock:
+		_shutdown = True
 
 
 def get_host_executable_path() -> Path:
@@ -67,6 +82,8 @@ def start_host_if_needed() -> None:
 	global _host_logger_thread  # pylint: disable=global-statement
 	process: subprocess.Popen | None = None
 	with _process_lock:
+		if _shutdown:
+			raise HostUnavailableError("UI host shutdown has fenced startup")
 		if _host_process is not None and _host_process.poll() is None:
 			logger.debug("Reusing existing UI host process pid=%s", _host_process.pid)
 			return
@@ -133,17 +150,20 @@ def is_host_process_alive() -> bool:
 
 def stop_host() -> None:
 	global _host_process  # pylint: disable=global-statement
+	global _shutdown
 	with _process_lock:
+		_shutdown = True
 		if _host_process is None:
 			return
 
 		try:
 			if _host_process.poll() is None:
 				_host_process.terminate()
-				_host_process.wait(timeout=5)
+				_host_process.wait(timeout=1.0)
 		except Exception:
 			try:
 				_host_process.kill()
+				_host_process.wait(timeout=1.0)
 			except Exception:
 				pass
 		finally:

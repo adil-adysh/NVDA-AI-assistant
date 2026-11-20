@@ -190,6 +190,22 @@ def test_preload_readiness_failure_is_reported_without_unbound_state(monkeypatch
 	assert str(reported[0]) == "readiness failed"
 
 
+def test_idle_lazy_runtime_is_not_preloaded_or_announced_ready(monkeypatch) -> None:
+	calls = []
+	runner = background.BackgroundTaskRunner(
+		llm_service=SimpleNamespace(ensure_model_available=lambda **_kwargs: calls.append("preload")),
+		use_case_engine=_BlockingEngine(), progress_handler=lambda _event: None,
+		readiness_service=SimpleNamespace(evaluate_active=lambda: SimpleNamespace(
+			provider="litert-lm", can_infer=True, is_ready=False,
+		)),
+	)
+	monkeypatch.setattr(runner, "_start_worker", lambda *, target, **_kwargs: target())
+	monkeypatch.setattr(runner, "_queue_delivery", lambda *_args: calls.append("announcement"))
+	runner.start_model_preload()
+	assert calls == []
+	runner.close()
+
+
 def test_application_terminate_closes_background_runner_first() -> None:
 	application_path = ADDON_ROOT / "plugin" / "application.py"
 	tree = ast.parse(application_path.read_text(encoding="utf-8"))

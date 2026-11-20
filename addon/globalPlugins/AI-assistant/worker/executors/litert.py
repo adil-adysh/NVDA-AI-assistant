@@ -121,6 +121,8 @@ class LiteRTWorkerExecutor:
 		self.port = port
 		self._config_lock = threading.Lock()
 		self._supervisor = supervisor
+		self._supervisor_lock = threading.Lock()
+		self._closed = False
 
 		if self._supervisor is None and runtime_supervisor is not None and hasattr(runtime_supervisor, "RuntimeSupervisor"):
 			try:
@@ -131,6 +133,12 @@ class LiteRTWorkerExecutor:
 				logger.warning("Could not initialize native RuntimeSupervisor('litert-lm'): %s", exc)
 
 	def _get_supervisor(self) -> Any:
+		with self._supervisor_lock:
+			if self._closed:
+				raise RuntimeError("LiteRT executor shutdown has fenced startup")
+			return self._get_supervisor_locked()
+
+	def _get_supervisor_locked(self) -> Any:
 		if self._supervisor is not None:
 			if (
 				runtime_supervisor is not None
@@ -291,6 +299,15 @@ class LiteRTWorkerExecutor:
 			return self.get_status()
 		status = self._supervisor.stop(timeout_seconds=timeout_seconds)
 		return serialize_runtime_status(status)
+
+	def shutdown(self, timeout_seconds: float = 0.3) -> None:
+		with self._supervisor_lock:
+			self._closed = True
+			supervisor = self._supervisor
+			if supervisor is not None:
+				supervisor.fence_startup()
+		if supervisor is not None:
+			supervisor.stop(timeout_seconds=timeout_seconds)
 
 	def adopt(self) -> dict[str, Any]:
 		"""Acknowledge a healthy server running on host:port without owned child process."""
