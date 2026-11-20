@@ -703,10 +703,10 @@ class OpenAICompatProvider(LLMProvider):
 		or ``None``.
 		"""
 		try:
-			from ..litert_models import lookup_by_friendly_name  # type: ignore[attr-defined]
+			from ..litert_models import lookup_catalog_friendly_name  # type: ignore[attr-defined]
 		except ImportError:
 			return None
-		return lookup_by_friendly_name(model_id)
+		return lookup_catalog_friendly_name(model_id)
 
 	def _is_litert_backend(self) -> bool:
 		"""Return ``True`` when this provider is configured against LiteRT-LM."""
@@ -735,11 +735,11 @@ class OpenAICompatProvider(LLMProvider):
 		"""Resolve *model_id* by querying the server's ``/v1/models`` and
 		mapping it back to the catalog.
 
-		Handles friendly names and legacy IDs that may appear in the
+		Handles friendly names and exact repository IDs that may appear in the
 		server list but not in the static catalog.
 		"""
 		try:
-			from ..litert_models import lookup_by_friendly_name  # type: ignore[attr-defined]
+			from ..litert_models import lookup_catalog_friendly_name  # type: ignore[attr-defined]
 			from ..runtime.server import get_litert_supervisor  # type: ignore[attr-defined]
 		except ImportError:
 			return None
@@ -751,7 +751,7 @@ class OpenAICompatProvider(LLMProvider):
 
 		# Direct match in server list.
 		if model_id in server_models:
-			return lookup_by_friendly_name(model_id)
+			return lookup_catalog_friendly_name(model_id)
 
 		return None
 

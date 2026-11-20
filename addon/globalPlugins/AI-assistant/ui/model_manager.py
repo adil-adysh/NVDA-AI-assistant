@@ -181,11 +181,6 @@ class ModelManagerDialog(wx.Dialog):
 		self._configure_btn = wx.Button(self, label=_("Configure Model..."))
 		self._configure_btn.Bind(wx.EVT_BUTTON, self._on_configure_model)
 		button_sizer.Add(self._configure_btn, flag=wx.LEFT, border=5)
-		self._runtime_btn = wx.Button(self, label=_("Runtime settings..."))
-		self._runtime_btn.Bind(wx.EVT_BUTTON, self._on_runtime_settings)
-		self._runtime_btn.Show(False)
-		button_sizer.Add(self._runtime_btn, flag=wx.LEFT, border=5)
-
 		s_helper.addItem(button_sizer)
 
 		# ── Close button ─────────────────────────────────────────
@@ -439,7 +434,6 @@ class ModelManagerDialog(wx.Dialog):
 		self._cache_delete_btn.Enable(not busy and ModelAction.DELETE_CACHE in actions)
 		self._set_active_btn.Enable(not busy and ModelAction.SELECT in actions)
 		self._configure_btn.Enable(not busy and model is not None)
-		self._runtime_btn.Enable(not busy and model is not None and model.registered)
 
 	def _update_details(self) -> None:
 		model = self._get_selected_model()
@@ -616,7 +610,7 @@ class ModelManagerDialog(wx.Dialog):
 		finally:
 			model_id_dialog.Destroy()
 
-	def _run_import(self, source: str, model_id: str | None) -> None:
+	def _run_import(self, source: str, model_id: str | None, huggingface_token: str | None = None) -> None:
 		try:
 			request = parse_model_import_source(source, model_id, self._provider.provider_id)
 		except ValueError as exc:
@@ -642,7 +636,12 @@ class ModelManagerDialog(wx.Dialog):
 				if downloaded is not None and total is not None:
 					dlg.update_progress(downloaded, total)
 
-			self._provider.import_model(request, progress, dlg.cancel_event)
+			self._provider.import_model(
+				request,
+				progress,
+				cancel_event=dlg.cancel_event,
+				huggingface_token=huggingface_token,
+			)
 			dlg.signal_complete(True, _("Model imported successfully."))
 
 		DownloadProgressDialog.run(
@@ -676,9 +675,17 @@ class ModelManagerDialog(wx.Dialog):
 	def _on_import_hugging_face(self, _event: wx.CommandEvent) -> None:
 		if not self._provider.features.import_model:
 			return
+		if self._provider.provider_id == "litert-lm":
+			prompt = _(
+				"Enter a Hugging Face repository reference and one artifact, for example:\n"
+				"owner/repository#file=path/model.litertlm\n\n"
+				"LiteRT-LM imports require exactly one .litertlm file from the main revision."
+			)
+		else:
+			prompt = _("Enter a Hugging Face repository reference (use repo:quantization for llama.cpp):")
 		source_dialog = wx.TextEntryDialog(
 			self,
-			_("Enter a Hugging Face repository reference (use repo:quantization for llama.cpp):"),
+			prompt,
 			_("Import from Hugging Face"),
 		)
 		try:
@@ -690,8 +697,22 @@ class ModelManagerDialog(wx.Dialog):
 		if not source:
 			return
 		confirmed, model_id = self._prompt_model_id()
-		if confirmed:
-			self._run_import(source, model_id)
+		if not confirmed:
+			return
+		huggingface_token = None
+		if self._provider.provider_id == "litert-lm":
+			token_dialog = wx.PasswordEntryDialog(
+				self,
+				_("Hugging Face token (optional; leave blank for public repositories):"),
+				_("Hugging Face Authentication"),
+			)
+			try:
+				if token_dialog.ShowModal() != wx.ID_OK:
+					return
+				huggingface_token = token_dialog.GetValue().strip() or None
+			finally:
+				token_dialog.Destroy()
+		self._run_import(source, model_id, huggingface_token)
 
 	def _on_set_active(self, _event: wx.CommandEvent) -> None:
 		model = self._get_selected_model()

@@ -92,6 +92,10 @@ class DownloadProgressDialog(wx.Dialog):
 
 		self._gauge = wx.Gauge(self, range=100, size=(380, 22))
 		sizer.Add(self._gauge, flag=wx.LEFT | wx.RIGHT | wx.EXPAND, border=12)
+		self._has_determinate_progress = False
+		self._pulse_timer = wx.Timer(self)
+		self.Bind(wx.EVT_TIMER, self._on_progress_pulse, self._pulse_timer)
+		self._pulse_timer.Start(120)
 
 		sizer.AddSpacer(12)
 
@@ -162,13 +166,22 @@ class DownloadProgressDialog(wx.Dialog):
 
 	def _do_update_progress(self, downloaded: int, total: int) -> None:
 		if total and total > 0:
+			self._has_determinate_progress = True
+			self._pulse_timer.Stop()
 			pct = min(downloaded * 100 // total, 100)
 			self._gauge.SetRange(100)
 			self._gauge.SetValue(pct)
 		else:
 			# Indeterminate — pulse the gauge.
+			self._has_determinate_progress = False
+			if not self._pulse_timer.IsRunning():
+				self._pulse_timer.Start(120)
 			val = self._gauge.GetValue()
 			self._gauge.SetValue(0 if val >= 100 else val + 5)
+
+	def _on_progress_pulse(self, _event: wx.TimerEvent) -> None:
+		if not self._has_determinate_progress and not self._closed:
+			self._gauge.Pulse()
 
 	# ------------------------------------------------------------------
 	# Completion
@@ -187,6 +200,7 @@ class DownloadProgressDialog(wx.Dialog):
 		self._post_ui(lambda: self._finish(success, message))
 
 	def _finish(self, success: bool, message: str | None) -> None:
+		self._pulse_timer.Stop()
 		if not self._cancel_event.is_set() and message:
 			self._do_show_final_message(success, message)
 		self._closed = True

@@ -28,7 +28,8 @@ from .model_import import ModelImportRequest, ModelImportError, ModelSourceKind,
 from .litert_models import (
 	download_url,
 	effective_capabilities_for,
-	lookup_by_friendly_name,
+	lookup_catalog_artifact_alias,
+	lookup_catalog_friendly_name,
 	recommended_models,
 	resolve_identity,
 )
@@ -142,7 +143,7 @@ class LiteRTModelManager(ModelManagerProvider):
 		for server_id in supervisor.list_server_models():
 			if server_id.lower() in known_ids:
 				continue
-			parsed = lookup_by_friendly_name(server_id)
+			parsed = lookup_catalog_friendly_name(server_id)
 			if parsed is not None:
 				model_def, variant = parsed
 				caps = effective_capabilities_for(model_def, variant)
@@ -191,7 +192,7 @@ class LiteRTModelManager(ModelManagerProvider):
 		*model_id* is a friendly_name.  The HF file is downloaded,
 		then imported into the server under the same friendly_name.
 		"""
-		parsed = lookup_by_friendly_name(model_id)
+		parsed = lookup_catalog_friendly_name(model_id)
 		if parsed is None:
 			raise LLMProviderError(f"Unknown model: {model_id}")
 
@@ -233,10 +234,10 @@ class LiteRTModelManager(ModelManagerProvider):
 		finally:
 			self._invalidate_caches()
 
-	def import_model(self, request, on_progress, cancel_event=None):
+	def import_model(self, request, on_progress, cancel_event=None, huggingface_token=None):
 		try:
 			with cancellation_event_scope(cancel_event):
-				return self._import_model(request, on_progress, cancel_event)
+				return self._import_model(request, on_progress, cancel_event, huggingface_token)
 		except RequestCancelled as exc:
 			raise DownloadCancelledError(_("Model import cancelled.")) from exc
 
@@ -245,6 +246,7 @@ class LiteRTModelManager(ModelManagerProvider):
 		request: ModelImportRequest,
 		on_progress: DownloadProgressCallback,
 		cancel_event: threading.Event | None = None,
+		huggingface_token: str | None = None,
 	) -> None:
 		"""Import a local LiteRT artifact or HF repository artifact.
 
@@ -281,6 +283,7 @@ class LiteRTModelManager(ModelManagerProvider):
 					parsed.artifact,
 					parsed.model_id,
 					on_progress=lambda message: on_progress(message, None, None),
+					huggingface_token=huggingface_token,
 				)
 			except LiteRTServerError as exc:
 				raise LLMProviderError(str(exc)) from exc
@@ -316,23 +319,45 @@ class LiteRTModelManager(ModelManagerProvider):
 
 	def delete_model(self, model_id: str) -> None:
 		"""Delete all registered variants of this model and remove cache."""
-		parsed = lookup_by_friendly_name(model_id)
-		if parsed is None:
-			raise LLMProviderError(f"Unknown model: {model_id}")
-
-		model_def, _ = parsed
 		supervisor = self._get_supervisor()
 		svc = self._download_service or ModelDownloadService()
+		server_ids = supervisor.list_server_models()
+		parsed = lookup_catalog_friendly_name(model_id)
+		if parsed is None:
+			# Preserve catalog cleanup for old filename references only when they
+			# are not themselves a registered imported model ID.
+			if model_id.lower() not in {item.lower() for item in server_ids}:
+				parsed = lookup_catalog_artifact_alias(model_id)
+		if parsed is None:
+			# Unknown IDs came from the server registry. Remove only that exact
+			# imported ID; aliases like "model.litertlm" are not identities.
+			if model_id.lower() not in {item.lower() for item in server_ids}:
+				raise LLMProviderError(f"Unknown model: {model_id}")
+			try:
+				supervisor.delete_model(model_id)
+			except LiteRTServerError as exc:
+				raise LLMProviderError(str(exc)) from exc
+			staged_path = svc.model_path(f"{model_id}.litertlm")
+			if staged_path.exists():
+				staged_path.unlink()
+			if (get_litert_model_name() or "").lower() == model_id.lower():
+				set_litert_model_name("")
+			self._invalidate_caches()
+			return
+
+		model_def, _ = parsed
 
 		# Collect all friendly_names belonging to this model.
-		sibling_fns: set[str] = {model_def.friendly_name}
+		sibling_fns: set[str] = {model_def.friendly_name, model_def.model_id}
 		for v in model_def.variants:
 			sibling_fns.add(v.friendly_name)
+		active_model = (get_litert_model_name() or "").lower()
+		if active_model in {name.lower() for name in sibling_fns}:
+			set_litert_model_name("")
 
 		# Unregister any server IDs matching our friendly_names.
-		for server_id in supervisor.list_server_models():
-			resolved = resolve_identity(server_id)
-			if resolved in sibling_fns:
+		for server_id in server_ids:
+			if server_id.lower() in {name.lower() for name in sibling_fns}:
 				try:
 					supervisor.delete_model(server_id)
 				except LiteRTServerError as exc:
@@ -361,7 +386,16 @@ class LiteRTModelManager(ModelManagerProvider):
 		server, just persist it.  If it's registered under a legacy
 		ID, rename.  If only a cache file exists, import it.
 		"""
-		parsed = lookup_by_friendly_name(model_id)
+		supervisor = self._get_supervisor()
+		server_ids = supervisor.list_server_models()
+		parsed = lookup_catalog_friendly_name(model_id)
+		if parsed is None and model_id.lower() in {item.lower() for item in server_ids}:
+			# A registered non-catalog ID is an imported model, even if its ID
+			# happens to look like a catalog artifact filename.
+			set_litert_model_name(model_id)
+			return
+		if parsed is None:
+			parsed = lookup_catalog_artifact_alias(model_id)
 		if parsed is None:
 			set_litert_model_name(model_id)
 			return
@@ -369,8 +403,7 @@ class LiteRTModelManager(ModelManagerProvider):
 		model_def, variant = parsed
 		fn = variant.friendly_name if variant else model_def.friendly_name
 		dl_filename = variant.filename if variant else model_def.local_filename
-		supervisor = self._get_supervisor()
-		server_ids_lower = {s.lower() for s in supervisor.list_server_models()}
+		server_ids_lower = {s.lower() for s in server_ids}
 
 		# Already registered under the right name.
 		if fn.lower() in server_ids_lower:

@@ -25,7 +25,7 @@ def dialog_shell(module, model=None):
         _get_selected_model=lambda: model, _pending_downloads=set(), _models=[],
         _list=Mock(), _populate_model_list=Mock())
     for name in ("_download_btn", "_delete_btn", "_cache_delete_btn", "_import_file_btn",
-                 "_import_hf_btn", "_set_active_btn", "_configure_btn", "_runtime_btn"):
+	             "_import_hf_btn", "_set_active_btn", "_configure_btn"):
         setattr(state, name, Mock())
     return state
 

@@ -628,15 +628,49 @@ def lookup_by_friendly_name(name: str) -> tuple[LiteRTModelDef, ModelVariant | N
 	return None
 
 
+def lookup_catalog_friendly_name(name: str) -> tuple[LiteRTModelDef, ModelVariant | None] | None:
+	"""Resolve only exact runtime IDs from the static catalog.
+
+	Friendly IDs and exact repository IDs are recognized. Filename aliases are
+	intentionally excluded because imported models commonly reuse them.
+	"""
+	lowered = str(name or "").lower().strip()
+	for model in ALL_MODELS:
+		if model.friendly_name.lower() == lowered or model.model_id.lower() == lowered:
+			return model, None
+		for variant in model.variants:
+			if variant.friendly_name.lower() == lowered:
+				return model, variant
+	return None
+
+
+def lookup_catalog_artifact_alias(name: str) -> tuple[LiteRTModelDef, ModelVariant | None] | None:
+	"""Resolve a unique catalog filename alias, refusing shared filenames."""
+	lowered = str(name or "").lower().strip()
+	variant_hits = [
+		(model, variant)
+		for model in ALL_MODELS
+		for variant in model.variants
+		if variant.filename.lower() == lowered
+	]
+	if len(variant_hits) == 1:
+		return variant_hits[0]
+	if variant_hits:
+		return None
+	model_hits = [model for model in ALL_MODELS if model.filename.lower() == lowered]
+	if len(model_hits) == 1:
+		return model_hits[0], None
+	return None
+
+
 def resolve_identity(name: str) -> str:
 	"""Return the canonical friendly_name for any model reference.
 
-	Accepts friendly names (``"gemma-4-e2b-gpu"``), HF model IDs
-	(``"litert-community/gemma-4-E2B-it-litert-lm"``), and variant
-	filenames (``"gemma-4-E2B-it-gpu.litertlm"``).  Returns the
-	corresponding friendly_name, or *name* unchanged if unrecognised.
+	Accepts friendly names (``"gemma-4-e2b-gpu"``) and exact HF repository
+	IDs (``"litert-community/gemma-4-E2B-it-litert-lm"``). Artifact filenames
+	are not identities because imported models may use the same names.
 	"""
-	parsed = lookup_by_friendly_name(name)
+	parsed = lookup_catalog_friendly_name(name)
 	if parsed is not None:
 		model_def, variant = parsed
 		if variant is not None:

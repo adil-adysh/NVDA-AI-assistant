@@ -175,6 +175,7 @@ class ModelManagerProvider(Protocol):
 		request: ModelImportRequest,
 		on_progress: DownloadProgressCallback,
 		cancel_event: threading.Event | None = None,
+		huggingface_token: str | None = None,
 	) -> None:
 		"""Import a local file or remote model reference into the provider."""
 		...
@@ -303,6 +304,7 @@ class CloudModelManagerAdapter:
 		request: ModelImportRequest,
 		on_progress: DownloadProgressCallback,
 		cancel_event: threading.Event | None = None,
+		huggingface_token: str | None = None,
 	) -> None:
 		raise NotImplementedError("Cloud providers do not support model import")
 

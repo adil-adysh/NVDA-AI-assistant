@@ -322,13 +322,14 @@ class LiteRTWorkerExecutor:
 		litert_dir: Path | str | None = None,
 		version: str = DEFAULT_LITERT_VERSION,
 		timeout_seconds: float = 120.0,
+		environment: dict[str, str] | None = None,
 	) -> subprocess.CompletedProcess[str]:
 		"""Execute a LiteRT CLI command via the bundled Python executable."""
 		py_path = Path(python_exe) if python_exe else default_python_exe(version)
 		lt_dir = Path(litert_dir) if litert_dir else default_litert_dir()
 
 		lt_dir.mkdir(parents=True, exist_ok=True)
-		env = {**os.environ, "LITERT_LM_DIR": str(lt_dir)}
+		env = {**os.environ, "LITERT_LM_DIR": str(lt_dir), **(environment or {})}
 
 		cmd = [str(py_path), "-m", "litert_lm_cli.main", *args]
 		logger.debug("Executing LiteRT CLI operation: %s", args[0] if args else "")
@@ -413,8 +414,11 @@ class LiteRTWorkerExecutor:
 
 		artifact = validate_litert_artifact(artifact)
 		cli_args = ["import", "--from-huggingface-repo", repository, artifact, clean_id]
+		environment = None
 		if token:
-			cli_args.extend(["--huggingface-token", token])
+			# Hugging Face Hub recognizes these environment variables. Keeping the
+			# token out of argv prevents it appearing in process inspection tools.
+			environment = {"HF_TOKEN": token, "HUGGING_FACE_HUB_TOKEN": token}
 
 		result = self._run_cli(
 			cli_args,
@@ -422,6 +426,7 @@ class LiteRTWorkerExecutor:
 			litert_dir=litert_dir,
 			version=version,
 			timeout_seconds=timeout_seconds,
+			environment=environment,
 		)
 
 		if result.returncode != 0:

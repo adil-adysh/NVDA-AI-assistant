@@ -270,6 +270,7 @@ class ModelDownloadService:
 	def stage_local_file(self, source: str | Path, cache_name: str) -> Path:
 		"""Copy a user-owned model file into the managed cache atomically."""
 		import shutil
+		import tempfile
 
 		source_path = Path(source)
 		if not source_path.is_file():
@@ -277,7 +278,16 @@ class ModelDownloadService:
 		destination = self._model_path(cache_name)
 		destination.parent.mkdir(parents=True, exist_ok=True)
 		if source_path.resolve() != destination.resolve():
-			shutil.copy2(source_path, destination)
+			fd, temporary_name = tempfile.mkstemp(
+				prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent,
+			)
+			os.close(fd)
+			temporary = Path(temporary_name)
+			try:
+				shutil.copy2(source_path, temporary)
+				os.replace(temporary, destination)
+			finally:
+				temporary.unlink(missing_ok=True)
 		return destination
 
 	# ── Internal helpers ────────────────────────────────────────────

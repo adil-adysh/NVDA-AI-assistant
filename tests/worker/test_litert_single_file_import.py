@@ -30,4 +30,4 @@ def test_worker_rejects_multi_file_components_before_cli(tmp_path, filename):
 def test_runtime_version_defaults_agree():
 	server = load_addon_module("providers.runtime.server", namespace="single_file_litert")
 	config = load_addon_module("providers.runtime.config", namespace="single_file_litert")
-	assert executor_module.DEFAULT_LITERT_VERSION == server.DEFAULT_LITERT_VERSION == config.DefaultRuntimeConfig().litert_lm == "0.18.0"
+	assert executor_module.DEFAULT_LITERT_VERSION == server.DEFAULT_LITERT_VERSION == config.DefaultRuntimeConfig().litert_lm == "0.19.1"

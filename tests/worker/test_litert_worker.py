@@ -139,6 +139,17 @@ class TestLiteRTWorkerExecutor(unittest.TestCase):
 			self.assertTrue(res["success"])
 			self.assertEqual(res["model_id"], "custom-id")
 
+	def test_huggingface_token_is_passed_in_environment_not_command_line(self) -> None:
+		with mock.patch.object(self.executor, "_run_cli") as mock_cli:
+			mock_cli.return_value = types.SimpleNamespace(stdout="", stderr="", returncode=0)
+			self.executor.import_huggingface_model(
+				"owner/repo", "model.litertlm", "custom-id", token="hf-secret",
+			)
+		args, kwargs = mock_cli.call_args
+		self.assertNotIn("hf-secret", args[0])
+		self.assertEqual(kwargs["environment"]["HF_TOKEN"], "hf-secret")
+		self.assertEqual(kwargs["environment"]["HUGGING_FACE_HUB_TOKEN"], "hf-secret")
+
 	def test_cli_delete_model(self) -> None:
 		with mock.patch.object(self.executor, "_run_cli") as mock_cli:
 			mock_cli.return_value = types.SimpleNamespace(stdout="", stderr="", returncode=0)

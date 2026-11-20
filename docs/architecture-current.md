@@ -499,3 +499,14 @@ llama.cpp presets cannot pin a revision, so the preset follows `main`.
 add-on does not own model files, delete cached weights, or adopt local GGUFs. A
 router with a valid preset but missing files still starts; model readiness must be
 read from `/models` status rather than `/health`.
+
+### LiteRT-LM imports
+
+Hugging Face imports require an explicit `.litertlm` artifact. The model manager
+accepts an optional, non-persisted Hugging Face token and forwards it to the
+worker for that import; the worker supplies it through the child process
+environment. Import progress stays indeterminate because the LiteRT CLI does not
+report byte counts through the current worker interface. Catalog rows resolve by
+friendly runtime ID or exact repository ID; imported rows are removed by their
+exact registry ID. Local artifact staging copies to a temporary file and replaces
+the cache entry only after the full copy succeeds.
