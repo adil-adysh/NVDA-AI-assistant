@@ -17,7 +17,10 @@ class LlamaModelsDialog(wx.Dialog):
 		self._task = None
 		self._closed = False
 		helper = guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
+		helper.addItem(wx.StaticText(self, label=_(
+			"Manage saved model presets. OK in the editor saves a preset; Close leaves saved changes in place.")))
 		self._list = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+		self._list.SetName(_("Model presets"))
 		for name, width in ((_("Name"), 200), (_("Source"), 340), (_("Mode"), 80),
 				(_("Draft"), 100), (_("Selected"), 75), (_("Runtime"), 120)):
 			self._list.AppendColumn(name, width=width)
@@ -42,13 +45,17 @@ class LlamaModelsDialog(wx.Dialog):
 			buttons.Add(button, 0, wx.ALL, 3)
 			self._buttons[key] = button
 		helper.addItem(buttons)
-		helper.addItem(self.CreateButtonSizer(wx.CANCEL))
+		close = wx.Button(self, id=wx.ID_CANCEL, label=_("&Close"))
+		close.Bind(wx.EVT_BUTTON, self._close)
+		helper.addItem(close, flag=wx.ALIGN_RIGHT)
 		self.SetSizer(helper.sizer)
 		self.SetSize((820, 620))
 		self._centre_on_screen()
 		wx.CallAfter(self._centre_on_screen)
 		self.SetEscapeId(wx.ID_CANCEL)
 		self.Bind(wx.EVT_CLOSE, self._close)
+		self.Bind(wx.EVT_WINDOW_DESTROY, self._on_destroy)
+		self._selection_changed()
 		self._refresh()
 
 	def _centre_on_screen(self) -> None:
@@ -61,8 +68,22 @@ class LlamaModelsDialog(wx.Dialog):
 		))
 
 	def _close(self, event):
+		self._dispose()
+		if self.IsModal():
+			self.EndModal(wx.ID_CANCEL)
+		else:
+			self.Destroy()
+
+	def _on_destroy(self, event):
+		if not self or event.GetEventObject() is self:
+			self._dispose()
+		event.Skip()
+
+	def _dispose(self):
 		self._closed = True
-		self.Destroy()
+		if self._task is not None:
+			self._task.cancel()
+			self._task = None
 
 	def _selected(self):
 		index = self._list.GetFirstSelected()
@@ -107,6 +128,7 @@ class LlamaModelsDialog(wx.Dialog):
 				owner=lambda presentation: self._status.SetLabel(presentation.message))
 		def finished():
 			self._task = None
+			self._selection_changed()
 		self._task = background_tasks.submit(work, on_success=show, on_error=failed, on_finally=finished,
 			is_alive=lambda: not self._closed)
 

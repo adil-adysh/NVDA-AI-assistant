@@ -75,7 +75,7 @@ class HuggingFaceCacheTests(unittest.TestCase):
 			model = next(item for item in repositories[0].artifacts if item.path == "model-Q4_K_M.gguf")
 			self.assertEqual(model.quant, "Q4_K_M")
 
-	def test_scan_falls_back_to_newest_snapshot_when_main_is_missing(self) -> None:
+	def test_scan_skips_repository_when_main_ref_is_missing(self) -> None:
 		with tempfile.TemporaryDirectory() as directory:
 			root = Path(directory)
 			repo = root / "models--org--model"
@@ -84,8 +84,7 @@ class HuggingFaceCacheTests(unittest.TestCase):
 			snapshot.mkdir(parents=True)
 			make_gguf(snapshot / "model.gguf", {"general.architecture": "llama"})
 			repositories = scan_cached_artifacts([root])
-			self.assertEqual(len(repositories), 1)
-			self.assertFalse(repositories[0].revision_confirmed)
+		self.assertEqual(repositories, ())
 
 	def test_scan_skips_malformed_and_broken_links(self) -> None:
 		with tempfile.TemporaryDirectory() as directory:

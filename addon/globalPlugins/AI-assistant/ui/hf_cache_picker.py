@@ -277,7 +277,13 @@ class CachedSourcePicker(wx.Dialog):
 
 	def _selection_changed(self) -> None:
 		artifact = self._selected_artifact()
-		self._set_ok(artifact is not None and artifact.complete)
+		repository = self._selected_repository()
+		self._set_ok(
+			artifact is not None
+			and artifact.complete
+			and repository is not None
+			and repository.revision_confirmed
+		)
 		if artifact is None:
 			self._details.SetValue("")
 			return
@@ -306,8 +312,9 @@ class CachedSourcePicker(wx.Dialog):
 	def _accept(self) -> None:
 		if self._kind == "projector":
 			return
+		repository = self._selected_repository()
 		artifact = self._selected_artifact()
-		if artifact is None or not artifact.complete:
+		if artifact is None or not artifact.complete or repository is None or not repository.revision_confirmed:
 			return
 		self.result = (artifact.repo, artifact.path)
 		self.EndModal(wx.ID_OK)

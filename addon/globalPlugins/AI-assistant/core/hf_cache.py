@@ -169,26 +169,17 @@ def _current_revision(repository: Path) -> tuple[str, Path, bool] | None:
 	snapshots = repository / "snapshots"
 	if not snapshots.is_dir():
 		return None
-	revision = ""
 	try:
 		value = (repository / "refs" / "main").read_text(encoding="utf-8").strip()
-		if re.fullmatch(r"[0-9a-fA-F]{40}", value):
-			revision = value.lower()
 	except OSError:
-		pass
-	candidates = [entry for entry in snapshots.iterdir()
-		if entry.is_dir() and re.fullmatch(r"[0-9a-fA-F]{40}", entry.name)]
-	if not candidates:
 		return None
-	if revision and any(entry.name.lower() == revision for entry in candidates):
-		return revision, next(entry for entry in candidates if entry.name.lower() == revision), True
-	def order(entry: Path):
-		try:
-			return (entry.stat().st_mtime_ns, entry.name)
-		except OSError:
-			return (0, entry.name)
-	latest = max(candidates, key=order)
-	return latest.name.lower(), latest, False
+	if not re.fullmatch(r"[0-9a-fA-F]{40}", value):
+		return None
+	revision = value.lower()
+	for entry in snapshots.iterdir():
+		if entry.name.lower() == revision and entry.is_dir():
+			return revision, entry, True
+	return None
 
 
 def _role(path: str, metadata: dict[str, str]) -> str:

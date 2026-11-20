@@ -137,7 +137,12 @@ class LlamaModelCatalog:
 			values = {key: value for key, value in item.items() if key in fields}
 			if not isinstance(values.get("repo"), str) or not values["repo"]:
 				continue
-			values["preset_options"] = dict(values.get("preset_options") or {})
+			preset_options = values.get("preset_options")
+			if preset_options is None:
+				preset_options = {}
+			if not isinstance(preset_options, dict):
+				continue
+			values["preset_options"] = dict(preset_options)
 			values["spec_type_auto"] = bool(values.get("spec_type_auto", False))
 			try:
 				records.append(LlamaModelRecord(**values))

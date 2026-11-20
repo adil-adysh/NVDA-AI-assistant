@@ -592,7 +592,10 @@ class UIAdapter:
 					"type": "image",
 					"image_base64": image_base64,
 					"mime_type": get_image_mime_type(),
-					"alt": localized_strings.get("image_attachment_notice", "[Image attachment included]"),
+					"alt": localized_strings.get(
+						"image_attachment_notice",
+						_("[Image attachment included]"),
+					),
 				}
 			)
 		return content
@@ -616,7 +619,7 @@ class UIAdapter:
 				{
 					"type": "thinking",
 					"text": thinking_trace.strip(),
-					"summary": localized_strings.get("thinking_trace_label", "Thinking trace"),
+					"summary": localized_strings.get("thinking_trace_label", _("Thinking trace")),
 					"collapsed": True,
 				}
 			)
@@ -629,7 +632,7 @@ class UIAdapter:
 	) -> list[dict[str, Any]]:
 		"""Build a content block list that renders as an inline error message in the chat transcript."""
 		content: list[dict[str, Any]] = []
-		error_label = localized_strings.get("error_prefix", "Error")
+		error_label = localized_strings.get("error_prefix", _("Error"))
 		error_summary = f"{error_label}: {presentation.title}" if presentation.title else error_label
 		content.append(
 			{
@@ -681,7 +684,7 @@ class UIAdapter:
 		localized_strings: dict[str, str],
 	) -> tuple[str | None, str]:
 		attachments = event_payload.get("attachments") if isinstance(event_payload, dict) else None
-		attached_file_label = localized_strings.get("attached_file_label", "Attached file")
+		attached_file_label = localized_strings.get("attached_file_label", _("Attached file"))
 		context = extract_attachment_context(attachments, attached_file_label=attached_file_label)
 		if context.image_count > 1:
 			log.warning(

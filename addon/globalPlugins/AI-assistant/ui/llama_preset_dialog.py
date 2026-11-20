@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 BASIC_KEYS = {
 	"ctx-size", "gpu-layers", "flash-attn", "cache-type-k", "cache-type-v",
 	"load-mode", "cpu-moe", "n-cpu-moe", "mmproj-auto",
+	"moe-cache-mib", "moe-cache-cpu-share", "n-predict",
 }
 RESERVED_KEYS = {"hf-repo", "hf-file", "spec-draft-hf", "spec-draft-model", "spec-type", "mmproj-auto"}
 MOE_DEFAULT, MOE_ALL, MOE_FIRST = 0, 1, 2
@@ -149,6 +150,17 @@ class LlamaPresetDialog(wx.Dialog):
 		self._build_model_page()
 		self._build_runtime_page()
 		self._build_preview_page()
+		for control, event in (
+			(self._ctx, wx.EVT_SPINCTRL), (self._ctx, wx.EVT_TEXT),
+			(self._layers, wx.EVT_TEXT), (self._fa, wx.EVT_CHOICE),
+			(self._kv, wx.EVT_CHOICE), (self._load_mode, wx.EVT_CHOICE),
+			(self._moe, wx.EVT_CHOICE), (self._moe_layers, wx.EVT_SPINCTRL),
+			(self._moe_layers, wx.EVT_TEXT),
+			(self._moe_cache_mib, wx.EVT_TEXT), (self._moe_cpu_share, wx.EVT_TEXT),
+			(self._n_predict, wx.EVT_TEXT),
+		):
+			control.Bind(event, lambda event: self._on_change())
+		self._moe_layers.Enable(self._moe.GetSelection() == MOE_FIRST)
 		root.Add(self._tabs, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
 
 		self._problems_label = wx.StaticText(self, label=_("Problems"))
@@ -175,7 +187,8 @@ class LlamaPresetDialog(wx.Dialog):
 		self._ok_button = wx.Button(self, id=wx.ID_OK, label=_("&OK"))
 		self._ok_button.Bind(wx.EVT_BUTTON, self._on_ok)
 		buttons.Add(self._ok_button, 0, wx.RIGHT, 6)
-		close = wx.Button(self, id=wx.ID_CANCEL, label=_("&Close"))
+		close = wx.Button(self, id=wx.ID_CANCEL, label=_("&Cancel"))
+		close.Bind(wx.EVT_BUTTON, self._close)
 		buttons.Add(close)
 		root.Add(buttons, 0, wx.EXPAND | wx.ALL, 10)
 
@@ -193,6 +206,7 @@ class LlamaPresetDialog(wx.Dialog):
 		self.SetEscapeId(wx.ID_CANCEL)
 		self.SetAffirmativeId(wx.ID_OK)
 		self.Bind(wx.EVT_CLOSE, self._close)
+		self.Bind(wx.EVT_WINDOW_DESTROY, self._on_destroy)
 
 	def _centre_on_screen(self) -> None:
 		self.Layout()
@@ -223,7 +237,7 @@ class LlamaPresetDialog(wx.Dialog):
 			_("Hugging Face &reference:"), wx.TextCtrl)
 		self._main_manual.SetValue(self._manual_main)
 		self._main_manual.Bind(wx.EVT_TEXT, self._on_manual_main)
-		self._main_manual.Bind(wx.EVT_KILL_FOCUS, lambda event: self._update_projector_info())
+		self._main_manual.Bind(wx.EVT_KILL_FOCUS, self._main_focus_lost)
 		manual_helper.addItem(wx.StaticText(self._main_manual_panel,
 			label=_("owner/repository or owner/repository:quant")))
 		manual_helper.addItem(wx.StaticText(self._main_manual_panel, label=_(
@@ -358,10 +372,28 @@ class LlamaPresetDialog(wx.Dialog):
 
 		self._moe_layers = _labeled(right, page, _("MoE &layers on CPU:"), wx.SpinCtrl, min=0, max=999)
 		self._moe_layers.SetValue(int(options.get("n-cpu-moe", 0) or 0))
+		self._moe_cache_mib = _labeled(left, page, _("MoE GPU cache &size (MiB):"), wx.TextCtrl)
+		self._moe_cache_mib.SetValue(options.get("moe-cache-mib", ""))
+		self._moe_cpu_share = _labeled(left, page, _("MoE cache CPU share (0 to &1):"), wx.TextCtrl)
+		self._moe_cpu_share.SetValue(options.get("moe-cache-cpu-share", ""))
+		self._n_predict = _labeled(left, page, _("Maximum output &tokens:"), wx.TextCtrl)
+		self._n_predict.SetValue(options.get("n-predict", ""))
+		for control, help_text in (
+			(self._moe_cache_mib, _("GPU memory for caching MoE experts kept in system RAM. 0 disables the cache; blank uses the runtime default.")),
+			(self._moe_cpu_share, _("Fraction of cache misses computed on the CPU once the cache is full. 0.95 means 95% of misses; blank uses the runtime default.")),
+			(self._n_predict, _("Maximum generated tokens. -1 means unlimited; blank uses the runtime default. Request settings can override this preset default.")),
+		):
+			control.SetToolTip(help_text)
+			control.SetHelpText(help_text)
 
 		columns.Add(left.sizer, 1, wx.EXPAND | wx.RIGHT, 18)
 		columns.Add(right.sizer, 1, wx.EXPAND)
 		page_sizer.Add(columns, 0, wx.EXPAND | wx.ALL, 12)
+		help_text = wx.StaticText(page, label=_(
+			"MoE cache stores experts on the GPU when experts are kept in system RAM.\n"
+			"CPU share applies to cache misses once the cache is full: 0.95 means 95% on CPU.\n"
+			"Leave optional fields blank for runtime defaults. Output tokens: -1 means unlimited."))
+		page_sizer.Add(help_text, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
 		reset = wx.Button(page, label=_("Reset runtime settings"))
 		reset.Bind(wx.EVT_BUTTON, self._reset_runtime)
 		page_sizer.Add(reset, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
@@ -399,11 +431,26 @@ class LlamaPresetDialog(wx.Dialog):
 		self._preview_page = page
 
 	def _close(self, event) -> None:
+		self._dispose()
+		if self.IsModal():
+			self.EndModal(wx.ID_CANCEL)
+		else:
+			self.Destroy()
+
+	def _on_destroy(self, event) -> None:
+		if not self or event.GetEventObject() is self:
+			self._dispose()
+		event.Skip()
+
+	def _dispose(self) -> None:
 		self._closed = True
 		if self._cache_task is not None:
 			self._cache_task.cancel()
 			self._cache_task = None
-		self.Destroy()
+
+	def _main_focus_lost(self, event) -> None:
+		self._update_projector_info()
+		event.Skip()
 
 	def _name_changed(self, event) -> None:
 		if self._id_auto:
@@ -429,7 +476,7 @@ class LlamaPresetDialog(wx.Dialog):
 
 	def _on_main_mode(self) -> None:
 		self._main_mode = self._main_mode_box.GetSelection()
-		self._toggle_main_mode()
+		self._toggle_main_mode(focus=False)
 		if self._main_mode == CACHED and not self._cached_main_file:
 			self._status.SetLabel(_("Cached model mode. Choose a cached repository and file."))
 		else:
@@ -450,7 +497,7 @@ class LlamaPresetDialog(wx.Dialog):
 
 	def _on_draft_mode(self) -> None:
 		self._draft_mode = self._draft_mode_box.GetSelection()
-		self._toggle_draft_mode()
+		self._toggle_draft_mode(focus=False)
 		self._update_preview()
 
 	def _toggle_draft_mode(self, focus: bool = True) -> None:
@@ -597,8 +644,14 @@ class LlamaPresetDialog(wx.Dialog):
 
 	def _options(self) -> dict[str, str]:
 		options = _options_from_lines(self._advanced.GetValue())
-		for key in BASIC_KEYS:
-			options.pop(key, None)
+		for key, control in (
+			("moe-cache-mib", self._moe_cache_mib),
+			("moe-cache-cpu-share", self._moe_cpu_share),
+			("n-predict", self._n_predict),
+		):
+			value = control.GetValue().strip()
+			if value:
+				options[key] = value
 		if self._ctx.GetValue() > 0:
 			options["ctx-size"] = str(self._ctx.GetValue())
 		layers = self._layers.GetValue().strip()
@@ -691,10 +744,14 @@ class LlamaPresetDialog(wx.Dialog):
 		self._load_mode.SetSelection(0)
 		self._moe.SetSelection(0)
 		self._moe_layers.SetValue(0)
+		self._moe_cache_mib.SetValue("")
+		self._moe_cpu_share.SetValue("")
+		self._n_predict.SetValue("")
 		self._advanced.SetValue("")
-		self._update_preview()
+		self._on_change()
 
 	def _on_change(self) -> None:
+		self._moe_layers.Enable(self._moe.GetSelection() == MOE_FIRST)
 		self._update_preview()
 
 	def _problems_for(self):
@@ -731,12 +788,14 @@ class LlamaPresetDialog(wx.Dialog):
 			except ValueError as error:
 				problems.append((_("Draft model: {error}").format(error=error),
 					lambda: self._goto_draft()))
+		options = None
 		try:
 			options = self._options()
-			if source["draft_file"] and not options.get("spec-type"):
-				raise ValueError(_("An exact cached draft file needs a speculative mode."))
 		except ValueError as error:
-			problems.append((_("Draft model: {error}").format(error=error),
+			problems.append((_("Runtime options: {error}").format(error=error),
+				lambda: self._goto_runtime()))
+		if options is not None and source["draft_file"] and not options.get("spec-type"):
+			problems.append((_("An exact cached draft file needs a speculative mode."),
 				lambda: self._goto_draft_spec()))
 		try:
 			if not problems:
@@ -777,9 +836,15 @@ class LlamaPresetDialog(wx.Dialog):
 		self._tabs.SetSelection(0)
 		wx.CallAfter(self._spec_type.SetFocus)
 
+	def _goto_runtime(self):
+		self._tabs.SetSelection(1)
+		wx.CallAfter(self._advanced.SetFocus)
+
 	def _show_problems(self, problems) -> None:
 		self._problem_targets = [target for _, target in problems]
 		self._problems.Set([message for message, _ in problems])
+		if problems:
+			self._problems.SetSelection(0)
 		self._problems_label.SetLabel(_("Problems ({count})").format(count=len(problems)))
 		self._problems_label.Show()
 		self._problems.Show()
@@ -826,4 +891,5 @@ class LlamaPresetDialog(wx.Dialog):
 		except Exception as error:
 			wx.MessageBox(str(error), _("Unable to save preset"), wx.OK | wx.ICON_ERROR, parent=self)
 			return
+		self._dispose()
 		self.EndModal(wx.ID_OK)
