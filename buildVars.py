@@ -39,25 +39,28 @@ The add-on includes a WebView-based chat interface with streaming responses, con
 	"""
 	),
 	# version
-	addon_version="0.16.0",
+	addon_version="0.15.0",
 	# Brief changelog for this version
 	# Translators: what's new content for this add-on version to be shown in the add-on store
 	addon_changelog=_(
 		"""
 	Added
-	• cached Hugging Face source picker for llama.cpp presets
-	• exact GGUF selection for main and draft models
-	• local cache inventory for model, draft and projector roles
-	• speculative-mode provenance and draft auto-detection
+	• page-structure summaries, accessibility-graph capture, and focused-text proofreading
+	• external MCP tools in chat, with search, per-tool approval, and automatic startup for enabled servers
+	• configurable tool-call limits for each response
+	• advanced llama.cpp presets with exact Hugging Face model files, speculative drafts, and runtime settings
+	• 21 community LiteRT-LM vision-language models and a guided runtime upgrade
+	• provider connection tests and per-provider local-server startup choices
 
 	Changed
-	• llama.cpp preset editor is split into Model, Runtime and Preview tabs
-	• manual Hugging Face references remain pass-through, with optional quant
-	• projector selection is automatic same-repository or disabled
+	• choose whether LiteRT-LM and llama.cpp servers start when needed or with NVDA
+	• choose whether one-shot results are displayed, spoken, or both
+	• thinking controls appear only for models that support them
 
 	Fixed
-	• preset IDs now track the preset name until edited manually
-	• cached picker now returns the selected configuration to the editor
+	• chat keeps its input caret and keyboard focus when a response finishes
+	• chat window titles and conversation content stay in sync when switching views
+	• MCP tool search and filter controls have accessible labels
 		"""
 	),
 	# Author(s)

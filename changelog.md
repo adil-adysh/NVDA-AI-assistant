@@ -1,3 +1,42 @@
+v0.15.0
+========
+
+Added
+-----
+
+* Summarize page structure, including headings, links, and interactive elements;
+  proofread focused text; and save accessibility graphs for inspection.
+* Connect external MCP tools to chat. Search and filter tools, review their
+  details, approve tools individually, or approve read-only tools together.
+  Enabled saved servers reconnect when NVDA starts.
+* Set a maximum number of tool calls for each response.
+* Manage llama.cpp models as Hugging Face presets. Choose a repository or an
+  exact cached model file, configure speculative draft models and runtime
+  options, and review the generated preset before saving.
+* Choose from 21 community LiteRT-LM vision-language models, including LFM3-VL,
+  MiniCPM-V, and Qwen3.5 Vision.
+* Test provider connections and choose local-server startup behavior for LiteRT-LM and llama.cpp.
+
+Changed
+-------
+
+* Configure local servers to start on the first request or when NVDA starts. Only the active local provider starts with NVDA.
+* Choose whether one-shot results are displayed, spoken, or both. Configure chat
+  status announcements and automatic reading of completed answers.
+* Show the thinking control only when the selected model supports it.
+* Upgrade LiteRT-LM to version 0.19.1 from a dismissible startup notice, or retry
+  cleanup of an older managed installation.
+* Keep chat requests and drafts available when hiding or switching views. Stop
+  response cancels generation while retaining the partial answer.
+
+Fixed
+-----
+
+* Preserve the chat input caret and keyboard focus when a response finishes;
+  keep the window title synchronized with the active view.
+* Give MCP tool search and filter controls accessible labels for screen readers.
+* Improve local-provider connection feedback and recovery when a server is unavailable or changes configuration.
+
 v0.14.1
 ========
 
