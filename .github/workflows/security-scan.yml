@@ -26,9 +26,23 @@ jobs:
       - name: Setup build toolchain
         uses: ./.github/actions/setup-addon-build
 
+      - name: Setup locked Python environment
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.21"
+          enable-cache: true
+
+      - name: Prepare pinned NVDA dependency
+        run: |
+          git clone --no-checkout https://github.com/nvaccess/nvda.git ../nvda
+          if ($LASTEXITCODE -ne 0) { throw "NVDA checkout failed" }
+          git -C ../nvda checkout 797a881381f8bedabc13456d3aa76bdd77d71503
+          if ($LASTEXITCODE -ne 0) { throw "NVDA revision checkout failed" }
+          uv sync --locked
+
       - name: Build add-on package
         run: |
-          scons
+          uv run scons
 
       - name: Show compiler cache statistics
         if: always()
