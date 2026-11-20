@@ -46,9 +46,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		# TRANSLATORS: Menu command to cancel active chat, summary, or image requests.
 		self._stop_requests_item = self._submenu.Append(wx.ID_ANY, _("S&top active requests"))
 		self._last_result_item = self._submenu.Append(wx.ID_ANY, _("Show &last result"))
-		# TRANSLATORS: Name of the submenu in NVDA's Tools menu for AI Assistant features.
+		# TRANSLATORS: Tools submenu. T avoids NVDA's Add-on Store access key A in English.
 		self._submenu_parent_item = self._tools_menu.AppendSubMenu(
-			self._submenu, _("AI Assistant"),
+			self._submenu, _("AI Assistan&t"),
 		)
 		gui.mainFrame.sysTrayIcon.Bind(
 			wx.EVT_MENU, self._on_tools_manage_providers, self._providers_item,

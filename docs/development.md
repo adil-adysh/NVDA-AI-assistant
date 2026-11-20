@@ -147,11 +147,12 @@ controller visibility, and foreground restoration. Its chat scenario sends a
 caret stay intact. It starts no IPC listeners.
 
 Application composition registers `configure_worker_owner()` without spawning.
-Runtime settings offer three startup policies for each managed local provider:
-start when needed (the default), prepare the background worker at startup, or
-start the local server at startup. Only the active provider's policy is applied,
-on the next NVDA startup. Older saved server-start booleans map to the equivalent
-policy; saving updates both the policy and the legacy flag.
+Each managed local provider's Configure dialog offers two startup policies:
+start when needed (the default), or start the server when NVDA starts. Only the
+active provider's policy applies, on the next NVDA startup. There is no separate
+Runtime tab or worker-preparation preference. Request timeout is in General.
+Only the two-choice startup policy is read and written; unreleased older flags
+and the worker-only policy are unsupported.
 Model mutations, downloads, and inference explicitly request a worker; status
 lookups remain passive. Worker preparation uses the same owned lazy connection;
 it neither checks for an installed model server nor starts one. Other future

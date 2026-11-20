@@ -285,6 +285,11 @@ class McpSettingsPanel(wx.Panel):
 		"""MCP configuration actions persist atomically when invoked."""
 		return
 
+	def dispose(self) -> None:
+		if self._busy is not None:
+			self._busy.cancel()
+			self._busy = None
+
 	def _alive(self) -> bool:
 		return not self.IsBeingDeleted()
 

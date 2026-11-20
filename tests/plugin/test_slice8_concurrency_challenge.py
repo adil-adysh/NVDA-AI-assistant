@@ -120,8 +120,6 @@ _stub_module(
 	get_active_provider_config=lambda: types.SimpleNamespace(provider="litert-lm", model_name="model-1"),
 	set_model_name=lambda _name: None,
 	get_enabled_providers=lambda: ["litert-lm"],
-	get_llama_start_on_startup=lambda: False,
-	get_litert_start_on_startup=lambda: False,
 	get_local_startup_mode=lambda _provider: "lazy",
 	get_mcp_servers=lambda: (),
 	get_provider_state=lambda: types.SimpleNamespace(provider="litert-lm", model_name="model-1", backend_url=""),
@@ -237,7 +235,13 @@ def test_application_removed_worker_policy_does_not_prepare_or_start(monkeypatch
 	monkeypatch.setattr(app_mod, "schedule_active_local_provider_start", schedule)
 	monkeypatch.setattr(app_mod, "ensure_provider_server_ready", lambda: calls.append("server"))
 	server_module = sys.modules[f"{CHALLENGE_NAMESPACE}.providers.runtime.server"]
-	monkeypatch.setattr(server_module, "get_litert_supervisor", lambda: calls.append("server probe"))
+	# Startup performs a passive disk-only upgrade check even when LiteRT-LM
+	# is inactive; it must not prepare the worker or start a server.
+	monkeypatch.setattr(
+		server_module,
+		"get_litert_supervisor",
+		lambda: types.SimpleNamespace(upgrade_available=False, cleanup_pending=False, is_installed=True),
+	)
 	application = object.__new__(app_mod.AIAssistantApplication)
 	application._terminating = threading.Event()
 	application._worker_owner = types.SimpleNamespace(ensure_client=lambda: calls.append("worker"))

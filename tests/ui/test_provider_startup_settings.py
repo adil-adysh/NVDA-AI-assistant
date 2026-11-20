@@ -88,3 +88,16 @@ def test_invalid_startup_selection_keeps_dialog_open_and_saves_nothing(provider_
 	dialog._on_save(None)
 	save.assert_not_called()
 	dialog.EndModal.assert_not_called()
+
+
+def test_test_connection_does_not_save_or_apply_startup_draft(provider_ui, monkeypatch):
+	module, create = provider_ui
+	monkeypatch.setattr(module, "get_local_startup_mode", lambda *_: "lazy")
+	save = Mock()
+	monkeypatch.setattr(module, "set_local_startup_mode", save)
+	monkeypatch.setattr(module.background_tasks, "submit", lambda *_args, **_kwargs: Mock())
+	dialog = create("litert-lm")
+	dialog._startup_choice.SetSelection(1)
+	dialog._on_test_connection(None)
+	save.assert_not_called()
+	assert dialog._startup_choice.GetSelection() == 1

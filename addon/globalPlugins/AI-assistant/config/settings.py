@@ -62,6 +62,17 @@ def save() -> None:
 	_config_store.save()
 
 
+def get_litert_upgrade_notice_suppressed_version() -> str:
+	"""Return the add-on version for which the LiteRT notice was dismissed."""
+	value = _get_raw_setting("litertUpgradeNoticeSuppressedVersion", "")
+	return value if isinstance(value, str) else ""
+
+
+def set_litert_upgrade_notice_suppressed_version(version: str) -> None:
+	"""Suppress LiteRT startup notices for one add-on release version."""
+	_set_value("litertUpgradeNoticeSuppressedVersion", str(version or ""))
+
+
 def get_max_tool_calls() -> int:
 	value = _get_raw_setting("maxToolCalls", defaults.DEFAULT_MAX_TOOL_CALLS)
 	if type(value) is not int or not 1 <= value <= defaults.MAX_TOOL_CALLS:
@@ -432,35 +443,23 @@ _LOCAL_STARTUP_KEYS = {"litert-lm": "litert", "llama-cpp-server": "llama"}
 
 
 def get_local_startup_mode(provider: str) -> str:
-	"""Read startup policy, preserving preferences saved by earlier releases."""
+	"""Read the local provider's two-choice startup policy."""
 	prefix = _LOCAL_STARTUP_KEYS.get(str(provider).strip().lower())
 	if prefix is None:
 		return "lazy"
 	mode = _read_string(prefix + "StartupMode", "").strip().lower()
-	if mode == "worker":
-		return "lazy"
 	if mode in LOCAL_STARTUP_MODES:
 		return mode
-	return "server" if _read_bool(prefix + "StartOnStartup", False) else "lazy"
+	return "lazy"
 
 
 def set_local_startup_mode(provider: str, mode: str) -> None:
-	"""Save the policy and its legacy server-start flag together."""
+	"""Save a local provider's startup policy without activating it."""
 	prefix = _LOCAL_STARTUP_KEYS.get(str(provider).strip().lower())
 	mode = str(mode).strip().lower()
 	if prefix is None or mode not in LOCAL_STARTUP_MODES:
 		raise ValueError("Unsupported local provider startup policy")
-	_set_values({prefix + "StartupMode": mode, prefix + "StartOnStartup": mode == "server"})
-
-
-def get_litert_start_on_startup() -> bool:
-	"""Return whether the active LiteRT-LM server starts with the add-on."""
-	return get_local_startup_mode("litert-lm") == "server"
-
-
-def get_llama_start_on_startup() -> bool:
-	"""Return whether the active llama-server starts with the add-on."""
-	return get_local_startup_mode("llama-cpp-server") == "server"
+	_set_value(prefix + "StartupMode", mode)
 
 
 def _get_openai_endpoint_paths(provider: str) -> tuple[str, str]:
@@ -757,16 +756,6 @@ def set_litert_cache(cache: str) -> None:
 def set_litert_cpu_threads(threads: int) -> None:
 	_set_value("litertCpuThreads", int(threads), notify=True)
 	_notify_litert_server_config_changed()
-
-
-def set_litert_start_on_startup(enabled: bool) -> None:
-	"""Persist whether the active LiteRT-LM server starts with the add-on."""
-	set_local_startup_mode("litert-lm", "server" if enabled else "lazy")
-
-
-def set_llama_start_on_startup(enabled: bool) -> None:
-	"""Persist whether the active llama-server starts with the add-on."""
-	set_local_startup_mode("llama-cpp-server", "server" if enabled else "lazy")
 
 
 def get_think(provider_id: str, model_id: str | None = None) -> bool:

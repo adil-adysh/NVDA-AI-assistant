@@ -66,8 +66,7 @@ def test_active_enabled_local_provider_is_scheduled(provider: str, expected_name
 
 	thread = startup.schedule_active_local_provider_start(
 		provider=provider,
-		litert_enabled=True,
-		llama_enabled=True,
+		startup_mode="server",
 		litert_installed=True,
 		ensure_ready=lambda: ready_calls.append(provider),
 		report_error=lambda *_args: None,
@@ -83,26 +82,24 @@ def test_active_enabled_local_provider_is_scheduled(provider: str, expected_name
 
 
 @pytest.mark.parametrize(
-	("provider", "litert_enabled", "llama_enabled", "litert_installed"),
+	("provider", "mode", "litert_installed"),
 	[
-		("openai", True, True, True),
-		("litert-lm", False, True, True),
-		("litert-lm", True, True, False),
-		("llama-cpp-server", True, False, True),
+		("openai", "server", True),
+		("litert-lm", "lazy", True),
+		("litert-lm", "server", False),
+		("llama-cpp-server", "lazy", True),
 	],
 )
 def test_inactive_disabled_or_uninstalled_provider_is_not_scheduled(
 	provider: str,
-	litert_enabled: bool,
-	llama_enabled: bool,
+	mode: str,
 	litert_installed: bool,
 ) -> None:
 	factory = ThreadFactory()
 
 	thread = startup.schedule_active_local_provider_start(
 		provider=provider,
-		litert_enabled=litert_enabled,
-		llama_enabled=llama_enabled,
+		startup_mode=mode,
 		litert_installed=litert_installed,
 		ensure_ready=lambda: None,
 		report_error=lambda *_args: None,
@@ -118,8 +115,7 @@ def test_startup_failure_is_reported_without_escaping_worker() -> None:
 	reported: list[tuple[Exception, str]] = []
 	thread = startup.schedule_active_local_provider_start(
 		provider="litert-lm",
-		litert_enabled=True,
-		llama_enabled=True,
+		startup_mode="server",
 		litert_installed=True,
 		ensure_ready=lambda: (_ for _ in ()).throw(RuntimeError("controlled failure")),
 		report_error=lambda error, provider: reported.append((error, provider)),
@@ -139,8 +135,7 @@ def test_litert_with_existing_process_still_enters_readiness_path() -> None:
 	readiness_checks: list[str] = []
 	thread = startup.schedule_active_local_provider_start(
 		provider="litert-lm",
-		litert_enabled=True,
-		llama_enabled=True,
+		startup_mode="server",
 		litert_installed=True,
 		ensure_ready=lambda: readiness_checks.append("health-and-fingerprint"),
 		report_error=lambda *_args: None,
@@ -158,7 +153,7 @@ def test_explicit_startup_mode_routes_only_the_requested_operation(provider, mod
 	factory = ThreadFactory()
 	calls = []
 	thread = startup.schedule_active_local_provider_start(
-		provider=provider, litert_enabled=False, llama_enabled=False,
+		provider=provider,
 		litert_installed=True, startup_mode=mode,
 		ensure_ready=lambda: calls.append("server"),
 		report_error=lambda *_args: None, thread_factory=factory,
@@ -173,10 +168,12 @@ def test_removed_worker_policy_does_not_start_background_processes():
 	factory = ThreadFactory()
 	calls = []
 	thread = startup.schedule_active_local_provider_start(
-		provider="litert-lm", litert_enabled=False, llama_enabled=False,
+		provider="litert-lm",
 		litert_installed=False, startup_mode="worker",
 		ensure_ready=lambda: calls.append("server"),
 		report_error=lambda *_args: None, thread_factory=factory,
 	)
 	assert thread is None
 	assert calls == []
+
+

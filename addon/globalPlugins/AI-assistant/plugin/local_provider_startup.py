@@ -13,26 +13,21 @@ MANAGED_LOCAL_PROVIDERS = frozenset({"litert-lm", "llama-cpp-server"})
 def schedule_active_local_provider_start(
 	*,
 	provider: str,
-	litert_enabled: bool = False,
-	llama_enabled: bool = False,
 	litert_installed: bool,
 	ensure_ready: Callable[[], None],
 	report_error: Callable[[Exception, str], None],
-	startup_mode: str | None = None,
+	startup_mode: str = "lazy",
 	should_start: Callable[[], bool] | None = None,
 	thread_factory: Callable[..., threading.Thread] = threading.Thread,
 ) -> threading.Thread | None:
 	"""Schedule startup for the active managed provider when policy permits.
 
-	Server startup enters the normal readiness path, which owns health and startup fingerprint
-	validation and will reuse, adopt, or replace a live server as appropriate.
+	Server startup enters the normal readiness path, which owns health and
+	startup fingerprint validation and reuses, adopts or replaces live servers.
 	"""
 	provider = str(provider or "").strip().lower()
 	if provider not in MANAGED_LOCAL_PROVIDERS:
 		return None
-	if startup_mode is None:
-		enabled = litert_enabled if provider == "litert-lm" else llama_enabled
-		startup_mode = "server" if enabled else "lazy"
 	if startup_mode != "server":
 		return None
 	if provider == "litert-lm" and not litert_installed:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import builtins
 import math
+import logging
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, cast
@@ -43,6 +45,8 @@ from .mcp_settings import McpSettingsPanel
 
 addonHandler.initTranslation()
 _ = cast(Callable[[str], str], getattr(builtins, "_", lambda value: value))
+log = logging.getLogger(__name__)
+_active_settings_dialog: weakref.ReferenceType[AIAssistantSettingsDialog] | None = None
 
 
 @dataclass(frozen=True)
@@ -134,6 +138,9 @@ class _SettingsTab(scrolledpanel.ScrolledPanel):
 	def collect(self, values: dict[str, object]) -> None:
 		return
 
+	def dispose(self) -> None:
+		self.dialog = None
+
 
 class ModelChoiceList(list):
 	"""Rendered choices with exact IDs, delivered as one generation-fenced result."""
@@ -175,6 +182,13 @@ class AIAssistantGeneralPanel(_SettingsTab):
 	def selected_provider(self) -> str:
 		index = self.provider_choice.GetSelection()
 		return PROVIDER_IDS[index] if 0 <= index < len(PROVIDER_IDS) else get_provider()
+
+	def dispose(self) -> None:
+		self._model_choice_generation += 1
+		if self._model_choice_task is not None:
+			self._model_choice_task.cancel()
+			self._model_choice_task = None
+		super().dispose()
 
 	def _current_model_name(self, provider_id: str) -> str:
 		try:
@@ -337,6 +351,11 @@ class AIAssistantModelsContextPanel(_SettingsTab):
 		self.embedding_model.SetItems(choices)
 		self.embedding_model.SetValue(selected)
 
+	def dispose(self) -> None:
+		self._embedding_catalog_task.cancel()
+		self._embedding_catalog_task = None
+		super().dispose()
+
 	def _on_manage_embeddings(self, _event: wx.CommandEvent) -> None:
 		from .embedding_model_dialog import open_embedding_model_dialog
 		open_embedding_model_dialog(self.dialog)
@@ -454,11 +473,32 @@ class AIAssistantSettingsDialog(SettingsDialog):
 	helpId = "AIAssistantSettings"
 	_panel_classes = (AIAssistantGeneralPanel, AIAssistantModelsContextPanel, AIAssistantBehaviorOutputPanel, AIAssistantDiagnosticsPanel, McpSettingsPanel)
 
-	def __init__(self, parent: wx.Window, *, mcp_catalog: object = None, tool_registry: object = None, tool_executor: object = None) -> None:
+	def __init__(self, parent: wx.Window, *, mcp_catalog: object = None, tool_registry: object = None, tool_executor: object = None, multiInstanceAllowed: bool = False) -> None:
+		global _active_settings_dialog
 		self.tabs: list[wx.Window] = []
+		self._disposed = False
 		self._mcp_dependencies = (mcp_catalog, tool_registry, tool_executor)
-		super().__init__(parent, resizeable=True, buttons={wx.OK, wx.CANCEL, wx.APPLY})
+		super().__init__(parent, resizeable=True, buttons={wx.OK, wx.CANCEL, wx.APPLY}, multiInstanceAllowed=multiInstanceAllowed)
 		self.Bind(wx.EVT_SHOW, self._on_show)
+		self.Bind(wx.EVT_WINDOW_DESTROY, self._on_destroy)
+		_active_settings_dialog = weakref.ref(self)
+
+	def _on_destroy(self, event: wx.WindowDestroyEvent) -> None:
+		global _active_settings_dialog
+		# wx may have invalidated the native object before dispatching destroy;
+		# NVDA uses the same bool(self) check for its SettingsDialog bookkeeping.
+		if (not self or event.GetEventObject() is self) and not self._disposed:
+			self._disposed = True
+			if _active_settings_dialog is not None and _active_settings_dialog() is self:
+				_active_settings_dialog = None
+			for panel in self.tabs:
+				try:
+					panel.dispose()
+				except Exception:
+					log.exception("Error disposing settings panel")
+			self.tabs.clear()
+			self._mcp_dependencies = (None, None, None)
+		event.Skip()
 
 	def _on_show(self, event: wx.ShowEvent) -> None:
 		event.Skip()
@@ -499,7 +539,7 @@ class AIAssistantSettingsDialog(SettingsDialog):
 		return None
 
 	def _focus_current_page(self) -> None:
-		if not self.tabs:
+		if not self or self.IsBeingDeleted() or not self.tabs:
 			return
 		page = self.notebook.GetPage(self.notebook.GetSelection())
 		(self._first_focusable(page) or self.notebook).SetFocus()
@@ -573,15 +613,22 @@ class AIAssistantSettingsDialog(SettingsDialog):
 AIAssistantSettingsPanel = AIAssistantGeneralPanel
 
 
-def open_settings_dialog(parent: wx.Window, services: object = None) -> AIAssistantSettingsDialog:
-	dialog = AIAssistantSettingsDialog(
-		parent,
+def open_settings_dialog(parent: wx.Window, services: object = None) -> AIAssistantSettingsDialog | None:
+	dialog = _active_settings_dialog() if _active_settings_dialog is not None else None
+	if dialog and not dialog.IsBeingDeleted():
+		if dialog.IsIconized():
+			dialog.Restore()
+		dialog.Raise()
+		dialog.SetFocus()
+		return dialog
+	# NVDA's SettingsDialog owns modeless destruction. Retained wrappers for
+	# destroyed dialogs must not block reopening; the live reference above
+	# enforces our single-window policy without touching NVDA's registry.
+	parent.popupSettingsDialog(
+		AIAssistantSettingsDialog,
+		multiInstanceAllowed=True,
 		mcp_catalog=getattr(services, "mcp_catalog", None),
 		tool_registry=getattr(services, "tool_registry", None),
 		tool_executor=getattr(services, "tool_executor", None),
 	)
-	try:
-		dialog.ShowModal()
-	finally:
-		dialog.Destroy()
-	return dialog
+	return _active_settings_dialog() if _active_settings_dialog is not None else None

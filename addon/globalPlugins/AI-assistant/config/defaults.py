@@ -47,14 +47,10 @@ DEFAULT_LITERT_URL = "http://127.0.0.1:9379"
 DEFAULT_LITERT_BACKEND = ""
 DEFAULT_LITERT_CACHE = ""
 DEFAULT_LITERT_CPU_THREADS = 0
-# Server preload is opt-in; first inference otherwise starts it lazily.
-DEFAULT_LITERT_START_ON_STARTUP = False
 
 DEFAULT_LLAMA_CPP_MODEL = ""
 DEFAULT_LLAMA_CPP_URL = "http://127.0.0.1:8081"
 DEFAULT_LLAMA_CPP_EXECUTABLE = "llama-server"
-# Server preload is opt-in; first inference otherwise starts it lazily.
-DEFAULT_LLAMA_START_ON_STARTUP = False
 
 DEFAULT_ENABLED_PROVIDERS = ["ollama", "gemini", "openai", "litert-lm"]
 
