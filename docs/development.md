@@ -1,5 +1,12 @@
 # Python development and tests
 
+After building `runtime_supervisor` with the locked `PYO3_PYTHON`, run
+`uv run python tests/worker/native_shutdown_smoke.py` on Windows. This loads the
+debug DLL directly and exercises both real worker executors: owned child exit,
+rejected launches through borrowed native references, and preservation of
+externally adopted HTTP servers. It uses disposable local HTTP servers and does
+not start an inference model or restart NVDA.
+
 Python development uses [uv](https://docs.astral.sh/uv/) and Python 3.13.12,
 matching the sibling NVDA source checkout. Clone NVDA beside this repository:
 
@@ -135,7 +142,9 @@ cargo test --manifest-path nvda_ui_host/Cargo.toml --lib real_one_shot_close_and
 
 It renders a real one-shot result, clicks its Close button, reopens for another
 result, and invokes native Escape. Assertions check the outer HWND, embedded
-controller visibility, and foreground restoration. It starts no IPC listeners.
+controller visibility, and foreground restoration. Its chat scenario sends a
+128-delta burst followed by completion and checks that the composer draft and
+caret stay intact. It starts no IPC listeners.
 
 Application composition registers `configure_worker_owner()` without spawning.
 Runtime settings offer three startup policies for each managed local provider:
@@ -182,78 +191,44 @@ report `Typelib different than module`, regenerate the sibling checkout's
 
 ### llama.cpp model management compatibility checks
 
-Run `uv run pytest tests/providers/test_deterministic_llama_management.py tests/ui/test_model_management_actions.py tests/build/test_llama_preset_smoke.py`.
-The real router smoke requires an installed `llama-server`; set
-`NVDA_AI_REQUIRE_LLAMA_TESTS=1` to fail instead of skipping when absent. It verifies
-router discovery of a generated version-1 preset with startup model loading disabled
-and offline mode enabled; it neither downloads weights nor performs inference.
-This implementation was validated against Windows build 10970 (0.4.1-dev,
-commit bfdc32183). Generated syntax is pinned to preset version 1; the native
-preflight rejects unsupported versions. Test another intended server build before
-expanding the supported syntax. Runtime binaries remain user-configurable.
+Run `uv run pytest tests/core/test_hf_cache.py tests/providers/test_deterministic_llama_management.py tests/providers/test_llama_configuration_transactions.py tests/providers/runtime/test_llama_models.py tests/providers/test_llama_provider.py tests/ui/test_llama_preset_sources.py`.
 
-Packaged-worker smoke also exercises the owned cache-deletion command and native
-extension imports. Keep package builds sequential with DLL-loading tests.
+The cache inventory tests build a temporary cache with `refs/main`, role-specific
+GGUF headers, an older snapshot, a malformed file, a broken link and split
+groups. They do not read the real user cache. The real router smoke requires an
+installed `llama-server`; set `NVDA_AI_REQUIRE_LLAMA_TESTS=1` to fail instead of
+skipping when absent. It verifies router discovery of a generated version-1
+preset with startup model loading disabled and offline mode enabled; it neither
+downloads weights nor performs inference.
 
-
-Preset migration and tuning regression checks:
-`uv run pytest tests/providers/test_llama_preset_migration.py tests/ui/test_llama_runtime_options.py`.
-Tests cover immutable import snapshots, source deletion, legacy tombstones,
-unsupported-option atomicity, per-model/default context precedence, runtime-help
-compatibility, placement conflicts and removal of stale worker preset sections.
-Unknown options are deliberately rejected rather than copied opaquely. To migrate
-an unsupported preset, prepare a copy containing supported options and import it;
-keep the original as a backup. Later external edits require explicit reimport.
-
+The editor and picker are checked manually because wx dialogs need a running NVDA
+process. The source picker lists only readable GGUFs from the `refs/main` snapshot,
+shows the observed commit as advisory, and returns repository plus exact filename.
+No local path is persisted.
 
 ### llama.cpp real-world UX acceptance
 
-The October 13 unified manager has one list and Add model with local, HF and
-existing-download sources. Optional companion files are configured by explicit
-role (vision projector, draft or MTP). HF Resolve only reads metadata; Load/first
-inference downloads missing remote companions. Authentication uses the worker's
-`HF_TOKEN` environment when supplied. Downloaded companions live in the shared HF
-cache; task-owned partials are removed on cancellation/failure, with no resume claim.
-
-Load/Unload progress remains in Tasks after closing the main manager. Stop affects
-only the selected operation; shutdown cancels application operations before worker
-teardown. Settings/source changes and deletion are rejected while lifecycle jobs
-are active. Shared file references block deletion; remove configurations separately.
-
-Additional tests: `uv run pytest tests/providers/test_llama_unified_management.py tests/providers/test_llama_companion_contract.py tests/service/test_llama_operations.py tests/worker/test_llama_companions.py`.
-Manual checks also cover Create versus Create and use, the collapsed companion
-section, role-specific cache/HF pickers, reopen Tasks during Load, explicit Unload,
-missing companions, MTP support after runtime downgrade, and shared-file protection.
-
-See [the integration workflow matrix](testing-llama-integration.md) for automated
-coverage across the catalog, worker, HTTP client, native dialogs and package.
-
-Automated checks: `uv run pytest tests/providers/test_llama_catalog_presentation.py tests/providers/test_llama_cached_configuration.py tests/providers/test_llama_configuration_transactions.py tests/providers/test_llama_model_recovery.py tests/worker/test_model_asset_discovery.py tests/worker/test_llama_prepare_model.py tests/ui/test_llama_model_manager_views.py tests/ui/test_llama_runtime_settings_accessibility.py tests/ui/test_llama_selection_consistency.py`.
-The NVDA integration tier constructs hidden dialogs with the pinned real GUI helpers.
-Packaged smoke discovers a temporary GGUF, creates a named configuration through
-the packaged worker, verifies unchanged files and confirms the server stays stopped.
+The advanced manager has one preset list. Add/Edit exposes two source modes for
+the main model and the optional draft model: a pass-through manual Hugging Face
+reference, or a cached repository plus exact file. The projector is automatic
+same-repository or disabled; cached projectors are informational.
 
 Before release, manually exercise with running NVDA:
 
-- First setup; empty configurations; Add local/HF reference with accurate lazy-load copy.
-- View/Search/columns read clearly; Enter uses or creates, visibility uses Space;
-  Tab/Shift+Tab and Escape work in every dialog.
-- Discover a real cache while the server is stopped; create two named configurations
-  referencing one asset; remove one and confirm weights/other configuration remain.
-- Refresh while focus is in Search; change views during scanning; close/Stop while
-  work is pending; no late dialogs, focus theft or false failure announcements.
-- Preview preset replacements; Cancel; modify the source after preview; unsupported
-  options; active choice and original file remain unchanged on rejected commits.
-- Basic/Advanced settings; provider/default origins; allocation versus budget copy;
-  runtime downgrade; individually reset saved unsupported flags; all-options reset.
-- Prepare then Stop; failed/missing files; Locate source and preserve settings; verify
-  actual loaded status rather than inferring it from endpoint availability.
-- Cancel Prepare while loading, retry the same model, and verify old completion does
-  not unload the successful retry. Delete a previously discovered file externally
-  and refresh; its configuration must offer Locate files and leave ordinary choices.
-- Interrupt the server during refresh; retain prior server rows with stale/error
-  feedback and disable their selection until a successful refresh.
-- Friendly model names/exact IDs agree in manager, settings, host and gesture menus;
-  unavailable current configurations remain identifiable and manageable.
+- Add a manual reference with and without `:quant`; confirm it is stored unchanged.
+- Add a cached main model and cached draft; confirm only repository + filename are stored.
+- Switch source modes and confirm hidden values are not serialized.
+- Enable a draft, disable it, and confirm an automatically added speculative mode is removed.
+- Confirm an incomplete split is not selectable and a malformed GGUF is absent.
+- Confirm the commit is labelled advisory and the preset still follows `main`.
+- Confirm the projector list is informational and cross-repository selection is unavailable.
+- Add/Edit/Duplicate/Remove, Preview, Problems navigation, Escape and focus return.
+- Empty cache, cache scan failure, no matching role and malformed-GGUF states.
+- Manual reference with and without `:quant`; cached main model; cached draft.
+- Mode switching preserves hidden values but serializes only the active mode.
+- Problems list focus and Go to problem; Preview copy; Cancel leaves state untouched.
+- Remove remains explicit and cached model files are kept.
+- Friendly names/exact IDs agree in manager, settings, host and gesture menus;
+  unavailable current presets remain identifiable and manageable.
 
 Do not interpret automated hidden-dialog tests as live speech/focus acceptance.

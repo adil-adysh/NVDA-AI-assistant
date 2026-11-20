@@ -99,3 +99,5 @@ Thumbs.db
 # =========================
 
 # (Do NOT add: docs/, nvda_ui_host/, src/)
+
+.superpowers/

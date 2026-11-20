@@ -1,12 +1,27 @@
 # Current architecture
 
-The llama manager now presents one configuration/external-model list. Add model
-owns local/HF/cache source selection and optional vision, draft or MTP companion
-descriptors. `models.json` remains authoritative; explicit companion options are
-derived into runtime presets. Worker HF metadata lookup never downloads; remote
-companion resolution occurs only for explicit Load or first inference. Cache
-verification is role-aware, and shared-file deletion is blocked in both manager
-and worker, including legacy projector/draft option paths.
+Saved enabled MCP servers connect on add-on load through the catalog's bounded
+background pool. Disabled servers are skipped, failures are isolated per server,
+and shutdown cancels queued connections. Connecting does not grant tool approval.
+Remote HTTP services are never launched or terminated by the add-on.
+
+On add-on shutdown, UI host launches are fenced before cleanup, and queued UI
+commands and native fallback deliveries are discarded. The private worker cancels
+jobs and shuts down only initialized runtime executors. Each executor permanently
+fences its native supervisor before stopping owned processes, so previously
+borrowed references cannot relaunch a server after teardown. The native fence
+also invalidates in-flight launches; late children are terminated. Externally
+adopted servers remain untouched. Native kill-on-job-close containment remains
+the fallback if the worker must be forcibly terminated.
+
+The llama manager presents one advanced preset list. Add/edit owns the main
+Hugging Face source, an optional draft source, projector mode and per-model
+runtime options. Manual references are pass-through; cached selection stores a
+repository and exact filename from the read-only cache inventory. `models.json`
+remains authoritative, and the generated preset is derived from records. Cache
+inspection never downloads, writes, repairs or deletes shared files. Projector
+control is automatic same-repository or disabled; there is no local-path or
+cross-repository projector picker.
 
 `service/llama_operations.py` retains application-owned Load/Unload operations,
 progress/error history and cancellation independently of dialog lifetime. Closing
@@ -28,6 +43,28 @@ status reads must run off that thread. Command writes and reads have deadlines,
 and a timed-out transaction reconnects before reuse. Job state is fenced by the
 handshake generation and released when its consumer finishes. Progress congestion
 may discard progress; terminal events are retained.
+
+Provider switching stops inactive add-on-owned LiteRT-LM and llama.cpp servers
+off the NVDA thread. `service/local_provider_lifecycle.py` owns this policy;
+`core/runtime_selection.py` supplies the shared selection/shutdown gate used by
+both supervisor wrappers for start, restart, readiness and adoption. Switching
+waits for an in-flight launch, then stops its server; late launches for an
+inactive provider are cancelled before worker IPC. Native supervisor ownership
+remains authoritative: adopted external processes are never terminated. The
+Windows owned-process stop uses termination, not a graceful server shutdown.
+Worker-only preparation remains independent of model selection. Passive status
+checks never start a runtime; a configured installed idle runtime can start on
+the request path without being misreported as a missing server URL.
+
+Provider connection diagnostics run through `service/provider_connection.py`
+using an unsaved configuration snapshot, a bounded timeout and no retries.
+Adapters check the configured HTTP models endpoint directly, independently of
+managed catalogs or runtime startup. The Configure dialog announces progress and
+results without changing focus. Success verifies connectivity and model listing;
+it does not verify generation, vision or tools. OpenAI's model list supplies no
+capability matrix, so documented family fallbacks are used when server metadata
+is absent. Advertised capability arrays take precedence, and the Rust transport
+preserves extra model metadata across the Python boundary.
 
 Managed-runtime preparation feedback is request-scoped. `core/readiness_progress.py` observes native lifecycle snapshots and emits startup, restart, and one delayed-preparation stage. Readiness RPCs opt in with `report_readiness_progress`; the worker sends `runtime_progress` frames with a `stage` of `starting`, `restarting`, or `delayed`, followed by the final response. `NamedPipeWorkerClient` waits for job events outside the command lock and translates stages in the NVDA process. No stages are sent to clients that do not opt in. Presentation checks cancellation, current chat identity, preparation lifetime, and output settings before speaking. Model loading is not inferred from elapsed time.
 
@@ -109,7 +146,7 @@ core/ contains provider-neutral canonical objects:
 - events.py: progress events and handlers.
 - tooling.py: tool-call structures.
 
-tools/ registers definitions, serializes tool declarations, executes provider tool calls, and returns canonical tool-result messages. The default composition registers get_time; the LLM service limits tool loops to five steps.
+tools/ registers definitions, serializes tool declarations, executes provider tool calls, and returns canonical tool-result messages. The default composition registers get_time. The application snapshots the saved maximum tool-call count for each response (default 100, range 1–1000), using it for both individual calls and model/tool rounds. Settings changes apply to the next response. Call exhaustion closes outstanding tool calls without repeatedly requesting further execution; existing timeouts, permissions and cancellation remain enforced.
 
 ### Context collection and reduction
 
@@ -218,6 +255,15 @@ webui/src/lib/bridge.ts is the inbound command entry point. It validates envelop
 - protocol-types.ts: WebView-side mirror of Rust payload types.
 - content.ts: sanitization/normalization; actions.ts: user actions; attachments.ts: attachments; shortcuts.ts: keyboard shortcuts.
 - components/: chat, controls, messages, content blocks, attachments, result screens, status, toolbar, and accessibility announcements.
+
+Chat completion preserves a composer that currently holds keyboard focus, including
+its draft and caret, while retaining response announcements. Explicit content
+navigation remains available. Deferred presentation focus yields to intervening
+user focus changes. A failed streaming begin/delta disables incremental updates,
+but final delivery still attempts a complete message upsert; an explicitly aborted
+projection cannot publish a late final result.
+Render acknowledgements (`ui_applied`) are consumed by the native focus gate;
+they are not forwarded into Python's user-event channel during streaming bursts.
 
 The Web UI sends chat_submitted, ui_action_invoked, provider/model selections, think-mode toggles, host close, and readiness events through window.chrome.webview.postMessage. Rust forwards them as host events; Python validates, persists, or reacts.
 
@@ -392,80 +438,64 @@ download state. Selection and mutations run on the background task boundary, wit
 refresh generations, completion speech and list focus restored after a mutation.
 
 `LlamaPresetCodec` generates version-1 presets in canonical model-ID order.
-`core/llama_options.py` owns supported options, aliases, validation and UI labels.
-Per-model records hold explicit runtime options; imported `[*]` defaults are
-flattened into those records. Preset import is a one-time migration, never a live
-configuration link. Unsupported options are reported by section/key and block
-import without changing the catalog or source file. The import summary lists the
-models and settings migrated. Explicit reimport replaces matching IDs and retains
-other registrations.
+`core/llama_options.py` owns supported options, aliases, validation and UI labels,
+including the current llama-server cache and sampling preset flags. Per-model
+records hold explicit runtime options; the catalog is never seeded from an
+external preset. `models.json` is the authoritative and only source of
+registrations: no migration, no preset import, and no reading back of generated
+files. The derived output is `runtime-models.ini`, written atomically from records.
+Both NVDA and the worker export from records rather than merging previous output.
 
-`models.json` is the authoritative catalog. Legacy list manifests and source-scoped
-manifests migrate on first catalog access, preserving removed IDs. Once the manifest
-has its authoritative marker, neither the original preset nor generated files are
-read as model state. Original files remain unchanged, even when they are named
-`models.ini` inside the managed directory. The derived output is `runtime-models.ini`.
-Both NVDA and worker export from records rather than merging previous output.
+Downloaded files are not owned by the add-on. Presets reference Hugging Face
+repositories; llama-server resolves, downloads and caches the files. The model
+manager provides only preset CRUD (add, edit, duplicate, remove). A read-only
+cache inventory may populate a cached source choice, but it never writes, repairs,
+evicts or deletes cache entries and never stores a local path in a preset.
 
-Runtime settings load and save off the NVDA event thread. The accessible dialog
-provides context, GPU layers, Flash Attention, cache precision/placement and MoE
-expert placement/cache controls, with reset and validation. Mutually exclusive flags
-are generated from a single placement choice. Other supported imported options
-survive ordinary edits; Reset clears all runtime options. The worker inspects the
-installed server's `--help`, with cancellation and a five-second deadline, and
-caches supported flags by executable file identity. Unavailable controls are disabled;
-unsupported configured flags fail before preset export and server launch. Provider
-context defaults are applied only to unpinned models in the export, not as a router
-command-line flag overriding per-model context. Changes take effect on the next
-managed inference/load, with the existing startup fingerprint triggering a restart
-when the derived preset changes.
+Runtime settings load and save off the NVDA event thread. The preset editor offers
+a small set of basic controls and an advanced `key = value` area for the remaining
+per-model options. Validation rejects unknown keys, server/router settings, secrets,
+local paths, and ambiguous Hugging Face source combinations before anything is
+written. The worker inspects the installed server's `--help`, with cancellation and
+a five-second deadline, and caches supported flags by executable file identity.
+Unsupported flags fail before preset export. Provider context defaults are applied
+only to unpinned models in the export, not as a router command-line flag overriding
+per-model context. Changes take effect on the next managed inference/load.
 
-The versioned model manifest retains exact removed IDs and retired server aliases.
-Legacy list manifests are accepted. Catalog commits serialize across instances and
+The manifest is schema version 2; older manifests are ignored rather than
+migrated. Catalog commits serialize across instances and
 roll back manifest changes when an atomic preset export fails. Removal verifies
 worker runtime status, stops only an owned router, and clears the active selection
 using compare-and-set so it cannot clear a newer choice. It preserves original
 model files and shared llama.cpp cache contents. Repeated removal is idempotent.
 
-Cached-file deletion is a separate worker job. The worker resolves its own managed
-cache root, requires an explicit add-on ownership record for the exact model/file,
-and rejects caller-selected roots and paths outside that root. Current llama.cpp
-Hugging Face downloads remain upstream-owned: importing a reference does not grant
-this add-on permission to delete files from that shared cache.
+### llama.cpp advanced presets
 
+llama.cpp is an advanced provider and the add-on owns only its presets. A preset
+has two source modes for the main model and the optional draft model. A manual
+reference passes `owner/repo[:quant]` through unchanged. A cached choice stores
+the repository and exact repository-relative filename. The same two modes apply
+to draft models through `spec-draft-hf` / `spec-draft-model`; a matching
+`draft-*` speculative mode may be auto-filled, with `spec_type_auto` preserving
+whether the editor owns that value. Local model paths, local projector paths,
+URLs, Docker repos, secrets, server/router settings and legacy migration are not
+part of the model.
 
-### llama.cpp configuration, asset and server views
+`models.json` is the only preset catalog. `runtime-models.ini` is generated output
+and is never read back. The preset editor has Model, Runtime and Preview tabs:
+the Model tab contains the two source modes, optional draft and automatic/disabled
+projector; Runtime contains the basic and advanced per-model options; Preview
+shows the generated INI. Validation rejects unknown keys and ambiguous source
+combinations before persistence. The worker inspects the installed server's
+`--help` and rejects unsupported flags before writing the preset.
 
-`providers/llama_catalog.py` is the shared presentation/selection policy. Entries
-separate saved configurations, worker-verified downloaded assets and server models.
-Runtime observations decode loaded/unloaded/loading/downloading/sleeping/failed
-instead of treating discovery as proof that a model is loaded. Missing local sources
-remain manageable but are excluded from ordinary selectors. Friendly names retain
-stable inference IDs. Explicit model capabilities remain available before load;
-a loaded server's actual capabilities take precedence.
+`core/hf_cache.py` provides a read-only inventory for the cached-source picker.
+It reads the configured Hugging Face cache roots, `refs/main`, snapshot symlinks
+or ordinary files, GGUF headers, and split groups. It does not write, repair,
+evict or delete. The picker displays the observed commit as advisory only:
+llama.cpp presets cannot pin a revision, so the preset follows `main`.
 
-`core/model_assets.py` provides immutable worker-safe snapshots. The model-asset
-executor scans configured folders, worker-visible llama.cpp and HF Hub caches with
-cancellation and limits. It checks GGUF headers, treats shard/projector entries as
-unsupported for standalone creation, deduplicates resolved paths and rejects links
-outside the declared root. It does not load weights or claim full tensor integrity.
-Opaque tokens expire and file identity is rechecked before reuse. Verified HF source
-metadata is retained in configuration records; cache ownership stays with the user.
-
-`ui/llama_model_manager.py` provides one accessible manager with three views, named
-columns, explicit primary actions, search, visibility controls and source details.
-Read tasks do not invalidate catalogs or move focus; durable mutations refresh the
-catalog with generation fences. Stop requests are distinct from errors, and closed
-views reject late results. `ui/llama_configuration_dialog.py` collects friendly name,
-source and optional stable ID. Cached creation references existing files without
-copying, downloading or starting an inference server. Several configurations can
-share one asset. Existing verified add-on-owned deletion is separate from removal.
-
-Preset imports have a preview, explicit replacement IDs, and source/catalog digests
-rechecked at commit. Runtime settings use Basic/Advanced pages with stored/effective
-values, default origins and individually removable unsupported options. Runtime
-allocation is separate from request context budgeting. Explicit preparation uses
-an owned router load request and waits for authoritative loaded status. Cancellation
-requests unload of that model, fenced against replacement server generations; it
-does not terminate an external server. Settings and gestures consume the shared
-selectable model policy through the manager/provider catalog.
+`llama-server` resolves and downloads Hugging Face files into its own cache. The
+add-on does not own model files, delete cached weights, or adopt local GGUFs. A
+router with a valid preset but missing files still starts; model readiness must be
+read from `/models` status rather than `/health`.

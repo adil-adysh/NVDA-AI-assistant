@@ -1,142 +1,162 @@
-# llama.cpp server integration
+# llama.cpp server integration (advanced)
 
-This document describes the NVDA AI Assistant integration with `llama-server` from llama.cpp.
+This document describes the **HF-only advanced** llama.cpp preset integration.
 
-## Architecture
+## Scope
 
-The integration has four boundaries:
+llama.cpp is an advanced provider. The app owns exactly one thing for it: the
+model preset. It does not install `llama-server`, discover local GGUF files,
+manage cache folders, delete model files, or provide onboarding.
 
-1. The provider configuration stores the endpoint, executable, selected model, and optional preset path.
-2. `LlamaModelCatalog` owns imported model identities and preset reconciliation.
-3. `LlamaServerSupervisor` owns the process and the cached server model API response.
-4. `LlamaCppServerProvider` translates server metadata into provider-neutral model information and sends the canonical model ID to the OpenAI-compatible client.
+## Model sources
 
-The server API is authoritative for runtime state. The local manifest is not a second runtime model catalog; it only preserves import metadata and generates the preset.
+Only Hugging Face sources are supported. Each of the main and optional draft
+model has two source modes:
 
-## Configuration
-
-Configure llama.cpp under **Manage AI Providers**:
-
-| Setting | Example | Purpose |
-| --- | --- | --- |
-| Server URL | `http://127.0.0.1:8081` | OpenAI-compatible llama-server endpoint |
-| llama-server executable | `llama-server` | Executable name or full path; `PATH` is used when blank |
-| Models preset path | `D:\llama-cpp\models.ini` | Optional user-owned router preset; select it with the Configure dialog’s file picker |
-
-When no preset path is configured, the addon uses:
-
-```text
-%APPDATA%\nvda\AIAssistant\models\llama-cpp\models.ini
-```
-
-The import manifest is stored beside the default preset as `models.json`. When a custom preset is configured, the manifest remains application-owned while the specified preset is used as the reconciliation target.
-
-## Presets
-
-llama-server presets contain model-router configuration, not server endpoint configuration. Host and port belong in the addon/server configuration, not in `models.ini`.
-
-Supported model entries include:
+1. **Manual reference**: pass `owner/repo` or `owner/repo[:quant]` unchanged to
+   llama.cpp. The add-on does not append a quant or infer a filename.
+2. **Cached selection**: choose a repository from the read-only Hugging Face
+   cache, then choose an exact GGUF file from its `refs/main` snapshot. The
+   preset stores only the repository and repository-relative filename.
 
 ```ini
 version = 1
 
-[*]
-ctx-size = 36864
-flash-attn = true
+[my-preset]
+hf-repo = owner/model[:quant]
+hf-file = optional/exact.gguf
 
-[local-model]
-model = C:\models\model.gguf
-
-[remote-model]
-hf-repo = org/model:Q4_K_M
+spec-draft-hf = owner/draft[:quant]
+spec-draft-model = optional/exact-draft.gguf
+spec-type = draft-dflash
 ```
 
-The addon preserves the preset’s global section, comments, and model-specific options. It updates only model source entries when imported records are reconciled.
+- `hf-repo` is required.
+- `hf-file` selects an exact repository file and overrides the quant tag.
+- When `hf-file` is set, `hf-repo` must not include a `:quant` suffix.
+- `spec-draft-model` requires `spec-draft-hf` and a `draft-*` `spec-type`.
+- Cached selection does not pin a commit. llama.cpp follows `main`; the cache
+  picker displays the observed commit as advisory only.
+- Local `model`, `mmproj`, `mmproj-url`, `model-url`, `docker-repo`, and
+  `hf-token` keys are rejected. Tokens come from app configuration/`HF_TOKEN`.
+- Projector control is `Automatic (same repository)` or `Disabled` only.
+  llama.cpp has no Hugging Face projector field. Cached projectors are listed
+  for information; they are not selected by the add-on.
 
-## Lifecycle
+The cache inventory reads the configured cache roots, `refs/main`, snapshot
+symlinks or ordinary files, GGUF headers, and split groups. It never writes,
+repairs, evicts or deletes cache entries and never stores a local path in a
+preset.
 
-When llama.cpp becomes active, or before a chat/use case starts, the addon:
+## Presets
 
-1. resolves the configured executable, using `PATH` when no explicit executable is set;
-2. loads the selected model identity from the local catalog or preset;
-3. starts `llama-server --models-preset <path> --host <host> --port <port>` when needed;
-4. waits for the endpoint to become healthy;
-5. queries `/models`, falling back to `/v1/models`;
-6. validates that the selected model is exposed by the server;
-7. sends the canonical preset section ID in the OpenAI-compatible request.
+`models.json` is the authoritative list of presets. The generated
+`runtime-models.ini` is written atomically from it and is never read back.
+Only preset IDs are selectable in the WebView and settings model lists. Raw
+`llama-server` `/models` entries are used only to enrich a matching preset's
+status and capabilities; cache-only entries never become selectable IDs.
+Each preset has:
 
-If a healthy server already exists after NVDA restarts, the addon can adopt it when the requested model is present. It refuses to silently take ownership of a server exposing a different model catalog.
+- stable model ID (the request model name),
+- display name,
+- `hf-repo`, optional `hf-file`,
+- optional draft repo/file,
+- per-model runtime options,
+- `spec_type_auto`, a manifest-only flag recording whether an automatically
+  added speculative mode may be removed with the draft.
 
-## Model switching
+Supported runtime options are per-model only (`ctx-size`, `gpu-layers`,
+`flash-attn`, cache/KV, MoE, projector, speculative, sampling). Server/router
+settings, secrets and local paths are not preset keys.
 
-llama-server router mode supports multiple models. A healthy router is kept alive while the selected model changes. The addon validates the target against the cached server model catalog and sends that model ID in the request. It does not restart the server for a normal model switch.
+Unknown keys, duplicate keys, invalid values, ambiguous quant+file, and source
+keys outside the Hugging Face grammar are rejected with a section/key message.
 
-A restart is reserved for:
+## UI
 
-* an unhealthy or exited process;
-* a changed endpoint or executable configuration;
-* an explicitly recreated runtime process.
+The advanced preset manager provides:
 
-## API model catalog and capabilities
+- Add preset
+- Edit preset
+- Duplicate preset
+- Remove preset
+- Refresh
 
-Successful model API responses are cached in the application-owned supervisor and invalidated when the server starts, is adopted, or stops. The cached response is used for:
+The editor has three tabs:
 
-* model availability and identity matching;
-* router adoption;
-* model switching validation;
-* provider model lists;
-* capability discovery.
+- **Model**: main source, optional draft source, projector mode.
+- **Runtime**: basic per-model controls, advanced `key = value` options.
+- **Preview**: generated INI with copy support.
 
-The addon maps llama metadata as follows:
+Manual mode uses one repository reference field. Cached mode opens the cached
+source picker, which lists repositories, role-filtered files, quant labels,
+sizes, split state and the observed revision. The picker is shared by the main
+and draft model. A draft can auto-fill a matching `draft-*` speculative mode;
+`spec_type_auto` records whether the editor owns that value.
 
-| llama metadata | Provider capability/field |
-| --- | --- |
-| `architecture.input_modalities: text` | `text_input` |
-| `architecture.input_modalities: image` | `image_input` |
-| `architecture.input_modalities: audio` | `audio_input` |
-| `architecture.output_modalities: text` | `text_output` |
-| `architecture.output_modalities: image` | `image_output` |
-| `meta.n_ctx_train` | `context_window` |
-| `status` and complete raw object | retained in `ProviderModelInfo.raw` |
+There is no remote browser, download manager, cache deletion, folder import,
+local file picker, bulk import, or legacy migration.
 
-Streaming and chat/completion are advertised because they are provided by the OpenAI-compatible llama-server adapter. Tool support is not inferred from model names or generic server support.
+### MoE cache and generation limits
 
-## Identity matching
+The Runtime tab supports these settings through its basic controls and
+additional `key = value` options. For example, this generated preset corresponds
+to CPU MoE experts, loading mode `none`, a 3264 MiB cache, 0.95 CPU share,
+99 GPU layers, Flash Attention on, 4096 context tokens and 512 output tokens:
 
-These forms can identify the same imported Hugging Face model:
+```ini
+version = 1
 
-```text
-gemma4-26b
-WhiskyAKM/Gemma-4-26B-A4B-NVFP4-GGUF:NVFP4
-hf://WhiskyAKM/Gemma-4-26B-A4B-NVFP4-GGUF:NVFP4
+[my-preset]
+hf-repo = owner/model
+cpu-moe = true
+load-mode = none
+moe-cache-mib = 3264
+moe-cache-cpu-share = 0.95
+gpu-layers = 99
+flash-attn = on
+ctx-size = 4096
+n-predict = 512
+temperature = 0.0
 ```
 
-The preset section ID is used as the canonical request model ID because it is stable and independent of local cache paths.
+Set context, GPU layers, Flash Attention, loading mode and expert placement
+with the basic controls. Enter the cache size, CPU share, `n-predict` and
+`temperature` in Additional per-model options, which also accepts `n`/`predict`
+and `temp` as aliases. Basic options and their aliases (`ngl`, `fa`, `c`) belong
+in the dedicated controls; entering them in Additional options reports the
+correct field instead of silently discarding them. The editor exports canonical
+names and takes `key = value` lines, not shell commands.
+
+Preset temperature, top-p and output-token defaults are also used in outgoing
+requests so provider-wide defaults do not overwrite them. Explicit per-model
+sampling pins override those request defaults; the server's own limits still
+apply. `n-predict = -1` leaves the output-token limit unspecified in requests.
+Enter the prompt in chat. Model sources remain Hugging Face references; local
+`-m` paths are not supported. Saving inspects the installed runtime's supported
+flags before writing the preset, and runtime changes apply on the next load.
+
+## Runtime
+
+`llama-server` is started with `--models-preset <runtime-models.ini>`. The server
+resolves and downloads `hf-repo` models through its own Hugging Face cache.
+A preset with missing files still starts the router; the failure appears when the
+model is loaded. Readiness must therefore be derived from the model status
+(`/models`), not only from `/health`.
+
+## Configuration
+
+| Setting | Example | Purpose |
+| --- | --- | --- |
+| Server URL | `http://127.0.0.1:8081` | OpenAI-compatible endpoint |
+| llama-server executable | `llama-server` | Executable name or full path |
+
+Cache location follows llama.cpp: `LLAMA_CACHE`, `HF_HUB_CACHE`,
+`HUGGINGFACE_HUB_CACHE`, `HF_HOME`, then the user Hugging Face cache.
 
 ## Diagnostics
 
-Before an owned server is launched, the native supervisor checks that the preset is readable and has valid INI lines. Known incompatible options produce a section and line number: for example, use `load-mode = mlock` rather than `mlock = true`. Unknown options are checked by the installed llama-server itself. Startup exit errors include bounded server stderr, so an invalid option or model-loading error is retained through the worker RPC rather than replaced with a generic startup failure.
-
-Model selection remains available from the local catalog when the server is offline. Selecting a model does not prove that the server can load it; inference still checks runtime availability. If the worker disconnects, pending jobs fail promptly with a retryable error instead of waiting indefinitely for a result. Worker failure announcements run on NVDA's event thread.
-
-Inspect the server catalog directly:
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8081/models
-```
-
-If that endpoint is unavailable, test the OpenAI-compatible fallback:
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8081/v1/models
-```
-
-Check that the response contains the selected preset ID or an equivalent recognized source alias. If the response does not contain the model, the addon reports that the model is not exposed by the server instead of treating the local manifest as proof of runtime availability.
-
-## Source references
-
-The integration follows llama.cpp’s documented router and model metadata endpoints:
-
-* [Model presets](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#model-presets)
-* [OpenAI-compatible `/v1/models`](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#get-v1models-openai-compatible-model-info-api)
-* [`/models` model catalog and architecture metadata](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#get-models-list-available-models)
+- `/models` exposes each preset with `status.value` and `failed`/`exit_code`.
+- `/models/load` is asynchronous: success only starts the load.
+- Startup errors include bounded server stderr.
+- Missing local paths are no longer possible; missing HF files fail on load.
