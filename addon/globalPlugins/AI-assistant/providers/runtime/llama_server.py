@@ -604,6 +604,7 @@ class LlamaServerSupervisor:
 				digest = ""
 			preset_identity = (os.path.normcase(str(path)), digest)
 		identity_data = {
+			"executable": self.executable,
 			"model": None if preset_identity is not None else (model_id or model),
 			"preset": preset_identity,
 			"threads": max(0, int(threads)),
