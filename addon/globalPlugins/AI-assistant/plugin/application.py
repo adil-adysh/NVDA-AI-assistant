@@ -109,7 +109,6 @@ class AIAssistantApplication:
 			bindings=(
 				("s", host.script_summarizeCurrentPage),
 				("o", host.script_summarizePageStructure),
-				("a", host.script_captureAccessibilityGraph),
 				("g", host.script_proofreadFocusedText),
 				("i", host.script_describeCurrentWindow),
 				("f", host.script_describeFocusedObject),
@@ -590,7 +589,7 @@ class AIAssistantApplication:
 		nvda_ui.message(
 			# TRANSLATORS: Help message listing all available AI assistant layer commands.
 			_(
-				"Assistant layer commands: S for summary, O for structure summary, A for accessibility graph capture, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object to chat, V for attach selection to chat, B for attach clipboard to chat, T for provider select, M for model select, R for current provider and model, L for last result, Q to stop active requests, H for help. Press the key after activating the layer with NVDA+Shift+A."
+				"Assistant layer commands: S for summary, O for structure summary, G for spelling and grammar, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object to chat, V for attach selection to chat, B for attach clipboard to chat, T for provider select, M for model select, R for current provider and model, L for last result, Q to stop active requests, H for help. Press the key after activating the layer with NVDA+Shift+A."
 			)
 		)
 

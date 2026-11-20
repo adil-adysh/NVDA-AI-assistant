@@ -164,8 +164,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._app.open_chat_with_screenshot()
 
 	@script(
-		# TRANSLATORS: Description for the script that saves the current accessibility graph.
-		description=_("Captures and saves the current accessibility graph as a .ag file."),
+		# TRANSLATORS: Description for the developer script that saves the current accessibility graph.
+		description=_("Developer tool: captures and saves the current accessibility graph as a .ag file."),
 	)
 	def script_captureAccessibilityGraph(self, gesture: Any):
 		log.debug("Script captureAccessibilityGraph invoked gesture=%s", gesture)
@@ -175,7 +175,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		# TRANSLATORS: Description for the script that activates the AI assistant command layer.
 		description=_(
 			"Activate the AI assistant command layer. "
-			"Press S for summary, O for structure summary, A for accessibility graph capture, G for spelling and grammar, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object, V for attach selection, B for attach clipboard, H for help."
+			"Press S for summary, O for structure summary, G for spelling and grammar, I for window image describe, F for focused object describe, C for chat, P for page content, X for screenshot, Z for attach focused object, V for attach selection, B for attach clipboard, H for help."
 		),
 		gesture="kb:NVDA+Shift+A",
 	)
