@@ -136,7 +136,6 @@ class ModelManagerDialog(wx.Dialog):
 			style=(wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.LC_HRULES | wx.LC_VRULES),
 		)
 		self._list.SetName(_("Model catalog"))
-		self._list.AppendColumn(_("Enabled"), width=85)
 		self._list.AppendColumn(_("Active"), width=75)
 		self._list.AppendColumn(_("Model"), width=280)
 		# TRANSLATORS: Column header for the download status.
@@ -375,16 +374,16 @@ class ModelManagerDialog(wx.Dialog):
 
 		if recommended_ready:
 			self._add_section_header(_("── Recommended — Ready to use ──"))
-			self._add_models(recommended_ready, disabled_ids)
+			self._add_models(recommended_ready)
 		if recommended_download:
 			self._add_section_header(_("── Recommended — Available to download ──") if self._provider.features.download else _("── Recommended — Unavailable sources ──"))
-			self._add_models(recommended_download, disabled_ids)
+			self._add_models(recommended_download)
 		if other_ready:
 			self._add_section_header(_("── Other Models — Ready to use ──"))
-			self._add_models(other_ready, disabled_ids)
+			self._add_models(other_ready)
 		if other_download:
 			self._add_section_header(_("── Other Models — Available to download ──") if self._provider.features.download else _("── Other Models — Unavailable sources ──"))
-			self._add_models(other_download, disabled_ids)
+			self._add_models(other_download)
 
 		self._has_populated_models = True
 		if initial_load and selected_model_id is None:
@@ -421,7 +420,7 @@ class ModelManagerDialog(wx.Dialog):
 		count = self._list.GetItemCount()
 		model_idx = 0
 		for i in range(count):
-			if self._list.GetItemText(i, 3):  # has status → real model
+			if self._list.GetItemText(i, 2):  # has status → real model
 				if model_idx < len(self._displayed_models) and self._displayed_models[model_idx].id == model_id:
 					self._list.Select(i, on=True)
 					if focus:
@@ -440,27 +439,22 @@ class ModelManagerDialog(wx.Dialog):
 	def _add_models(
 		self,
 		models: list[ManagedModel],
-		disabled_ids: set[str],
 	) -> None:
 		for m in models:
 			idx = self._list.InsertItem(self._list.GetItemCount(), "")
 
-			# Column 0: readable enabled state for screen readers.
-			is_enabled = m.id not in disabled_ids
-			self._list.SetItem(idx, 0, _("Enabled") if is_enabled else _("Disabled"))
-
-			# Column 1: active marker
+			# Column 0: active marker
 			is_active = _model_matches_active(m, self._active_id_clean)
-			self._list.SetItem(idx, 1, _("Active") if is_active else "")
+			self._list.SetItem(idx, 0, _("Active") if is_active else "")
 
-			# Column 2: display name
-			self._list.SetItem(idx, 2, m.display_name)
+			# Column 1: display name
+			self._list.SetItem(idx, 1, m.display_name)
 
-			# Column 3: status
-			self._list.SetItem(idx, 3, _status_label(m.state))
+			# Column 2: status
+			self._list.SetItem(idx, 2, _status_label(m.state))
 
-			# Column 4: size
-			self._list.SetItem(idx, 4, m.size_hint)
+			# Column 3: size
+			self._list.SetItem(idx, 3, m.size_hint)
 
 			self._list.SetItemData(idx, idx)
 
@@ -475,10 +469,10 @@ class ModelManagerDialog(wx.Dialog):
 		for i in range(count):
 			if i == list_idx:
 				if model_idx < len(self._displayed_models):
-					if self._list.GetItemText(i, 3):  # has status → real model
+					if self._list.GetItemText(i, 2):  # has status → real model
 						return self._displayed_models[model_idx]
 				return None
-			if self._list.GetItemText(i, 3):  # has a status → real model
+			if self._list.GetItemText(i, 2):  # has a status → real model
 				model_idx += 1
 		return None
 

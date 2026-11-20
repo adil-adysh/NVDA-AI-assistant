@@ -87,7 +87,7 @@ def _visible_model_ids(dialog):
 	return {model.id for model in dialog._displayed_models}
 
 
-def test_model_manager_exposes_labeled_filters_state_columns_and_active_selection(model_manager):
+def test_model_manager_omits_redundant_enabled_column_and_selects_active_model(model_manager):
 	_app, module, dialog, store, _callbacks = model_manager
 	store.disabled.add("disabled-model")
 	_load_models(dialog, _models(module))
@@ -96,14 +96,13 @@ def test_model_manager_exposes_labeled_filters_state_columns_and_active_selectio
 	assert dialog._availability_filter.GetName() == "Filter by model status"
 	assert dialog._enabled_filter.GetStringSelection() == "All"
 	assert dialog._availability_filter.GetStringSelection() == "All"
-	assert [dialog._list.GetColumn(i).GetText() for i in range(5)] == ["Enabled", "Active", "Model", "Status", "Size"]
+	assert [dialog._list.GetColumn(i).GetText() for i in range(4)] == ["Active", "Model", "Status", "Size"]
 	assert dialog._get_selected_model().id == "active-model"
 	assert dialog._list.GetFocusedItem() >= 0
-	active_row = next(i for i in range(dialog._list.GetItemCount()) if dialog._list.GetItemText(i, 2) == "Active model")
-	disabled_row = next(i for i in range(dialog._list.GetItemCount()) if dialog._list.GetItemText(i, 2) == "Disabled model")
-	assert dialog._list.GetItemText(active_row, 0) == "Enabled"
-	assert dialog._list.GetItemText(active_row, 1) == "Active"
-	assert dialog._list.GetItemText(disabled_row, 0) == "Disabled"
+	active_row = next(i for i in range(dialog._list.GetItemCount()) if dialog._list.GetItemText(i, 1) == "Active model")
+	disabled_row = next(i for i in range(dialog._list.GetItemCount()) if dialog._list.GetItemText(i, 1) == "Disabled model")
+	assert dialog._list.GetItemText(active_row, 0) == "Active"
+	assert dialog._list.GetItemText(disabled_row, 0) == ""
 	assert dialog._enable_btn.GetLabel() == "Enable"
 	assert dialog._disable_btn.GetLabel() == "Disable"
 	assert _visible_model_ids(dialog) == {"active-model", "disabled-model", "missing-model", "loading-model", "failed-model"}
