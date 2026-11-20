@@ -358,21 +358,8 @@ class WorkerSupervisor:
 			if not self.is_running or self._shutdown_event.is_set():
 				break
 
-			now = time.monotonic()
-			# Check liveness timeout
-			if (
-				now - self._last_pong_monotonic
-				> self.liveness_timeout_seconds
-			):
-				logger.error(
-					"Worker liveness timeout exceeded (%.1fs > %.1fs); initiating recovery",
-					now - self._last_pong_monotonic,
-					self.liveness_timeout_seconds,
-				)
-				self._handle_crash(reason="LIVENESS_TIMEOUT")
-				break
-
-			# Send probe
+			# Probe before evaluating elapsed time: system suspend or a delayed
+			# watchdog does not establish that the worker is unresponsive.
 			try:
 				with self._cmd_lock:
 					if not self._cmd_client or not self._cmd_client.is_connected:
@@ -392,13 +379,22 @@ class WorkerSupervisor:
 				frame_gen = int(
 					resp_frame.get("generation", self.active_generation)
 				)
-				if frame_gen >= self.active_generation:
+				if frame_gen == self.active_generation and resp_frame.get("type") == "worker_health":
+					self._latest_health = WorkerHealth.from_dict(resp_frame)
 					self._last_pong_monotonic = time.monotonic()
-					if resp_frame.get("type") == "worker_health":
-						self._latest_health = WorkerHealth.from_dict(resp_frame)
 			except Exception as exc:
 				logger.warning("Heartbeat probe failed: %s", exc)
 				self._handle_crash(reason=f"HEARTBEAT_PROBE_FAILED: {exc}")
+				break
+
+			now = time.monotonic()
+			if now - self._last_pong_monotonic > self.liveness_timeout_seconds:
+				logger.error(
+					"Worker liveness timeout exceeded (%.1fs > %.1fs); initiating recovery",
+					now - self._last_pong_monotonic,
+					self.liveness_timeout_seconds,
+				)
+				self._handle_crash(reason="LIVENESS_TIMEOUT")
 				break
 
 	def _handle_crash(self, reason: str = "WORKER_CRASHED") -> None:
