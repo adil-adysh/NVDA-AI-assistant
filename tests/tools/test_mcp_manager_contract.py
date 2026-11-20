@@ -10,32 +10,27 @@ import time
 def test_rust_manager_json_lines_contract() -> None:
 	root = Path(__file__).resolve().parents[2]
 	manifest = root / "mcp_client_prototype" / "Cargo.toml"
-	metadata = subprocess.run(
-		["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1", "--manifest-path", str(manifest)],
-		cwd=root,
-		capture_output=True,
-		text=True,
-		check=True,
-	)
-	metadata_value = json.loads(metadata.stdout)
-	cargo_target = Path(metadata_value["target_directory"])
-	cargo_target_triple = "x86_64-pc-windows-msvc" if os.name == "nt" else ""
-	if os.environ.get("CARGO_BUILD_TARGET"):
-		cargo_target_triple = os.environ["CARGO_BUILD_TARGET"]
-	debug = cargo_target / cargo_target_triple / "debug" if cargo_target_triple else cargo_target / "debug"
-	manager = debug / ("mcp_manager.exe" if os.name == "nt" else "mcp_manager")
-	fixture = debug / ("mock_mcp.exe" if os.name == "nt" else "mock_mcp")
 	built = subprocess.run(
-		["cargo", "build", "--locked", "--features", "fixture-server", "--manifest-path", str(manifest),
-			"--bin", "mcp_manager", "--bin", "mock_mcp"],
+		["cargo", "build", "--locked", "--message-format=json-render-diagnostics", "--features", "fixture-server",
+			"--manifest-path", str(manifest), "--bin", "mcp_manager", "--bin", "mock_mcp"],
 		cwd=root,
 		capture_output=True,
 		text=True,
 		check=False,
 	)
 	assert built.returncode == 0, built.stderr
-	assert manager.is_file()
-	assert fixture.is_file()
+	executables = {}
+	for line in built.stdout.splitlines():
+		try:
+			event = json.loads(line)
+		except json.JSONDecodeError:
+			continue
+		if event.get("reason") == "compiler-artifact" and event.get("executable"):
+			executables[event["target"]["name"]] = Path(event["executable"])
+	manager = executables.get("mcp_manager")
+	fixture = executables.get("mock_mcp")
+	assert manager is not None and manager.is_file()
+	assert fixture is not None and fixture.is_file()
 	process = subprocess.Popen(
 		[manager],
 		stdin=subprocess.PIPE,

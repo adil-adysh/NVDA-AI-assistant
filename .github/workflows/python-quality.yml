@@ -47,20 +47,22 @@ jobs:
         with:
           channel: "1.97.1"
           profile: minimal
-      - name: Build runtime supervisor test extension
+      - name: Build native Python test extensions
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
         run: |
           $env:PYO3_PYTHON = (Resolve-Path .venv/Scripts/python.exe).Path
-          cargo build --manifest-path runtime_supervisor/Cargo.toml --release --locked
-          if ($LASTEXITCODE -ne 0) { throw "Runtime supervisor build failed" }
-          $extension = Get-ChildItem runtime_supervisor/target -Recurse -Filter runtime_supervisor.dll |
-            Where-Object { $_.FullName -match '[\\/]release[\\/]' -and $_.FullName -notmatch '[\\/]deps[\\/]' } |
-            Select-Object -First 1
-          if (-not $extension) { throw "Built runtime_supervisor.dll was not found" }
           $addonLib = "addon/globalPlugins/AI-assistant/lib"
           New-Item -ItemType Directory -Path $addonLib -Force | Out-Null
-          Copy-Item $extension.FullName "$addonLib/runtime_supervisor.pyd"
+          foreach ($crate in @("runtime_supervisor", "llm_client")) {
+            cargo build --manifest-path "$crate/Cargo.toml" --release --locked
+            if ($LASTEXITCODE -ne 0) { throw "$crate build failed" }
+            $extension = Get-ChildItem "$crate/target" -Recurse -Filter "$crate.dll" |
+              Where-Object { $_.FullName -match '[\\/]release[\\/]' -and $_.FullName -notmatch '[\\/]deps[\\/]' } |
+              Select-Object -First 1
+            if (-not $extension) { throw "Built $crate.dll was not found" }
+            Copy-Item $extension.FullName "$addonLib/$crate.pyd"
+          }
       - run: uv run pytest
       - run: uv run scons --dry-run
 
