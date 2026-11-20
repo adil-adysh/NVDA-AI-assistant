@@ -97,7 +97,7 @@ class ModelManagerDialog(wx.Dialog):
 			self, _("&Enabled state:"), wx.Choice, choices=[],
 		)
 		self._enabled_filter = enabled_filter_helper.control
-		self._enabled_filter.SetName(_("Enabled state"))
+		self._enabled_filter.SetName(_("Filter by enabled state"))
 		for value, label in (("all", _("All")), ("enabled", _("Enabled")), ("disabled", _("Disabled"))):
 			self._enabled_filter.Append(label, value)
 		self._enabled_filter.SetSelection(0)
@@ -105,10 +105,10 @@ class ModelManagerDialog(wx.Dialog):
 		filter_sizer.Add(enabled_filter_helper.sizer, 0, wx.RIGHT, 12)
 
 		availability_filter_helper = guiHelper.LabeledControlHelper(
-			self, _("&Availability:"), wx.Choice, choices=[],
+			self, _("&Model status:"), wx.Choice, choices=[],
 		)
 		self._availability_filter = availability_filter_helper.control
-		self._availability_filter.SetName(_("Availability"))
+		self._availability_filter.SetName(_("Filter by model status"))
 		for value, label in (
 			("all", _("All")),
 			("available", _("Available")),

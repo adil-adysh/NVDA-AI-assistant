@@ -92,8 +92,8 @@ def test_model_manager_exposes_labeled_filters_state_columns_and_active_selectio
 	store.disabled.add("disabled-model")
 	_load_models(dialog, _models(module))
 
-	assert dialog._enabled_filter.GetName() == "Enabled state"
-	assert dialog._availability_filter.GetName() == "Availability"
+	assert dialog._enabled_filter.GetName() == "Filter by enabled state"
+	assert dialog._availability_filter.GetName() == "Filter by model status"
 	assert dialog._enabled_filter.GetStringSelection() == "All"
 	assert dialog._availability_filter.GetStringSelection() == "All"
 	assert [dialog._list.GetColumn(i).GetText() for i in range(5)] == ["Enabled", "Active", "Model", "Status", "Size"]
