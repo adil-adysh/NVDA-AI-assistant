@@ -44,6 +44,14 @@ fn to_wide(s: &str) -> Vec<u16> {
 // ── Message delivery ──────────────────────────────────────────────────
 
 fn send_pending_command(controller: &ICoreWebView2Controller, command: HostCommand) -> Result<DeliveryOutcome> {
+    // Apply titles on the UI thread with the command, before activation.
+    // The pipe listener must not synchronously send window messages or
+    // change the title for a command rejected by the dispatch queue.
+    if let Ok(envelope) = serde_json::from_str::<Value>(&command.message) {
+        if let Some(title) = envelope.pointer("/command/payload/title").and_then(Value::as_str) {
+            if !title.trim().is_empty() { crate::window::set_window_title(title.trim()); }
+        }
+    }
     crate::window::arm_command_focus(&command.message, command.activation_policy);
     if !host_dispatch::window_ready_for_delivery(
         command.activation_policy,

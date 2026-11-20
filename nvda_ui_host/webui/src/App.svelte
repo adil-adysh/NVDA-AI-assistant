@@ -91,13 +91,17 @@
 
 <svelte:window />
 
+<svelte:head>
+    <title>{appState.title}</title>
+</svelte:head>
+
 <AccessibilityAnnouncer />
 
 <div class="app-shell">
     <header class="app-header">
         <div class="title-block">
             <p class="eyebrow">{t('app_brand', 'NVDA AI Assistant')}</p>
-            <h1 class="app-title">{t('app_title', 'Response Workspace')}</h1>
+            <h1 class="app-title">{appState.title}</h1>
         </div>
 
         {#if appState.controlsVisible}

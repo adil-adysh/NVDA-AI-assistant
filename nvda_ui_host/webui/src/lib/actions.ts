@@ -260,10 +260,12 @@ export function openConversation(conversationId: string): void {
 
 export function deleteConversation(conversationId: string): void {
 	if (!conversationId) return;
-	emitUiEvent('ui_action_invoked', appState.currentCommandId, {
+	if (!emitUiEvent('ui_action_invoked', appState.currentCommandId, {
 		action_id: 'conversation_delete',
 		payload: { conversation_id: conversationId },
-	});
+	})) {
+		setStatus(t('send_failed_status', 'Unable to send request. The host connection is unavailable.'), true);
+	}
 }
 
 export function focusContentRegion(): void {

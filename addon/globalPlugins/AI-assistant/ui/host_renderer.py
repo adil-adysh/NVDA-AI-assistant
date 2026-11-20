@@ -119,7 +119,7 @@ class HostRenderer(UIHostRenderer):
 			),
 		)
 
-	def sync_session_state(self, metadata: dict[str, Any] | None = None) -> None:
+	def sync_session_state(self, metadata: dict[str, Any] | None = None, *, start_host: bool = True) -> None:
 		self._current_conversation_id = self._resolve_conversation_id(
 			None, metadata, fallback=self._current_conversation_id
 		)
@@ -129,6 +129,7 @@ class HostRenderer(UIHostRenderer):
 				conversation_id=self._current_conversation_id,
 				metadata=metadata,
 			),
+			start_host=start_host,
 		)
 
 	def register_chat_submission_handler(
@@ -338,13 +339,14 @@ class HostRenderer(UIHostRenderer):
 		"""Probe an existing process without starting or activating a host."""
 		return is_host_process_alive()
 
-	def _send_command(self, command_name: str, payload: HostCommandPayload) -> None:
+	def _send_command(self, command_name: str, payload: HostCommandPayload, *, start_host: bool = True) -> None:
 		command = HostCommand(name=command_name, payload=payload)
 		message = command.to_bytes()
 		logger.debug(
 			"HostRenderer sending command name=%s message_id=%s payload=%s", command.name, command.id, payload
 		)
-		self._ensure_host_running()
+		if start_host:
+			self._ensure_host_running()
 		try:
 			response_bytes = self._transport.send(message)
 			self._process_response(response_bytes, expected_request_id=command.id)

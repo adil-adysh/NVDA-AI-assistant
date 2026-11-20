@@ -65,7 +65,9 @@ fn parse_webview_event(payload: &serde_json::Value) -> Option<WebViewEvent> {
 // ── Controller access ─────────────────────────────────────────────────
 
 fn current_controller() -> Option<ICoreWebView2Controller> {
-    WEBVIEW_CONTROLLER.with(|controller| controller.borrow().clone())
+    // WebView/COM may deliver callbacks while the UI thread's TLS is being
+    // destroyed. Treat an already destroyed controller slot as unavailable.
+    WEBVIEW_CONTROLLER.try_with(|controller| controller.borrow().clone()).ok().flatten()
 }
 
 // ── Test helpers ──────────────────────────────────────────────────────
@@ -80,6 +82,7 @@ pub(crate) fn pending_message_count() -> usize {
     host_dispatch::pending_command_count()
 }
 
+#[cfg(test)]
 pub(crate) fn clear_pending_messages() {
     host_dispatch::clear_pending_commands();
 }

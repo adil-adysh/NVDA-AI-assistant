@@ -53,6 +53,7 @@ pub(crate) fn pending_command_count() -> usize {
     pending_messages().lock().unwrap().len()
 }
 
+#[cfg(test)]
 pub(crate) fn clear_pending_commands() {
     pending_messages().lock().unwrap().clear();
 }

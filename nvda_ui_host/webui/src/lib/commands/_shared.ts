@@ -56,9 +56,16 @@ export function announceAfterKeyboardFocus(text: string, element: HTMLElement): 
 export async function focusPresentationElement(element: HTMLElement): Promise<boolean> {
 	cancelAnnouncement?.();
 	const generation = ++focusGeneration;
+	const previousFocus = document.activeElement;
 	await tick();
 	if (generation !== focusGeneration || !element.isConnected) return false;
+	// A user can move focus between command delivery and the Svelte flush.
+	if (document.activeElement !== previousFocus && document.activeElement !== element
+		&& document.activeElement !== document.body) return false;
 	element.focus({ preventScroll: false });
+	// focus() does not scroll an already focused target. History rendering
+	// can move the composer offscreen without changing keyboard focus.
+	element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 	return true;
 }
 
@@ -89,6 +96,15 @@ export function resolvePresentationFocusTarget(
 	const target = readPresentationValue<string>(payload, 'focus_target', fallback ?? undefined);
 	if (typeof target !== 'string' || !target.trim()) return null;
 	return target.trim();
+}
+
+/** Completion must not interrupt a user still writing the next message. */
+export function resolveChatCompletionFocusTarget(payload: Record<string, unknown>): string | null {
+	const target = resolvePresentationFocusTarget(payload);
+	if (target === 'content' && document.hasFocus() && document.activeElement?.id === 'chat-input') {
+		return 'composer';
+	}
+	return target;
 }
 
 export function getHostStatusMessage(payload: Record<string, unknown>): string {

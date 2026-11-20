@@ -75,14 +75,56 @@ test('detached targets never receive delayed focus', async () => {
 	assert.equal(focused, false);
 });
 
+test('user focus changes win over a queued presentation focus', async () => {
+	const helpers = loadFocusHelpers();
+	let focused = false;
+	const pending = helpers.focusPresentationElement({ isConnected: true, focus() { focused = true; }, scrollIntoView() {} });
+	helpers.document.activeElement = { id: 'chat-input' };
+	helpers.ticks.shift()();
+	assert.equal(await pending, false);
+	assert.equal(focused, false);
+});
+
+test('removing the old view does not cancel focus on its replacement', async () => {
+	const helpers = loadFocusHelpers();
+	let focused = false;
+	helpers.document.activeElement = { isConnected: true };
+	const pending = helpers.focusPresentationElement({ isConnected: true, focus() { focused = true; }, scrollIntoView() {} });
+	helpers.document.body = {};
+	helpers.document.activeElement = helpers.document.body;
+	helpers.ticks.shift()();
+	assert.equal(await pending, true);
+	assert.equal(focused, true);
+});
+
 test('the latest connected presentation target receives focus', async () => {
 	const helpers = loadFocusHelpers();
 	const focused = [];
 	const old = helpers.focusPresentationElement({ isConnected: true, focus: () => focused.push('old') });
-	const latest = helpers.focusPresentationElement({ isConnected: true, focus: () => focused.push('latest') });
+	const latest = helpers.focusPresentationElement({ isConnected: true, focus: () => focused.push('latest'), scrollIntoView() {} });
 	helpers.ticks.shift()(); helpers.ticks.shift()();
 	await Promise.all([old, latest]);
 	assert.deepEqual(focused, ['latest']);
+});
+
+test('refocusing the active composer reveals it after history moves it offscreen', async () => {
+	const helpers = loadFocusHelpers();
+	let visible = false;
+	const element = {
+		isConnected: true,
+		// Browsers do not scroll an already focused element on focus().
+		focus() {},
+		scrollIntoView(options) {
+			assert.equal(options.block, 'nearest');
+			assert.equal(options.inline, 'nearest');
+			visible = true;
+		},
+	};
+	helpers.document.activeElement = element;
+	const pending = helpers.focusPresentationElement(element);
+	helpers.ticks.shift()();
+	await pending;
+	assert.equal(visible, true);
 });
 
 test('progress updates preserve the chat and do not request focus', () => {

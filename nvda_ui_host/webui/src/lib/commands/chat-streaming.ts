@@ -6,7 +6,7 @@ import type {
 } from '../protocol-types';
 import { appState, setViewMode, setPendingFocus, setStatus, t } from '../state.svelte';
 import { completeChatTurn } from './chat-feedback';
-import { isCurrentChatEvent, readPresentationValue, resolvePresentationFocusTarget, reportUiApplied, updateChatEnvelope } from './_shared';
+import { isCurrentChatEvent, readPresentationValue, resolveChatCompletionFocusTarget, reportUiApplied, updateChatEnvelope } from './_shared';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -104,7 +104,7 @@ export function endChatStream(commandId: string, payload: ChatStreamEndPayload):
 	if (ended) {
 		completeChatTurn(messageId, payload as Record<string, unknown>);
 		const cancelled = readPresentationValue(payload, 'cancelled') === true;
-		const focusTarget = cancelled ? null : resolvePresentationFocusTarget(payload);
+		const focusTarget = cancelled ? null : resolveChatCompletionFocusTarget(payload);
 		if (focusTarget) setPendingFocus(focusTarget);
 	}
 	reportUiApplied(commandId);

@@ -11,6 +11,8 @@ import {
 	appState,
 	setCopyBuffers,
 	setViewMode,
+	setWindowTitle,
+	t,
 } from '../state.svelte';
 import {
 	applyPresentationState,
@@ -20,6 +22,7 @@ import {
 } from './_shared';
 
 export function openChat(commandId: string, payload: OpenChatPayload): void {
+	setWindowTitle(payload.title || t('chat_heading', 'Chat'));
 	const preserveConversation = appState.chat.active &&
 		(payload.conversation_id || null) === appState.chat.conversationId &&
 		!!(payload.preserve_conversation

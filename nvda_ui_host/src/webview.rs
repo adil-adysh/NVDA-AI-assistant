@@ -183,21 +183,64 @@ mod tests {
         pump_until(host_dispatch::host_ready);
         let controller = current_controller().unwrap();
         let webview = unsafe { controller.CoreWebView2().unwrap() };
+        let evaluate = |script: &str| {
+            let result = std::rc::Rc::new(RefCell::new(None));
+            let captured = result.clone();
+            let script = to_wide(script);
+            unsafe { webview.ExecuteScript(PCWSTR(script.as_ptr()), &ExecuteScriptCompletedHandler::create(Box::new(move |status, value| {
+                status?;
+                *captured.borrow_mut() = Some(value);
+                Ok(())
+            }))).unwrap(); }
+            pump_until(|| result.borrow().is_some());
+            let value = result.borrow_mut().take().unwrap();
+            serde_json::from_str::<serde_json::Value>(&value).unwrap()
+        };
+        let mut observed_titles = Vec::new();
+        let mut native_titles = Vec::new();
+        let mut preserved_on_close = false;
         for (index, script) in [
             Some(w!("document.getElementById('close-window').click()")),
+            None,
             None,
         ].into_iter().enumerate() {
             let interrupted = unsafe { GetForegroundWindow() };
             let message = serde_json::json!({
                 "schema": "nvda.ui_host", "version": 2, "id": format!("result-{index}"),
                 "correlation_id": null, "source": "ui_host", "type": "command",
-                "command": {"name": "render_display", "payload": {
-                    "title": "Dismissal regression", "output_text": "One-shot result",
+                "command": {"name": if index == 2 { "open_chat" } else { "render_display" }, "payload": {
+                    "title": if index == 2 { "AI Chat" } else { "Dismissal regression" }, "output_text": "One-shot result",
                     "display_presentation": {"toolbar": {"actions": ["close"]}}
                 }}
             }).to_string();
             post_host_command(&message, ActivationPolicy::ActivateAndFocus, true).unwrap();
             pump_until(|| crate::window::is_window_visible() && crate::window::may_focus_webview());
+            observed_titles.push(evaluate("document.title").as_str().unwrap().to_string());
+            if index == 2 {
+                evaluate("(() => { const e = document.getElementById('chat-input'); e.value = 'next question'; e.dispatchEvent(new Event('input', {bubbles: true})); e.focus(); e.setSelectionRange(4, 4); return e.id; })()");
+                for (name, payload) in [
+                    ("chat_stream_begin", serde_json::json!({"message_id":"focus-answer", "stream_id":"focus-stream", "role":"assistant"})),
+                    ("chat_stream_delta", serde_json::json!({"message_id":"focus-answer", "stream_id":"focus-stream", "sequence":0, "delta":"Partial answer"})),
+                    ("chat_stream_end", serde_json::json!({"message_id":"focus-answer", "stream_id":"focus-stream", "final_sequence":127, "content":[{"type":"text", "text":"Final answer"}], "metadata":{"focus_target":"content"}})),
+                ] {
+                    let message = serde_json::json!({"schema":"nvda.ui_host", "version":2, "id":name, "type":"command", "command":{"name":name, "payload":payload}}).to_string();
+                    let policy = if name == "chat_stream_end" { ActivationPolicy::ActivateAndFocus } else { ActivationPolicy::NoActivate };
+                    post_host_command(&message, policy, name == "chat_stream_end").unwrap();
+                    if name == "chat_stream_delta" {
+                        for sequence in 1..128 {
+                            let message = serde_json::json!({"schema":"nvda.ui_host", "version":2, "id":format!("burst-{sequence}"), "type":"command", "command":{"name":"chat_stream_delta", "payload":{"message_id":"focus-answer", "stream_id":"focus-stream", "sequence":sequence, "delta":" burst"}}}).to_string();
+                            post_host_command(&message, ActivationPolicy::NoActivate, false).unwrap();
+                        }
+                    }
+                }
+                pump_until(|| evaluate("document.getElementById('message-focus-answer')?.textContent.includes('Final answer') || false") == serde_json::json!(true));
+                pump_until(crate::window::may_focus_webview);
+                assert_eq!(evaluate("({id:document.activeElement.id, start:document.activeElement.selectionStart, end:document.activeElement.selectionEnd, value:document.activeElement.value})"),
+                    serde_json::json!({"id":"chat-input", "start":4, "end":4, "value":"next question"}), "stream completion must preserve the composer and caret");
+            }
+            let mut title_buffer = [0u16; 256];
+            let title_length = unsafe { GetWindowTextW(hwnd, &mut title_buffer) };
+            native_titles.push(String::from_utf16_lossy(&title_buffer[..title_length as usize]));
             let mut visible = BOOL(0);
             unsafe {
                 controller.IsVisible(&mut visible).unwrap();
@@ -216,8 +259,20 @@ mod tests {
                         status?;
                         Ok(())
                     }))).unwrap();
-                } else {
+                } else if index == 1 {
                     crate::window::post_escape_dismiss();
+                } else {
+                    host_dispatch::enqueue_pending_command(HostCommand {
+                        message: "queued result".to_string(),
+                        activation_policy: ActivationPolicy::ActivateIfBackground,
+                        request_webview_focus: true,
+                    });
+                    SendMessageW(hwnd, WM_CLOSE, Some(WPARAM(0)), Some(LPARAM(0)));
+                    let pending = host_dispatch::take_pending_commands();
+                    preserved_on_close = pending.len() == 1
+                        && pending[0].message == "queued result"
+                        && pending[0].activation_policy == ActivationPolicy::NoActivate
+                        && !pending[0].request_webview_focus;
                 }
             }
             pump_until(|| crate::window::is_window_hidden());
@@ -234,10 +289,42 @@ mod tests {
             DestroyWindow(hwnd).unwrap();
             CoUninitialize();
         }
+        let expected_titles = vec!["Dismissal regression", "Dismissal regression", "AI Chat"];
+        assert_eq!(observed_titles, expected_titles, "NVDA document title must describe the current surface");
+        assert_eq!(native_titles, expected_titles, "native and document titles must agree");
+        assert!(preserved_on_close, "native Close must retain queued results without reactivation");
     }
 
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
         host_dispatch::test_guard()
+    }
+
+    #[test]
+    fn streaming_acknowledgement_burst_does_not_fill_user_event_pipe() {
+        let _guard = test_guard();
+        let before = ipc::pending_ui_event_count();
+        for sequence in 0..1000 {
+            let message = serde_json::json!({"schema":"nvda.ui_host", "type":"event", "correlation_id":format!("delta-{sequence}"), "event":{"name":"ui_applied", "payload":{}}}).to_string();
+            handle_js_event(&message, HWND(std::ptr::null_mut())).unwrap();
+        }
+        assert_eq!(ipc::pending_ui_event_count(), before, "render acknowledgements are native focus signals, not application events");
+    }
+
+    #[test]
+    fn late_controller_callback_is_safe_during_ui_thread_teardown() {
+        struct LateCallback;
+        impl Drop for LateCallback {
+            fn drop(&mut self) {
+                assert!(current_controller().is_none());
+            }
+        }
+        thread_local! { static LATE_CALLBACK: LateCallback = const { LateCallback }; }
+        std::thread::spawn(|| {
+            // TLS destructors run in reverse initialization order. Simulate
+            // a late native callback after the controller slot is destroyed.
+            LATE_CALLBACK.with(|_| {});
+            assert!(current_controller().is_none());
+        }).join().unwrap();
     }
 
     #[test]

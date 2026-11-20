@@ -7,6 +7,7 @@ import {
 	reportUiApplied,
 	isCurrentChatEvent,
 	resolvePresentationFocusTarget,
+	resolveChatCompletionFocusTarget,
 	updateChatEnvelope,
 } from './_shared';
 import { completeChatTurn } from './chat-feedback';
@@ -57,7 +58,10 @@ export function appendChatMessage(commandId: string, payload: ChatAppendPayload)
 		if (!appState.chat.attachments?.length && Array.isArray(meta.restore_attachments)) appState.chat.attachments = meta.restore_attachments as typeof appState.chat.attachments;
 	}
 
-	setViewMode('chat', resolvePresentationFocusTarget(payload as Record<string, unknown>));
+	const completed = messages.some(message => message.role === 'assistant' && !message.streaming);
+	setViewMode('chat', completed
+		? resolveChatCompletionFocusTarget(payload as Record<string, unknown>)
+		: resolvePresentationFocusTarget(payload as Record<string, unknown>));
 	reportUiApplied(commandId);
 }
 

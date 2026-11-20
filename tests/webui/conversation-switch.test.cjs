@@ -7,6 +7,7 @@ const root = path.resolve(__dirname, '../..');
 const ts = require(path.join(root, 'nvda_ui_host/node_modules/typescript'));
 
 function loadFlow() {
+	const document = { hasFocus: () => false, activeElement: null };
 	const state = {
 		chat: {
 			active: true, conversationId: 'B', commandId: 'open-B', processing: true,
@@ -22,13 +23,14 @@ function loadFlow() {
 		setPendingFocus(focus) { state.view.pendingFocus = focus; },
 		announceResponse(text) { state.announcement = text; }, setStatus(text) { state.status = text; }, t(key, fallback) { return fallback; },
 		setCopyBuffers() {}, setControlsVisible() {}, setInteractionMode() {},
+		setWindowTitle(title) { state.title = title; },
 	};
 	function load(file, modules) {
 		const exports = {};
 		const source = fs.readFileSync(path.join(root, 'nvda_ui_host/webui/src/lib', file), 'utf8');
 		vm.runInNewContext(ts.transpileModule(source, {
 			compilerOptions: { module: ts.ModuleKind.CommonJS },
-		}).outputText, { exports, require: name => modules[name], console, $state: value => value });
+		}).outputText, { exports, require: name => modules[name], console, document, $state: value => value });
 		return exports;
 	}
 	const views = load('operations/view-ops.ts', { '../state.svelte': stateModule });
@@ -51,8 +53,49 @@ function loadFlow() {
 		'../state.svelte': stateModule, '../operations/view-ops': views, './_shared': shared,
 		'../attachments': { addInitialImageAttachment() {} },
 	});
-	return { state, views, streams, history, opening };
+	return { state, views, streams, history, opening, document };
 }
+
+for (const streamed of [true, false]) {
+	test(`completion preserves the focused composer (${streamed ? 'stream' : 'append'})`, () => {
+		const { state, streams, history, document } = loadFlow();
+		document.hasFocus = () => true;
+		document.activeElement = { id: 'chat-input' };
+		const metadata = { focus_target: 'content', announcement_text: 'Answer' };
+		if (streamed) streams.endChatStream('end', { conversation_id: 'B', message_id: 'assistant-B', stream_id: 'stream-B', metadata });
+		else history.appendChatMessage('append', { conversation_id: 'B', message: { id: 'final-B', role: 'assistant', content: [] }, metadata });
+		assert.equal(state.view.pendingFocus, 'composer');
+		assert.equal(state.view.pendingAnnouncement.text, 'Answer');
+	});
+}
+
+test('a rapid delta burst preserves ordered text, composer focus and final state', () => {
+	const { state, streams, document } = loadFlow();
+	document.hasFocus = () => true;
+	const composer = { id: 'chat-input', selectionStart: 3, selectionEnd: 3 };
+	document.activeElement = composer;
+	state.chat.composerText = 'next question';
+	for (let sequence = 0; sequence < 1000; sequence++) {
+		streams.applyChatStreamDelta(`delta-${sequence}`, { conversation_id: 'B', message_id: 'assistant-B', stream_id: 'stream-B', delta: `${sequence},`, sequence });
+	}
+	const expected = Array.from({ length: 1000 }, (_, i) => `${i},`).join('');
+	assert.equal(state.chat.transcript.findById('assistant-B').content[0].text, expected);
+	streams.endChatStream('end', { conversation_id: 'B', message_id: 'assistant-B', stream_id: 'stream-B', content: [{ type: 'text', text: expected }], metadata: { focus_target: 'content' } });
+	streams.applyChatStreamDelta('late', { conversation_id: 'B', message_id: 'assistant-B', stream_id: 'stream-B', delta: 'late', sequence: 1000 });
+	assert.equal(state.chat.transcript.findById('assistant-B').content[0].text, expected);
+	assert.equal(state.chat.transcript.findById('assistant-B').streaming, false);
+	assert.equal(state.chat.processing, false);
+	assert.equal(state.view.pendingFocus, 'composer');
+	assert.equal(document.activeElement, composer);
+	assert.equal(state.chat.composerText, 'next question');
+});
+
+test('opening chat replaces the previous result title', () => {
+	const { state, opening } = loadFlow();
+	state.title = 'Page summary';
+	opening.openChat('open', { title: 'AI Chat', conversation_id: 'B' });
+	assert.equal(state.title, 'AI Chat');
+});
 
 test('switching away and back restores per-conversation draft and attachments', () => {
 	const { state, opening } = loadFlow();

@@ -214,14 +214,28 @@ def test_close_wakes_and_joins_worker_thread() -> None:
 	assert adapter._host_renderer.closed
 
 
-def test_dispatch_after_close_uses_native_fallback() -> None:
+def test_dispatch_after_close_discards_late_native_fallback() -> None:
 	adapter = adapter_module.UIAdapter()
 	adapter.close()
 	fallback_called: list[bool] = []
 
 	adapter._dispatch_host_command(lambda: None, lambda: fallback_called.append(True))
 
-	assert fallback_called == [True]
+	assert fallback_called == []
+
+
+def test_queued_command_and_fallback_are_suppressed_after_close() -> None:
+	adapter = adapter_module.UIAdapter.__new__(adapter_module.UIAdapter)
+	adapter._running = True
+	adapter._command_queue = queue.Queue()
+	adapter._host_lifecycle = _Lifecycle()
+	calls = []
+	adapter._dispatch_host_command(lambda: calls.append("host"), lambda: calls.append("native"))
+	command, fallback = adapter._command_queue.get_nowait()
+	adapter._running = False
+	command()
+	fallback()
+	assert calls == []
 
 
 def test_stop_action_cancels_only_exact_registered_request() -> None:
@@ -304,6 +318,37 @@ def test_normal_final_metadata_requests_content_focus() -> None:
 		assert metadata == {"request_id": "request", "attention_policy": "activate_and_focus", "focus_target": "content"}
 	finally:
 		adapter.close()
+
+
+@pytest.mark.parametrize("failed_command", ["begin", "delta"])
+def test_stream_delivery_failure_still_attempts_authoritative_final_answer(failed_command) -> None:
+	projection = load_module(f"{NAMESPACE}.ui.production_stream_projection", ADDON_ROOT / "ui" / "stream_projection.py")
+	appends = []
+	def fail(*args, **kwargs):
+		raise OSError("temporary pipe failure")
+	renderer = SimpleNamespace(
+		chat_stream_begin=fail if failed_command == "begin" else lambda *args, **kwargs: None,
+		chat_stream_delta=fail,
+		chat_append=lambda *args, **kwargs: appends.append((args, kwargs)),
+	)
+	stream = projection.StreamProjection(renderer, None, "A", "answer", "stream", lambda: {"request_id": "request"})
+	stream.update("partial", 7)
+	assert not stream.host_stream_updates_enabled
+	content = [{"type": "text", "text": "Complete answer"}]
+	stream.finish(content)
+	assert len(appends) == 1
+	assert appends[0][0][2:] == ({"id": "answer", "role": "assistant", "content": content},)
+	assert appends[0][1]["metadata"] == {"request_id": "request"}
+
+
+def test_aborted_stream_does_not_publish_a_late_final_answer() -> None:
+	projection = load_module(f"{NAMESPACE}.ui.production_stream_projection", ADDON_ROOT / "ui" / "stream_projection.py")
+	appends = []
+	renderer = SimpleNamespace(chat_append=lambda *args, **kwargs: appends.append(args))
+	stream = projection.StreamProjection(renderer, None, "A", "answer", "stream", dict)
+	stream.abort()
+	stream.finish([{"type": "text", "text": "Late answer"}])
+	assert appends == []
 
 
 def test_one_shot_stop_remains_available_until_post_speech_presentation(monkeypatch) -> None:
@@ -399,6 +444,57 @@ def test_reopening_hidden_host_restores_history_after_process_exit(alive) -> Non
 		assert bool(histories) != alive
 	finally:
 		adapter.close()
+
+
+@pytest.mark.parametrize("hidden, alive", [(False, True), (True, True), (True, False)])
+def test_deleted_conversation_summaries_reach_existing_surface_without_activating(hidden, alive) -> None:
+	adapter = adapter_module.UIAdapter()
+	lifecycle = load_module(f"{NAMESPACE}.ui.deletion_host_lifecycle", ADDON_ROOT / "ui" / "host_lifecycle.py")
+	adapter._host_lifecycle = lifecycle.HostLifecycleService()
+	adapter._host_lifecycle.mark_ready()
+	if hidden:
+		adapter._host_lifecycle.mark_hidden()
+	adapter._host_renderer.has_live_surface = lambda: alive
+	sent = []
+	def sync(**kwargs):
+		sent.append(kwargs["metadata"])
+		adapter._host_lifecycle.mark_command_succeeded("sync_session")
+	adapter._host_renderer.sync_session_state = sync
+	adapter._dispatch_host_command = lambda command, fallback: command()
+	try:
+		adapter.sync_session_state({"conversation_id": "kept", "conversation_summaries": [{"id": "kept"}]})
+		expected = [] if hidden and not alive else [{"conversation_id": "kept", "conversation_summaries": [{"id": "kept"}]}]
+		assert sent == expected
+		assert adapter._host_lifecycle.state == (lifecycle.HostLifecycleState.HIDDEN if hidden else lifecycle.HostLifecycleState.READY)
+	finally:
+		adapter.close()
+
+
+def test_hidden_refresh_never_starts_host_that_exits_before_queued_delivery(monkeypatch) -> None:
+	from unittest.mock import Mock
+	from tests.support import load_addon_module
+	renderer_module = load_addon_module("ui.host_renderer", namespace="passive_session_renderer_tests")
+	renderer = renderer_module.HostRenderer.__new__(renderer_module.HostRenderer)
+	renderer._current_conversation_id = None
+	renderer._lifecycle = renderer_module.HostLifecycleService()
+	renderer._lifecycle.mark_hidden()
+	renderer.has_live_surface = lambda: True
+	renderer._ensure_host_running = Mock(side_effect=AssertionError("passive sync must never launch"))
+	def disconnected(_message):
+		raise renderer_module.HostUnavailableError("Host exited before delivery")
+	renderer._transport = SimpleNamespace(send=disconnected)
+	adapter = adapter_module.UIAdapter.__new__(adapter_module.UIAdapter)
+	adapter._host_lifecycle = renderer._lifecycle
+	adapter._host_renderer = renderer
+	queued = []
+	adapter._dispatch_host_command = lambda command, fallback: queued.append(command)
+	metadata = {"conversation_summaries": []}
+	adapter.sync_session_state(metadata)
+	assert len(queued) == 1
+	with pytest.raises(renderer_module.HostUnavailableError):
+		queued[0]()
+	renderer._ensure_host_running.assert_not_called()
+	assert adapter._pending_session_metadata == metadata
 
 def test_chat_submission_forwards_registry_to_the_worker(monkeypatch) -> None:
 	adapter = adapter_module.UIAdapter()

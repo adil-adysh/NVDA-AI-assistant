@@ -70,6 +70,7 @@ class StreamProjection:
 	pending_stream_delta_chunks: list[str] = field(default_factory=list)
 	pending_stream_delta_char_count: int = 0
 	stream_sequence: int = 0
+	aborted: bool = False
 
 	def update(self, partial_text: str, generated_chars: int) -> None:
 		if not self.host_stream_updates_enabled:
@@ -123,12 +124,12 @@ class StreamProjection:
 		return True
 
 	def finish(self, assistant_content: list[dict[str, Any]]) -> None:
+		if self.aborted:
+			return
 		if self.streaming_started:
 			self.flush()
-		if not self.host_stream_updates_enabled:
-			return
 		try:
-			if self.streaming_started:
+			if self.streaming_started and self.host_stream_updates_enabled:
 				self.renderer.chat_stream_end(
 					self.use_case_id,
 					self.conversation_id,
@@ -139,6 +140,8 @@ class StreamProjection:
 					metadata=self.final_metadata_factory(),
 				)
 			else:
+				# Recover from a failed begin/delta with a complete upsert. The
+				# renderer may have missed the placeholder or reconnected since.
 				self.renderer.chat_append(
 					self.use_case_id,
 					self.conversation_id,
@@ -175,6 +178,7 @@ class StreamProjection:
 		Safe to call regardless of whether streaming started — the method
 		no-ops cleanly if ``streaming_started`` is False.
 		"""
+		self.aborted = True
 		if not self.streaming_started:
 			return
 		try:

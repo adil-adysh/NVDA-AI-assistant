@@ -120,12 +120,6 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
         return write_json_value(&protocol::build_ack(&command, AckStage::Accepted, None), writer);
     }
 
-    if let Some(title) = command.payload.payload().get("title").and_then(|value| value.as_str()) {
-        if !title.is_empty() {
-            window::set_window_title(title);
-        }
-    }
-
     if matches!(command.payload, protocol::UiCommand::CloseWindow(_)) {
         if let Err(dispatch_error) = window::request_close_window("programmatic") {
             let (kind, message) = match dispatch_error {

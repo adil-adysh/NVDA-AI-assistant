@@ -121,6 +121,15 @@ class UIAdapter:
 				raise
 
 	def _dispatch_host_command(self, command: Callable[[], None], fallback: Callable[[], None]) -> None:
+		if not self._running:
+			return
+		requested_command, requested_fallback = command, fallback
+		def command() -> None:
+			if self._running:
+				requested_command()
+		def fallback() -> None:
+			if self._running:
+				requested_fallback()
 		token = current_cancellation_token()
 		if token is not None:
 			release = token.hold_delivery()
@@ -139,10 +148,6 @@ class UIAdapter:
 							original_fallback()
 				finally:
 					release()
-		if not self._running:
-			log.debug("UIAdapter is closed; dispatching native fallback")
-			nvda_ui.queue(fallback)
-			return
 		log.debug("ENQUEUE COMMAND: %s", command)
 		log.debug("QUEUE ID (enqueue): %s", id(self._command_queue))
 		log.debug("UIAdapter dispatching host command; host_state=%s", self._host_lifecycle.state)
@@ -328,10 +333,16 @@ class UIAdapter:
 
 	def sync_session_state(self, metadata: dict[str, Any] | None = None) -> None:
 		self._remember_session_metadata(metadata)
-		if not self._host_lifecycle.should_dispatch_background_command():
+		# A dismissed WebView still owns its rendered conversation list.
+		# Apply passive refreshes there too, but never launch a dead host.
+		hidden_surface_alive = (
+			self._host_lifecycle.state == HostLifecycleState.HIDDEN
+			and self._host_renderer.has_live_surface()
+		)
+		if not self._host_lifecycle.should_dispatch_background_command() and not hidden_surface_alive:
 			return
 		self._dispatch_host_command(
-			lambda: self._send_session_state(metadata),
+			lambda: self._send_session_state(metadata, start_host=not hidden_surface_alive),
 			lambda: None,
 		)
 
@@ -367,9 +378,12 @@ class UIAdapter:
 				and self._latest_chat_requests.get(conversation_id) == request_id
 			)
 
-	def _send_session_state(self, metadata: dict[str, Any] | None = None) -> None:
+	def _send_session_state(self, metadata: dict[str, Any] | None = None, *, start_host: bool = True) -> None:
 		effective_metadata = metadata if isinstance(metadata, dict) else self._pending_session_metadata
-		self._host_renderer.sync_session_state(metadata=effective_metadata)
+		if start_host:
+			self._host_renderer.sync_session_state(metadata=effective_metadata)
+		else:
+			self._host_renderer.sync_session_state(metadata=effective_metadata, start_host=False)
 		if effective_metadata is not None:
 			self._pending_session_metadata = None
 

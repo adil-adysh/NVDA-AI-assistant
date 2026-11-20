@@ -32,9 +32,7 @@
 </script>
 
 {#if appState.view.mode === 'chat'}
-    <section class="workspace-card chat-composer-panel" aria-labelledby="composer-heading">
-
-        <h2 id="composer-heading" class="sr-only">{t('composer_heading', 'Compose message')}</h2>
+    <section class="workspace-card chat-composer-panel" aria-label={t('composer_heading', 'Compose message')}>
 
         <div class="composer-stack">
             <input id="file-input" bind:this={fileInputElement} type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp,.svg" multiple hidden onchange={handleInputFiles} />

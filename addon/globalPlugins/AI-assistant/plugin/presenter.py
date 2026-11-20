@@ -559,8 +559,6 @@ class UseCasePresenter:
 			return
 		if isinstance(action, ConversationDeleteAction):
 			delete_result = self._conversation_service.delete_conversation(action.conversation_id)
-			if not delete_result.deleted:
-				return
 			if delete_result.active_conversation_deleted:
 				self.open_chat_window(force_new_conversation=True)
 			else:

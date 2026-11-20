@@ -83,6 +83,14 @@ test('failed conversation send preserves the displayed selection', () => {
 	assert.equal(state.chat.conversationId, 'old-chat');
 });
 
+test('failed conversation deletion reports a connection failure and preserves selection', () => {
+	const { actions, state, events, status } = loadActions(false);
+	actions.deleteConversation('old-chat');
+	assert.equal(events[0][2].action_id, 'conversation_delete');
+	assert.equal(state.chat.conversationId, 'old-chat');
+	assert.match(status.at(-1) || '', /Unable to send request/);
+});
+
 test('fallback clipboard restores keyboard focus', async () => {
 	const { actions, context } = loadActions();
 	let focused = false;

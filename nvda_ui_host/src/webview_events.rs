@@ -56,7 +56,9 @@ fn handle_js_event(message: &str, _hwnd: HWND) -> Result<()> {
         Some(WebViewEvent::UiApplied) => {
             logger::debug("WebView ui_applied received; requesting deferred focus_webview");
             crate::window::request_deferred_focus_webview(payload.get("correlation_id").and_then(Value::as_str));
-            ipc::queue_ui_event(message.to_string());
+            // Rendering acknowledgements terminate here. Python does not
+            // consume them; forwarding every delta can congest the same
+            // bounded event channel used by Stop and other user actions.
         }
         Some(WebViewEvent::Other) => {
             ipc::queue_ui_event(message.to_string());

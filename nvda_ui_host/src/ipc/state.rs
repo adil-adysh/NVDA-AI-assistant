@@ -95,6 +95,11 @@ pub(crate) fn requeue_ui_events_after_disconnect(
 }
 
 #[cfg(test)]
+pub(super) fn pending_ui_event_count() -> usize {
+	ui_event_state().lock().unwrap().pending.len()
+}
+
+#[cfg(test)]
 fn reset_ui_event_state() {
 	let mut state = ui_event_state().lock().unwrap();
 	state.sender = None;
@@ -107,6 +112,7 @@ mod tests {
 
 	#[test]
 	fn queue_ui_event_buffers_messages_until_sender_is_available() {
+		let _guard = crate::host_dispatch::test_guard();
 		reset_ui_event_state();
 
 		queue_ui_event("{\"event\":\"close_host\"}".to_string());

@@ -23,7 +23,7 @@ export type ConversationSelectionStateValue =
 
 export const appState = $state({
 	currentCommandId: null as string | null,
-	title: 'NVDA UI Host',
+	title: 'NVDA AI Assistant',
 	statusMessage: '',
 	controlsVisible: true,
 
@@ -156,7 +156,7 @@ export function setDisplayBlocks(
 }
 
 export function setWindowTitle(title: string): void {
-	appState.title = title || 'NVDA UI Host';
+	appState.title = title.trim() || t('app_brand', 'NVDA AI Assistant');
 }
 
 export function setControlPending(change: string | null): void {

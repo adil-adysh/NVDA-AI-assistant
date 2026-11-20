@@ -689,6 +689,12 @@ class PresenterUIActionTests(unittest.TestCase):
 		self.assertEqual(captured_opens, [{"force_new_conversation": True}])
 		self.assertEqual(update_calls, [])
 
+	def test_deleting_an_already_missing_row_refreshes_the_stale_list(self) -> None:
+		updates = []
+		self.presenter.update_provider_state = lambda: updates.append(True)
+		self.presenter._handle_result_action("conversation_delete", {"conversation_id": "already-deleted"})
+		self.assertEqual(updates, [True])
+
 
 if __name__ == "__main__":
 	unittest.main()

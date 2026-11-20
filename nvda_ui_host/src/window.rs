@@ -227,7 +227,7 @@ pub fn create_window() -> Result<HWND> {
         let hwnd = CreateWindowExW(
             Default::default(),
             class_name,
-            w!("NVDA UI Host"),
+            w!("NVDA AI Assistant"),
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
@@ -327,8 +327,8 @@ pub(crate) fn request_close_window(reason: &str) -> std::result::Result<(), Disp
     Err(DispatchError::NotInitialized)
 }
 
-/// Soft-dismiss the window: hide it without clearing command queues or
-/// sending a close_host IPC event.  The WebView stays alive so streaming
+/// Soft-dismiss the window without clearing command queues. Notify Python
+/// of the hidden state. The WebView stays alive so streaming
 /// responses continue to flow in the background.  When the next command
 /// arrives with ActivateIfBackground (e.g. ChatStreamEnd) the window
 /// will automatically re-appear with the full response visible.
@@ -433,14 +433,6 @@ pub(crate) fn try_activate_window(policy: ActivationPolicy) -> bool {
     is_window_visible()
 }
 
-fn clear_host_command_queue() {
-    let mut queue = command_queue().lock().unwrap();
-    if !queue.is_empty() {
-        logger::info(&format!("Clearing {} queued host command(s) on window close", queue.len()));
-        queue.clear();
-    }
-}
-
 fn handle_window_close(hwnd: HWND, source: &str) -> LRESULT {
     let current_state = current_window_state();
     logger::info(&format!("Window close handler invoked from {} current_state={:?}", source, current_state));
@@ -451,8 +443,10 @@ fn handle_window_close(hwnd: HWND, source: &str) -> LRESULT {
 
     set_window_state(WindowState::Closing);
     logger::info("Window state transitioning to Closing");
-    clear_host_command_queue();
-    crate::webview::clear_pending_messages();
+    // Native Close has the same retention semantics as Escape: already
+    // queued work may finish, but it must not bring the window back.
+    crate::host_dispatch::suppress_command_activation(&mut command_queue().lock().unwrap());
+    crate::host_dispatch::dismiss_pending_commands();
     // Clear any pending focus gate so the next activation works correctly.
     focus_request().lock().unwrap().dismiss();
     let reason = if source == "WM_CLOSE" {
