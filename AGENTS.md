@@ -83,33 +83,35 @@ extensions, a Rust/WebView2 UI host, and a Svelte 5 Web UI.
 - See `docs/development.md` for checkout setup, test tiers, and packaging checks.
 
 
-## Model registration and preset ownership
+## llama.cpp presets (advanced)
 
-- Drive model-manager controls from explicit model actions when supplied, keeping
-  registration, file ownership, file availability and runtime state independent.
-- User-supplied llama.cpp presets are one-time migration input. Keep originals
-  unchanged; reject unsupported options with a section/key summary. `models.json`
-  owns model settings after migration. Generate `runtime-models.ini` solely from
-  records using `LlamaPresetCodec`; never merge stale output or reread external
-  presets during refresh. Keep option validation in `core/llama_options.py` and
-  inspect installed runtime capabilities in the worker. Catalog discovery must
-  never silently register a model.
-- Remove registrations by exact ID, preserve user model files/shared upstream cache,
-  and verify runtime status before stopping an owned router. Clear selections using
-  compare-and-set. Worker cache deletion must independently verify the managed root
-  and an explicit ownership record; never infer ownership from a filename.
-
-- llama.cpp configurations, downloaded assets and server entries use the shared
-  `providers/llama_catalog.py` policy. Discover/verify assets in the worker; preserve
-  exact IDs and source ownership. Cache reuse must not copy/download weights or
-  start inference servers. Do not use server-reported paths as local ownership proof.
-- Preset replacement requires a digest-bound preview. UI reads do not trigger
-  mutation refresh/focus behavior; closed/stale callbacks never reopen dialogs.
-- llama model lifecycle operations are application-owned in `service/llama_operations.py`.
-  Closing the manager/Tasks detaches observers; Stop cancels one operation. Fence
-  new starts before worker shutdown. Disposable UI scans may cancel on dismissal.
-- Companion roles are explicit (vision, draft, MTP). Resolve/download in the worker
-  only for Load/first inference; reuse unchanged verified immutable cache files
-  offline. Validate installed speculative modes, preserve legacy overrides, and
-  invalidate compatibility after changing sources/settings. Block shared-file
-  deletion at both manager and worker boundaries, including companion references.
+- llama.cpp is an advanced provider. Its only managed feature is the model preset:
+  create, edit, duplicate and remove. Do not add onboarding, remote model catalogs,
+  download management, folder import or first-run guidance for it.
+- New presets use Hugging Face sources only: `hf-repo`, optional `hf-file`,
+  optional `spec-draft-hf` / `spec-draft-model`, plus per-model runtime options.
+  Never accept local model paths, local projector paths, `model-url`, `docker-repo`,
+  `hf-token` in a preset, or server-wide options.
+- The cache-backed picker is a read-only convenience. It may inspect the configured
+  Hugging Face cache to fill a repository and exact filename, but it must not write,
+  repair, evict or delete cache entries, and it must not store a local path. List the
+  snapshot that `refs/main` points to, never the newest mtime snapshot as a preset
+  target.
+- Manual references are pass-through: preserve `owner/repo[:quant]` exactly and let
+  llama.cpp resolve the quant. Do not append a quant or infer a filename in manual
+  mode. Cached mode stores repo + exact file and never combines `:quant` with
+  `hf-file` / `spec-draft-model`.
+- Projector control is automatic same-repository or disabled. Do not add an exact
+  projector picker: llama.cpp has no Hugging Face projector field, and a local path
+  would break path-independent presets.
+- `models.json` is the sole source of presets. `runtime-models.ini` is generated
+  output and is never read back. Do not migrate legacy catalog or preset formats.
+- Keep the preset grammar strict in `core/llama_preset.py` and option validation in
+  `core/llama_options.py`. Reject unknown keys and ambiguous `:quant` + `hf-file`
+  combinations instead of guessing. Preserve `spec_type_auto` so an automatically
+  added speculative mode can be removed without deleting a user-entered mode.
+- Inspect installed runtime capabilities in the worker before writing a preset.
+  Runtime option changes apply on the next model load.
+- llama.cpp lifecycle is application-owned in `service/llama_operations.py`.
+  Closing the manager detaches observers; Stop cancels one operation. Fence
+  new starts before worker shutdown.

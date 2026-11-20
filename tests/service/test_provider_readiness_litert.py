@@ -58,6 +58,21 @@ class LiteRTReadinessTests(unittest.TestCase):
 	def setUp(self) -> None:
 		self.readiness_service = ProviderReadinessService()
 
+	def test_llama_ui_readiness_uses_one_status_snapshot_without_http_probe(self) -> None:
+		supervisor = mock.Mock()
+		supervisor.status.return_value = types.SimpleNamespace(is_ready=True)
+		runtime = types.ModuleType(f"{PACKAGE_NAME}.providers.runtime.llama_server")
+		runtime.DEFAULT_LLAMA_HOST = "127.0.0.1"
+		runtime.DEFAULT_LLAMA_PORT = 8080
+		runtime.default_llama_server_executable = lambda: "llama-server"
+		runtime.get_llama_supervisor = mock.Mock(return_value=supervisor)
+		config = types.SimpleNamespace(base_url="http://127.0.0.1:8080", server_executable="llama-server")
+		with mock.patch.dict(sys.modules, {runtime.__name__: runtime}):
+			self.assertTrue(self.readiness_service._llama_server_is_ready(config))
+		supervisor.status.assert_called_once_with()
+		supervisor.is_healthy.assert_not_called()
+		supervisor.list_models.assert_not_called()
+
 	def _litert_config(self) -> LiteRTConfig:
 		return LiteRTConfig(
 			provider="litert-lm",
@@ -75,7 +90,7 @@ class LiteRTReadinessTests(unittest.TestCase):
 		)
 
 	def test_litert_running_is_ready(self) -> None:
-		fake_supervisor = types.SimpleNamespace(is_running=True, is_adopted=False)
+		fake_supervisor = types.SimpleNamespace(status=lambda: types.SimpleNamespace(is_ready=True))
 		with mock.patch.object(
 			provider_readiness_module,
 			"get_litert_supervisor",
@@ -88,7 +103,7 @@ class LiteRTReadinessTests(unittest.TestCase):
 
 	def test_litert_adopted_is_ready(self) -> None:
 		"""A healthy-but-handleless server (NVDA restart) is still ready."""
-		fake_supervisor = types.SimpleNamespace(is_running=False, is_adopted=True)
+		fake_supervisor = types.SimpleNamespace(status=lambda: types.SimpleNamespace(is_ready=True))
 		with mock.patch.object(
 			provider_readiness_module,
 			"get_litert_supervisor",
@@ -98,8 +113,8 @@ class LiteRTReadinessTests(unittest.TestCase):
 		self.assertEqual(readiness.state, ProviderReadinessState.READY)
 		self.assertTrue(readiness.can_infer)
 
-	def test_litert_not_running_or_adopted_is_unconfigured(self) -> None:
-		fake_supervisor = types.SimpleNamespace(is_running=False, is_adopted=False)
+	def test_installed_idle_litert_allows_lazy_start_without_claiming_missing_url(self) -> None:
+		fake_supervisor = types.SimpleNamespace(status=lambda: types.SimpleNamespace(is_ready=False), is_installed=True)
 		with mock.patch.object(
 			provider_readiness_module,
 			"get_litert_supervisor",
@@ -107,9 +122,24 @@ class LiteRTReadinessTests(unittest.TestCase):
 		):
 			readiness = self.readiness_service.evaluate(self._litert_config())
 		self.assertEqual(readiness.state, ProviderReadinessState.UNCONFIGURED)
+		self.assertEqual(readiness.reason, ProviderReadinessReason.SERVER_NOT_READY)
+		self.assertTrue(readiness.can_infer)
+		self.assertTrue(readiness.can_list_models)
+
+	def test_litert_missing_url_is_a_configuration_error_even_if_server_runs(self) -> None:
+		from dataclasses import replace
+		with mock.patch.object(provider_readiness_module, "get_litert_supervisor",
+			return_value=types.SimpleNamespace(status=lambda: types.SimpleNamespace(is_ready=True))):
+			readiness = self.readiness_service.evaluate(replace(self._litert_config(), base_url=""))
 		self.assertEqual(readiness.reason, ProviderReadinessReason.MISSING_SERVER_URL)
 		self.assertFalse(readiness.can_infer)
-		self.assertFalse(readiness.can_list_models)
+
+	def test_uninstalled_litert_is_not_reported_as_a_missing_url(self) -> None:
+		with mock.patch.object(provider_readiness_module, "get_litert_supervisor",
+			return_value=types.SimpleNamespace(status=lambda: types.SimpleNamespace(is_ready=False), is_installed=False)):
+			readiness = self.readiness_service.evaluate(self._litert_config())
+		self.assertNotEqual(readiness.reason, ProviderReadinessReason.MISSING_SERVER_URL)
+		self.assertFalse(readiness.can_infer)
 
 
 if __name__ == "__main__":

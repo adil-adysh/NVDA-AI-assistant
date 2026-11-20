@@ -171,7 +171,7 @@ class ConfiguredModelStatusTests(unittest.TestCase):
 			store.set_model_visible("openai", "gpt-4o-mini", True)
 
 	def test_litert_uninstalled_model_reports_unavailable(self) -> None:
-		fake_supervisor = types.SimpleNamespace(is_running=True, is_adopted=False)
+		fake_supervisor = types.SimpleNamespace(status=lambda: types.SimpleNamespace(is_ready=True))
 		ready_snapshot = ModelCatalogSnapshot(
 			provider_id="litert-lm",
 			state=CatalogState.READY,
@@ -217,7 +217,7 @@ class ConfiguredModelStatusTests(unittest.TestCase):
 		self.assertIn("not available", msg.lower())
 
 	def test_litert_installed_model_reports_valid(self) -> None:
-		fake_supervisor = types.SimpleNamespace(is_running=True, is_adopted=False)
+		fake_supervisor = types.SimpleNamespace(status=lambda: types.SimpleNamespace(is_ready=True))
 		ready_snapshot = ModelCatalogSnapshot(
 			provider_id="litert-lm",
 			state=CatalogState.READY,

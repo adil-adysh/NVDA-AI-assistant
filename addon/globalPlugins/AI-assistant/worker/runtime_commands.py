@@ -551,15 +551,10 @@ def execute_runtime_command(server, frame, write, *, cancellation_requested: Cal
 				}
 			)
 
-	elif cmd_type in {"llama_resolve_hf", "llama_resolve_companions", "llama_unload_model"}:
+	elif cmd_type == "llama_unload_model":
 		try:
 			executor = server.get_llama_executor()
-			if cmd_type == "llama_resolve_hf":
-				result = executor.resolve_hf(str(frame.get("repo") or frame.get("repository") or ""), str(frame.get("revision", "main")), str(frame.get("role", "primary")))
-			elif cmd_type == "llama_resolve_companions":
-				result = executor.resolve_companions(frame.get("companions", []), **stage_options)
-			else:
-				result = executor.unload_model(str(frame.get("model_id", "")), float(frame.get("timeout_seconds", 30)), **stage_options)
+			result = executor.unload_model(str(frame.get("model_id", "")), float(frame.get("timeout_seconds", 30)), **stage_options)
 			write({"type": "llama_operation_response", "command": cmd_type, "success": True, "result": result})
 		except Exception as exc:
 			write({"type": "error", "command": cmd_type, "success": False, "error_message": str(exc)})
@@ -571,31 +566,12 @@ def execute_runtime_command(server, frame, write, *, cancellation_requested: Cal
 		except Exception as exc:
 			write({"type": "error", "command": cmd_type, "success": False, "error_code": "LLAMA_PREPARE_FAILED", "error_message": str(exc)})
 
-	elif cmd_type in {"llama_discover_assets", "llama_verify_asset"}:
-		try:
-			executor = server.get_model_asset_executor()
-			if cmd_type == "llama_discover_assets":
-				roots = [*server._default_cache_roots(), *frame.get("roots", [])]
-				result = executor.discover_model_assets(roots, frame.get("generation", 0))
-			else:
-				result = executor.verify_model_asset(str(frame.get("token", "")), role=str(frame.get("role", "primary")))
-			write({"type": "llama_assets_response", "command": cmd_type, "success": True, "result": result.to_dict()})
-		except Exception as exc:
-			write({"type": "error", "command": cmd_type, "success": False, "error_code": "LLAMA_ASSET_FAILED", "error_message": str(exc)})
-
 	elif cmd_type == "llama_inspect_options":
 		try:
 			options = server.get_llama_executor().inspect_options(str(frame.get("executable") or "llama-server"))
 			write({"type": "llama_options_response", "command": cmd_type, "success": True, "options": sorted(options)})
 		except Exception as exc:
 			write({"type": "error", "command": cmd_type, "success": False, "error_code": "LLAMA_OPTIONS_FAILED", "error_message": str(exc)})
-
-	elif cmd_type == "llama_delete_cache":
-		try:
-			result = server.get_llama_executor().delete_cache(str(frame.get("cache_root", "")), str(frame.get("path", "")), model_id=frame.get("model_id"))
-			write({"type": "llama_delete_cache_response", "command": cmd_type, **result})
-		except Exception as exc:
-			write({"type": "error", "command": cmd_type, "success": False, "error_code": "LLAMA_CACHE_DELETE_FAILED", "error_message": str(exc)})
 
 	elif cmd_type == "llama_configure_preset":
 		try:

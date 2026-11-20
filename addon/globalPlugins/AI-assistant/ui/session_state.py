@@ -371,6 +371,8 @@ def build_provider_status_message(translate: Translator, readiness: ProviderRead
 		return translate("{provider} is selected but its server address is not configured.").format(provider=provider_label)
 	if readiness.reason is ProviderReadinessReason.SERVER_NOT_READY:
 		return translate("{provider} is configured but its server is not ready yet.").format(provider=provider_label)
+	if readiness.reason is ProviderReadinessReason.RUNTIME_NOT_INSTALLED:
+		return translate("{provider} runtime is not installed. Install it in Manage AI Providers.").format(provider=provider_label)
 	if readiness.reason is ProviderReadinessReason.MISSING_CHAT_PATH:
 		# TRANSLATORS: Guidance shown when OpenAI is selected without a chat endpoint path.
 		return translate("OpenAI is selected but the chat endpoint path is not configured.")
@@ -427,7 +429,7 @@ def _resolve_model_labels(
 		from ..providers.registry import build_model_manager
 
 		mgr = build_model_manager(provider)
-		all_models = mgr.list_managed_models()
+		all_models = mgr.list_managed_models() or ()
 	except Exception:
 		return {}
 

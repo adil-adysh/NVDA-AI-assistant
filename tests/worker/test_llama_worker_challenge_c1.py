@@ -505,13 +505,11 @@ class TestLlamaConcurrencyAndStressIPC(unittest.TestCase):
 						models = [
 							{
 								"model_id": f"model_w{worker_id}_{i}",
-								"source": f"hf://repo/model_{worker_id}_{i}",
-								"kind": "hugging_face",
+								"repo": f"org/model_{worker_id}_{i}",
 							},
 							{
 								"model_id": "common_base",
-								"source": "hf://repo/common_base",
-								"kind": "hugging_face",
+								"repo": "org/common_base",
 							},
 						]
 						res = executor.configure_preset(
@@ -1079,21 +1077,12 @@ class TestLlamaFailClosedInvariants(unittest.TestCase):
 			self.assertEqual(st.generation, 3)
 
 	def test_record_source_lines_sanitizes_newlines_and_carriage_returns(self) -> None:
-		"""_record_source_lines and build_models_preset neutralize CRLF injection attempts."""
+		"""The HF-only codec rejects control characters in source values."""
 		build_models_preset = llama_exec_mod.build_models_preset
-		attacks = [
-			{"model_id": "model-repo-inject", "hf_repo": "org/repo\n[injected_section]\nadmin=true"},
-			{"model_id": "model-source-inject", "source": "C:/models/valid.gguf\r\n[evil_section]\nkey=val"},
-			{"model_id": "model-variant-inject", "source": "hf://org/repo", "variant": "Q4_K_M\n[variant_section]\npwned=1"},
-		]
-		result = build_models_preset(attacks)
-		section_headers = [line.strip() for line in result.splitlines() if line.strip().startswith("[")]
-		self.assertNotIn("[injected_section]", section_headers)
-		self.assertNotIn("[evil_section]", section_headers)
-		self.assertNotIn("[variant_section]", section_headers)
-		self.assertIn("[model-repo-inject]", section_headers)
-		self.assertIn("[model-source-inject]", section_headers)
-		self.assertIn("[model-variant-inject]", section_headers)
+		with self.assertRaises(ValueError):
+			build_models_preset([{"model_id": "model-repo-inject", "repo": "org/repo\n[injected_section]\nadmin=true"}])
+		with self.assertRaises(ValueError):
+			build_models_preset([{"model_id": "model-source-inject", "repo": "C:/models/valid.gguf\r\n[evil_section]"}])
 
 
 if __name__ == "__main__":

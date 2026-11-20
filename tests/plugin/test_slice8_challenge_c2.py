@@ -159,18 +159,18 @@ class InvariantA14AdversarialProbingTests(unittest.TestCase):
 		mock_manager, exc = self._run_with_model_name("")
 
 		self.assertIsInstance(exc, background.LLMProviderError)
-		self.assertEqual(str(exc), "Unknown llama.cpp model: ")
+		self.assertIn("No llama.cpp model is selected", str(exc))
 		mock_manager.ensure_running.assert_not_called()
 		self.assertEqual(self.set_model_calls, [])
 		self.assertEqual(self.refreshed_providers, [])
 
 	def test_whitespace_string_model_fails_closed(self) -> None:
-		"""Ensure whitespace-only model raises LLMProviderError with raw value."""
+		"""Ensure whitespace-only model raises LLMProviderError with guidance."""
 		whitespace_value = "   \t \r\n  "
 		mock_manager, exc = self._run_with_model_name(whitespace_value)
 
 		self.assertIsInstance(exc, background.LLMProviderError)
-		self.assertEqual(str(exc), f"Unknown llama.cpp model: {whitespace_value}")
+		self.assertIn("No llama.cpp model is selected", str(exc))
 		mock_manager.ensure_running.assert_not_called()
 		self.assertEqual(self.set_model_calls, [])
 		self.assertEqual(self.refreshed_providers, [])
@@ -180,7 +180,7 @@ class InvariantA14AdversarialProbingTests(unittest.TestCase):
 		mock_manager, exc = self._run_with_model_name(None)
 
 		self.assertIsInstance(exc, background.LLMProviderError)
-		self.assertEqual(str(exc), "Unknown llama.cpp model: None")
+		self.assertIn("No llama.cpp model is selected", str(exc))
 		mock_manager.ensure_running.assert_not_called()
 		self.assertEqual(self.set_model_calls, [])
 		self.assertEqual(self.refreshed_providers, [])
@@ -191,7 +191,10 @@ class InvariantA14AdversarialProbingTests(unittest.TestCase):
 			with self.subTest(val=non_str_val):
 				mock_manager, exc = self._run_with_model_name(non_str_val)
 				self.assertIsInstance(exc, background.LLMProviderError)
-				self.assertEqual(str(exc), f"Unknown llama.cpp model: {non_str_val}")
+				if non_str_val is False:
+					self.assertIn("No llama.cpp model is selected", str(exc))
+				else:
+					self.assertIn("Unknown llama.cpp model", str(exc))
 				mock_manager.ensure_running.assert_not_called()
 				self.assertEqual(self.set_model_calls, [])
 

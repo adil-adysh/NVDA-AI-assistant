@@ -260,7 +260,7 @@ class ModelCatalogCache:
             config = build_provider_config(provider_id)
             values = tuple(getattr(config, field, None) for field in (
                 "base_url", "models_path", "api_key", "api_token", "organization",
-                "litert_cache", "models_preset",
+                "litert_cache",
             ))
             identity = hashlib.sha256(repr(values).encode("utf-8")).digest()
         except Exception:

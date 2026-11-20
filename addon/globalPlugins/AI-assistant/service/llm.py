@@ -153,6 +153,8 @@ class ProviderLLMService:
 		check_cancelled()
 		canonical_messages = list(messages)
 		generated_messages: list[Message] = []
+		# Freeze this response's preference before the first model request.
+		effective_tracker = (tracker or self._new_tracker()) if self._tool_executor is not None else None
 
 		def emit(stage: str, message: str) -> None:
 			if progress is not None:
@@ -183,9 +185,12 @@ class ProviderLLMService:
 		if self._tool_executor is None:
 			return ConversationTurnResult(response=response, messages=tuple(generated_messages))
 
-		effective_tracker = tracker or self._new_tracker()
+		assert effective_tracker is not None
 		loop_limit_reached = False
 		while response.tool_calls:
+			if effective_tracker.calls_started() >= effective_tracker.budget.max_tool_calls:
+				loop_limit_reached = True
+				break
 			try:
 				effective_tracker.begin_iteration()
 			except ToolBudgetExceeded:
@@ -298,14 +303,14 @@ class ProviderLLMService:
 				ok=False,
 				error_category="budget_exceeded",
 				error_source="host",
-				error_message="Tool iteration limit reached; the call was not executed.",
+				error_message="Tool execution limit reached; the call was not executed.",
 			)
 			for call in (response.tool_calls or [])
 		]
 		messages = self._convert_tool_messages(results)
 		message_text = response.text.strip() if isinstance(response.text, str) else ""
-		if not message_text:
-			message_text = _("Tool execution limit reached. Ask again with a narrower request.")
+		limit_notice = _("Tool execution limit reached. Review the tool-call limit in AI Assistant settings or ask a narrower question.")
+		message_text = f"{message_text}\n\n{limit_notice}" if message_text else limit_notice
 		raw = dict(response.raw) if isinstance(response.raw, dict) else {"raw": response.raw}
 		raw["tool_loop_limit_reached"] = True
 		return (

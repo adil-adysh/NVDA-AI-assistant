@@ -41,7 +41,6 @@ WorkerServer = server_mod.WorkerServer
 LlamaWorkerExecutor = llama_exec_mod.LlamaWorkerExecutor
 build_llama_server_args = llama_exec_mod.build_llama_server_args
 build_startup_identity = llama_exec_mod.build_startup_identity
-merge_models_preset = llama_exec_mod.merge_models_preset
 build_models_preset = llama_exec_mod.build_models_preset
 LlamaServerSupervisor = llama_server_mod.LlamaServerSupervisor
 LlamaServerError = llama_server_mod.LlamaServerError
@@ -244,15 +243,11 @@ class TestRouterPresetConfigurationEmpirical(unittest.TestCase):
 			models = [
 				{
 					"model_id": "hf_model",
-					"source": "hf://unsloth/Qwen3-8B-GGUF",
-					"kind": "hugging_face",
-					"variant": "UD-Q4_K_XL",
+					"repo": "unsloth/Qwen3-8B-GGUF:UD-Q4_K_XL",
 				},
 				{
-					"model_id": "local_gguf",
-					"source": str(Path(td) / "model.gguf"),
-					"kind": "local_file",
-					"local_path": str(Path(td) / "model.gguf"),
+					"model_id": "other_model",
+					"repo": "owner/other",
 				},
 			]
 			res = self.executor.configure_preset(
@@ -268,7 +263,7 @@ class TestRouterPresetConfigurationEmpirical(unittest.TestCase):
 			self.assertIn("version = 1", content)
 			self.assertIn("[hf_model]", content)
 			self.assertIn("hf-repo = unsloth/Qwen3-8B-GGUF:UD-Q4_K_XL", content)
-			self.assertIn("[local_gguf]", content)
+			self.assertIn("[other_model]", content)
 
 			expected_hash = hashlib.sha256(target_ini.read_bytes()).hexdigest()
 			self.assertEqual(res["sha256"], expected_hash)
@@ -294,8 +289,8 @@ class TestRouterPresetConfigurationEmpirical(unittest.TestCase):
 		with tempfile.TemporaryDirectory() as td:
 			target_ini = Path(td) / "models.ini"
 			models = [
-				{"model_id": "m1", "source": "repo/1", "kind": "hugging_face"},
-				{"model_id": "m2", "source": "repo/2", "kind": "hugging_face"},
+				{"model_id": "m1", "repo": "repo/1"},
+				{"model_id": "m2", "repo": "repo/2"},
 			]
 			res = self.executor.configure_preset(
 				models=models,
@@ -320,7 +315,7 @@ class TestRouterPresetConfigurationEmpirical(unittest.TestCase):
 				{"foo": "bar"},  # missing model_id
 				{"model_id": ""},  # empty model_id
 				{"model_id": "   "},  # whitespace model_id
-				{"model_id": "valid_one", "source": "repo/valid", "kind": "hugging_face"},
+				{"model_id": "valid_one", "repo": "repo/valid"},
 			]
 			res = self.executor.configure_preset(
 				models=models,
@@ -407,9 +402,9 @@ class TestRouterPresetConfigurationEmpirical(unittest.TestCase):
 	def test_build_models_preset_rejects_section_injection(self) -> None:
 		"""build_models_preset filters out model_ids containing brackets or newlines."""
 		models = [
-			{"model_id": "malicious\n[injected]\ncommand = 1", "source": "repo/bad"},
-			{"model_id": "[bracket_injection]", "source": "repo/bad"},
-			{"model_id": "clean_model", "source": "repo/clean", "kind": "hugging_face"},
+			{"model_id": "malicious\n[injected]\ncommand = 1", "repo": "repo/bad"},
+			{"model_id": "[bracket_injection]", "repo": "repo/bad"},
+			{"model_id": "clean_model", "repo": "repo/clean"},
 		]
 		output = build_models_preset(models)
 		self.assertNotIn("injected", output)
@@ -533,7 +528,7 @@ class TestWorkerErrorResponsePreservation(unittest.TestCase):
 		}
 		self.addCleanup(tempfile.TemporaryDirectory.cleanup, (catalog_tmp := tempfile.TemporaryDirectory()))
 		mgr = LlamaCppModelManager(worker_client=mock_client, cache_dir=catalog_tmp.name)
-		rec = LlamaModelRecord(model_id="heavy_qwen", source="heavy.gguf", kind="local_file")
+		rec = LlamaModelRecord(model_id="heavy_qwen", repo="owner/heavy")
 
 		with self.assertRaises(LlamaServerError) as ctx:
 			mgr.ensure_running(rec)

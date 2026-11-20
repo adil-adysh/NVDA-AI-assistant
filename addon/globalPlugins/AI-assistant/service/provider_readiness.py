@@ -49,6 +49,7 @@ class ProviderReadinessReason(str, Enum):
 	MISSING_BASE_URL = "missing_base_url"
 	MISSING_CHAT_PATH = "missing_chat_path"
 	SERVER_NOT_READY = "server_not_ready"
+	RUNTIME_NOT_INSTALLED = "runtime_not_installed"
 	MISSING_CREDENTIALS = "missing_credentials"
 	UNSUPPORTED_MODEL = "unsupported_model"
 	UNSUPPORTED_PROVIDER = "unsupported_provider"
@@ -156,14 +157,19 @@ class ProviderReadinessService:
 			pass
 
 		if policy.requires_runtime:
+			if not base_url:
+				return self._unconfigured(config.provider, ProviderReadinessReason.MISSING_SERVER_URL, model_name=model_name)
 			supervisor = get_litert_supervisor()
-			if not supervisor.is_running and not supervisor.is_adopted:
+			runtime_status = supervisor.status()
+			if not runtime_status.is_ready:
+				installed = supervisor.is_installed
 				return ProviderReadiness(
 					provider=config.provider,
 					state=ProviderReadinessState.UNCONFIGURED,
-					reason=ProviderReadinessReason.MISSING_SERVER_URL,
-					can_infer=False,
-					can_list_models=False,
+					reason=ProviderReadinessReason.SERVER_NOT_READY if installed else ProviderReadinessReason.RUNTIME_NOT_INSTALLED,
+					# A configured installed runtime starts on the request path.
+					can_infer=installed,
+					can_list_models=installed,
 					model_name=model_name,
 				)
 			# For LiteRT, check authoritative catalog if populated
@@ -216,12 +222,7 @@ class ProviderReadinessService:
 
 			manager = LlamaCppModelManager(config=config)
 			record = manager.find_record(model_name)
-			server_items = manager.list_server_models() if record is None else ()
-			server_exposed = any(
-				str(item.get("id", "")).strip().lower() == model_name.lower()
-				for item in server_items
-			)
-			if record is None and not server_exposed:
+			if record is None:
 				status = ConfiguredModelStatus(
 					model_id=model_name,
 					state=ConfiguredModelState.UNAVAILABLE,
@@ -243,7 +244,7 @@ class ProviderReadinessService:
 					provider=config.provider,
 					state=ProviderReadinessState.UNCONFIGURED,
 					reason=ProviderReadinessReason.SERVER_NOT_READY,
-					can_infer=False,
+					can_infer=True,
 					can_list_models=True,
 					model_name=model_name,
 				)
@@ -335,10 +336,6 @@ class ProviderReadinessService:
 		port = parsed.port or DEFAULT_LLAMA_PORT
 		executable = str(getattr(config, "server_executable", "") or "").strip() or default_llama_server_executable()
 		supervisor = get_llama_supervisor(executable, host, port)
-		if supervisor.is_running or supervisor.is_adopted:
-			return True
-		if not supervisor.is_healthy():
-			return False
-		if record is None:
-			return True
-		return any(record.matches_server_id(str(item.get("id", ""))) for item in supervisor.list_models())
+		# This path is also used by NVDA event-thread status reads. The
+		# supervisor provides a cached snapshot there; never probe HTTP here.
+		return bool(supervisor.status().is_ready)

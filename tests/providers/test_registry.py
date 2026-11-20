@@ -301,26 +301,31 @@ class ProviderInfoActionMatrixTests(unittest.TestCase):
 			(ProviderAction.CONFIGURE, ProviderAction.MANAGE_MODELS),
 		)
 
-	def test_ollama_local_non_installable_never_installs(self) -> None:
-		# Ollama is local but has no app-managed install step: its lifecycle
-		# collapses to the cloud-style Available/Configured pair.
-		available = ProviderInfo(
-			id="ollama",
-			name="Ollama",
-			kind=ProviderKind.LOCAL,
-			state=ProviderLifecycleState.AVAILABLE,
-		)
-		self.assertEqual(available.actions, (ProviderAction.CONFIGURE,))
-		configured = ProviderInfo(
-			id="ollama",
-			name="Ollama",
-			kind=ProviderKind.LOCAL,
-			state=ProviderLifecycleState.CONFIGURED,
-		)
-		self.assertEqual(
-			configured.actions,
-			(ProviderAction.CONFIGURE, ProviderAction.MANAGE_MODELS),
-		)
+	def test_local_non_installable_can_manage_models_before_selection(self) -> None:
+		# Ollama and llama.cpp are local but have no app-managed install step.
+		# Their model manager is how a model (and therefore configuration)
+		# is established, so it must be available in the Available state too.
+		for provider_id in ("ollama", "llama-cpp-server"):
+			available = ProviderInfo(
+				id=provider_id,
+				name=provider_id,
+				kind=ProviderKind.LOCAL,
+				state=ProviderLifecycleState.AVAILABLE,
+			)
+			self.assertEqual(
+				available.actions,
+				(ProviderAction.CONFIGURE, ProviderAction.MANAGE_MODELS),
+			)
+			configured = ProviderInfo(
+				id=provider_id,
+				name=provider_id,
+				kind=ProviderKind.LOCAL,
+				state=ProviderLifecycleState.CONFIGURED,
+			)
+			self.assertEqual(
+				configured.actions,
+				(ProviderAction.CONFIGURE, ProviderAction.MANAGE_MODELS),
+			)
 
 
 class ProviderKindTests(unittest.TestCase):
@@ -567,11 +572,10 @@ class ConfigureFieldSpecTests(unittest.TestCase):
 		self.assertFalse(fields["cache"].required)
 		self.assertFalse(fields["cpu_thread_count"].required)
 
-	def test_llama_preset_is_a_file_field(self) -> None:
+	def test_llama_configure_fields_are_server_settings_only(self) -> None:
 		fields = {spec.id: spec for spec in get_configure_fields("llama-cpp-server")}
-		self.assertEqual(fields["models_preset"].kind, "file")
-		self.assertIn("*.ini", fields["models_preset"].file_wildcard)
-		self.assertIn("All files", fields["models_preset"].file_wildcard)
+		self.assertEqual(set(fields), {"server_url", "server_executable"})
+		self.assertNotIn("models_preset", fields)
 
 
 class DialogTitleTests(unittest.TestCase):

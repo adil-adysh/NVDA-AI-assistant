@@ -51,6 +51,10 @@ PROVIDER_POLICIES: dict[str, ProviderPolicy] = {
 		display_name="OpenAI",
 		kind="cloud",
 		credential_groups=(("api_key",),),
+		unsupported_model_markers=(
+			"text-embedding", "text-moderation", "omni-moderation", "whisper",
+			"tts", "dall-e", "gpt-image", "sora", "transcribe", "realtime",
+		),
 	),
 	"litert-lm": ProviderPolicy(
 		provider_id="litert-lm",
@@ -61,7 +65,7 @@ PROVIDER_POLICIES: dict[str, ProviderPolicy] = {
 	),
 	"llama-cpp-server": ProviderPolicy(
 		provider_id="llama-cpp-server",
-		display_name="llama.cpp server",
+		display_name="llama.cpp (advanced)",
 		kind="local",
 	),
 }

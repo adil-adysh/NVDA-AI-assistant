@@ -113,7 +113,6 @@ class ProviderFeatures:
 	download: bool = False
 	delete: bool = False
 	import_model: bool = False
-	import_preset: bool = False
 	configuration_management: bool = False
 
 

@@ -153,9 +153,9 @@ def build_startup_identity(
 
 
 try:
-	from ...core.llama_preset import LlamaPresetCodec, build_models_preset as build_models_preset, merge_models_preset as merge_models_preset
+	from ...core.llama_preset import LlamaPresetCodec, build_models_preset as build_models_preset
 except ImportError:
-	from core.llama_preset import LlamaPresetCodec, build_models_preset as build_models_preset, merge_models_preset as merge_models_preset
+	from core.llama_preset import LlamaPresetCodec, build_models_preset as build_models_preset
 
 
 class LlamaWorkerExecutor:
@@ -171,12 +171,13 @@ class LlamaWorkerExecutor:
 		self.host = host
 		self.port = port
 		self._supervisor = supervisor
+		self._supervisor_lock = threading.Lock()
+		self._closed = False
 		self._preset_lock = threading.Lock()
 		self._option_cache = {}
 		self._spec_modes = None
 		self._preparation_lock = threading.Lock()
 		self._preparations = {}
-		self._owned_cache_root = (owned_cache_root or (default_preset_dir() / "cache")).resolve()
 
 		if self._supervisor is None and runtime_supervisor is not None and hasattr(runtime_supervisor, "RuntimeSupervisor"):
 			try:
@@ -187,6 +188,12 @@ class LlamaWorkerExecutor:
 				logger.warning("Could not initialize native RuntimeSupervisor('llama-server'): %s", exc)
 
 	def _get_supervisor(self) -> Any:
+		with self._supervisor_lock:
+			if self._closed:
+				raise RuntimeError("llama executor shutdown has fenced startup")
+			return self._get_supervisor_locked()
+
+	def _get_supervisor_locked(self) -> Any:
 		if self._supervisor is not None:
 			if (
 				runtime_supervisor is not None
@@ -373,48 +380,20 @@ class LlamaWorkerExecutor:
 		status = self._supervisor.stop(timeout_seconds=timeout_seconds)
 		return serialize_runtime_status(status)
 
+	def shutdown(self, timeout_seconds: float = 0.3) -> None:
+		with self._supervisor_lock:
+			self._closed = True
+			supervisor = self._supervisor
+			if supervisor is not None:
+				supervisor.fence_startup()
+		if supervisor is not None:
+			supervisor.stop(timeout_seconds=timeout_seconds)
+
 	def adopt(self, model_id: str | None = None) -> dict[str, Any]:
 		"""Acknowledge a healthy server running on host:port without owned child process."""
 		sup = self._get_supervisor()
 		status = sup.adopt(model_id=model_id)
 		return serialize_runtime_status(status)
-
-	def delete_cache(self, cache_root: str, path: str, model_id: str | None = None) -> dict[str, Any]:
-		"""Delete only a recorded owned GGUF under the worker's authoritative root."""
-		root = self._owned_cache_root
-		target = Path(path).resolve()
-		if Path(cache_root).resolve() != root or not target.is_relative_to(root) or target == root or target.suffix.lower() != ".gguf":
-			raise ValueError(_("Model cache deletion target is outside the owned cache directory"))
-		owned = False
-		for manifest in root.parent.glob("models*.json"):
-			try:
-				payload = json.loads(manifest.read_text(encoding="utf-8"))
-			except (OSError, ValueError) as error:
-				raise ValueError(_("Unable to verify model catalog dependencies before deletion.")) from error
-			if not isinstance(payload, dict) or payload.get("version") != 1:
-				continue
-			for record in payload.get("models", []):
-				if not isinstance(record, dict):
-					continue
-				if record.get("model_id") == model_id and record.get("ownership") == "addon" and record.get("cached_path"):
-					owned = owned or Path(record["cached_path"]).resolve() == target
-				if record.get("model_id") == model_id:
-					continue
-				references = [record.get(key) for key in ("source", "local_path", "cached_path")]
-				options = record.get("preset_options") or {}
-				if isinstance(options, dict):
-					references.extend(options.get(key) for key in ("mmproj", "spec-draft-model", "model-draft"))
-				for companion in record.get("companions") or ():
-					if isinstance(companion, dict):
-						references.extend(companion.get(key) for key in ("source", "local_path"))
-				for reference in references:
-					if isinstance(reference, str) and reference and Path(reference).resolve() == target:
-						raise ValueError(_("This file is referenced by another model configuration."))
-		if not owned:
-			raise ValueError(_("The cached model file has no add-on ownership record"))
-		check_job_cancelled()
-		target.unlink(missing_ok=True)
-		return {"success": True}
 
 	def _model_request(self, operation: str, model_id: str, timeout_seconds: float):
 		url_host = f"[{self.host}]" if ":" in self.host and not self.host.startswith("[") else self.host
@@ -481,14 +460,6 @@ class LlamaWorkerExecutor:
 			stopped.set()
 			unload()
 			raise
-
-	def resolve_hf(self, repo, revision="main", role="primary"):
-		from .llama_hf import resolve_hf
-		return resolve_hf(repo, revision, role)
-
-	def resolve_companions(self, companions, on_stage=None):
-		from .llama_hf import resolve_companions
-		return resolve_companions(companions, on_stage=on_stage)
 
 	def unload_model(self, model_id: str, timeout_seconds: float = 30, on_stage=None):
 		"""Confirm the owned router has unloaded this exact model, with a bound."""
@@ -558,8 +529,6 @@ class LlamaWorkerExecutor:
 		mode_match = re.search(r"--spec-type\s+([a-z0-9,-]+)", help_text)
 		self._spec_modes = frozenset(mode_match.group(1).split(",")) if mode_match else frozenset()
 		keys = {canonical_key(key) for key in re.findall(r"(?<!\w)--([a-z][a-z0-9-]+)", output.decode("utf-8", errors="replace"))}
-		# These are documented router preset options, absent from CLI help.
-		keys.update({"load-on-startup", "stop-timeout", "dedup-cache-models"})
 		supported = keys & OPTION_BY_KEY.keys()
 		self._option_cache = {identity: frozenset(supported)}
 		return supported

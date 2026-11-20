@@ -122,15 +122,12 @@ class TestLlamaWorkerExecutor(unittest.TestCase):
 			models = [
 				{
 					"model_id": "qwen",
-					"source": "unsloth/Qwen3-8B-GGUF",
-					"kind": "hugging_face",
-					"variant": "UD-Q4_K_XL",
+					"repo": "unsloth/Qwen3-8B-GGUF:UD-Q4_K_XL",
 				},
 				{
-					"model_id": "local_model",
-					"source": str(Path(td) / "local.gguf"),
-					"kind": "local_file",
-					"local_path": str(Path(td) / "local.gguf"),
+					"model_id": "other",
+					"repo": "owner/other",
+					"file": "other.gguf",
 				},
 			]
 			res = self.executor.configure_preset(
@@ -146,7 +143,7 @@ class TestLlamaWorkerExecutor(unittest.TestCase):
 			self.assertIn("version = 1", content)
 			self.assertIn("[qwen]", content)
 			self.assertIn("hf-repo = unsloth/Qwen3-8B-GGUF:UD-Q4_K_XL", content)
-			self.assertIn("[local_model]", content)
+			self.assertIn("[other]", content)
 
 			expected_hash = hashlib.sha256(preset_file.read_bytes()).hexdigest()
 			self.assertEqual(res["sha256"], expected_hash)
@@ -155,8 +152,8 @@ class TestLlamaWorkerExecutor(unittest.TestCase):
 		with tempfile.TemporaryDirectory() as td:
 			preset_file = Path(td) / "models.ini"
 			models = [
-				{"model_id": "model_b", "source": "repo/b", "kind": "hugging_face"},
-				{"model_id": "model_a", "source": "repo/a", "kind": "hugging_face"},
+				{"model_id": "model_b", "repo": "repo/b"},
+				{"model_id": "model_a", "repo": "repo/a"},
 			]
 			res = self.executor.configure_preset(
 				models=models,

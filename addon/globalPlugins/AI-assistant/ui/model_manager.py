@@ -159,10 +159,6 @@ class ModelManagerDialog(wx.Dialog):
 		self._import_hf_btn.Bind(wx.EVT_BUTTON, self._on_import_hugging_face)
 		button_sizer.Add(self._import_hf_btn, flag=wx.RIGHT, border=5)
 
-		self._import_preset_btn = wx.Button(self, label=_("Import preset..."))
-		self._import_preset_btn.Bind(wx.EVT_BUTTON, self._on_import_preset)
-		self._import_preset_btn.Show(self._provider.features.import_preset)
-		button_sizer.Add(self._import_preset_btn, flag=wx.RIGHT, border=5)
 		self._cache_delete_btn = wx.Button(self, label=_("Delete cached files..."))
 		self._cache_delete_btn.Bind(wx.EVT_BUTTON, self._on_delete_cache)
 		self._cache_delete_btn.Show(callable(getattr(type(self._provider), "delete_cached_files", None)))
@@ -187,7 +183,7 @@ class ModelManagerDialog(wx.Dialog):
 		button_sizer.Add(self._configure_btn, flag=wx.LEFT, border=5)
 		self._runtime_btn = wx.Button(self, label=_("Runtime settings..."))
 		self._runtime_btn.Bind(wx.EVT_BUTTON, self._on_runtime_settings)
-		self._runtime_btn.Show(callable(getattr(type(self._provider), "get_runtime_options", None)))
+		self._runtime_btn.Show(False)
 		button_sizer.Add(self._runtime_btn, flag=wx.LEFT, border=5)
 
 		s_helper.addItem(button_sizer)
@@ -434,7 +430,6 @@ class ModelManagerDialog(wx.Dialog):
 		features = self._provider.features
 		self._import_file_btn.Enable(not busy and features.import_model)
 		self._import_hf_btn.Enable(not busy and features.import_model)
-		self._import_preset_btn.Enable(not busy and features.import_preset)
 		if hasattr(self, "_refresh_btn"):
 			self._refresh_btn.Enable(not busy and self._fetch_task is None)
 		model = self._get_selected_model()
@@ -548,24 +543,6 @@ class ModelManagerDialog(wx.Dialog):
 	def _on_refresh(self, _event: wx.Event) -> None:
 		model_catalog_cache.invalidate(self._provider.provider_id)
 		self._refresh_model_list()
-
-	def _on_import_preset(self, _event: wx.Event) -> None:
-		if not self._provider.features.import_preset:
-			return
-		dialog = wx.FileDialog(self, message=_("Select llama.cpp model preset"),
-			wildcard=_("Preset files (*.ini)|*.ini|All files (*.*)|*.*"), style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
-		try:
-			if dialog.ShowModal() != wx.ID_OK:
-				return
-			path = dialog.GetPath()
-		finally:
-			dialog.Destroy()
-		def describe(summary):
-			if self._is_destroyed:
-				return
-			message = _("Imported {count} models and {settings} runtime settings. The original file is unchanged and is no longer watched.\n\nModels:\n{models}").format(count=len(summary.model_ids), settings=summary.option_count, models="\n".join(summary.model_ids))
-			wx.MessageBox(message, _("Preset import summary"), wx.OK | wx.ICON_INFORMATION, parent=self)
-		self._run_mutation(lambda: self._provider.import_preset(path), _("Preset imported into the model catalog."), on_success=describe)
 
 	def _on_delete(self, _event: wx.CommandEvent) -> None:
 		model = self._get_selected_model()
@@ -721,26 +698,6 @@ class ModelManagerDialog(wx.Dialog):
 		if model is None or not model.state.is_ready():
 			return
 		self._run_mutation(lambda: self._provider.set_active_model(model.id), _("Active model changed."), focus_model_id=model.id)
-
-	def _on_runtime_settings(self, _event):
-		model = self._get_selected_model()
-		if model is None or not model.registered:
-			return
-		def show(configuration):
-			if self._is_destroyed:
-				return
-			from .llama_runtime_dialog import LlamaRuntimeDialog
-			options, supported = configuration
-			dialog = LlamaRuntimeDialog(self, model.id, options, supported)
-			try:
-				if dialog.ShowModal() != wx.ID_OK:
-					return
-				updated = dialog.options
-			finally:
-				dialog.Destroy()
-			self._run_mutation(lambda: self._provider.set_runtime_options(model.id, updated),
-				_("Runtime settings saved. They apply on the next model load; the owned server may restart."), focus_model_id=model.id)
-		self._run_mutation(lambda: self._provider.get_runtime_configuration(model.id), "", on_success=show)
 
 	def _on_configure_model(self, _event: wx.CommandEvent) -> None:
 		"""Open the per-model Configure dialog for the selected model."""

@@ -129,8 +129,11 @@ class ProviderInfo:
 	def actions(self) -> tuple[ProviderAction, ...]:
 		"""Actions valid for this provider in its current state."""
 		if self.kind is ProviderKind.CLOUD or not self.installable:
-			# Cloud / non-installable local providers: no install step.
-			if self.state is ProviderLifecycleState.CONFIGURED:
+			# Local providers without an install step still need the model
+			# manager before any model exists: selecting a model is how the
+			# provider becomes configured.  Cloud providers need credentials
+			# first, so their model manager appears after configuration.
+			if self.state is ProviderLifecycleState.CONFIGURED or self.kind is ProviderKind.LOCAL:
 				return (ProviderAction.CONFIGURE, ProviderAction.MANAGE_MODELS)
 			return (ProviderAction.CONFIGURE,)
 		if self.state in (
@@ -219,13 +222,6 @@ _CONFIGURE_FIELDS: dict[str, tuple[ConfigureFieldSpec, ...]] = {
 	"llama-cpp-server": (
 		ConfigureFieldSpec("server_url", _("Server URL:")),
 		ConfigureFieldSpec("server_executable", _("llama-server executable:"), required=False),
-		ConfigureFieldSpec(
-			"models_preset",
-			_("Models preset path:"),
-			kind="file",
-			file_wildcard=_("INI files (*.ini)|*.ini|All files (*.*)|*.*"),
-			required=False,
-		),
 	),
 }
 
@@ -472,12 +468,11 @@ def build_model_manager(
 	if normalized == "llama-cpp-server":
 		from .llama_manager import LlamaCppModelManager
 
-		from ..config.settings import compare_provider_model_name, set_provider_preset_path
+		from ..config.settings import compare_provider_model_name
 
 		return LlamaCppModelManager(config=config, set_model_fn=_make_set_model(normalized),
 			clear_model_fn=lambda expected, value: compare_provider_model_name(normalized, expected, value),
-			get_config_fn=lambda: build_provider_config(normalized),
-			set_preset_fn=lambda path: set_provider_preset_path(normalized, path))
+			get_config_fn=lambda: build_provider_config(normalized))
 	return CloudModelManagerAdapter(
 		provider_id=normalized,
 		config=config,

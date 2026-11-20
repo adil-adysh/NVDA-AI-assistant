@@ -110,6 +110,10 @@ class LLMProvider(abc.ABC):
 	def list_models(self) -> tuple[ProviderModelInfo, ...]:
 		raise NotImplementedError
 
+	def check_connection(self) -> int:
+		"""Verify the remote connection and return its advertised model count."""
+		return len(self.list_models())
+
 	@abc.abstractmethod
 	def get_model_info(self, model_name: str | None = None) -> ProviderModelInfo | None:
 		raise NotImplementedError

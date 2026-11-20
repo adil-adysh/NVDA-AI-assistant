@@ -1,66 +1,76 @@
-"""Pure llama router preset reconciliation shared by NVDA and worker."""
-from pathlib import Path
+"""HF-only llama.cpp preset syntax, codec, and validation."""
+from __future__ import annotations
+
 import re
 from typing import Any
+
+from .llama_options import (
+	OPTION_BY_KEY,
+	SOURCE_KEYS,
+	canonical_key,
+	validate_options,
+	validate_source_fields,
+)
 from .translation import _
-from .llama_options import validate_options
-from .llama_companions import companion_options
 
 _SECTION_RE = re.compile(r"^\[([^\]\r\n]+)\]\s*$")
+_MODEL_ID_RE = re.compile(r"^[^\[\]*\r\n]+$")
+_SUPPORTED_VERSION = "1"
+
+
+def validate_model_id(value: object) -> str:
+	model_id = str(value or "").strip()
+	if not model_id or len(model_id) > 96 or not _MODEL_ID_RE.fullmatch(model_id):
+		raise ValueError(_("Preset model ID must be 1-96 characters without []* or newlines."))
+	return model_id
 
 
 class LlamaPresetCodec:
-	"""Versioned supported syntax; opaque user options remain untouched."""
-	SUPPORTED_VERSION = "1"
+	SUPPORTED_VERSION = _SUPPORTED_VERSION
 
 	def validate(self, text: str) -> None:
 		version = None
-		section = None
-		sections = set()
-		keys = set()
+		current = None
+		sections: dict[str, dict[str, str]] = {}
 		for number, raw in enumerate(text.lstrip("\ufeff").splitlines(), 1):
 			line = raw.strip()
 			if not line or line.startswith(("#", ";")):
 				continue
 			match = _SECTION_RE.fullmatch(line)
 			if match:
-				section = match.group(1).strip()
-				if not section or section in sections or any(ord(char) < 32 for char in section):
-					raise ValueError(_("Duplicate or empty llama.cpp preset section on line {line}.").format(line=number))
-				sections.add(section)
-				keys = set()
+				current = match.group(1).strip()
+				if current in sections:
+					raise ValueError(_("Duplicate preset section on line {line}.").format(line=number))
+				if current == "*":
+					raise ValueError(_("Global [*] sections are not supported."))
+				validate_model_id(current)
+				sections[current] = {}
 				continue
 			if "=" not in line or line.startswith("["):
-				raise ValueError(_("Invalid llama.cpp preset syntax on line {line}.").format(line=number))
-			key, value = (value.strip() for value in line.split("=", 1))
-			key = key.lower()
-			if key in keys:
-				raise ValueError(_("Duplicate llama.cpp preset option on line {line}.").format(line=number))
-			keys.add(key)
-			if section is None and key == "version":
+				raise ValueError(_("Invalid preset syntax on line {line}.").format(line=number))
+			key, value = (part.strip() for part in line.split("=", 1))
+			normalized = canonical_key(key)
+			if current is None:
+				if normalized != "version":
+					raise ValueError(_("Only version is allowed before the first section on line {line}.").format(line=number))
+				if version is not None:
+					raise ValueError(_("Duplicate version on line {line}.").format(line=number))
 				version = value
-			if key == "ctx-size":
-				try:
-					if int(value) < 0:
-						raise ValueError()
-				except ValueError as exc:
-					raise ValueError(_("Invalid llama.cpp context size on line {line}.").format(line=number)) from exc
-		if version != self.SUPPORTED_VERSION:
-			raise ValueError(_("Unsupported llama.cpp preset version: {version}. Expected version 1.").format(version=version or _("missing")))
-
-	def _validated_models(self, models):
-		valid = []
-		for model in models:
-			identity = model.get("model_id", "") if isinstance(model, dict) else getattr(model, "model_id", "")
-			if not str(identity).strip() or any(char in str(identity) for char in "[]*\r\n"):
 				continue
-			values = model if isinstance(model, dict) else vars(model)
-			for key in ("source", "variant", "local_path", "artifact", "hf_repo", "hf-repo"):
-				value = values.get(key)
-				if value is not None and any(ord(char) < 32 for char in str(value)):
-					raise ValueError(_("Model preset values must be single-line strings."))
-			valid.append(model)
-		return valid
+			if normalized in sections[current]:
+				raise ValueError(_("Duplicate preset option on line {line}.").format(line=number))
+			if normalized not in SOURCE_KEYS and normalized not in OPTION_BY_KEY:
+				raise ValueError(_("Unsupported preset key on line {line}: {key}.").format(line=number, key=key))
+			sections[current][normalized] = value
+		if version != _SUPPORTED_VERSION:
+			raise ValueError(_("Unsupported preset version: {version}. Expected version 1.").format(version=version or _("missing")))
+		for section, fields in sections.items():
+			source = {key: fields.pop(key) for key in list(fields) if key in SOURCE_KEYS}
+			try:
+				validate_source_fields(source)
+				validate_options(fields)
+			except ValueError as exc:
+				raise ValueError(_("[{section}] {detail}").format(section=section, detail=exc)) from exc
 
 	def encode(self, models: list[Any]) -> str:
 		def identity(model):
@@ -69,135 +79,81 @@ class LlamaPresetCodec:
 		self.validate(result)
 		return result
 
-	def reconcile(self, text: str, models: list[Any], *, removed_ids=()) -> str:
-		if text.strip():
-			self.validate(text)
-		for model_id in sorted(removed_ids):
-			text = self.remove(text, model_id)
-		result = merge_models_preset(text, sorted(self._validated_models(models), key=lambda m: str(m.get("model_id", "") if isinstance(m, dict) else m.model_id)))
-		self.validate(result)
-		return result
+	def _validated_models(self, models):
+		valid = []
+		for model in models:
+			try:
+				validate_model_id(model.get("model_id", "") if isinstance(model, dict) else getattr(model, "model_id", ""))
+			except (AttributeError, TypeError, ValueError):
+				continue
+			values = model if isinstance(model, dict) else vars(model)
+			validate_source_fields(_source_fields(values))
+			validate_options(values.get("preset_options") or {})
+			valid.append(model)
+		return valid
 
-	def remove(self, text: str, model_id: str) -> str:
-		lines = text.splitlines()
-		output = []
-		keep = True
-		for line in lines:
-			match = _SECTION_RE.fullmatch(line.strip())
-			if match:
-				keep = match.group(1).strip() != model_id
-			if keep:
-				output.append(line)
-		return "\n".join(output).rstrip() + "\n"
 
-def _record_source_lines(model: dict[str, Any] | Any) -> list[str]:
-	if isinstance(model, dict):
-		kind = model.get("kind", "")
-		source = str(model.get("source", "")).strip()
-		variant = model.get("variant")
-		local_path = model.get("local_path")
-		artifact = model.get("artifact") or model.get("hf-file")
-		hf_repo = model.get("hf_repo") or model.get("hf-repo")
-	else:
-		kind = getattr(model, "kind", "")
-		source = str(getattr(model, "source", "")).strip()
-		variant = getattr(model, "variant", None)
-		local_path = getattr(model, "local_path", None)
-		artifact = getattr(model, "artifact", None)
-		hf_repo = getattr(model, "hf_repo", None)
+def _value(model: Any, key: str, default=None):
+	return model.get(key, default) if isinstance(model, dict) else getattr(model, key, default)
 
-	if hf_repo:
-		clean_hf_repo = re.sub(r"[\r\n]+", "", str(hf_repo)).strip()
-		if clean_hf_repo:
-			return [f"hf-repo = {clean_hf_repo}"] + ([f"hf-file = {re.sub(chr(13) + '|' + chr(10), '', str(artifact))}"] if artifact else [])
-	if kind == "hugging_face" or source.startswith("hf://"):
-		clean_source = re.sub(r"[\r\n]+", "", source).strip()
-		repo = clean_source.removeprefix("hf://").strip()
-		if variant:
-			clean_variant = re.sub(r"[\r\n]+", "", str(variant)).strip()
-			if clean_variant:
-				repo = f"{repo}:{clean_variant}"
-		if repo:
-			return [f"hf-repo = {repo}"] + ([f"hf-file = {re.sub(chr(13) + '|' + chr(10), '', str(artifact))}"] if artifact else [])
-	raw_target = str(local_path or source)
-	clean_target = re.sub(r"[\r\n]+", "", raw_target).strip()
-	if not clean_target:
-		return []
-	try:
-		path = str(Path(clean_target).resolve())
-	except Exception:
-		path = clean_target
-	return [f"model = {path}"]
+
+def _source_fields(model: Any) -> dict[str, str]:
+	fields = {
+		"hf-repo": _value(model, "repo", "") or "",
+		"hf-file": _value(model, "file", None) or "",
+		"spec-draft-hf": _value(model, "draft_repo", None) or "",
+		"spec-draft-model": _value(model, "draft_file", None) or "",
+	}
+	return {key: value for key, value in fields.items() if value}
+
+
+def _record_source_lines(model: Any) -> list[str]:
+	fields = validate_source_fields(_source_fields(model))
+	order = ("hf-repo", "hf-file", "spec-draft-hf", "spec-draft-model")
+	return [f"{key} = {fields[key]}" for key in order if key in fields]
 
 
 def build_models_preset(models: list[Any]) -> str:
-	"""Build a llama-server router preset from model records."""
 	lines = ["version = 1", ""]
-	for m in models:
-		m_id = m.get("model_id") if isinstance(m, dict) else getattr(m, "model_id", "")
-		m_id = str(m_id or "").strip()
-		if not m_id or any(char in m_id for char in "[]*\r\n"):
+	seen: set[str] = set()
+	for model in models:
+		try:
+			model_id = validate_model_id(_value(model, "model_id", "") or "")
+		except (AttributeError, TypeError, ValueError):
 			continue
-		lines.append(f"[{m_id}]")
-		lines.extend(_new_record_lines(m))
+		if model_id in seen:
+			continue
+		seen.add(model_id)
+		lines.append(f"[{model_id}]")
+		lines.extend(_record_source_lines(model))
+		options = validate_options(_value(model, "preset_options", {}) or {})
+		lines.extend(f"{key} = {value}" for key, value in sorted(options.items()))
 		lines.append("")
 	return "\n".join(lines)
 
 
-def _new_record_lines(model: Any) -> list[str]:
-	lines = _record_source_lines(model)
-	values = model if isinstance(model, dict) else vars(model)
-	options = validate_options(values.get("preset_options") or {})
-	options.update(companion_options(values.get("companions")))
-	context = values.get("context_window")
-	if context is not None and "ctx-size" not in options:
-		if int(context) <= 0:
-			raise ValueError(_("Model context size must be positive."))
-		lines.append(f"ctx-size = {int(context)}")
-	if "thinking" in (values.get("capabilities") or ()) and "reasoning" not in options and "reasoning-format" not in options:
-		lines.append("reasoning = on")
-	lines.extend(f"{key} = {value}" for key, value in sorted(options.items()))
-	return lines
-
-
-def merge_models_preset(text: str, models: list[Any]) -> str:
-	"""Reconcile model sources while preserving preset comments and options."""
-	if not text.strip():
-		return build_models_preset(models)
-	lines = text.splitlines()
-	sections: list[tuple[str, int, int]] = []
-	for index, line in enumerate(lines):
-		match = _SECTION_RE.match(line.strip())
-		if match:
-			if sections:
-				sections[-1] = (sections[-1][0], sections[-1][1], index)
-			sections.append((match.group(1).strip(), index, len(lines)))
-
-	managed: dict[str, Any] = {}
-	for m in models:
-		m_id = m.get("model_id") if isinstance(m, dict) else getattr(m, "model_id", "")
-		m_id_str = str(m_id or "").strip()
-		if m_id_str and not any(char in m_id_str for char in "[]*\r\n"):
-			managed[m_id_str] = m
-
-	output = list(lines)
-	for section, start, end in reversed(sections):
-		m = managed.get(section)
-		if m is None or section == "*":
-			continue
-		body = output[start + 1 : end]
-		body = [line for line in body if not re.match(r"^\s*(?:model|hf-repo|hf-file)\s*=", line, re.I)]
-		body = _record_source_lines(m) + body
-		output[start + 1 : end] = body
-
-	existing = {section for section, _, _ in sections}
-	for m in models:
-		m_id = m.get("model_id") if isinstance(m, dict) else getattr(m, "model_id", "")
-		m_id_str = str(m_id or "").strip()
-		if not m_id_str or any(char in m_id_str for char in "[]*\r\n") or m_id_str in existing:
-			continue
-		while output and not output[-1].strip():
-			output.pop()
-		output.extend(["", f"[{m_id_str}]", *_new_record_lines(m)])
-	return "\n".join(output).rstrip() + "\n"
-
+def validate_preset_model(model_id: object, repo: object, file: object = None,
+		draft_repo: object = None, draft_file: object = None,
+		options: dict[str, str] | None = None) -> dict[str, object]:
+	"""Validate one preset record and return its canonical fields."""
+	model_id = validate_model_id(model_id)
+	source = validate_source_fields({
+		"hf-repo": repo,
+		"hf-file": file,
+		"spec-draft-hf": draft_repo,
+		"spec-draft-model": draft_file,
+	})
+	canonical = validate_options(options or {})
+	if source.get("spec-draft-model") and "spec-type" not in canonical:
+		raise ValueError(_("spec-draft-model requires a speculative spec-type."))
+	spec_type = canonical.get("spec-type", "")
+	if source.get("spec-draft-model") and not any(mode.startswith("draft-") for mode in spec_type.split(",")):
+		raise ValueError(_("spec-draft-model requires a draft-* spec-type."))
+	return {
+		"model_id": model_id,
+		"repo": source["hf-repo"],
+		"file": source.get("hf-file"),
+		"draft_repo": source.get("spec-draft-hf"),
+		"draft_file": source.get("spec-draft-model"),
+		"preset_options": canonical,
+	}

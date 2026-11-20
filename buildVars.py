@@ -32,20 +32,32 @@ Features include:
 * persistent chat conversations
 * page content and screenshot attachment
 * runtime provider and model switching
-* support for Ollama, OpenAI-compatible APIs, Gemini, LiteRT-LM, and llama.cpp local inference
+* support for Ollama, OpenAI-compatible APIs, Gemini, LiteRT-LM, and advanced HF-only llama.cpp presets
 * provider enable/disable and per-model sampling settings
 
 The add-on includes a WebView-based chat interface with streaming responses, conversation history, and contextual workflows designed for NVDA users.
 	"""
 	),
 	# version
-	addon_version="0.14.1",
+	addon_version="0.16.0",
 	# Brief changelog for this version
 	# Translators: what's new content for this add-on version to be shown in the add-on store
 	addon_changelog=_(
 		"""
-Fixed
-• MCP tool search and approval filter now have visible labels, so NVDA announces "Search tools" and "Show" instead of "Discovered tools" and an unnamed combo box
+	Added
+	• cached Hugging Face source picker for llama.cpp presets
+	• exact GGUF selection for main and draft models
+	• local cache inventory for model, draft and projector roles
+	• speculative-mode provenance and draft auto-detection
+
+	Changed
+	• llama.cpp preset editor is split into Model, Runtime and Preview tabs
+	• manual Hugging Face references remain pass-through, with optional quant
+	• projector selection is automatic same-repository or disabled
+
+	Fixed
+	• preset IDs now track the preset name until edited manually
+	• cached picker now returns the selected configuration to the editor
 		"""
 	),
 	# Author(s)
