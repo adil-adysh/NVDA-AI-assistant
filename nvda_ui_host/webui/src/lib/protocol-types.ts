@@ -48,6 +48,7 @@ export interface EventEnvelope extends ProtocolEnvelope {
 export interface PresentationMetadata {
 	controls_visible?: boolean;
 	interaction_mode?: 'display' | 'chat';
+	request_id?: string;
 	focus_target?: string;
 	status_message?: string;
 	localized_strings?: Record<string, string>;
@@ -189,6 +190,7 @@ export interface RenderDisplayPayload extends PayloadObject {
 }
 
 export interface OpenChatPayload extends PayloadObject {
+	title?: string;
 	conversation_id?: string | null;
 	initial_text?: string;
 	initial_image_base64?: string;

@@ -119,7 +119,7 @@ export function renderDisplay(commandId: string, payload: RenderDisplayPayload):
 	if (payload.title) setWindowTitle(payload.title);
 	setPendingFocus(displayPresentation.initialFocus);
 	setCopyBuffers(
-		payload.copy_text || payload.output_text || '',
+		payload.copy_text || '',
 		payload.copy_markdown || '',
 	);
 	reportUiApplied(commandId);

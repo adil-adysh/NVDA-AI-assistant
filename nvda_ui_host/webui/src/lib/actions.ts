@@ -4,7 +4,6 @@ import { invalidatePresentationFocus } from './commands/_shared';
 import {
 	extractMarkdownFromBlocks,
 	extractTextFromBlocks,
-	formatRoleLabel,
 	getCurrentCopyMarkdown,
 	getCurrentCopyText,
 	hasRenderedTables,
@@ -96,16 +95,18 @@ export function copyCurrentMarkdown(): Promise<boolean> {
 	return copyToClipboard(getCurrentCopyMarkdown());
 }
 
-export function copyMessageText(message: { role?: string; content?: { type: string; text?: string }[] }): void {
+export function copyMessageText(
+	message: { content?: { type: string; text?: string; html?: string }[] },
+): void {
 	if (!message) return;
 	copyToClipboard(extractTextFromBlocks(message.content));
 }
 
-export function copyMessageMarkdown(message: { role?: string; content?: { type: string; text?: string }[] }): void {
+export function copyMessageMarkdown(
+	message: { content?: { type: string; text?: string; html?: string }[] },
+): void {
 	if (!message) return;
-	const roleLabel = formatRoleLabel(message.role || 'assistant');
-	const markdown = `##### ${roleLabel}\n\n${extractMarkdownFromBlocks(message.content)}`.trim();
-	copyToClipboard(markdown);
+	copyToClipboard(extractMarkdownFromBlocks(message.content));
 }
 
 export function copyMessageTable(message: { content?: { type: string; html?: string }[] }): void {
