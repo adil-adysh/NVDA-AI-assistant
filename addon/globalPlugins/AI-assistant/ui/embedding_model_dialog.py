@@ -44,6 +44,7 @@ class EmbeddingModelManagementDialog(wx.Dialog):
 		sizer = wx.BoxSizer(wx.VERTICAL)
 		sizer.Add(wx.StaticText(self, label=_("Embedding models select relevant context for summaries and page chat.")), 0, wx.ALL | wx.EXPAND, 10)
 		self._list = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.LC_HRULES)
+		self._list.SetName(_("Embedding model catalog"))
 		for title, width in ((_("Model"), 180), (_("Status"), 100), (_("Dimensions"), 90), (_("Context"), 90), (_("Size"), 90), (_("Active"), 70)):
 			self._list.AppendColumn(title, width=width)
 		self._list.Bind(wx.EVT_LIST_ITEM_SELECTED, lambda _event: self._update_buttons())
@@ -81,7 +82,9 @@ class EmbeddingModelManagementDialog(wx.Dialog):
 			self._list.SetItem(index, 4, f"{model.size_mb:.0f} MB")
 			self._list.SetItem(index, 5, _("Yes") if model.id == active else "")
 		if self._models:
-			self._list.Select(next((i for i, model in enumerate(self._models) if model.id == active), 0))
+			selected = next((i for i, model in enumerate(self._models) if model.id == active), 0)
+			self._list.Select(selected)
+			self._list.Focus(selected)
 		self._update_buttons()
 		if self._status_task is not None and not self._status_task.done:
 			return

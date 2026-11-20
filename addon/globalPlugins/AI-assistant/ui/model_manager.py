@@ -32,6 +32,7 @@ from ..service.model_cache import model_capability_cache, model_catalog_cache
 from ..service.error_reporter import ErrorContext, error_reporter
 from .task_runner import TaskHandle, background_tasks
 from ..core.cancellation import cancellation_event_scope
+from .model_filters import matches_model_filters
 from . import nvda_ui
 
 _RECOMMENDED_PRIORITY = 50
@@ -73,6 +74,7 @@ class ModelManagerDialog(wx.Dialog):
 		self._refresh_generation = 0
 		self._refresh_pending = False
 		self._mutation_focus = None
+		self._has_populated_models = False
 
 		self._build_ui()
 		self._start_initial_load()
@@ -89,6 +91,40 @@ class ModelManagerDialog(wx.Dialog):
 	def _build_ui(self) -> None:
 		main_sizer = wx.BoxSizer(wx.VERTICAL)
 		s_helper = guiHelper.BoxSizerHelper(self, sizer=main_sizer)
+		filter_sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+		enabled_filter_helper = guiHelper.LabeledControlHelper(
+			self, _("&Enabled state:"), wx.Choice, choices=[],
+		)
+		self._enabled_filter = enabled_filter_helper.control
+		self._enabled_filter.SetName(_("Enabled state"))
+		for value, label in (("all", _("All")), ("enabled", _("Enabled")), ("disabled", _("Disabled"))):
+			self._enabled_filter.Append(label, value)
+		self._enabled_filter.SetSelection(0)
+		self._enabled_filter.Bind(wx.EVT_CHOICE, self._on_filter_change)
+		filter_sizer.Add(enabled_filter_helper.sizer, 0, wx.RIGHT, 12)
+
+		availability_filter_helper = guiHelper.LabeledControlHelper(
+			self, _("&Availability:"), wx.Choice, choices=[],
+		)
+		self._availability_filter = availability_filter_helper.control
+		self._availability_filter.SetName(_("Availability"))
+		for value, label in (
+			("all", _("All")),
+			("available", _("Available")),
+			("not_downloaded", _("Not downloaded")),
+			("downloading", _("Downloading")),
+			("failed", _("Failed")),
+		):
+			self._availability_filter.Append(label, value)
+		self._availability_filter.SetSelection(0)
+		self._availability_filter.Bind(wx.EVT_CHOICE, self._on_filter_change)
+		filter_sizer.Add(availability_filter_helper.sizer, 0)
+		s_helper.addItem(filter_sizer, flag=wx.EXPAND)
+
+		self._filter_status = wx.StaticText(self, label="")
+		self._filter_status.SetName(_("Model list status"))
+		s_helper.addItem(self._filter_status)
 
 		# ── Model list ───────────────────────────────────────────
 		# TRANSLATORS: Label for the model list.
@@ -99,9 +135,10 @@ class ModelManagerDialog(wx.Dialog):
 			self,
 			style=(wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.LC_HRULES | wx.LC_VRULES),
 		)
-		self._list.AppendColumn("", width=40)
-		self._list.AppendColumn("", width=40)
-		self._list.AppendColumn("", width=280)
+		self._list.SetName(_("Model catalog"))
+		self._list.AppendColumn(_("Enabled"), width=85)
+		self._list.AppendColumn(_("Active"), width=75)
+		self._list.AppendColumn(_("Model"), width=280)
 		# TRANSLATORS: Column header for the download status.
 		self._list.AppendColumn(_("Status"), width=180)
 		# TRANSLATORS: Column header for the model file size.
@@ -109,9 +146,8 @@ class ModelManagerDialog(wx.Dialog):
 
 		self._list.Bind(wx.EVT_LIST_ITEM_SELECTED, self._on_selection_change)
 		self._list.Bind(wx.EVT_LIST_ITEM_DESELECTED, self._on_selection_change)
-		self._list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_double_click)
-		self._list.Bind(wx.EVT_LEFT_DOWN, self._on_left_down)
 		s_helper.addItem(self._list, flag=wx.EXPAND, proportion=1)
+		self._list.SetFocus()
 		s_helper.sizer.AddSpacer(8)
 
 		# ── Model details panel ──────────────────────────────────
@@ -130,16 +166,6 @@ class ModelManagerDialog(wx.Dialog):
 		self._details_text.SetBackgroundColour(self.GetBackgroundColour())
 		s_helper.addItem(self._details_text, flag=wx.EXPAND)
 		s_helper.sizer.AddSpacer(8)
-
-		# ── Show disabled checkbox ───────────────────────────────
-		# TRANSLATORS: Checkbox to show disabled models.
-		self._show_disabled_cb = wx.CheckBox(
-			self,
-			label=_("Show disabled models"),
-		)
-		self._show_disabled_cb.SetValue(True)
-		self._show_disabled_cb.Bind(wx.EVT_CHECKBOX, self._on_show_disabled)
-		s_helper.addItem(self._show_disabled_cb)
 
 		# ── Action buttons ───────────────────────────────────────
 		button_sizer = wx.WrapSizer(wx.HORIZONTAL)
@@ -176,6 +202,14 @@ class ModelManagerDialog(wx.Dialog):
 		self._set_active_btn = wx.Button(self, label=_("Set Active"))
 		self._set_active_btn.Bind(wx.EVT_BUTTON, self._on_set_active)
 		button_sizer.Add(self._set_active_btn)
+		self._enable_btn = wx.Button(self, label=_("Enable"))
+		self._enable_btn.SetName(_("Enable selected model"))
+		self._enable_btn.Bind(wx.EVT_BUTTON, self._on_enable_model)
+		button_sizer.Add(self._enable_btn, flag=wx.LEFT, border=5)
+		self._disable_btn = wx.Button(self, label=_("Disable"))
+		self._disable_btn.SetName(_("Disable selected model"))
+		self._disable_btn.Bind(wx.EVT_BUTTON, self._on_disable_model)
+		button_sizer.Add(self._disable_btn, flag=wx.LEFT, border=5)
 
 		# TRANSLATORS: Button to open the per-model Configure dialog.
 		self._configure_btn = wx.Button(self, label=_("Configure Model..."))
@@ -297,9 +331,19 @@ class ModelManagerDialog(wx.Dialog):
 		focus_model_id: str | None = None,
 	) -> None:
 		"""Populate the list control from *models* (must be called on main thread)."""
+		initial_load = not self._has_populated_models
+		current_focus = wx.Window.FindFocus()
+		restore_row_focus = current_focus is self._list or (
+			initial_load
+			and (current_focus is None or current_focus.GetTopLevelParent() is not self)
+		)
+		previous_selection = self._get_selected_model()
+		selected_model_id = focus_model_id or (previous_selection.id if previous_selection else None)
 		self._models = models
-		# Filter using visibility store
+		# Apply both independent filters against the current visibility state.
 		disabled_ids = self._enabled_store.get_disabled_models(self._provider.provider_id)
+		enabled_filter = self._enabled_filter.GetClientData(self._enabled_filter.GetSelection())
+		availability_filter = self._availability_filter.GetClientData(self._availability_filter.GetSelection())
 
 		# Separate by download state + priority
 		recommended_ready: list[ManagedModel] = []
@@ -307,10 +351,9 @@ class ModelManagerDialog(wx.Dialog):
 		other_ready: list[ManagedModel] = []
 		other_download: list[ManagedModel] = []
 
-		show_disabled = self._show_disabled_cb.GetValue()
-
 		for m in self._models:
-			if not show_disabled and m.id in disabled_ids:
+			is_enabled = m.id not in disabled_ids
+			if not matches_model_filters(m.state, is_enabled, enabled_filter, availability_filter):
 				continue
 			rec = m.priority <= _RECOMMENDED_PRIORITY
 			ready = m.state.is_ready()
@@ -343,13 +386,37 @@ class ModelManagerDialog(wx.Dialog):
 			self._add_section_header(_("── Other Models — Available to download ──") if self._provider.features.download else _("── Other Models — Unavailable sources ──"))
 			self._add_models(other_download, disabled_ids)
 
-		# Restore focus to the previously selected model.
-		if focus_model_id is not None:
-			self._select_displayed_model(focus_model_id)
+		self._has_populated_models = True
+		if initial_load and selected_model_id is None:
+			selected_model_id = next(
+				(m.id for m in self._displayed_models if _model_matches_active(m, self._active_id_clean)),
+				None,
+			)
+		selected = (
+			self._select_displayed_model(selected_model_id, focus=restore_row_focus)
+			if selected_model_id is not None
+			else False
+		)
+		if not selected:
+			self._list.SetItemState(-1, 0, wx.LIST_STATE_SELECTED | wx.LIST_STATE_FOCUSED)
+		self._filter_status.SetLabel(
+			_("{count} models shown.").format(count=len(self._displayed_models))
+			if self._displayed_models
+			else _("No models match the selected filters.")
+		)
+		if selected_model_id is not None and not selected and any(
+			model.id == selected_model_id for model in self._models
+		):
+			self._filter_status.SetLabel(
+				_("Selected model is hidden by the current filters. {count} models shown.").format(
+					count=len(self._displayed_models),
+				)
+			)
 
 		self._update_buttons()
+		self._update_details()
 
-	def _select_displayed_model(self, model_id: str) -> None:
+	def _select_displayed_model(self, model_id: str, *, focus: bool = True) -> bool:
 		"""Find *model_id* in displayed models and select its row."""
 		count = self._list.GetItemCount()
 		model_idx = 0
@@ -357,9 +424,11 @@ class ModelManagerDialog(wx.Dialog):
 			if self._list.GetItemText(i, 3):  # has status → real model
 				if model_idx < len(self._displayed_models) and self._displayed_models[model_idx].id == model_id:
 					self._list.Select(i, on=True)
-					self._list.Focus(i)
-					return
+					if focus:
+						self._list.Focus(i)
+					return True
 				model_idx += 1
+		return False
 
 	def _add_section_header(self, label: str) -> None:
 		idx = self._list.InsertItem(self._list.GetItemCount(), label)
@@ -376,13 +445,13 @@ class ModelManagerDialog(wx.Dialog):
 		for m in models:
 			idx = self._list.InsertItem(self._list.GetItemCount(), "")
 
-			# Column 0: enabled checkbox
+			# Column 0: readable enabled state for screen readers.
 			is_enabled = m.id not in disabled_ids
-			self._list.SetItem(idx, 0, "☑" if is_enabled else "☐")  # noqa: RUF001
+			self._list.SetItem(idx, 0, _("Enabled") if is_enabled else _("Disabled"))
 
 			# Column 1: active marker
 			is_active = _model_matches_active(m, self._active_id_clean)
-			self._list.SetItem(idx, 1, "◉" if is_active else "○")  # noqa: RUF001
+			self._list.SetItem(idx, 1, _("Active") if is_active else "")
 
 			# Column 2: display name
 			self._list.SetItem(idx, 2, m.display_name)
@@ -434,6 +503,12 @@ class ModelManagerDialog(wx.Dialog):
 		self._cache_delete_btn.Enable(not busy and ModelAction.DELETE_CACHE in actions)
 		self._set_active_btn.Enable(not busy and ModelAction.SELECT in actions)
 		self._configure_btn.Enable(not busy and model is not None)
+		is_enabled = model is not None and self._enabled_store.is_model_visible(
+			self._provider.provider_id,
+			model.id,
+		)
+		self._enable_btn.Enable(not busy and model is not None and not is_enabled)
+		self._disable_btn.Enable(not busy and model is not None and is_enabled)
 
 	def _update_details(self) -> None:
 		model = self._get_selected_model()
@@ -464,36 +539,22 @@ class ModelManagerDialog(wx.Dialog):
 		self._update_details()
 		event.Skip()
 
-	def _on_left_down(self, event: wx.MouseEvent) -> None:
-		"""Single-click on the checkbox column (col 0) toggles enabled."""
-		x_pos = event.GetPosition().x
-		col0_width = self._list.GetColumnWidth(0)
-		if x_pos <= col0_width:
-			idx = self._list.HitTest(event.GetPosition())[0]
-			if idx >= 0:
-				model = self._get_displayed_model_at(idx)
-				if model is not None:
-					is_enabled = self._enabled_store.is_model_visible(
-						self._provider.provider_id,
-						model.id,
-					)
-					self._toggle_enabled(model, not is_enabled)
-					return  # handled; skip normal selection processing
-		event.Skip()
+	def _on_filter_change(self, event: wx.CommandEvent | None) -> None:
+		"""Reapply both filters without fetching provider data again."""
+		selected = self._get_selected_model()
+		self._populate_model_list(self._models, selected.id if selected else None)
+		if event is not None:
+			event.Skip()
 
-	def _on_double_click(self, _event: wx.ListEvent) -> None:
-		"""Double-click / Enter: toggle enabled."""
+	def _on_enable_model(self, _event: wx.CommandEvent) -> None:
 		model = self._get_selected_model()
-		if model is None:
-			return
-		is_enabled = self._enabled_store.is_model_visible(
-			self._provider.provider_id,
-			model.id,
-		)
-		self._toggle_enabled(model, not is_enabled)
+		if model is not None and not self._enabled_store.is_model_visible(self._provider.provider_id, model.id):
+			self._toggle_enabled(model, True)
 
-	def _on_show_disabled(self, _event: wx.CommandEvent) -> None:
-		self._refresh_model_list()
+	def _on_disable_model(self, _event: wx.CommandEvent) -> None:
+		model = self._get_selected_model()
+		if model is not None and self._enabled_store.is_model_visible(self._provider.provider_id, model.id):
+			self._toggle_enabled(model, False)
 
 	def _on_download(self, _event: wx.CommandEvent) -> None:
 		model = self._get_selected_model()
@@ -752,7 +813,10 @@ class ModelManagerDialog(wx.Dialog):
 			model.id,
 			enabled,
 		)
-		self._refresh_model_list(focus_model_id=model.id)
+		# Update immediately from the cached catalog, then refresh provider state
+		# in the background while retaining the same selection when it remains visible.
+		self._populate_model_list(self._models, focus_model_id=model.id)
+		self._request_model_refresh(focus_model_id=model.id)
 
 
 # ── Module-level helpers ───────────────────────────────────────────

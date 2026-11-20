@@ -14,6 +14,7 @@ class LlamaModelsDialog(wx.Dialog):
 			style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
 		self._provider = provider
 		self._records = ()
+		self._has_populated_presets = False
 		self._task = None
 		self._closed = False
 		helper = guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
@@ -27,6 +28,7 @@ class LlamaModelsDialog(wx.Dialog):
 		self._list.Bind(wx.EVT_LIST_ITEM_SELECTED, lambda event: self._selection_changed())
 		self._list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda event: self._edit())
 		helper.addItem(self._list, flag=wx.EXPAND, proportion=1)
+		self._list.SetFocus()
 		self._details = helper.addLabeledControl(_("Selected preset:"), wx.TextCtrl,
 			style=wx.TE_READONLY | wx.TE_MULTILINE, size=(-1, 100))
 		self._status = wx.StaticText(self, label=_("Loading presets..."))
@@ -98,11 +100,23 @@ class LlamaModelsDialog(wx.Dialog):
 			models = self._provider.list_server_models(refresh=True)
 			return records, {str(item.get("id", "")): item.get("status") or {} for item in models}
 		def show(result):
+			focused_window = wx.Window.FindFocus()
+			initial_load = not self._has_populated_presets
+			restore_row_focus = focused_window is self._list or (
+				initial_load
+				and (focused_window is None or focused_window.GetTopLevelParent() is not self)
+			)
 			selected = self._selected()
 			selected_id = selected.model_id if selected else None
 			self._records, statuses = result
+			self._has_populated_presets = True
 			self._list.DeleteAllItems()
 			active = self._provider.active_model_id
+			target = next((i for i, record in enumerate(self._records) if record.model_id == selected_id), None)
+			if target is None:
+				target = next((i for i, record in enumerate(self._records) if record.model_id == active), None)
+			if target is None and self._records:
+				target = 0
 			for record in self._records:
 				index = self._list.InsertItem(self._list.GetItemCount(), record.display_name or record.model_id)
 				source = record.repo + (f" - {record.file}" if record.file else "")
@@ -116,9 +130,10 @@ class LlamaModelsDialog(wx.Dialog):
 				if isinstance(status, dict) and status.get("failed"):
 					value = _("Failed")
 				self._list.SetItem(index, 5, str(value))
-				if record.model_id == selected_id:
+				if index == target:
 					self._list.Select(index)
-					self._list.Focus(index)
+					if restore_row_focus:
+						self._list.Focus(index)
 			count = len(self._records)
 			self._status.SetLabel(_("{count} preset(s).").format(count=count) if count else
 				_("No presets yet. Add a Hugging Face repository to create one."))

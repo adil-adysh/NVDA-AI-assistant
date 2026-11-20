@@ -11,11 +11,20 @@ from tests.support.bootstrap import load_addon_module
 def load_settings_ui(monkeypatch, *, real_dialog_shell=False):
 	class BoxSizerHelper:
 		def __init__(self, parent, orientation=None, *, sizer=None):
+			self.parent = parent
 			self.sizer = sizer if sizer is not None else wx.BoxSizer(orientation)
 
 		def addItem(self, item, **kwargs):
 			self.sizer.Add(item.sizer if isinstance(item, BoxSizerHelper) else item, **({"flag": wx.EXPAND} | kwargs))
 			return item
+
+		def addLabeledControl(self, label, control_class, **kwargs):
+			row = wx.BoxSizer(wx.VERTICAL)
+			row.Add(wx.StaticText(self.parent, label=label))
+			control = control_class(self.parent, **kwargs)
+			row.Add(control, 1, wx.EXPAND)
+			self.sizer.Add(row, 0, wx.EXPAND)
+			return control
 
 		def addDialogDismissButtons(self, buttons, separated=False):
 			self.sizer.Add(buttons.sizer)

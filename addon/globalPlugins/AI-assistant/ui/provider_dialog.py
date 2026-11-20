@@ -74,9 +74,11 @@ class ProviderManagementDialog(wx.Dialog):
 			style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
 		)
 		self._provider_infos: list[ProviderInfo] = []
+		self._has_populated_providers = False
 
 		self._build_ui()
 		self._refresh_provider_list()
+		self._list.SetFocus()
 
 		# Escape closes the dialog.
 		self.SetEscapeId(wx.ID_CLOSE)
@@ -107,6 +109,7 @@ class ProviderManagementDialog(wx.Dialog):
 			self,
 			style=(wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.LC_HRULES | wx.LC_VRULES),
 		)
+		self._list.SetName(_("Provider catalog"))
 		# TRANSLATORS: Column header for the provider name in the provider list.
 		self._list.AppendColumn(_("Provider"), width=150)
 		# TRANSLATORS: Column header for the provider type (cloud/local) in the provider list.
@@ -177,10 +180,24 @@ class ProviderManagementDialog(wx.Dialog):
 
 	def _refresh_provider_list(self) -> None:
 		"""Re-derive provider states and repopulate the list."""
+		focused_window = wx.Window.FindFocus()
+		restore_row_focus = focused_window is self._list or not self._has_populated_providers
+		focused_action = any(focused_window is button for button in (
+			self._install_btn,
+			self._upgrade_btn,
+			self._configure_btn,
+			self._manage_btn,
+			self._set_active_btn,
+			self._enable_btn,
+		))
 		prev_id = self._selected_info().id if self._selected_info() is not None else None
 		self._provider_infos = list(get_provider_infos())
+		self._has_populated_providers = True
 		self._list.DeleteAllItems()
 		target = 0
+		active_target = next((i for i, info in enumerate(self._provider_infos) if info.active), None)
+		if active_target is not None:
+			target = active_target
 		for i, info in enumerate(self._provider_infos):
 			idx = self._list.InsertItem(self._list.GetItemCount(), info.name)
 			self._list.SetItem(idx, 1, provider_kind_label(info.kind))
@@ -189,11 +206,17 @@ class ProviderManagementDialog(wx.Dialog):
 			self._list.SetItem(idx, 3, _("Yes") if info.enabled else _("No"))
 			# TRANSLATORS: Value shown in the Active column when a provider is the active one.
 			self._list.SetItem(idx, 4, _("Yes") if info.active else "")
-			if info.id == prev_id:
+			if prev_id is not None and info.id == prev_id:
 				target = i
 		if self._provider_infos:
 			self._list.Select(target, on=1)
 		self._update_actions()
+		if self._provider_infos:
+			if focused_action and not focused_window.IsShown():
+				self._list.SetFocus()
+				restore_row_focus = True
+			if restore_row_focus:
+				self._list.Focus(target)
 
 	def _selected_info(self) -> ProviderInfo | None:
 		sel = self._list.GetFirstSelected()

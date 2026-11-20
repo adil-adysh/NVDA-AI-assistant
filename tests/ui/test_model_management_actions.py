@@ -21,11 +21,12 @@ def module(monkeypatch):
 def dialog_shell(module, model=None):
     state = SimpleNamespace(_is_destroyed=False, _mutation_task=None, _fetch_task=None,
         _refresh_generation=2, _refresh_pending=False, _mutation_focus=None,
-        _provider=SimpleNamespace(features=SimpleNamespace(download=False, delete=True, import_model=True)),
+		_provider=SimpleNamespace(provider_id="test-provider", features=SimpleNamespace(download=False, delete=True, import_model=True)),
+		_enabled_store=SimpleNamespace(is_model_visible=Mock(return_value=True)),
         _get_selected_model=lambda: model, _pending_downloads=set(), _models=[],
         _list=Mock(), _populate_model_list=Mock())
     for name in ("_download_btn", "_delete_btn", "_cache_delete_btn", "_import_file_btn",
-	             "_import_hf_btn", "_set_active_btn", "_configure_btn"):
+	             "_import_hf_btn", "_set_active_btn", "_configure_btn", "_enable_btn", "_disable_btn"):
         setattr(state, name, Mock())
     return state
 
