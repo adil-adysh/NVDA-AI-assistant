@@ -1,101 +1,62 @@
-# -*- coding: utf-8 -*-
+"""Privacy-safe measurements for provider requests."""
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
-from math import ceil
-from typing import Any
+import math
+import re
+import time
 
 
-def estimate_tokens(text: str) -> int:
-	"""Estimate token count for a text string using a simple heuristic."""
-	if not text:
-		return 0
-	return max(1, ceil(len(text) / 4))
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
+_MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$")
+_REPOSITORY_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_DRIVE_RELATIVE_PATH_RE = re.compile(r"^[A-Za-z]:")
+_HOST_PORT_RE = re.compile(r"^(?:localhost|(?:[A-Za-z0-9-]+\.)+[A-Za-z0-9-]+):\d{1,5}$", re.IGNORECASE)
 
 
-@dataclass
+def _safe_identifier(value: object, pattern: re.Pattern[str], fallback: str) -> str:
+	if not isinstance(value, str) or not pattern.fullmatch(value) or "://" in value:
+		return fallback
+	return value
+
+
+def _safe_model(value: object) -> str:
+	if not isinstance(value, str):
+		return "unknown"
+	if _DRIVE_RELATIVE_PATH_RE.match(value) or _HOST_PORT_RE.fullmatch(value):
+		return "unknown"
+	if value.lower().endswith((".gguf", ".litert", ".litertlm", ".safetensors", ".onnx", ".bin")):
+		return "unknown"
+	if _MODEL_NAME_RE.fullmatch(value):
+		return value
+	if _REPOSITORY_MODEL_RE.fullmatch(value):
+		return value
+	return "unknown"
+
+
+@dataclass(frozen=True, slots=True)
 class RequestMetrics:
+	"""Allowlisted metadata for one provider invocation; content is never accepted."""
+
 	request_type: str
 	provider: str
-	model: str = "unknown"
-	start_time: float = 0.0
-	end_time: float = 0.0
-	duration_seconds: float = 0.0
-	success: bool = False
-	error: str | None = None
+	model: str | None
+	duration_ms: float
+	success: bool
+	error_type: str | None = None
 
-	def finalize(self, end_time: float, success: bool, error: str | None = None) -> None:
-		self.end_time = end_time
-		self.duration_seconds = end_time - self.start_time
-		self.success = success
-		self.error = error
-
-	def to_dict(self) -> dict[str, Any]:
-		return {
-			"request_type": self.request_type,
-			"provider": self.provider,
-			"model": self.model,
-			"duration_seconds": self.duration_seconds,
-			"success": self.success,
-			"error": self.error,
-		}
-
-	def to_log_record(self) -> dict[str, Any]:
-		record = {
+	def to_log_record(self) -> dict[str, object]:
+		duration = self.duration_ms if math.isfinite(self.duration_ms) and self.duration_ms >= 0 else 0.0
+		record: dict[str, object] = {
+			"record_type": "request_metric",
+			"schema_version": 1,
 			"timestamp": time.time(),
+			"request_type": _safe_identifier(self.request_type, _IDENTIFIER_RE, "unknown"),
+			"provider": _safe_identifier(self.provider, _IDENTIFIER_RE, "unknown"),
+			"model": _safe_model(self.model) if self.model else "unknown",
+			"duration_ms": round(duration, 3),
+			"success": bool(self.success),
 		}
-		record.update(self.to_dict())
+		if not self.success and self.error_type:
+			record["error_type"] = _safe_identifier(self.error_type, _IDENTIFIER_RE, "UnknownError")
 		return record
-
-
-@dataclass
-class SummaryRequestMetrics(RequestMetrics):
-	input_chars: int = 0
-	prompt_chars: int = 0
-	prompt_tokens_estimated: int = 0
-	output_chars: int = 0
-	output_tokens_estimated: int = 0
-
-	def to_dict(self) -> dict[str, Any]:
-		base = super().to_dict()
-		base.update(
-			{
-				"input_chars": self.input_chars,
-				"prompt_chars": self.prompt_chars,
-				"prompt_tokens_estimated": self.prompt_tokens_estimated,
-				"output_chars": self.output_chars,
-				"output_tokens_estimated": self.output_tokens_estimated,
-			}
-		)
-		return base
-
-
-@dataclass
-class ImageRequestMetrics(RequestMetrics):
-	raw_image_bytes: int = 0
-	processed_image_bytes: int = 0
-	image_pixels: int = 0
-	resize_ratio: float = 1.0
-	base64_size: int = 0
-	prompt_chars: int = 0
-	prompt_tokens_estimated: int = 0
-	output_chars: int = 0
-	output_tokens_estimated: int = 0
-
-	def to_dict(self) -> dict[str, Any]:
-		base = super().to_dict()
-		base.update(
-			{
-				"raw_image_bytes": self.raw_image_bytes,
-				"processed_image_bytes": self.processed_image_bytes,
-				"image_pixels": self.image_pixels,
-				"resize_ratio": self.resize_ratio,
-				"base64_size": self.base64_size,
-				"prompt_chars": self.prompt_chars,
-				"prompt_tokens_estimated": self.prompt_tokens_estimated,
-				"output_chars": self.output_chars,
-				"output_tokens_estimated": self.output_tokens_estimated,
-			}
-		)
-		return base

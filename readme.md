@@ -351,7 +351,7 @@ The settings panel allows you to:
 * configure image quality and size
 * adjust timeout behavior
 * enable optional think mode
-* log request metrics to a file
+* optionally log request measurements and background task events to the configured rotating JSONL file. The add-on does not upload the log. Records include the request type, provider/model, duration, outcome, and exception type; prompts, responses, image data, credentials, endpoint URLs, and raw error messages are excluded.
 
 ## Recommended local models
 

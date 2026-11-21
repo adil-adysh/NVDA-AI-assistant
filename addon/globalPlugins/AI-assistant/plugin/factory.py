@@ -107,11 +107,14 @@ def build_plugin_services() -> PluginServices:
 		policy=DefaultToolPermissionPolicy(approved_tool_ids=get_mcp_approved_tool_ids()),
 		budget_provider=_configured_tool_budget,
 	)
-	llm_service = ProviderLLMService(provider, tool_executor=tool_executor)
+	llm_service = ProviderLLMService(
+		provider,
+		tool_executor=tool_executor,
+		metrics_reporter=metrics_reporter,
+	)
 	chat_coordinator = ChatCoordinator(
 		client=llm_service,
 		ui_port=nvda_ui,
-		metrics_reporter=metrics_reporter,
 		repository=WorkerConversationRepository(),
 		page_context_provider=page_context_provider,
 	)
@@ -123,7 +126,6 @@ def build_plugin_services() -> PluginServices:
 	)
 	return PluginServices(
 		provider=provider,
-		metrics_reporter=metrics_reporter,
 		page_text_collector=page_text_collector,
 		page_structure_collector=page_structure_collector,
 		image_context_collector=image_context_collector,

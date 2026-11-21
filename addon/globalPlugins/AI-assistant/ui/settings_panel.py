@@ -458,15 +458,17 @@ class AIAssistantDiagnosticsPanel(_SettingsTab):
 
 	def __init__(self, parent: wx.Window, dialog: "AIAssistantSettingsDialog") -> None:
 		super().__init__(parent, dialog)
-		helper = self.add_group(_("Observability"))
-		self.metrics_enabled = helper.addItem(wx.CheckBox(self, label=_("Enable request metrics logging")))
+		helper = self.add_group(_("Local diagnostics"))
+		self.metrics_enabled = helper.addItem(wx.CheckBox(self, label=_("Log request and background task metadata")))
+		self.metrics_enabled.SetToolTip(_("When enabled, records request type, provider and model, duration, outcome, exception type, and background task events. Prompts, responses, image data, credentials, endpoint URLs, and raw error messages are not recorded."))
 		self.metrics_enabled.SetValue(get_request_metrics_logging_enabled())
-		self.metrics_path = self.add_labeled_text(helper, _("Metrics log file path:"), get_request_metrics_log_path())
+		self.metrics_description = helper.addItem(wx.StaticText(self, label=_("The opt-in log is written to the configured file and is not uploaded automatically. It rotates automatically to limit disk use. It records request metadata and task events, but never prompts, responses, image data, credentials, endpoint URLs, or raw error messages.")))
+		self.metrics_path = self.add_labeled_text(helper, _("Diagnostics JSONL log file path:"), get_request_metrics_log_path())
 
 	def collect(self, values: dict[str, object]) -> None:
 		path = self.metrics_path.GetValue().strip()
 		if self.metrics_enabled.GetValue() and not path:
-			raise _InvalidSetting(_("Metrics log file path cannot be empty when logging is enabled."), self.metrics_path, self)
+			raise _InvalidSetting(_("Diagnostics log file path cannot be empty when logging is enabled."), self.metrics_path, self)
 		values.update(metrics_enabled=self.metrics_enabled.GetValue(), metrics_path=path)
 
 

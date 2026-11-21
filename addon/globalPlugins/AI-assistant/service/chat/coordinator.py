@@ -24,7 +24,6 @@ from ...core.messages import ChatMessage, LLMResponse
 from ...core.events import ProgressHandler
 from ..llm import ProviderLLMService
 from ...providers.interfaces import ProviderModelInfo
-from ...observability.reporter import MetricsReporter
 from .projector import project_chat_history, project_chat_history_transport
 from .repository import ConversationRepository, ConversationSummary
 from .session import ConversationSession
@@ -41,7 +40,6 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 	def __init__(
 		self,
 		client: ProviderLLMService,
-		metrics_reporter: MetricsReporter | None = None,
 		session_factory: Callable[[], ConversationSession] = ConversationSession,
 		repository: ConversationRepository | None = None,
 		conversation_id_factory: Callable[[], str] | None = None,
@@ -52,7 +50,7 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 		page_context_provider: object | None = None,
 		ui_port: Any | None = None,
 	) -> None:
-		super().__init__(metrics_reporter, ui_port=ui_port)
+		super().__init__(ui_port=ui_port)
 		self._llm_service = client
 		self._session = session_factory()
 		self._session_factory = session_factory

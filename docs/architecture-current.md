@@ -205,7 +205,7 @@ service/chat/ owns interactive sessions:
 - projector.py maps canonical history to host transport messages.
 - session.py, transaction.py, and types.py hold session and turn data.
 
-observability/ records request context, events, and metrics. The file reporter is wired by plugin/factory.py.
+observability/ records opt-in request measurements and background task events in a versioned, bounded JSONL log at the configured path. Provider calls are measured at the shared `ProviderLLMService` boundary; the file reporter is wired by `plugin/factory.py` and emits only allowlisted metadata.
 
 ### Image and embedding subsystems
 
