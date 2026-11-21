@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 # pyright: reportMissingImports=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
 import threading
-import time
 from collections.abc import Callable
 from typing import Any
 
@@ -11,9 +10,6 @@ from ..config.settings import (
 	is_progress_enabled,
 	is_streaming_enabled,
 )
-from ..observability.context import ExecutionContext
-from ..observability.metrics import RequestMetrics
-from ..observability.reporter import FileMetricsReporter, MetricsReporter
 from ..providers.interfaces import LLMProviderError
 from ..service.error_presentation import present_error
 
@@ -42,7 +38,6 @@ class BaseCoordinator:
 
 	def __init__(
 		self,
-		metrics_reporter: MetricsReporter | None = None,
 		ui_port: Any | None = None,
 	) -> None:
 		"""Initialize shared coordinator state."""
@@ -50,9 +45,6 @@ class BaseCoordinator:
 		self._lock = threading.Lock()
 		self._active_worker: threading.Thread | None = None
 		self._last_announced_chars = 0
-		self._request_metrics: RequestMetrics | None = None
-		self.execution_context: ExecutionContext | None = None
-		self.metrics_reporter = metrics_reporter or FileMetricsReporter()
 		self._ui_port = ui_port or _NullUiPort()
 
 	def start_task(self, *args: Any, **kwargs: Any) -> None:
@@ -78,28 +70,18 @@ class BaseCoordinator:
 	def _run_in_background(self, *args: Any, **kwargs: Any) -> None:
 		"""Internal wrapper executed in the background thread."""
 		self._last_announced_chars = 0
-		self.execution_context = ExecutionContext()
 		self._pre_run(*args, **kwargs)
 
 		progress_callback = self._handle_progress if is_streaming_enabled() else None
-		# _build_request_metrics is an extension point: the base returns None to
-		# disable metrics; subclasses override it to return a RequestMetrics.
-		self._request_metrics = self._build_request_metrics(*args, **kwargs)  # pylint: disable=assignment-from-none
-		if self._request_metrics is not None:
-			self._request_metrics.start_time = time.perf_counter()
-
 		try:
 			result = self._run_task_logic(progress_callback, *args, **kwargs)
 		except LLMProviderError as error:
 			log.exception("Task failed with provider error")
-			self._finalize_request_metrics(False, error)
 			self._handle_error(error)
 		except Exception as error:
 			log.exception("Task failed with unexpected exception")
-			self._finalize_request_metrics(False, error)
 			self._handle_error(error)
 		else:
-			self._finalize_request_metrics(True, None, result)
 			self._queue_to_nvda(self._present_result, result)
 		finally:
 			with self._lock:
@@ -137,32 +119,6 @@ class BaseCoordinator:
 	) -> None:
 		"""Queue execution on the NVDA event queue."""
 		self._ui_port.queue(callback, *args)
-
-	def _build_request_metrics(self, *_args: Any, **_kwargs: Any) -> RequestMetrics | None:
-		"""Return a metrics object for the current request, if supported."""
-		return None
-
-	def _finalize_request_metrics(
-		self,
-		success: bool,
-		error: Exception | None = None,
-		result: Any | None = None,
-	) -> None:
-		if self._request_metrics is None:
-			return
-		end_time = time.perf_counter()
-		self._request_metrics.finalize(end_time, success, str(error) if error is not None else None)
-		try:
-			self._report_request_metrics(self._request_metrics, result)
-		except Exception:
-			log.exception("Failed to report request metrics")
-		self._request_metrics = None
-
-	def _report_request_metrics(self, metrics: RequestMetrics, _result: Any | None) -> None:
-		"""Report request metrics. Subclasses may override this to capture richer telemetry."""
-		log.debug("Request metrics: %s", metrics.to_dict())
-		if self.metrics_reporter:
-			self.metrics_reporter.report(metrics)
 
 	# --- Required Hooks ---
 

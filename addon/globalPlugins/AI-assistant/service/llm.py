@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
+import logging
+import time
 from typing import Protocol
 
 from ..config.settings import is_streaming_enabled
@@ -13,6 +15,8 @@ from ..core.message_transforms import build_assistant_message, build_tool_result
 from ..core.messages import LLMResponse, SummaryResponse
 from ..core.translation import _
 from ..providers.interfaces import LLMProvider, PartialCallback, ProgressCallback, ProviderModelInfo
+from ..observability.metrics import RequestMetrics
+from ..observability.reporter import FileMetricsReporter, MetricsReporter
 from ..tools import (
 	ToolBudgetExceeded,
 	ToolCatalogSnapshot,
@@ -21,6 +25,8 @@ from ..tools import (
 	ToolExecutor,
 )
 from .chat.types import ConversationTurnResult
+
+log = logging.getLogger(__name__)
 
 
 class LLMService(Protocol):
@@ -77,9 +83,15 @@ class LLMService(Protocol):
 class ProviderLLMService:
 	MAX_TOOL_STEPS = 5
 
-	def __init__(self, provider: LLMProvider, tool_executor: ToolExecutor | None = None) -> None:
+	def __init__(
+		self,
+		provider: LLMProvider,
+		tool_executor: ToolExecutor | None = None,
+		metrics_reporter: MetricsReporter | None = None,
+	) -> None:
 		self._provider = provider
 		self._tool_executor = tool_executor
+		self._metrics_reporter = metrics_reporter or FileMetricsReporter()
 
 	def provider_name(self) -> str:
 		return self._provider.provider_name()
@@ -99,7 +111,7 @@ class ProviderLLMService:
 	def summarize(self, prompt: str, stream_handler: PartialCallback | None = None) -> SummaryResponse:
 		check_cancelled()
 		effective = self._cancellable_stream(stream_handler) if is_streaming_enabled() else None
-		return self._request(lambda: self._provider.summarize(prompt, stream_handler=effective))
+		return self._request(lambda: self._provider.summarize(prompt, stream_handler=effective), request_type="summary")
 
 	def summarize_structured(
 		self,
@@ -109,9 +121,10 @@ class ProviderLLMService:
 	) -> SummaryResponse:
 		# Structured responses are intentionally non-streaming: emitting partial
 		# JSON would not be a valid displayable structure-summary response.
-		return self._request(lambda: self._provider.summarize_structured(
-			prompt, schema=schema, stream_handler=None
-		))
+		return self._request(
+			lambda: self._provider.summarize_structured(prompt, schema=schema, stream_handler=None),
+			request_type="structured_summary",
+		)
 
 	def describe_image(
 		self,
@@ -121,11 +134,14 @@ class ProviderLLMService:
 	) -> SummaryResponse:
 		check_cancelled()
 		effective = self._cancellable_stream(stream_handler) if is_streaming_enabled() else None
-		return self._request(lambda: self._provider.describe_image(
-			image_base64=image_base64,
-			prompt=prompt,
-			stream_handler=effective,
-		))
+		return self._request(
+			lambda: self._provider.describe_image(
+				image_base64=image_base64,
+				prompt=prompt,
+				stream_handler=effective,
+			),
+			request_type="image_description",
+		)
 
 	def generate(
 		self,
@@ -176,7 +192,7 @@ class ProviderLLMService:
 				messages=canonical_messages,
 				tools=tools,
 				stream_handler=stream_adapter if _use_streaming else None,
-			))
+			), request_type="chat")
 
 		emit("llm_request", f"Generating response with {self.provider_name()}...")
 		response = request()
@@ -234,17 +250,51 @@ class ProviderLLMService:
 	def ensure_model_available(self, on_progress: ProgressCallback | None = None) -> str | None:
 		return self._provider.ensure_model_available(on_progress=on_progress)
 
-	@staticmethod
-	def _request(operation):
+	def _request(self, operation, *, request_type: str | None = None):
 		check_cancelled()
+		started_at = time.perf_counter()
+		provider_name = "unknown"
+		metrics_enabled = False
+		if request_type is not None:
+			try:
+				metrics_enabled = self._metrics_reporter.is_enabled()
+			except Exception:
+				log.debug("Unable to read diagnostics logging setting", exc_info=True)
+		if metrics_enabled:
+			try:
+				provider_name = self._provider.provider_name()
+			except Exception:
+				log.debug("Unable to read provider name for request diagnostics", exc_info=True)
+		result = None
+		success = False
+		error_type = None
 		try:
 			result = operation()
-		except Exception:
-			# HTTP adapters may wrap callback exceptions as provider errors.
 			check_cancelled()
+			success = True
+			return result
+		except Exception as error:
+			# HTTP adapters may wrap callback exceptions as provider errors.
+			error_type = type(error).__name__
+			try:
+				check_cancelled()
+			except Exception as cancellation_error:
+				error_type = type(cancellation_error).__name__
+				raise cancellation_error
 			raise
-		check_cancelled()
-		return result
+		finally:
+			if request_type is not None and metrics_enabled:
+				try:
+					self._metrics_reporter.report(RequestMetrics(
+						request_type=request_type,
+						provider=provider_name,
+						model=getattr(result, "model", None),
+						duration_ms=(time.perf_counter() - started_at) * 1000,
+						success=success,
+						error_type=error_type,
+					))
+				except Exception:
+					log.debug("Unable to report provider request metrics", exc_info=True)
 
 	@staticmethod
 	def _cancellable_stream(handler):

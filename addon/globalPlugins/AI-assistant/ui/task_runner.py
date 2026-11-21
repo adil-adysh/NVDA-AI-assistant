@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
+from queue import Empty, Full, Queue
 import threading
 import time
 from typing import Generic, TypeVar
@@ -33,6 +34,75 @@ class UiDispatcher:
 		except Exception:
 			# NVDA may be shutting down while a worker is completing.
 			log.debug("Unable to dispatch UI callback during shutdown", exc_info=True)
+
+
+class _AsyncDiagnosticWriter:
+	"""Keep optional diagnostic file IO off UI and task-completion threads."""
+
+	IDLE_TIMEOUT = 30.0
+
+	def __init__(self, write_event: Callable[[object], None], max_pending: int = 512) -> None:
+		self._write_event = write_event
+		self._queue: Queue[object] = Queue(maxsize=max_pending)
+		self._lock = threading.Lock()
+		self._thread: threading.Thread | None = None
+
+	def submit(self, event: object) -> bool:
+		with self._lock:
+			if self._thread is None:
+				self._thread = threading.Thread(
+					target=self._run,
+					name="NVDA-AI-diagnostics",
+					daemon=True,
+				)
+				self._thread.start()
+			try:
+				self._queue.put_nowait(event)
+			except Full:
+				log.debug("Dropping diagnostic event because the writer queue is full")
+				return False
+			return True
+
+	def flush(self) -> None:
+		"""Wait for queued events; intended for deterministic tests and shutdown."""
+		self._queue.join()
+
+	def _run(self) -> None:
+		while True:
+			try:
+				event = self._queue.get(timeout=self.IDLE_TIMEOUT)
+			except Empty:
+				with self._lock:
+					if self._queue.empty():
+						self._thread = None
+						return
+				continue
+			try:
+				self._write_event(event)
+			except Exception:
+				log.debug("Unable to write queued diagnostic event", exc_info=True)
+			finally:
+				self._queue.task_done()
+
+
+def _write_diagnostic_event(event: object) -> None:
+	try:
+		from ..observability.reporter import FileMetricsReporter
+		FileMetricsReporter().report_event(event)
+	except Exception:
+		log.debug("Unable to report background task event", exc_info=True)
+
+
+def _diagnostics_logging_enabled() -> bool:
+	try:
+		from ..config.settings import get_request_metrics_logging_enabled
+		return get_request_metrics_logging_enabled()
+	except Exception:
+		log.debug("Unable to read diagnostics logging setting", exc_info=True)
+		return False
+
+
+_diagnostic_writer = _AsyncDiagnosticWriter(_write_diagnostic_event)
 
 
 @dataclass(slots=True)
@@ -86,11 +156,12 @@ class BackgroundTaskRunner:
 
 		def report(event: str, **attributes: object) -> None:
 			try:
+				if not _diagnostics_logging_enabled():
+					return
 				from ..observability.events import DiagnosticEvent
-				from ..observability.reporter import FileMetricsReporter
 
 				record = DiagnosticEvent(event, operation_id=operation_id, attributes=attributes)
-				FileMetricsReporter().report_event(record)
+				_diagnostic_writer.submit(record)
 				log.debug("AI task event: %s", record.to_record())
 			except Exception:
 				log.debug("Unable to report AI task event", exc_info=True)

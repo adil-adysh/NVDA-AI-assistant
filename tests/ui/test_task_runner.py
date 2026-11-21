@@ -1,12 +1,14 @@
 """Regression tests for the UI/background task boundary."""
 from __future__ import annotations
 
+from concurrent.futures import Future
 from tests.support import ADDON_ROOT, load_module, register_package
 import sys
 import threading
 import time
 import types
 import unittest
+import importlib
 from unittest import mock
 
 import wx
@@ -36,6 +38,105 @@ def _load_runner():
 
 
 class BackgroundTaskRunnerTests(unittest.TestCase):
+	def test_diagnostic_writer_runs_file_work_on_its_own_thread(self) -> None:
+		module, _callbacks = _load_runner()
+		written = threading.Event()
+		writer_threads = []
+		writer = module._AsyncDiagnosticWriter(
+			lambda _event: (writer_threads.append(threading.current_thread()), written.set())
+		)
+		writer.submit(object())
+		self.assertTrue(written.wait(2))
+		writer.flush()
+		self.assertIsNot(writer_threads[0], threading.current_thread())
+
+	def test_diagnostic_writer_exits_after_idle_period(self) -> None:
+		module, _callbacks = _load_runner()
+		written = threading.Event()
+		writer = module._AsyncDiagnosticWriter(lambda _event: written.set())
+		writer.IDLE_TIMEOUT = 0.02
+		writer.submit(object())
+		self.assertTrue(written.wait(2))
+		writer.flush()
+		thread = writer._thread
+		deadline = time.monotonic() + 2
+		while thread is not None and thread.is_alive() and time.monotonic() < deadline:
+			time.sleep(0.01)
+		self.assertFalse(thread and thread.is_alive())
+
+	def test_submit_racing_idle_retirement_does_not_strand_event(self) -> None:
+		module, _callbacks = _load_runner()
+		written = []
+		writer = module._AsyncDiagnosticWriter(written.append)
+		writer.IDLE_TIMEOUT = 0.15
+		writer.submit("warmup")
+		writer.flush()
+		original_put = writer._queue.put_nowait
+		put_started = threading.Event()
+		allow_put = threading.Event()
+		def delayed_put(event):
+			put_started.set()
+			allow_put.wait(2)
+			original_put(event)
+		writer._queue.put_nowait = delayed_put
+		submitter = threading.Thread(target=lambda: writer.submit("racing"))
+		submitter.start()
+		self.assertTrue(put_started.wait(2))
+		time.sleep(0.2)
+		allow_put.set()
+		submitter.join(timeout=2)
+		self.assertFalse(submitter.is_alive())
+		self.assertIn("racing", written)
+
+	def test_diagnostics_setting_is_checked_before_task_event_enqueue(self) -> None:
+		module, _callbacks = _load_runner()
+		settings = importlib.import_module("task_runner_test_package.config.settings")
+		written = []
+		writer = module._AsyncDiagnosticWriter(written.append)
+		module._diagnostic_writer = writer
+		with mock.patch.object(settings, "get_request_metrics_logging_enabled", return_value=False):
+			self.assertFalse(module._diagnostics_logging_enabled())
+			runner = module.BackgroundTaskRunner(max_workers=1)
+			future = runner.submit(lambda _cancel: 1)
+			future._future.result(timeout=2)
+			runner._executor.shutdown(wait=True)
+		writer.flush()
+		self.assertEqual(written, [])
+
+	def test_queued_cancellation_and_inline_completion_write_off_caller_thread(self) -> None:
+		module, callbacks = _load_runner()
+		written = []
+		writer_threads = []
+		writer = module._AsyncDiagnosticWriter(
+			lambda event: (written.append(event.event), writer_threads.append(threading.current_thread()))
+		)
+		module._diagnostic_writer = writer
+		module._diagnostics_logging_enabled = lambda: True
+		with mock.patch.object(wx, "CallAfter", callbacks.append):
+			runner = module.BackgroundTaskRunner(max_workers=1)
+			gate = threading.Event()
+			active = runner.submit(lambda _cancel: gate.wait(2) or 1)
+			queued = runner.submit(lambda _cancel: 2)
+			queued.cancel()
+			self.assertTrue(queued._future.cancelled())
+			gate.set()
+			active._future.result(timeout=2)
+			runner._executor.shutdown(wait=True)
+
+			class ImmediateExecutor:
+				def submit(self, work):
+					future = Future()
+					future.set_result(work())
+					return future
+
+			runner._executor = ImmediateExecutor()
+			runner.submit(lambda _cancel: 3)
+		writer.flush()
+		self.assertIn("task_cancelled", written)
+		self.assertIn("task_completed", written)
+		self.assertTrue(writer_threads)
+		self.assertTrue(all(thread is not threading.main_thread() for thread in writer_threads))
+
 	def test_cancelled_failure_is_not_logged_as_error(self) -> None:
 		module, callbacks = _load_runner()
 		runner = module.BackgroundTaskRunner(max_workers=1)

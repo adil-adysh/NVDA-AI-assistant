@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from ..context.collectors.image import ImageContextCollector
 from ..context.collectors.page import ExtractionStructureCollector, ExtractionTextCollector
 from ..context.pipeline import ContextPipeline
-from ..observability.reporter import FileMetricsReporter
 from ..providers.provider_proxy import ProviderProxy
 from ..service.chat import ChatCoordinator, ConversationService
 from ..service.llm import ProviderLLMService
@@ -19,7 +18,6 @@ from ..use_case.engine import UseCaseEngine
 @dataclass(frozen=True, slots=True)
 class PluginServices:
 	provider: ProviderProxy
-	metrics_reporter: FileMetricsReporter
 	page_text_collector: ExtractionTextCollector
 	page_structure_collector: ExtractionStructureCollector
 	image_context_collector: ImageContextCollector
