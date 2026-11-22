@@ -38,11 +38,81 @@ def _load_runner():
 
 
 class BackgroundTaskRunnerTests(unittest.TestCase):
+	def test_cancelled_normal_return_has_one_cancelled_outcome(self) -> None:
+		module, callbacks = _load_runner()
+		records, results, cleanup = [], [], []
+		class Diagnostics:
+			def emit(self, event, operation_id, **attributes):
+				records.append(event)
+		runner = module.BackgroundTaskRunner(max_workers=1, diagnostics=Diagnostics())
+		def work(cancel):
+			cancel.set()
+			return 42
+		with mock.patch.object(wx, "CallAfter", callbacks.append):
+			handle = runner.submit(work, on_success=results.append, on_finally=lambda: cleanup.append(True))
+			runner._executor.shutdown(wait=True)
+			for callback in callbacks:
+				callback()
+		self.assertEqual(handle.outcome, module.OperationOutcome.CANCELLED)
+		self.assertEqual(records, ["task_started", "task_cancelled"])
+		self.assertEqual(results, [])
+		self.assertEqual(cleanup, [True])
+
+	def test_detaching_delivery_does_not_cancel_work(self) -> None:
+		module, callbacks = _load_runner()
+		runner = module.BackgroundTaskRunner(max_workers=1)
+		gate, entered = threading.Event(), threading.Event()
+		results, cleanup = [], []
+		def work(cancel):
+			entered.set()
+			assert gate.wait(2)
+			assert not cancel.is_set()
+			return 42
+		with mock.patch.object(wx, "CallAfter", callbacks.append):
+			handle = runner.submit(work, on_success=results.append, on_finally=lambda: cleanup.append(True))
+			self.assertTrue(entered.wait(2))
+			handle.detach()
+			gate.set()
+			runner._executor.shutdown(wait=True)
+			for callback in callbacks:
+				callback()
+		self.assertEqual(handle.outcome, module.OperationOutcome.SUCCEEDED)
+		self.assertEqual(results, [])
+		self.assertEqual(cleanup, [])
+		self.assertFalse(handle.cancel_event.is_set())
+
+	def test_detaching_before_queued_error_delivery_suppresses_default_error(self) -> None:
+		module, callbacks = _load_runner()
+		runner = module.BackgroundTaskRunner(max_workers=1)
+		with mock.patch.object(wx, "CallAfter", callbacks.append):
+			handle = runner.submit(lambda _cancel: (_ for _ in ()).throw(RuntimeError("boom")))
+			runner._executor.shutdown(wait=True)
+			handle.detach()
+			for callback in callbacks:
+				callback()
+		self.assertEqual(handle.outcome, module.OperationOutcome.FAILED)
+		self.assertEqual(module.error_reporter.reported, [])
+
+	def test_diagnostics_failure_does_not_change_operation_outcome(self) -> None:
+		module, callbacks = _load_runner()
+		class BrokenDiagnostics:
+			def emit(self, *args, **kwargs):
+				raise OSError("unavailable diagnostics destination")
+		runner = module.BackgroundTaskRunner(max_workers=1, diagnostics=BrokenDiagnostics())
+		results = []
+		with mock.patch.object(wx, "CallAfter", callbacks.append):
+			handle = runner.submit(lambda _cancel: 42, on_success=results.append)
+			runner._executor.shutdown(wait=True)
+			for callback in callbacks:
+				callback()
+		self.assertEqual(handle.outcome, module.OperationOutcome.SUCCEEDED)
+		self.assertEqual(results, [42])
+
 	def test_diagnostic_writer_runs_file_work_on_its_own_thread(self) -> None:
 		module, _callbacks = _load_runner()
 		written = threading.Event()
 		writer_threads = []
-		writer = module._AsyncDiagnosticWriter(
+		writer = importlib.import_module("task_runner_test_package.observability.task_diagnostics")._AsyncDiagnosticWriter(
 			lambda _event: (writer_threads.append(threading.current_thread()), written.set())
 		)
 		writer.submit(object())
@@ -53,7 +123,7 @@ class BackgroundTaskRunnerTests(unittest.TestCase):
 	def test_diagnostic_writer_exits_after_idle_period(self) -> None:
 		module, _callbacks = _load_runner()
 		written = threading.Event()
-		writer = module._AsyncDiagnosticWriter(lambda _event: written.set())
+		writer = importlib.import_module("task_runner_test_package.observability.task_diagnostics")._AsyncDiagnosticWriter(lambda _event: written.set())
 		writer.IDLE_TIMEOUT = 0.02
 		writer.submit(object())
 		self.assertTrue(written.wait(2))
@@ -67,7 +137,7 @@ class BackgroundTaskRunnerTests(unittest.TestCase):
 	def test_submit_racing_idle_retirement_does_not_strand_event(self) -> None:
 		module, _callbacks = _load_runner()
 		written = []
-		writer = module._AsyncDiagnosticWriter(written.append)
+		writer = importlib.import_module("task_runner_test_package.observability.task_diagnostics")._AsyncDiagnosticWriter(written.append)
 		writer.IDLE_TIMEOUT = 0.15
 		writer.submit("warmup")
 		writer.flush()
@@ -90,30 +160,29 @@ class BackgroundTaskRunnerTests(unittest.TestCase):
 
 	def test_diagnostics_setting_is_checked_before_task_event_enqueue(self) -> None:
 		module, _callbacks = _load_runner()
-		settings = importlib.import_module("task_runner_test_package.config.settings")
+		adapter = importlib.import_module("task_runner_test_package.observability.task_diagnostics")
 		written = []
-		writer = module._AsyncDiagnosticWriter(written.append)
-		module._diagnostic_writer = writer
-		with mock.patch.object(settings, "get_request_metrics_logging_enabled", return_value=False):
-			self.assertFalse(module._diagnostics_logging_enabled())
-			runner = module.BackgroundTaskRunner(max_workers=1)
-			future = runner.submit(lambda _cancel: 1)
-			future._future.result(timeout=2)
-			runner._executor.shutdown(wait=True)
-		writer.flush()
+		diagnostics = adapter.AsyncTaskDiagnostics(types.SimpleNamespace(
+			is_enabled=lambda: False, report_event=written.append,
+		))
+		runner = module.BackgroundTaskRunner(max_workers=1, diagnostics=diagnostics)
+		runner.submit(lambda _cancel: 1)
+		runner._executor.shutdown(wait=True)
+		diagnostics.flush()
 		self.assertEqual(written, [])
 
 	def test_queued_cancellation_and_inline_completion_write_off_caller_thread(self) -> None:
 		module, callbacks = _load_runner()
 		written = []
 		writer_threads = []
-		writer = module._AsyncDiagnosticWriter(
+		writer = importlib.import_module("task_runner_test_package.observability.task_diagnostics")._AsyncDiagnosticWriter(
 			lambda event: (written.append(event.event), writer_threads.append(threading.current_thread()))
 		)
-		module._diagnostic_writer = writer
-		module._diagnostics_logging_enabled = lambda: True
+		adapter = importlib.import_module("task_runner_test_package.observability.task_diagnostics")
+		diagnostics = adapter.AsyncTaskDiagnostics(types.SimpleNamespace(is_enabled=lambda: True, report_event=lambda event: None))
+		diagnostics._writer = writer
 		with mock.patch.object(wx, "CallAfter", callbacks.append):
-			runner = module.BackgroundTaskRunner(max_workers=1)
+			runner = module.BackgroundTaskRunner(max_workers=1, diagnostics=diagnostics)
 			gate = threading.Event()
 			active = runner.submit(lambda _cancel: gate.wait(2) or 1)
 			queued = runner.submit(lambda _cancel: 2)
@@ -228,21 +297,15 @@ class BackgroundTaskRunnerTests(unittest.TestCase):
 
 	def test_failure_without_handler_is_reported(self) -> None:
 		runner_module, callbacks = _load_runner()
-		call_after_patch = mock.patch.object(wx, "CallAfter", lambda callback: callbacks.append(callback))
-		call_after_patch.start()
-		self.addCleanup(call_after_patch.stop)
 		runner = runner_module.BackgroundTaskRunner(max_workers=1)
-		try:
+		with mock.patch.object(wx, "CallAfter", callbacks.append):
 			handle = runner.submit(lambda _cancel: (_ for _ in ()).throw(RuntimeError("boom")))
-			with self.assertRaises(RuntimeError):
-				handle._future.result(timeout=2)
-			for _ in range(20):
-				if runner_module.error_reporter.reported:
-					break
-				time.sleep(0.01)
-			self.assertEqual(len(runner_module.error_reporter.reported), 1)
-		finally:
 			runner._executor.shutdown(wait=True)
+			self.assertEqual(handle.outcome, runner_module.OperationOutcome.FAILED)
+			self.assertEqual(runner_module.error_reporter.reported, [])
+			for callback in callbacks:
+				callback()
+		self.assertEqual(len(runner_module.error_reporter.reported), 1)
 
 
 if __name__ == "__main__":

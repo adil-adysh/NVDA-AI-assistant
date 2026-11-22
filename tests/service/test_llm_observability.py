@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import importlib
+import sys
 import pytest
 
-from tests.support import ADDON_ROOT, register_package
+from tests.support import ADDON_ROOT, load_addon_module, register_package
 
 
 NAMESPACE = "llm_observability_testpkg"
@@ -44,6 +45,13 @@ class Provider:
 
 	def generate(self, messages, tools=None, stream_handler=None):
 		return globals()["messages"].LLMResponse(text="private chat response", model="org/model")
+
+
+def test_service_does_not_construct_or_import_file_diagnostics():
+	namespace = "llm_port_boundary_tests"
+	module = load_addon_module("service.llm", namespace=namespace)
+	assert f"{namespace}.observability.reporter" not in sys.modules
+	assert not module.ProviderLLMService(Provider())._metrics_reporter.is_enabled()
 
 
 def test_one_shot_and_chat_provider_calls_are_recorded_without_content(monkeypatch):

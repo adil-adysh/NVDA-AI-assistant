@@ -14,9 +14,10 @@ from ..core.canonical import Message, Tool
 from ..core.message_transforms import build_assistant_message, build_tool_result_message_from_result
 from ..core.messages import LLMResponse, SummaryResponse
 from ..core.translation import _
+from ..core.operation_outcome import OperationOutcome, resolve_outcome
+from ..core.diagnostics import NullRequestDiagnostics, RequestDiagnostics
+from ..core.request_metrics import RequestMetrics
 from ..providers.interfaces import LLMProvider, PartialCallback, ProgressCallback, ProviderModelInfo
-from ..observability.metrics import RequestMetrics
-from ..observability.reporter import FileMetricsReporter, MetricsReporter
 from ..tools import (
 	ToolBudgetExceeded,
 	ToolCatalogSnapshot,
@@ -87,11 +88,11 @@ class ProviderLLMService:
 		self,
 		provider: LLMProvider,
 		tool_executor: ToolExecutor | None = None,
-		metrics_reporter: MetricsReporter | None = None,
+		metrics_reporter: RequestDiagnostics | None = None,
 	) -> None:
 		self._provider = provider
 		self._tool_executor = tool_executor
-		self._metrics_reporter = metrics_reporter or FileMetricsReporter()
+		self._metrics_reporter = metrics_reporter if metrics_reporter is not None else NullRequestDiagnostics()
 
 	def provider_name(self) -> str:
 		return self._provider.provider_name()
@@ -266,19 +267,21 @@ class ProviderLLMService:
 			except Exception:
 				log.debug("Unable to read provider name for request diagnostics", exc_info=True)
 		result = None
-		success = False
+		outcome = OperationOutcome.FAILED
 		error_type = None
 		try:
 			result = operation()
 			check_cancelled()
-			success = True
+			outcome = resolve_outcome(cancelled=False)
 			return result
 		except Exception as error:
 			# HTTP adapters may wrap callback exceptions as provider errors.
+			outcome = resolve_outcome(cancelled=False, error=error)
 			error_type = type(error).__name__
 			try:
 				check_cancelled()
 			except Exception as cancellation_error:
+				outcome = resolve_outcome(cancelled=True, error=cancellation_error)
 				error_type = type(cancellation_error).__name__
 				raise cancellation_error
 			raise
@@ -290,7 +293,7 @@ class ProviderLLMService:
 						provider=provider_name,
 						model=getattr(result, "model", None),
 						duration_ms=(time.perf_counter() - started_at) * 1000,
-						success=success,
+						success=outcome is OperationOutcome.SUCCEEDED,
 						error_type=error_type,
 					))
 				except Exception:

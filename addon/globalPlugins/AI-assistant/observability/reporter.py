@@ -10,7 +10,7 @@ import uuid
 
 import logging
 
-from .metrics import RequestMetrics
+from ..core.diagnostics import RequestDiagnosticRecord
 from .events import DiagnosticEvent
 from ..config.settings import get_request_metrics_log_path, get_request_metrics_logging_enabled
 
@@ -21,7 +21,7 @@ class MetricsReporter:
 	def is_enabled(self) -> bool:
 		return True
 
-	def report(self, metrics: RequestMetrics) -> None:
+	def report(self, metrics: RequestDiagnosticRecord) -> None:
 		raise NotImplementedError
 
 	def report_event(self, event: DiagnosticEvent) -> None:
@@ -34,7 +34,7 @@ class FileMetricsReporter(MetricsReporter):
 	BACKUP_COUNT = 3
 	_write_lock = threading.RLock()
 
-	def report(self, metrics: RequestMetrics) -> None:
+	def report(self, metrics: RequestDiagnosticRecord) -> None:
 		self._write_record(metrics.to_log_record())
 
 	def report_event(self, event: DiagnosticEvent) -> None:

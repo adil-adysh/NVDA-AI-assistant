@@ -7,8 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
-from queue import Empty, Full, Queue
+from dataclasses import dataclass, field
 import threading
 import time
 from typing import Generic, TypeVar
@@ -17,6 +16,8 @@ import uuid
 import logging
 import wx
 
+from ..core.diagnostics import NullTaskDiagnostics, TaskDiagnostics
+from ..core.operation_outcome import OperationOutcome, resolve_outcome
 from ..service.error_reporter import ErrorContext, ErrorReporter, error_reporter
 
 log = logging.getLogger(__name__)
@@ -36,81 +37,22 @@ class UiDispatcher:
 			log.debug("Unable to dispatch UI callback during shutdown", exc_info=True)
 
 
-class _AsyncDiagnosticWriter:
-	"""Keep optional diagnostic file IO off UI and task-completion threads."""
-
-	IDLE_TIMEOUT = 30.0
-
-	def __init__(self, write_event: Callable[[object], None], max_pending: int = 512) -> None:
-		self._write_event = write_event
-		self._queue: Queue[object] = Queue(maxsize=max_pending)
-		self._lock = threading.Lock()
-		self._thread: threading.Thread | None = None
-
-	def submit(self, event: object) -> bool:
-		with self._lock:
-			if self._thread is None:
-				self._thread = threading.Thread(
-					target=self._run,
-					name="NVDA-AI-diagnostics",
-					daemon=True,
-				)
-				self._thread.start()
-			try:
-				self._queue.put_nowait(event)
-			except Full:
-				log.debug("Dropping diagnostic event because the writer queue is full")
-				return False
-			return True
-
-	def flush(self) -> None:
-		"""Wait for queued events; intended for deterministic tests and shutdown."""
-		self._queue.join()
-
-	def _run(self) -> None:
-		while True:
-			try:
-				event = self._queue.get(timeout=self.IDLE_TIMEOUT)
-			except Empty:
-				with self._lock:
-					if self._queue.empty():
-						self._thread = None
-						return
-				continue
-			try:
-				self._write_event(event)
-			except Exception:
-				log.debug("Unable to write queued diagnostic event", exc_info=True)
-			finally:
-				self._queue.task_done()
-
-
-def _write_diagnostic_event(event: object) -> None:
-	try:
-		from ..observability.reporter import FileMetricsReporter
-		FileMetricsReporter().report_event(event)
-	except Exception:
-		log.debug("Unable to report background task event", exc_info=True)
-
-
-def _diagnostics_logging_enabled() -> bool:
-	try:
-		from ..config.settings import get_request_metrics_logging_enabled
-		return get_request_metrics_logging_enabled()
-	except Exception:
-		log.debug("Unable to read diagnostics logging setting", exc_info=True)
-		return False
-
-
-_diagnostic_writer = _AsyncDiagnosticWriter(_write_diagnostic_event)
-
-
 @dataclass(slots=True)
 class TaskHandle(Generic[T]):
 	"""Cancellation and completion state for one background operation."""
 
 	cancel_event: threading.Event
 	_future: Future[T]
+	_completion: Future[OperationOutcome] = field(default_factory=Future)
+	_detached: threading.Event = field(default_factory=threading.Event)
+
+	def detach(self) -> None:
+		"""Stop view delivery without cancelling application work."""
+		self._detached.set()
+
+	@property
+	def outcome(self) -> OperationOutcome | None:
+		return self._completion.result() if self._completion.done() else None
 
 	def cancel(self) -> None:
 		self.cancel_event.set()
@@ -129,12 +71,17 @@ class BackgroundTaskRunner:
 	guarded by ``is_alive`` so callbacks cannot mutate destroyed dialogs.
 	"""
 
-	def __init__(self, max_workers: int = 4) -> None:
+	def __init__(self, max_workers: int = 4, *, diagnostics: TaskDiagnostics | None = None) -> None:
+		self._diagnostics = diagnostics if diagnostics is not None else NullTaskDiagnostics()
 		self._error_reporter = error_reporter
 		self._executor = ThreadPoolExecutor(
 			max_workers=max_workers,
 			thread_name_prefix="NVDA-AI-worker",
 		)
+
+	def configure_diagnostics(self, diagnostics: TaskDiagnostics) -> None:
+		"""Wire the infrastructure adapter at application composition."""
+		self._diagnostics = diagnostics
 
 	def submit(
 		self,
@@ -154,20 +101,18 @@ class BackgroundTaskRunner:
 		submitted_at = time.perf_counter()
 		started_at: float | None = None
 
+		diagnostics = self._diagnostics
+
 		def report(event: str, **attributes: object) -> None:
 			try:
-				if not _diagnostics_logging_enabled():
-					return
-				from ..observability.events import DiagnosticEvent
-
-				record = DiagnosticEvent(event, operation_id=operation_id, attributes=attributes)
-				_diagnostic_writer.submit(record)
-				log.debug("AI task event: %s", record.to_record())
+				diagnostics.emit(event, operation_id, **attributes)
 			except Exception:
 				log.debug("Unable to report AI task event", exc_info=True)
 
 		def dispatch(callback: Callable[[], None], *, deliver_after_cancel: bool = False) -> None:
 			def guarded_callback() -> None:
+				if handle._detached.is_set():
+					return
 				if cancel_event.is_set() and not deliver_after_cancel:
 					return
 				if is_alive is None or is_alive():
@@ -193,45 +138,45 @@ class BackgroundTaskRunner:
 
 		future = self._executor.submit(execute)
 
+		handle = TaskHandle(cancel_event, future)
+
 		def completed(completed_future: Future[T]) -> None:
-			if completed_future.cancelled():
-				report("task_cancelled", task=name)
-				if on_finally is not None:
-					dispatch(on_finally, deliver_after_cancel=True)
-				return
-			try:
-				result = completed_future.result()
-			except Exception as error:
-				if cancel_event.is_set():
-					report("task_cancelled", task=name)
-					if on_finally is not None:
-						dispatch(on_finally, deliver_after_cancel=True)
-					return
-				report(
-					"task_failed",
-					task=name,
-					duration_ms=round((time.perf_counter() - (started_at or submitted_at)) * 1000, 3),
-					error_type=type(error).__name__,
-				)
-				log.error("Background UI task failed: %s", error, exc_info=True)
+			error = None
+			result = None
+			if not completed_future.cancelled():
+				try:
+					result = completed_future.result()
+				except Exception as failure:
+					error = failure
+			outcome = resolve_outcome(
+				cancelled=completed_future.cancelled() or cancel_event.is_set(), error=error,
+			)
+			handle._completion.set_result(outcome)
+			attributes = {
+				"task": name,
+				"duration_ms": round((time.perf_counter() - (started_at or submitted_at)) * 1000, 3),
+			}
+			if outcome is OperationOutcome.FAILED:
+				attributes["error_type"] = type(error).__name__
+			report({
+				OperationOutcome.SUCCEEDED: "task_completed",
+				OperationOutcome.FAILED: "task_failed",
+				OperationOutcome.CANCELLED: "task_cancelled",
+			}[outcome], **attributes)
+			if outcome is OperationOutcome.FAILED:
+				log.error("Background UI task failed: %s", error, exc_info=(type(error), error, error.__traceback__))
 				context = ErrorContext(operation=name, origin="background task")
 				if on_error is not None:
 					dispatch(lambda error=error: on_error(error))
 				else:
-					reporter.report(error, context)
-			else:
-				report(
-					"task_completed",
-					task=name,
-					duration_ms=round((time.perf_counter() - (started_at or submitted_at)) * 1000, 3),
-				)
-				if on_success is not None:
-					dispatch(lambda: on_success(result))
+					dispatch(lambda error=error: reporter.report(error, context))
+			elif outcome is OperationOutcome.SUCCEEDED and on_success is not None:
+				dispatch(lambda: on_success(result))
 			if on_finally is not None:
 				dispatch(on_finally, deliver_after_cancel=True)
 
 		future.add_done_callback(completed)
-		return TaskHandle(cancel_event, future)
+		return handle
 
 
 background_tasks = BackgroundTaskRunner()

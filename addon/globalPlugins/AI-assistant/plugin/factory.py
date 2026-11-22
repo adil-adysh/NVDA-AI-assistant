@@ -31,7 +31,9 @@ from ..service.chat.repository_worker import WorkerConversationRepository
 from ..embeddings import CandleEmbeddingAdapter
 from ..image.services import ImageEncoder, ImagePreprocessor
 from ..observability.reporter import FileMetricsReporter
+from ..observability.task_diagnostics import AsyncTaskDiagnostics
 from ..ui import nvda_ui
+from ..ui.task_runner import background_tasks
 from ..providers.provider_proxy import ProviderProxy
 from ..providers.runtime.server import build_server_config, get_litert_supervisor
 from ..service.chat import ChatCoordinator, ConversationService
@@ -66,6 +68,7 @@ def build_plugin_services() -> PluginServices:
 	)
 	provider = ProviderProxy()
 	metrics_reporter = FileMetricsReporter()
+	background_tasks.configure_diagnostics(AsyncTaskDiagnostics(metrics_reporter))
 	browser_extractor = BrowserAwarePageExtractor()
 	generic_extractor = GenericPageExtractor()
 	page_extractor = ExtractionManager((browser_extractor, generic_extractor))
