@@ -45,6 +45,7 @@ from ..use_case.types import (
 from .background import BackgroundTaskRunner, ensure_provider_server_ready
 from .factory import build_plugin_services
 from .layer_mode import AssistantLayerController
+from ..core.command_session import Choice
 from .local_provider_startup import schedule_active_local_provider_start
 from .presenter import UseCasePresenter
 from .types import PluginServices
@@ -219,6 +220,7 @@ class AIAssistantApplication:
 
 	def terminate(self) -> None:
 		self._terminating.set()
+		self.layer_mode.close()
 		fence_host_startup()
 		self._local_lifecycle.close()
 		try:
@@ -269,6 +271,7 @@ class AIAssistantApplication:
 		the host process starts or responds.  We must not block the
 		NVDA main thread.
 		"""
+		self.layer_mode.provider_changed(provider_state.provider)
 		threading.Thread(
 			target=self._handle_provider_state_change,
 			args=(provider_state,),
@@ -475,19 +478,12 @@ class AIAssistantApplication:
 			nvda_ui.message(_("No AI providers are enabled."))
 			self.layer_mode.finish()
 			return
-		# Build announcement with digit labels.
-		lines: list[str] = []
-		for i, pid in enumerate(enabled):
-			digit = (i + 1) % 10  # 1-9, 0 for 10th
-			label = get_provider_display_name(pid)
-			lines.append(f"{digit}: {label}")
-		nvda_ui.message("\n".join(lines))
-		# Enter digit-selection mode.
-		def _on_provider_digit(digit: int) -> None:
-			idx = (digit - 1) if digit != 0 else 9
-			if idx < len(enabled):
-				self._select_provider_by_id(enabled[idx])
-		self.layer_mode.enter_digit_selection(_on_provider_digit)
+		token = self.layer_mode.begin_choices(get_provider())
+		self.layer_mode.show_choices(
+			token, get_provider(),
+			[Choice(pid, get_provider_display_name(pid)) for pid in enabled],
+			self._select_provider_by_id,
+		)
 
 	def _select_provider_by_id(self, provider_id: str) -> None:
 		"""Activate a provider by ID and announce the result."""
@@ -515,53 +511,40 @@ class AIAssistantApplication:
 		fetch on the background thread — the NVDA main thread is never blocked.
 		"""
 		layer = self.layer_mode
+		provider_id = get_provider()
+		token = layer.begin_choices(provider_id)
 
-		def _fetch_and_announce() -> None:
+		def current() -> bool:
+			return layer.accepts(token, get_provider()) and get_provider() == provider_id
+
+		def deliver(models=None, error=None) -> None:
+			if not current():
+				return
+			if error is not None:
+				layer.finish()
+				error_reporter.report(error, ErrorContext(
+					operation="select model", provider=provider_id, origin="model selector"))
+			elif not models:
+				nvda_ui.message(_("No enabled models for the current provider."))
+				layer.finish()
+			else:
+				layer.show_choices(token, provider_id,
+					[Choice(model.id, model.display_name or model.id) for model in models],
+					lambda model_id: self._select_model_by_id(model_id) if current() else None)
+
+		def fetch() -> None:
 			try:
-				provider_id = get_provider()
-				# Managed providers become authoritative only after their server
-				# has been started/adopted.  Refresh the shared catalog here so a
-				# startup-time empty cache cannot produce a false empty menu.
 				if provider_id == "litert-lm":
 					ensure_provider_server_ready()
 				if provider_id in {"litert-lm", "llama-cpp-server"}:
 					provider_control_service.refresh_models(provider_id)
 				models = provider_control_service.list_enabled_models(provider_id)
 			except Exception as error:
-				error_reporter.report(
-					error,
-				ErrorContext(operation="select model", provider=get_provider(), origin="model selector"),
-				)
-				def _announce_error() -> None:
-					layer.finish()
-				nvda_ui.call(_announce_error)
-				return
-			if not models:
-				def _announce_empty() -> None:
-					# TRANSLATORS: Message spoken when the current provider has no enabled models.
-					nvda_ui.message(_("No enabled models for the current provider."))
-					layer.finish()
-				nvda_ui.call(_announce_empty)
-				return
-			def _announce_and_prompt() -> None:
-				lines: list[str] = []
-				for i, m in enumerate(models):
-					digit = (i + 1) % 10
-					label = m.display_name or m.id
-					lines.append(f"{digit}: {label}")
-				nvda_ui.message("\n".join(lines))
-				def _on_model_digit(digit: int) -> None:
-					idx = (digit - 1) if digit != 0 else 9
-					if idx < len(models):
-						self._select_model_by_id(models[idx].id)
-				layer.enter_digit_selection(_on_model_digit)
-			nvda_ui.call(_announce_and_prompt)
+				nvda_ui.call(deliver, error=error)
+			else:
+				nvda_ui.call(deliver, models=models)
 
-		threading.Thread(
-			target=_fetch_and_announce,
-			name="ModelListFetch",
-			daemon=True,
-		).start()
+		threading.Thread(target=fetch, name="ModelListFetch", daemon=True).start()
 
 	def _select_model_by_id(self, model_id: str) -> None:
 		"""Activate a model by ID and announce the result.

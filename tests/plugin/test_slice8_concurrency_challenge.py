@@ -167,7 +167,7 @@ _stub_module("plugin.factory", build_plugin_services=lambda: types.SimpleNamespa
 	provider=types.SimpleNamespace(close=MagicMock()),
 	mcp_catalog=types.SimpleNamespace(start_configured=MagicMock(), close=MagicMock()),
 ))
-_stub_module("plugin.layer_mode", AssistantLayerController=lambda **k: types.SimpleNamespace(activate=lambda: None))
+_stub_module("plugin.layer_mode", AssistantLayerController=lambda **k: types.SimpleNamespace(activate=lambda: None, close=lambda: None, provider_changed=lambda _provider: None))
 _stub_module("plugin.local_provider_startup", schedule_active_local_provider_start=lambda **k: None)
 _stub_module("plugin.presenter", UseCasePresenter=lambda **k: types.SimpleNamespace(
 	progress_handler=lambda p: None, present_use_case_error=lambda t, m: None,
@@ -601,3 +601,59 @@ def test_stop_request_command_is_available_from_menu_script_and_layer():
 	assert 'self._app.cancel_active_requests' in ast.unparse(methods['script_stopActiveRequests'])
 	assert '_stop_requests_item' in ast.unparse(methods['_build_tools_submenu'])
 	assert "('q', host.script_stopActiveRequests)" in ast.unparse(application)
+
+@pytest.mark.parametrize("result", ["success", "empty", "error"])
+@pytest.mark.parametrize("invalidate", ["dismiss", "reactivate", "provider", "shutdown", "current"])
+def test_model_selector_stale_delivery_is_silent(monkeypatch, result, invalidate):
+	from tests.support import load_addon_module
+	ui_boundary = types.ModuleType("selector_layer_tests.ui.nvda_ui")
+	ui_boundary.message = lambda _message: None
+	ui_boundary.queue = lambda callback: callback()
+	register_package("selector_layer_tests.ui", ADDON_ROOT / "ui")
+	monkeypatch.setitem(sys.modules, ui_boundary.__name__, ui_boundary)
+	layer_module = load_addon_module("plugin.layer_mode", namespace="selector_layer_tests")
+	announcements = []
+	callbacks = []
+	workers = []
+	monkeypatch.setattr(layer_module.nvda_ui, "message", announcements.append)
+	monkeypatch.setattr(app_mod.nvda_ui, "message", announcements.append)
+	monkeypatch.setattr(app_mod.nvda_ui, "call", lambda callback, **kwargs: callbacks.append(lambda: callback(**kwargs)))
+	provider = ["first"]
+	monkeypatch.setattr(app_mod, "get_provider", lambda: provider[0])
+	def lookup(_provider):
+		if result == "error":
+			raise RuntimeError("lookup failed")
+		return [types.SimpleNamespace(id="stable", display_name="Model")] if result == "success" else []
+	monkeypatch.setattr(app_mod, "provider_control_service", types.SimpleNamespace(list_enabled_models=lookup))
+	monkeypatch.setattr(app_mod, "threading", types.SimpleNamespace(Thread=lambda **kwargs: types.SimpleNamespace(start=lambda: workers.append(kwargs["target"]))))
+	reports = []
+	monkeypatch.setattr(app_mod, "error_reporter", types.SimpleNamespace(report=lambda *args: reports.append(args)))
+	bindings = {}
+	layer = layer_module.AssistantLayerController([], lambda key, script: bindings.update({key: script}), bindings.clear, lambda: None)
+	layer.activate()
+	application = object.__new__(app_mod.AIAssistantApplication)
+	application.layer_mode = layer
+	application.select_model_for_current_provider()
+	workers.pop()()
+	assert callbacks
+	if invalidate == "dismiss":
+		layer.finish()
+	elif invalidate == "reactivate":
+		layer.finish()
+		layer.activate()
+	elif invalidate == "provider":
+		provider[0] = "second"
+	elif invalidate == "shutdown":
+		layer.close()
+	before = dict(bindings), list(announcements), layer.session.generation
+	callbacks.pop()()
+	if invalidate == "current":
+		if result == "success":
+			assert layer.session.phase.value == "choosing"
+			assert layer.session.choices[0].id == "stable"
+		else:
+			assert not layer.active
+		assert len(reports) == (1 if result == "error" else 0)
+	else:
+		assert (dict(bindings), announcements, layer.session.generation) == before
+		assert reports == []

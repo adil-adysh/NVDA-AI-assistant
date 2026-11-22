@@ -9,6 +9,7 @@ from typing import Any, cast
 from logHandler import log
 
 from ..ui import nvda_ui
+from ..core.command_session import Choice, CommandSession, Phase
 
 
 def _translate(message: str) -> str:
@@ -39,22 +40,25 @@ class AssistantLayerController:
 		self._bind_gesture = bind_gesture
 		self._clear_gesture_bindings = clear_gesture_bindings
 		self._restore_default_gestures = restore_default_gestures
-		self._active = False
+		self.session = CommandSession()
 		self._layered_script_to_run: Callable[[Any], None] | None = None
 		self._digit_handler: Callable[[int], None] | None = None
 
 	@property
 	def active(self) -> bool:
-		return self._active
+		return self.session.phase is not Phase.IDLE
 
 	def activate(self) -> None:
-		if self._active:
+		if self.session.closed:
+			return
+		if self.active:
 			raise RuntimeError("Assistant layer is already active")
 		self._layered_script_to_run = None
 		self._digit_handler = None
-		for gesture_key, handler in self._bindings:
-			self._bind_gesture(f"kb:{gesture_key}", handler.__name__[7:])
-		self._active = True
+		for gesture_key, _handler in self._bindings:
+			self._bind_gesture(f"kb:{gesture_key}", "layerDispatch")
+		self.session.activate()
+		self._bind_gesture("kb:escape", "layerDispatch")
 		nvda_ui.message(
 			# TRANSLATORS: Message spoken when the AI assistant command layer is activated, listing available key shortcuts.
 			_(
@@ -63,8 +67,15 @@ class AssistantLayerController:
 		)
 
 	def resolve_script(self, gesture: Any):
-		if not self._active:
+		if not self.active:
 			return None
+
+		if gesture.mainKeyName == "escape":
+			return lambda _gesture: self.finish()
+		if self.session.phase is Phase.LOADING_CHOICES:
+			return lambda _gesture: None
+		if self.session.phase is Phase.CHOOSING and gesture.mainKeyName in {"leftArrow", "rightArrow"}:
+			return lambda _gesture: self._move_page(-1 if gesture.mainKeyName == "leftArrow" else 1)
 
 		# Digit mode active: only digit keys are accepted.
 		if self._digit_handler is not None:
@@ -132,8 +143,57 @@ class AssistantLayerController:
 		for d in range(10):
 			self._bind_gesture(f"kb:{d}", "digitSelect")
 
+	def begin_choices(self, provider: str) -> int:
+		token = self.session.begin_choices(provider)
+		if self.session.closed:
+			return token
+		self._digit_handler = None
+		self._clear_gesture_bindings()
+		self._bind_gesture("kb:escape", "layerDispatch")
+		return token
+
+	def accepts(self, token: int, provider: str) -> bool:
+		return self.session.accepts(token, provider)
+
+	def show_choices(self, token: int, provider: str, choices: Sequence[Choice], handler: Callable[[str], None]) -> None:
+		if not self.session.set_choices(token, provider, choices):
+			return
+		def select(digit: int) -> None:
+			choice = self.session.choice(digit)
+			if choice is not None:
+				handler(choice.id)
+		self.enter_digit_selection(select)
+		for key in ("escape", "leftArrow", "rightArrow"):
+			self._bind_gesture(f"kb:{key}", "layerDispatch")
+		self._announce_page()
+
+	def _move_page(self, direction: int) -> None:
+		self.session.move_page(direction)
+		self._announce_page()
+
+	def _announce_page(self) -> None:
+		lines = [f"{(index + 1) % 10}: {choice.label}" for index, choice in enumerate(self.session.visible_choices)]
+		if len(self.session.choices) > 10:
+			lines.append(_("Page {page} of {pages}. Left and right arrows change pages. Escape cancels.").format(
+				page=self.session.page + 1, pages=(len(self.session.choices) + 9) // 10))
+		nvda_ui.message("\n".join(lines))
+
+	def provider_changed(self, provider: str) -> None:
+		if self.session.provider is None or self.session.provider == provider:
+			return
+		self.session.dismiss()
+		generation = self.session.generation
+		def restore() -> None:
+			if self.session.generation == generation:
+				self.finish()
+		nvda_ui.queue(restore)
+
+	def close(self) -> None:
+		self.session.close()
+		self.finish()
+
 	def finish(self) -> None:
-		self._active = False
+		self.session.dismiss()
 		self._layered_script_to_run = None
 		self._digit_handler = None
 		self._clear_gesture_bindings()

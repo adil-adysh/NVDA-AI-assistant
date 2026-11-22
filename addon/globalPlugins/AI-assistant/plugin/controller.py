@@ -62,7 +62,11 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		gui.mainFrame.sysTrayIcon.Bind(wx.EVT_MENU, self._on_tools_last_result, self._last_result_item)
 
 	def _restore_default_gesture_bindings(self) -> None:
-		self.bindGestures(self.__gestures)
+		# Match NVDA's ScriptableObject initialization. Newer NVDA versions
+		# keep decorator gestures separate from the legacy __gestures map.
+		for cls in reversed(type(self).__mro__):
+			self.bindGestures(getattr(cls, f"_{cls.__name__}__gestures", {}))
+			self.bindGestures(getattr(cls, "_scriptDecoratorGestures", {}))
 
 	def _on_tools_manage_providers(self, _event: wx.CommandEvent) -> None:
 		"""Open the AI provider management dialog."""
@@ -264,6 +268,12 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	def script_error(self, gesture: Any):
 		self._app.layer_mode.script_error(gesture)
+
+	def script_layerDispatch(self, gesture: Any):
+		"""Route NVDA's directly bound scripts through command-session ownership."""
+		script_fn = self._app.layer_mode.resolve_script(gesture)
+		if script_fn is not None:
+			script_fn(gesture)
 
 	def script_digitSelect(self, gesture: Any):
 		"""Digit key handler invoked directly by NVDA for bound ``kb:0``-``kb:9``.
