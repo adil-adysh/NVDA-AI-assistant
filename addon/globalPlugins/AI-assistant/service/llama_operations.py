@@ -1,5 +1,6 @@
 """Application-owned model lifecycle operations; observers never own cancellation."""
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import logging
 import re
@@ -7,8 +8,9 @@ import threading
 import time
 import uuid
 
-from ..core.cancellation import cancellation_event_scope, RequestCancelled
+from ..core.cancellation import cancellation_event_scope, check_cancelled
 from ..core.translation import _
+from ..core.operation_outcome import OperationOutcome, resolve_outcome
 
 log = logging.getLogger(__name__)
 ACTIVE = {"queued", "running"}
@@ -40,10 +42,56 @@ class ModelOperations:
 		self._records, self._events, self._futures = {}, {}, {}
 		self._observers, self._handlers = set(), {}
 		self._closed = False
+		self._lane = threading.RLock()
+		self._local = threading.local()
+		self._removing = False
+		self._executing = set()
 
-	def bind(self, *, load, unload):
+	def bind(self, *, load, unload, remove=None):
 		with self._lock:
 			self._handlers = {"load": load, "unload": unload}
+			if remove is not None:
+				self._handlers["remove"] = remove
+
+	def _reserve_removal(self):
+		if self._removing:
+			raise ValueError(_("A preset removal is already running."))
+		self._removing = True
+		for event in (*self._executing, *self._events.values()):
+			event.set()
+
+	@contextmanager
+	def execution(self, kind, cancel=None, *, reserved=False):
+		"""Serialize endpoint mutations without holding admission or IPC locks."""
+		if getattr(self._local, "depth", 0):
+			check_cancelled()
+			yield
+			return
+		cancel = cancel if cancel is not None else threading.Event()
+		with self._lock:
+			if self._closed:
+				raise RuntimeError(_("Model operations are shutting down."))
+			if kind == "remove":
+				if not reserved:
+					self._reserve_removal()
+			elif self._removing:
+				raise ValueError(_("A preset removal is running. Wait for completion."))
+			if kind == "mutation" and self._executing:
+				raise ValueError(_("A model operation is running. Wait for completion."))
+			self._executing.add(cancel)
+		try:
+			with self._lane, cancellation_event_scope(cancel):
+				check_cancelled()
+				self._local.depth = 1
+				try:
+					yield
+				finally:
+					self._local.depth = 0
+		finally:
+			with self._lock:
+				self._executing.discard(cancel)
+				if kind == "remove":
+					self._removing = False
 
 	def snapshots(self):
 		with self._lock:
@@ -82,9 +130,16 @@ class ModelOperations:
 				raise RuntimeError(_("Model operations are shutting down."))
 			if kind not in self._handlers:
 				raise ValueError(_("Unsupported model operation."))
+			if self._removing:
+				for item in self.active():
+					if item.kind == kind == "remove" and item.model_id == model_id:
+						return item
+				raise ValueError(_("A preset removal is running. Wait for completion."))
 			for item in self.active(model_id):
 				if item.kind == kind:
 					return item
+				if kind == "remove":
+					continue
 				raise ValueError(_("An operation is already running for this configuration. Stop it or wait for completion."))
 			# Bound retained terminal history; active operations are never discarded.
 			for identifier in tuple(self._records):
@@ -94,6 +149,8 @@ class ModelOperations:
 					self._records.pop(identifier)
 					self._events.pop(identifier, None)
 					self._futures.pop(identifier, None)
+			if kind == "remove":
+				self._reserve_removal()
 			identifier = uuid.uuid4().hex
 			item = ModelOperation(identifier, model_id, kind, "queued", _("Queued"), updated_at=time.time())
 			self._records[identifier] = item
@@ -103,18 +160,27 @@ class ModelOperations:
 			return item
 
 	def _run(self, item, cancel, handler):
+		error = None
 		try:
-			with cancellation_event_scope(cancel):
-				self._publish(item.operation_id, state="running", message=_("Loading model...") if item.kind == "load" else _("Unloading model..."))
+			with self.execution(item.kind, cancel, reserved=item.kind == "remove"):
+				self._publish(item.operation_id, state="running", message={
+					"load": _("Loading model..."), "unload": _("Unloading model..."),
+					"remove": _("Removing preset..."),
+				}[item.kind])
 				handler(item.model_id, lambda message: self._publish(item.operation_id, message=message), cancel)
-			if cancel.is_set():
-				self._publish(item.operation_id, state="stopped", message=_("Operation stopped. Configuration and files were kept."))
-			else:
-				self._publish(item.operation_id, state="succeeded", message=_("Model loaded.") if item.kind == "load" else _("Model unloaded."))
-		except Exception as error:
-			stopped = cancel.is_set() or isinstance(error, RequestCancelled)
-			message = _("Operation stopped. Configuration and files were kept.") if stopped else safe_diagnostic(error)
-			self._publish(item.operation_id, state="stopped" if stopped else "failed", message=message, error="" if stopped else message)
+		except Exception as exc:
+			error = exc
+		outcome = resolve_outcome(cancelled=cancel.is_set(), error=error)
+		if outcome is OperationOutcome.CANCELLED:
+			self._publish(item.operation_id, state="stopped", message=_("Operation stopped."))
+		elif outcome is OperationOutcome.FAILED:
+			message = safe_diagnostic(error)
+			self._publish(item.operation_id, state="failed", message=message, error=message)
+		else:
+			self._publish(item.operation_id, state="succeeded", message={
+				"load": _("Model loaded."), "unload": _("Model unloaded."),
+				"remove": _("Preset removed."),
+			}[item.kind])
 
 	def cancel(self, operation_id):
 		with self._lock:
@@ -130,6 +196,8 @@ class ModelOperations:
 	def shutdown(self):
 		with self._lock:
 			self._closed = True
+			for event in self._executing:
+				event.set()
 			for identifier, event in self._events.items():
 				if self._records[identifier].state in ACTIVE:
 					event.set()
@@ -141,14 +209,14 @@ _registry_lock = threading.Lock()
 _shutting_down = False
 
 
-def get_model_operations(key, *, load, unload):
+def get_model_operations(key, *, load, unload, remove=None):
 	with _registry_lock:
 		if _shutting_down:
 			raise RuntimeError(_("Model operations are shutting down."))
 		registry = _registries.get(key)
 		if registry is None or registry._closed:
 			registry = _registries[key] = ModelOperations()
-		registry.bind(load=load, unload=unload)
+		registry.bind(load=load, unload=unload, remove=remove)
 		return registry
 
 

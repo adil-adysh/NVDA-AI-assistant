@@ -427,6 +427,19 @@ def execute_runtime_command(server, frame, write, *, cancellation_requested: Cal
 				}
 			)
 
+	elif cmd_type in ("llama_pause_startup", "llama_resume_startup"):
+		try:
+			executor = server.get_llama_executor()
+			if cmd_type == "llama_pause_startup":
+				result = {"token": executor.pause_startup()}
+			else:
+				executor.resume_startup(int(frame["token"]))
+				result = {}
+			write({"type": "llama_fence_response", "command": cmd_type, "success": True, **result})
+		except Exception as exc:
+			write({"type": "error", "command": cmd_type, "success": False,
+				"error_code": "LLAMA_FENCE_FAILED", "error_message": str(exc)})
+
 	elif cmd_type == "llama_stop":
 		try:
 			executor = server.get_llama_executor()

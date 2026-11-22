@@ -135,6 +135,19 @@ impl RuntimeSupervisor {
         py.allow_threads(move || core.fence_startup());
     }
 
+    /// Application catalog transaction fence. Control/status remain available.
+    pub fn pause_startup(&self, py: Python<'_>) -> PyResult<u64> {
+        let core = Arc::clone(&self.core);
+        py.allow_threads(move || core.pause_startup())
+            .map_err(PyRuntimeError::new_err)
+    }
+
+    pub fn resume_startup(&self, py: Python<'_>, token: u64) -> PyResult<()> {
+        let core = Arc::clone(&self.core);
+        py.allow_threads(move || core.resume_startup(token))
+            .map_err(PyRuntimeError::new_err)
+    }
+
     /// Permanently fence and stop the runtime during add-on termination.
     pub fn shutdown(&self, py: Python<'_>) -> PyResult<()> {
         let core = Arc::clone(&self.core);

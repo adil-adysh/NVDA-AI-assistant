@@ -381,7 +381,7 @@ class WorkerServer:
 			spec = JobSpec.from_dict(frame)
 			token = CancellationToken(spec.job_id)
 			command = str(spec.payload.get("type", ""))
-			control = spec.job_type == "runtime_command" and (command.endswith(("_stop", "_get_status", "_status")) or command == "mcp_manager_status")
+			control = spec.job_type == "runtime_command" and (command.endswith(("_stop", "_get_status", "_status", "_pause_startup", "_resume_startup")) or command == "mcp_manager_status")
 			with self._registry_lock:
 				full = (len(self._control_jobs) >= 8 or self._event_queue.qsize() >= 1128) if control else (
 					len(self._active_jobs) - len(self._control_jobs) >= 128 or self._event_queue.qsize() >= 1000)
@@ -406,7 +406,7 @@ class WorkerServer:
 			# Dispatch execution to thread pool
 			command = str(spec.payload.get("type", ""))
 			if spec.job_type == "runtime_command":
-				if command.endswith(("_stop", "_get_status", "_status")):
+				if command.endswith(("_stop", "_get_status", "_status", "_pause_startup", "_resume_startup")):
 					pool = self._control_executor
 				elif command.startswith("mcp_"):
 					pool = self._execution_lanes["mcp"]
@@ -488,7 +488,7 @@ class WorkerServer:
 					status_message=str(frame.get("stage", "")), generation=spec.generation).to_dict())
 			else:
 				response.update(frame)
-		lock = None if command.startswith("mcp_") or command.endswith(("_stop", "_get_status", "_status")) else self._runtime_locks[family]
+		lock = None if command.startswith("mcp_") or command.endswith(("_stop", "_get_status", "_status", "_pause_startup", "_resume_startup")) else self._runtime_locks[family]
 		acquired = False
 		finished = threading.Event()
 		watcher = None

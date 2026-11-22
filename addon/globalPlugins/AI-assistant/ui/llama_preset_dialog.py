@@ -105,6 +105,7 @@ class LlamaPresetDialog(wx.Dialog):
 		self._record = record
 		self._closed = False
 		self._cache_task = None
+		self._save_task = None
 		self._cache_repos: tuple[CachedRepository, ...] = ()
 		self._cache_scanned = False
 		self._setting_spec = False
@@ -444,6 +445,9 @@ class LlamaPresetDialog(wx.Dialog):
 
 	def _dispose(self) -> None:
 		self._closed = True
+		if self._save_task is not None:
+			self._save_task.detach()
+			self._save_task = None
 		if self._cache_task is not None:
 			self._cache_task.cancel()
 			self._cache_task = None
@@ -865,6 +869,8 @@ class LlamaPresetDialog(wx.Dialog):
 			self._problem_targets[index]()
 
 	def _on_ok(self, event) -> None:
+		if self._closed or self._save_task is not None:
+			return
 		source = self._source()
 		log.debug("Saving llama.cpp preset source=%r main_mode=%r cached=%r/%r",
 			source, self._main_mode, self._cached_main_repo, self._cached_main_file)
@@ -876,20 +882,36 @@ class LlamaPresetDialog(wx.Dialog):
 		self._hide_problems()
 		source = self._source()
 		options = self._options()
-		try:
-			model_id = self._id.GetValue().strip()
-			name = self._name.GetValue().strip() or model_id
-			if self._record:
-				self._provider.update_preset(model_id, repo=source["repo"], file=source["file"],
+		model_id = self._id.GetValue().strip()
+		name = self._name.GetValue().strip() or model_id
+		provider, editing, spec_type_auto = self._provider, bool(self._record), self._spec_type_auto
+		self._tabs.Enable(False)
+		self._ok_button.Enable(False)
+		self._status.SetLabel(_("Saving preset..."))
+
+		def work(_cancel):
+			if editing:
+				provider.update_preset(model_id, repo=source["repo"], file=source["file"],
 					draft_repo=source["draft_repo"], draft_file=source["draft_file"],
-					display_name=name, options=options, spec_type_auto=self._spec_type_auto)
+					display_name=name, options=options, spec_type_auto=spec_type_auto)
 			else:
-				self._provider.create_preset(source["repo"], model_id, name,
+				provider.create_preset(source["repo"], model_id, name,
 					file=source["file"], draft_repo=source["draft_repo"],
 					draft_file=source["draft_file"], options=options,
-					spec_type_auto=self._spec_type_auto, select=True)
-		except Exception as error:
+					spec_type_auto=spec_type_auto, select=True)
+
+		def saved(_result):
+			self._dispose()
+			self.EndModal(wx.ID_OK)
+
+		def failed(error):
+			self._status.SetLabel(_("Unable to save preset."))
 			wx.MessageBox(str(error), _("Unable to save preset"), wx.OK | wx.ICON_ERROR, parent=self)
-			return
-		self._dispose()
-		self.EndModal(wx.ID_OK)
+
+		def finished():
+			self._save_task = None
+			self._tabs.Enable(True)
+			self._ok_button.Enable(True)
+
+		self._save_task = background_tasks.submit(work, on_success=saved, on_error=failed,
+			on_finally=finished, is_alive=lambda: not self._closed, task_name="save llama.cpp preset")

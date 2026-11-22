@@ -16,6 +16,8 @@ struct ActiveConfig {
 
 struct InnerState {
     closed: bool,
+    startup_pause: Option<u64>,
+    startup_epoch: u64,
     state: LifecycleState,
     process: Option<Box<dyn ProcessHandle>>,
     generation: u64,
@@ -62,6 +64,8 @@ impl SupervisorCore {
 
         let initial_state = InnerState {
             closed: false,
+            startup_pause: None,
+            startup_epoch: 0,
             state: LifecycleState::Stopped,
             process: None,
             generation: 0,
@@ -167,6 +171,21 @@ impl SupervisorCore {
         running_model: Option<&str>,
         timeout: Duration,
     ) -> Result<RuntimeStatus, String> {
+        let epoch = self.state.lock().unwrap().startup_epoch;
+        self.ensure_ready_at_epoch(executable, args, env, startup_identity, running_model, timeout, epoch)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ensure_ready_at_epoch(
+        &self,
+        executable: &str,
+        args: &[String],
+        env: &HashMap<String, String>,
+        startup_identity: &str,
+        running_model: Option<&str>,
+        timeout: Duration,
+        epoch: u64,
+    ) -> Result<RuntimeStatus, String> {
         let start_time = Instant::now();
         const MAX_ATTEMPTS: usize = 5;
         let mut attempt: usize = 0;
@@ -181,9 +200,9 @@ impl SupervisorCore {
             }
 
             let mut state = self.state.lock().unwrap();
-            if state.closed {
+            if state.closed || state.startup_pause.is_some() || state.startup_epoch != epoch {
                 return Err(format!(
-                    "{} supervisor shutdown has fenced startup",
+                    "{} supervisor shutdown or catalog mutation has fenced startup",
                     self.runtime_name
                 ));
             }
@@ -247,13 +266,14 @@ impl SupervisorCore {
                 }
                 // Config changed; restart needed
                 drop(state);
-                return self.restart(
+                return self.restart_at_epoch(
                     executable,
                     args,
                     env,
                     startup_identity,
                     running_model,
                     timeout.saturating_sub(start_time.elapsed()),
+                    epoch,
                 );
             }
 
@@ -523,12 +543,27 @@ impl SupervisorCore {
         running_model: Option<&str>,
         timeout: Duration,
     ) -> Result<RuntimeStatus, String> {
+        let epoch = self.state.lock().unwrap().startup_epoch;
+        self.restart_at_epoch(executable, args, env, startup_identity, running_model, timeout, epoch)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn restart_at_epoch(
+        &self,
+        executable: &str,
+        args: &[String],
+        env: &HashMap<String, String>,
+        startup_identity: &str,
+        running_model: Option<&str>,
+        timeout: Duration,
+        epoch: u64,
+    ) -> Result<RuntimeStatus, String> {
         let start_time = Instant::now();
 
         // 1. Enter Restarting state under lock
         let old_proc = {
             let mut state = self.state.lock().unwrap();
-            if state.closed {
+            if state.closed || state.startup_pause.is_some() || state.startup_epoch != epoch {
                 return Err(format!(
                     "{} supervisor shutdown has fenced restart",
                     self.runtime_name
@@ -619,13 +654,14 @@ impl SupervisorCore {
             return Err(err_msg);
         }
 
-        self.ensure_ready(
+        self.ensure_ready_at_epoch(
             executable,
             args,
             env,
             startup_identity,
             running_model,
             remaining_timeout,
+            epoch,
         )
     }
 
@@ -677,15 +713,40 @@ impl SupervisorCore {
         let mut state = self.state.lock().unwrap();
         if !state.closed {
             state.closed = true;
+            state.startup_epoch += 1;
             state.generation += 1;
         }
         self.condvar.notify_all();
     }
 
+    /// Temporarily reject lifecycle launches while the application mutates its catalog.
+    pub fn pause_startup(&self) -> Result<u64, String> {
+        let mut state = self.state.lock().unwrap();
+        if state.closed || state.startup_pause.is_some() {
+            return Err("Runtime startup is already fenced".into());
+        }
+        state.generation += 1;
+        state.startup_epoch += 1;
+        let token = state.generation;
+        state.startup_pause = Some(token);
+        self.condvar.notify_all();
+        Ok(token)
+    }
+
+    pub fn resume_startup(&self, token: u64) -> Result<(), String> {
+        let mut state = self.state.lock().unwrap();
+        if state.closed || state.startup_pause != Some(token) {
+            return Err("Runtime startup fence is stale or shutdown".into());
+        }
+        state.startup_pause = None;
+        self.condvar.notify_all();
+        Ok(())
+    }
+
     /// Explicitly adopt a server running on the endpoint.
     pub fn adopt(&self, model_id: Option<&str>) -> Result<RuntimeStatus, String> {
         let mut state = self.state.lock().unwrap();
-        if state.closed {
+        if state.closed || state.startup_pause.is_some() {
             return Err(format!(
                 "{} supervisor shutdown has fenced adoption",
                 self.runtime_name
@@ -705,13 +766,14 @@ impl SupervisorCore {
             ));
         }
 
+        let adoption_generation = state.generation;
         drop(state);
         if self
             .health_checker
             .check_compatible(&self.base_url, Duration::from_secs(2))
         {
             let mut s = self.state.lock().unwrap();
-            if s.closed {
+            if s.closed || s.startup_pause.is_some() || s.generation != adoption_generation {
                 return Err(format!(
                     "{} supervisor shutdown has fenced adoption",
                     self.runtime_name

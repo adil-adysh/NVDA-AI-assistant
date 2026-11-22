@@ -170,6 +170,30 @@ class LlamaServerSupervisor:
 			return self._native_supervisor
 		return None
 
+	def pause_startup(self) -> int:
+		native = self._get_native()
+		if native is not None:
+			return native.pause_startup()
+		client = self._get_worker_client(start=True)
+		if client is None:
+			raise LlamaServerError(_("The local AI worker is unavailable."))
+		response = client.send_command({"type": "llama_pause_startup"}, timeout=5.0)
+		if not response.get("success") or not isinstance(response.get("token"), int):
+			raise LlamaServerError(response.get("error_message") or _("Unable to fence llama.cpp startup."))
+		return response["token"]
+
+	def resume_startup(self, token: int) -> None:
+		native = self._get_native()
+		if native is not None:
+			native.resume_startup(token)
+			return
+		client = self._get_worker_client()
+		if client is None:
+			raise LlamaServerError(_("The local AI worker is unavailable."))
+		response = client.send_command({"type": "llama_resume_startup", "token": token}, timeout=5.0)
+		if not response.get("success"):
+			raise LlamaServerError(response.get("error_message") or _("Unable to release llama.cpp startup fence."))
+
 	def status(self, *, refresh: bool = False, strict: bool = False) -> Any:
 		"""Return an immutable snapshot of supervisor status (non-blocking)."""
 		native = self._get_native()

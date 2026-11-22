@@ -526,3 +526,32 @@ class TestLlamaCrashContainmentAndGenerationFencing(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+def test_worker_catalog_fence_is_native_and_status_stop_remain_available():
+    from unittest.mock import Mock
+    executor_mod = load_addon_module("worker.executors.llama", namespace="catalog_fence_worker")
+    native = Mock()
+    native.pause_startup.return_value = 41
+    native.status.return_value = {"state": "stopped"}
+    native.stop.return_value = {"state": "stopped"}
+    executor = executor_mod.LlamaWorkerExecutor(supervisor=native)
+    assert executor.pause_startup() == 41
+    executor.get_status()
+    executor.stop()
+    executor.resume_startup(41)
+    native.pause_startup.assert_called_once()
+    native.resume_startup.assert_called_once_with(41)
+
+
+def test_supervisor_catalog_fence_uses_correlated_worker_commands():
+    from unittest.mock import Mock
+    mod = load_addon_module("providers.runtime.llama_server", namespace="catalog_fence_wrapper")
+    client = Mock()
+    client.send_command.side_effect = [{"success": True, "token": 41}, {"success": True}]
+    supervisor = mod.LlamaServerSupervisor(worker_client=client)
+    assert supervisor.pause_startup() == 41
+    supervisor.resume_startup(41)
+    assert [call.args[0]["type"] for call in client.send_command.call_args_list] == ["llama_pause_startup", "llama_resume_startup"]
+    operations = load_addon_module("core.job.operations", namespace="catalog_fence_wrapper")
+    assert {"llama_pause_startup", "llama_resume_startup"} <= operations.RUNTIME_COMMANDS

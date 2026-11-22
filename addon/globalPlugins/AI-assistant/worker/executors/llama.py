@@ -384,6 +384,19 @@ class LlamaWorkerExecutor:
 		status = self._supervisor.stop(timeout_seconds=timeout_seconds)
 		return serialize_runtime_status(status)
 
+	def pause_startup(self) -> int:
+		# The native epoch also fences references already borrowed by control jobs.
+		with self._supervisor_lock:
+			if self._closed:
+				raise RuntimeError("llama executor shutdown has fenced startup")
+			return self._get_supervisor_locked().pause_startup()
+
+	def resume_startup(self, token: int) -> None:
+		with self._supervisor_lock:
+			if self._closed:
+				raise RuntimeError("llama executor shutdown has fenced startup")
+			self._get_supervisor_locked().resume_startup(token)
+
 	def shutdown(self, timeout_seconds: float = 0.3) -> None:
 		with self._supervisor_lock:
 			self._closed = True

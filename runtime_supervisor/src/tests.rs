@@ -1044,3 +1044,140 @@ fn test_real_child_stderr_survives_startup_failure() {
         .diagnostics()
         .contains("invalid preset option mlock"));
 }
+
+#[test]
+fn catalog_fence_blocks_start_restart_adoption_and_cannot_reopen_shutdown() {
+    let driver = Arc::new(FakeProcessDriver::new());
+    let health = Arc::new(FakeHealthChecker::new(false, true));
+    let supervisor = create_test_supervisor(driver.clone(), health);
+    let token = supervisor.pause_startup().unwrap();
+    let env = HashMap::new();
+    let timeout = Duration::from_millis(100);
+    assert!(supervisor
+        .ensure_ready("fake", &[], &env, "config", None, timeout)
+        .is_err());
+    assert!(supervisor
+        .restart("fake", &[], &env, "config", None, timeout)
+        .is_err());
+    assert!(supervisor.adopt(None).is_err());
+    assert_eq!(driver.spawns.load(Ordering::SeqCst), 0);
+    supervisor.resume_startup(token + 1).unwrap_err();
+    supervisor.resume_startup(token).unwrap();
+    let next = supervisor.pause_startup().unwrap();
+    supervisor.shutdown().unwrap();
+    assert!(supervisor.resume_startup(next).is_err());
+}
+
+#[test]
+fn catalog_fence_invalidates_adoption_even_after_reopening() {
+    struct BlockingHealth {
+        entered: std::sync::Barrier,
+        release: std::sync::Barrier,
+    }
+    impl HealthChecker for BlockingHealth {
+        fn check_health(&self, _: &str, _: Duration) -> bool { true }
+        fn check_compatible(&self, _: &str, _: Duration) -> bool {
+            self.entered.wait();
+            self.release.wait();
+            true
+        }
+    }
+    let health = Arc::new(BlockingHealth {
+        entered: std::sync::Barrier::new(2),
+        release: std::sync::Barrier::new(2),
+    });
+    let supervisor = Arc::new(SupervisorCore::with_drivers(
+        "test".into(), "127.0.0.1".into(), 9999,
+        Arc::new(FakeProcessDriver::new()), health.clone(),
+    ));
+    let borrowed = supervisor.clone();
+    let task = thread::spawn(move || borrowed.adopt(None));
+    health.entered.wait();
+    let token = supervisor.pause_startup().unwrap();
+    supervisor.resume_startup(token).unwrap();
+    health.release.wait();
+    assert!(task.join().unwrap().is_err());
+    assert_eq!(supervisor.status().state, "stopped");
+}
+
+#[test]
+fn catalog_removal_during_spawn_drains_late_child_and_allows_next_start() {
+    struct BlockingDriver {
+        inner: Arc<FakeProcessDriver>,
+        first: AtomicBool,
+        entered: std::sync::Barrier,
+        release: std::sync::Barrier,
+    }
+    impl ProcessDriver for BlockingDriver {
+        fn spawn(&self, executable: &str, args: &[String], env: &HashMap<String, String>) -> Result<Box<dyn ProcessHandle>, String> {
+            if self.first.swap(false, Ordering::SeqCst) {
+                self.entered.wait();
+                self.release.wait();
+            }
+            self.inner.spawn(executable, args, env)
+        }
+    }
+    let inner = Arc::new(FakeProcessDriver::new());
+    let driver = Arc::new(BlockingDriver {
+        inner: inner.clone(), first: AtomicBool::new(true),
+        entered: std::sync::Barrier::new(2), release: std::sync::Barrier::new(2),
+    });
+    let supervisor = Arc::new(SupervisorCore::with_drivers(
+        "test".into(), "127.0.0.1".into(), 9999,
+        driver.clone(), Arc::new(FakeHealthChecker::new(true, false)),
+    ));
+    let borrowed = supervisor.clone();
+    let task = thread::spawn(move || borrowed.ensure_ready("fake", &[], &HashMap::new(), "old", None, Duration::from_secs(2)));
+    driver.entered.wait();
+    assert_eq!(supervisor.status().state, "starting");
+    let token = supervisor.pause_startup().unwrap();
+    supervisor.stop(Duration::from_millis(100)).unwrap();
+    supervisor.resume_startup(token).unwrap();
+    driver.release.wait();
+    assert!(task.join().unwrap().is_err());
+    assert!(!inner.current_alive.load(Ordering::SeqCst));
+    assert_eq!(supervisor.status().state, "stopped");
+    supervisor.ensure_ready("fake", &[], &HashMap::new(), "new", None, Duration::from_secs(2)).unwrap();
+    assert!(supervisor.status().is_running);
+    supervisor.shutdown().unwrap();
+}
+
+#[test]
+fn catalog_removal_during_health_poll_stops_owned_pid_and_allows_next_start() {
+    struct BlockingHealth {
+        first: AtomicBool,
+        entered: std::sync::Barrier,
+        release: std::sync::Barrier,
+    }
+    impl HealthChecker for BlockingHealth {
+        fn check_health(&self, _: &str, _: Duration) -> bool {
+            if self.first.swap(false, Ordering::SeqCst) {
+                self.entered.wait();
+                self.release.wait();
+            }
+            true
+        }
+        fn check_compatible(&self, _: &str, _: Duration) -> bool { false }
+    }
+    let health = Arc::new(BlockingHealth {
+        first: AtomicBool::new(true), entered: std::sync::Barrier::new(2), release: std::sync::Barrier::new(2),
+    });
+    let driver = Arc::new(FakeProcessDriver::new());
+    let supervisor = Arc::new(SupervisorCore::with_drivers(
+        "test".into(), "127.0.0.1".into(), 9999, driver.clone(), health.clone(),
+    ));
+    let borrowed = supervisor.clone();
+    let task = thread::spawn(move || borrowed.ensure_ready("fake", &[], &HashMap::new(), "old", None, Duration::from_secs(2)));
+    health.entered.wait();
+    assert!(supervisor.status().pid.is_some());
+    let token = supervisor.pause_startup().unwrap();
+    supervisor.stop(Duration::from_millis(100)).unwrap();
+    supervisor.resume_startup(token).unwrap();
+    health.release.wait();
+    assert!(task.join().unwrap().is_err());
+    assert!(!driver.current_alive.load(Ordering::SeqCst));
+    assert_eq!(supervisor.status().state, "stopped");
+    supervisor.ensure_ready("fake", &[], &HashMap::new(), "new", None, Duration::from_secs(2)).unwrap();
+    assert!(supervisor.status().is_running);
+    supervisor.shutdown().unwrap();
+}

@@ -16,7 +16,10 @@ class LlamaModelsDialog(wx.Dialog):
 		self._records = ()
 		self._has_populated_presets = False
 		self._task = None
+		self._mutation_task = None
 		self._closed = False
+		self._operation_detach = None
+		self._removal_id = None
 		helper = guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
 		helper.addItem(wx.StaticText(self, label=_(
 			"Manage saved model presets. OK in the editor saves a preset; Close leaves saved changes in place.")))
@@ -83,6 +86,12 @@ class LlamaModelsDialog(wx.Dialog):
 
 	def _dispose(self):
 		self._closed = True
+		if self._mutation_task is not None:
+			self._mutation_task.detach()
+			self._mutation_task = None
+		if self._operation_detach is not None:
+			self._operation_detach()
+			self._operation_detach = None
 		if self._task is not None:
 			self._task.cancel()
 			self._task = None
@@ -92,7 +101,7 @@ class LlamaModelsDialog(wx.Dialog):
 		return self._records[index] if 0 <= index < len(self._records) else None
 
 	def _refresh(self, event=None):
-		if self._task is not None:
+		if self._task is not None or self._mutation_task is not None:
 			return
 		self._status.SetLabel(_("Refreshing presets..."))
 		def work(cancel):
@@ -149,8 +158,11 @@ class LlamaModelsDialog(wx.Dialog):
 
 	def _selection_changed(self):
 		record = self._selected()
+		busy = self._task is not None or self._mutation_task is not None or self._removal_id is not None
 		for key in ("edit", "duplicate", "remove"):
-			self._buttons[key].Enable(record is not None and self._task is None)
+			self._buttons[key].Enable(record is not None and not busy)
+		for key in ("add", "refresh"):
+			self._buttons[key].Enable(not busy)
 		if record is None:
 			self._details.SetValue("")
 			return
@@ -175,6 +187,8 @@ class LlamaModelsDialog(wx.Dialog):
 		self._details.SetValue("\n".join(lines))
 
 	def _add(self, event):
+		if self._closed or self._task is not None or self._mutation_task is not None or self._removal_id is not None:
+			return
 		dialog = LlamaPresetDialog(self, self._provider)
 		try:
 			if dialog.ShowModal() == wx.ID_OK:
@@ -183,6 +197,8 @@ class LlamaModelsDialog(wx.Dialog):
 			dialog.Destroy()
 
 	def _edit(self, event=None):
+		if self._closed or self._task is not None or self._mutation_task is not None or self._removal_id is not None:
+			return
 		record = self._selected()
 		if record is None:
 			return
@@ -194,6 +210,8 @@ class LlamaModelsDialog(wx.Dialog):
 			dialog.Destroy()
 
 	def _duplicate(self, event):
+		if self._closed or self._task is not None or self._mutation_task is not None or self._removal_id is not None:
+			return
 		record = self._selected()
 		if record is None:
 			return
@@ -204,14 +222,23 @@ class LlamaModelsDialog(wx.Dialog):
 			new_id = dialog.GetValue().strip()
 		finally:
 			dialog.Destroy()
-		try:
-			self._provider.duplicate_preset(record.model_id, new_id, _("{name} copy").format(name=record.display_name or record.model_id))
-		except Exception as error:
+		provider, model_id = self._provider, record.model_id
+		name = _("{name} copy").format(name=record.display_name or model_id)
+		self._status.SetLabel(_("Duplicating preset..."))
+		def work(_cancel):
+			return provider.duplicate_preset(model_id, new_id, name)
+		def failed(error):
 			wx.MessageBox(str(error), _("Duplicate preset"), wx.OK | wx.ICON_ERROR, parent=self)
-			return
-		self._refresh()
+		def finished():
+			self._mutation_task = None
+			self._refresh()
+		self._mutation_task = background_tasks.submit(work, on_error=failed,
+			on_finally=finished, is_alive=lambda: not self._closed, task_name="duplicate llama.cpp preset")
+		self._selection_changed()
 
 	def _remove(self, event):
+		if self._closed or self._task is not None or self._mutation_task is not None or self._removal_id is not None:
+			return
 		record = self._selected()
 		if record is None:
 			return
@@ -224,22 +251,28 @@ class LlamaModelsDialog(wx.Dialog):
 			return
 		self._status.SetLabel(_("Removing preset and stopping any add-on-owned server..."))
 
-		def work(_cancel):
-			self._provider.delete_model(record.model_id)
-
-		def failed(error):
+		operations = self._provider.model_operations
+		def changed(item):
+			if item.operation_id == self._removal_id:
+				wx.CallAfter(self._show_removal, item)
+		if self._operation_detach is None:
+			self._operation_detach = operations.subscribe(changed)
+		try:
+			operation = operations.start(record.model_id, "remove")
+			self._removal_id = operation.operation_id
+			# Fast completion can race subscription delivery before the ID is assigned.
+			self._show_removal(next(item for item in operations.snapshots()
+				if item.operation_id == operation.operation_id))
+		except Exception as error:
 			wx.MessageBox(str(error), _("Remove preset"), wx.OK | wx.ICON_ERROR, parent=self)
-
-		def finished():
-			self._task = None
-			if not self._closed:
-				self._refresh()
-
-		self._task = background_tasks.submit(
-			work,
-			on_error=failed,
-			on_finally=finished,
-			is_alive=lambda: not self._closed,
-			task_name="remove llama.cpp preset",
-		)
 		self._selection_changed()
+
+	def _show_removal(self, item):
+		if self._closed or item.operation_id != self._removal_id:
+			return
+		self._status.SetLabel(item.message)
+		if item.state not in {"queued", "running"}:
+			self._removal_id = None
+			if item.error:
+				wx.MessageBox(item.error, _("Remove preset"), wx.OK | wx.ICON_ERROR, parent=self)
+			self._refresh()

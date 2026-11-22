@@ -529,6 +529,8 @@ class TestWorkerErrorResponsePreservation(unittest.TestCase):
 		self.addCleanup(tempfile.TemporaryDirectory.cleanup, (catalog_tmp := tempfile.TemporaryDirectory()))
 		mgr = LlamaCppModelManager(worker_client=mock_client, cache_dir=catalog_tmp.name)
 		rec = LlamaModelRecord(model_id="heavy_qwen", repo="owner/heavy")
+		mgr._catalog.upsert(rec)
+		rec = mgr.find_record(rec.model_id)
 
 		with self.assertRaises(LlamaServerError) as ctx:
 			mgr.ensure_running(rec)

@@ -311,3 +311,36 @@ def test_stop_submission_has_reserved_capacity_under_progress_backpressure():
 		server._control_executor.shutdown(wait=True)
 		for lane in server._execution_lanes.values():
 			lane.shutdown(wait=True)
+
+
+def test_catalog_fence_control_jobs_bypass_busy_runtime_lane():
+    started, release, fenced = threading.Event(), threading.Event(), threading.Event()
+    class Runtime:
+        def list_models(self, **kwargs):
+            started.set()
+            assert release.wait(3)
+            return []
+        def pause_startup(self):
+            fenced.set()
+            return 23
+    server = server_mod.WorkerServer(llama_executor=Runtime(), max_workers=1)
+    server._cmd_server = Pipe()
+    try:
+        server._handle_command(dto.JobSpec(job_id="load", job_type="runtime_command",
+            payload={"type": "llama_list_models"}).to_dict())
+        assert started.wait(1)
+        server._handle_command(dto.JobSpec(job_id="fence", job_type="runtime_command",
+            payload={"type": "llama_pause_startup"}).to_dict())
+        assert server._cmd_server.frames[-1]["type"] == "job_ack"
+        assert fenced.wait(1)
+        server._handle_command({"type": "worker_health_ping"})
+        assert server._cmd_server.frames[-1]["type"] == "worker_health"
+    finally:
+        release.set()
+        server._executor.shutdown(wait=True)
+        server._execution_lanes["llama"].shutdown(wait=True)
+        server._control_executor.shutdown(wait=True)
+    frames = list(server._event_queue.queue)
+    result = next(frame for frame in frames if frame.get("type") == "job_result" and frame["job_id"] == "fence")
+    assert result["status"] == "completed"
+    assert result["result_data"]["token"] == 23

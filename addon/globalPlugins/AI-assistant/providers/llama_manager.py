@@ -6,11 +6,13 @@ import logging
 import threading
 import urllib.parse
 from dataclasses import replace
+from functools import wraps
+from inspect import signature
 from pathlib import Path
 from typing import Any
 
 from ..core.translation import _
-from ..core.cancellation import cancellation_event_scope, check_cancelled, RequestCancelled
+from ..core.cancellation import cancellation_event_scope, cancellation_scope, check_cancelled, RequestCancelled
 from .interfaces import LLMProviderError, DownloadCancelledError
 from .model_manager import (
 	ManagedModel,
@@ -34,6 +36,19 @@ log = logging.getLogger(__name__)
 
 
 _UNSET = object()
+
+
+def coordinated(kind):
+	"""All catalog and router mutations share the endpoint application owner."""
+	def decorate(method):
+		parameters = signature(method)
+		@wraps(method)
+		def guarded(self, *args, **kwargs):
+			cancel = parameters.bind(self, *args, **kwargs).arguments.get("cancel_event")
+			with self.model_operations.execution(kind, cancel):
+				return method(self, *args, **kwargs)
+		return guarded
+	return decorate
 
 
 class LlamaCppModelManager(ModelManagerProvider):
@@ -81,8 +96,8 @@ class LlamaCppModelManager(ModelManagerProvider):
 	@property
 	def model_operations(self):
 		from ..service.llama_operations import get_model_operations
-		return get_model_operations((str(self._catalog.preset_path.parent), self._server_address(self._config)),
-			load=self.load_model, unload=self.unload_model)
+		return get_model_operations(self._server_address(self._config),
+			load=self.load_model, unload=self.unload_model, remove=self.remove_model)
 
 	@property
 	def active_model_id(self) -> str | None:
@@ -148,6 +163,7 @@ class LlamaCppModelManager(ModelManagerProvider):
 		if not str(name).strip() or any(ord(char) < 32 for char in str(name)):
 			raise ValueError(_("Preset name must be a nonempty single-line name."))
 
+	@coordinated("mutation")
 	def create_preset(self, repo: str, model_id: str, display_name: str, *,
 			file: str | None = None, draft_repo: str | None = None,
 			draft_file: str | None = None, options: dict[str, str] | None = None,
@@ -164,6 +180,7 @@ class LlamaCppModelManager(ModelManagerProvider):
 			self.set_active_model(model_id)
 		return model_id
 
+	@coordinated("mutation")
 	def update_preset(self, model_id: str, *, repo: str | None = None, file=_UNSET,
 			draft_repo=_UNSET, draft_file=_UNSET,
 			display_name: str | None = None, options: dict[str, str] | None = None,
@@ -187,6 +204,7 @@ class LlamaCppModelManager(ModelManagerProvider):
 		self._invalidate_caches()
 		return model_id
 
+	@coordinated("mutation")
 	def duplicate_preset(self, model_id: str, new_id: str, display_name: str) -> str:
 		self._validate_display_name(display_name)
 		if self._catalog.find_exact(new_id) is not None:
@@ -198,6 +216,7 @@ class LlamaCppModelManager(ModelManagerProvider):
 		self._invalidate_caches()
 		return new_id
 
+	@coordinated("mutation")
 	def set_runtime_options(self, model_id: str, options: dict[str, str]) -> None:
 		self._catalog.update_options(model_id, options)
 		self._invalidate_caches()
@@ -213,6 +232,7 @@ class LlamaCppModelManager(ModelManagerProvider):
 		response = self._worker_command("llama_inspect_options", executable=self._supervisor.executable)
 		return options, set(response.get("options", []))
 
+	@coordinated("mutation")
 	def set_active_model(self, model_id: str) -> None:
 		if self._catalog.find_exact(model_id) is None:
 			raise LLMProviderError(_("The selected preset is not available."))
@@ -233,6 +253,7 @@ class LlamaCppModelManager(ModelManagerProvider):
 	def load_model(self, model_id, on_progress, cancel_event):
 		self.prepare_configuration(model_id, on_progress, cancel_event)
 
+	@coordinated("unload")
 	def unload_model(self, model_id, on_progress, cancel_event):
 		with cancellation_event_scope(cancel_event), self._lock:
 			if self._catalog.find_exact(model_id) is None:
@@ -244,6 +265,7 @@ class LlamaCppModelManager(ModelManagerProvider):
 				raise LLMProviderError(_("The model did not finish unloading."))
 			self._invalidate_caches()
 
+	@coordinated("load")
 	def prepare_configuration(self, model_id: str, on_progress, cancel_event) -> None:
 		with cancellation_event_scope(cancel_event):
 			record = self._catalog.find_exact(model_id)
@@ -260,7 +282,14 @@ class LlamaCppModelManager(ModelManagerProvider):
 				raise LLMProviderError(_("The model did not finish loading."))
 			self._invalidate_caches()
 
+	@coordinated("load")
 	def ensure_running(self, record, *, on_progress=None, cancel_event=None) -> None:
+		# Request preparation may retain a snapshot across a completed removal/edit.
+		current = self._catalog.find_exact(record.model_id)
+		if current is None:
+			raise ValueError(_("This preset is no longer registered."))
+		if current != record:
+			raise ValueError(_("This preset changed. Select it again before loading."))
 		try:
 			with cancellation_event_scope(cancel_event):
 				self._ensure_running(record, on_progress=on_progress)
@@ -321,10 +350,29 @@ class LlamaCppModelManager(ModelManagerProvider):
 
 	def _stop_owned_router(self) -> None:
 		status = self._supervisor.status(refresh=True, strict=True)
-		if status.is_running and not status.is_adopted:
+		owned_activity = status.is_running or getattr(status, "state", "") in {"starting", "restarting"}
+		if owned_activity and not status.is_adopted:
 			self._supervisor.stop(strict=True)
 
+	@coordinated("remove")
 	def delete_model(self, model_id: str) -> None:
+		check_cancelled()
+		# The fence acknowledgement must be received even if Stop races admission.
+		with cancellation_scope(None):
+			token = self._supervisor.pause_startup()
+		try:
+			check_cancelled()
+			self._delete_model(model_id)
+		finally:
+			# Cleanup must not inherit Stop and leave the endpoint permanently fenced.
+			with cancellation_scope(None):
+				self._supervisor.resume_startup(token)
+
+	def remove_model(self, model_id, on_progress, cancel_event):
+		with cancellation_event_scope(cancel_event):
+			self.delete_model(model_id)
+
+	def _delete_model(self, model_id: str) -> None:
 		record = self._catalog.find_exact(model_id)
 		if record is None:
 			raise LLMProviderError(_("This preset is not registered."))
@@ -332,6 +380,7 @@ class LlamaCppModelManager(ModelManagerProvider):
 		# only our owned process before changing the catalog; adopted servers are
 		# deliberately left untouched.
 		self._stop_owned_router()
+		check_cancelled()
 		active = self.active_model_id
 		was_active = active == record.model_id or (active and record.matches_server_id(active))
 		cleared = False
