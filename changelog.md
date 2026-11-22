@@ -55,6 +55,12 @@ Changed
 * Hide the chat window with `Escape` while requests continue in the
   background. **Stop response** cancels generation and keeps the partial answer;
   drafts and attachments remain available when switching conversations.
+* Ask a question about the current page directly in the chat input. AI
+  Assistant retrieves relevant passages separately and keeps those excerpts
+  out of the saved conversation.
+* Download and select a local embedding model under **Manage Embedding
+  Models** in Settings. Page chat uses downloaded model files for semantic
+  matching.
 
 Fixed
 -----
@@ -66,6 +72,9 @@ Fixed
   unavailable or its configuration changes.
 * Keep provider and model list selection and screen-reader focus usable while
   filtering and refreshing.
+* Preserve section headings when retrieving passages for page chat and
+  prioritize exact matches for version numbers and error codes. Page chat
+  falls back to keyword matching when embeddings are disabled or unavailable.
 * Apply a changed llama-server executable the next time the managed server is
   started. Removing a preset stops an add-on-owned server, keeps model files
   and the shared Hugging Face cache, and leaves servers already running outside
