@@ -13,27 +13,26 @@ pytestmark = pytest.mark.nvda_integration
 def test_llama_dialogs_construct_with_real_nvda_helpers(monkeypatch):
     app = wx.GetApp() or wx.App(False)
     manager = load_addon_module("ui.llama_model_manager", namespace="real_llama_dialogs")
-    configuration = load_addon_module("ui.llama_configuration_dialog", namespace="real_llama_dialogs")
-    runtime = load_addon_module("ui.llama_runtime_dialog", namespace="real_llama_dialogs")
+    preset = load_addon_module("ui.llama_preset_dialog", namespace="real_llama_dialogs")
     generation = load_addon_module("ui.model_config_dialog", namespace="real_llama_dialogs")
     monkeypatch.setattr(generation, "_base_sampling", lambda provider: generation.ModelSamplingConfig())
     monkeypatch.setattr(generation, "get_model_sampling", lambda *args: generation.ModelSamplingConfig())
-    monkeypatch.setattr(manager.LlamaModelsDialog, "refresh", lambda self: None)
+    monkeypatch.setattr(manager.LlamaModelsDialog, "_refresh", lambda self: None)
     operations = load_addon_module("service.llama_operations", namespace="real_llama_dialogs").ModelOperations()
+    monkeypatch.setattr(preset.LlamaPresetDialog, "_scan_cache", lambda self: None)
     dialogs = []
+    provider = SimpleNamespace(provider_id="llama-cpp-server", active_model_id=None, model_operations=operations)
     try:
-        parent = manager.LlamaModelsDialog(None, SimpleNamespace(provider_id="llama-cpp-server", active_model_id=None, model_operations=operations))
+        parent = manager.LlamaModelsDialog(None, provider)
         dialogs.append(parent)
-        assert [parent._list.GetColumn(i).GetText() for i in range(4)] == ["Name", "Selected", "Files / source", "Runtime"]
+        assert [parent._list.GetColumn(i).GetText() for i in range(parent._list.GetColumnCount())] == [
+            "Name", "Source", "Mode", "Draft", "Selected", "Runtime",
+        ]
         assert parent.GetEscapeId() == wx.ID_CANCEL
-        create = configuration.LlamaConfigurationDialog(parent)
+        create = preset.LlamaPresetDialog(parent, provider)
         dialogs.append(create)
         assert create.GetEscapeId() == wx.ID_CANCEL
-        settings = runtime.LlamaRuntimeDialog(parent, "model", {"n-cpu-moe": "2", "moe-cache-mib": "512"}, {"ctx-size"}, provider_context=8192)
-        dialogs.append(settings)
-        assert settings._book.GetPageCount() == 2
-        assert not settings._layers.IsEnabled()
-        assert settings._controls["moe-cache-mib"].GetValue() == "512"
+        assert create._tabs.GetPageCount() == 3
         sampling = generation.ModelConfigureDialog(parent, "llama-cpp-server", "model", "Everyday",
             field_labels={"num_ctx": "Request context budget (tokens):"}, extra_fields=(generation.MODEL_FIELD_BY_ID["seed"],))
         dialogs.append(sampling)
