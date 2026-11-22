@@ -83,10 +83,9 @@ jobs:
 
       - name: Download artifacts
         uses: actions/download-artifact@v8
-
-      - name: Move artifacts to root
-        run: |
-          cp -r packaged_addon/* .
+        with:
+          name: packaged_addon
+          path: .
 
       - name: Extract version
         id: version
