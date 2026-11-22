@@ -237,6 +237,7 @@ def test_provider_without_tool_support_still_completes(monkeypatch) -> None:
 def test_tool_execution_limit_is_bounded_and_history_stays_valid(monkeypatch) -> None:
 	monkeypatch.setattr(llm_module, "is_streaming_enabled", lambda: False)
 	registry, executor = _build_stack()
+	max_steps = tools.ToolExecutionBudget().max_iterations
 	executed: list[str] = []
 
 	def handler(arguments):
@@ -267,8 +268,8 @@ def test_tool_execution_limit_is_bounded_and_history_stays_valid(monkeypatch) ->
 
 	response = coordinator.send_message(text="loop", tool_catalog=registry.snapshot())
 
-	assert len(executed) == llm_module.ProviderLLMService.MAX_TOOL_STEPS
-	assert len(provider.calls) == llm_module.ProviderLLMService.MAX_TOOL_STEPS + 1
+	assert len(executed) == max_steps
+	assert len(provider.calls) == max_steps + 1
 	assert response.tool_calls is None
 	assert response.raw["tool_loop_limit_reached"] is True
 	assert response.text
@@ -277,8 +278,8 @@ def test_tool_execution_limit_is_bounded_and_history_stays_valid(monkeypatch) ->
 	roles = [message.role for message in history]
 	assert roles[0] == "user"
 	assert roles[-1] == "assistant"
-	assert roles.count("assistant") == llm_module.ProviderLLMService.MAX_TOOL_STEPS + 2
-	assert roles.count("tool") == llm_module.ProviderLLMService.MAX_TOOL_STEPS + 1
+	assert roles.count("assistant") == max_steps + 2
+	assert roles.count("tool") == max_steps + 1
 	# Every assistant tool_call is immediately followed by matching tool results.
 	for index, message in enumerate(history):
 		if message.tool_calls:

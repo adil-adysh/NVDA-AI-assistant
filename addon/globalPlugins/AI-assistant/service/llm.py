@@ -82,7 +82,6 @@ class LLMService(Protocol):
 
 
 class ProviderLLMService:
-	MAX_TOOL_STEPS = 5
 
 	def __init__(
 		self,

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from ..context.navigation import NavigationTarget
+from ..core.translation import _
 
 
 STRUCTURE_SUMMARY_JSON_SCHEMA: dict[str, object] = {
@@ -65,7 +66,7 @@ class StructureSummaryResponse:
 		seen: set[str] = set()
 		for section in self.sections:
 			if section.target_id and section.target_id not in seen:
-				result.append(StructureSummaryTarget(section.target_id, section.summary or "Useful page section"))
+				result.append(StructureSummaryTarget(section.target_id, section.summary or _("Useful page section")))
 				seen.add(section.target_id)
 			for target in section.important_targets:
 				if target.target_id not in seen:
@@ -108,7 +109,7 @@ def _parse_outline(
 		if targets or not by_id:
 			return StructureSummaryResponse(
 				overview=_optional_text(data.get("page_context")),
-				sections=(StructureSummarySection("Most useful places", None, "", targets),),
+				sections=(StructureSummarySection(_("Most useful places"), None, "", targets),),
 				omissions=_optional_text(data.get("omissions")),
 				structured=True,
 			)
@@ -168,16 +169,23 @@ def _parse_targets(value: object, by_id: dict[str, NavigationTarget], limit: int
 def _fallback_sections(
 	candidates: tuple[NavigationTarget, ...], max_sections: int, max_targets_per_section: int
 ) -> tuple[StructureSummarySection, ...]:
+	if max_sections <= 0:
+		return ()
+	actions = tuple(
+		StructureSummaryTarget(target.id, target.reason)
+		for target in candidates if target.kind == "action"
+	)[:max(0, max_targets_per_section)]
 	sections = tuple(
 		StructureSummarySection(target.name, target.id, target.reason)
 		for target in candidates if target.kind == "section"
-	)[:max_sections]
-	if sections or not candidates:
-		return sections
-	return (StructureSummarySection(
-		"Most useful places", None, "",
-		tuple(StructureSummaryTarget(target.id, target.reason) for target in candidates[:max_targets_per_section]),
-	),)
+	)
+	if not actions:
+		return sections[:max_sections]
+	title = _("Important actions") if sections else _("Most useful places")
+	if sections and max_sections == 1:
+		section = sections[0]
+		return (StructureSummarySection(section.title, section.target_id, section.summary, actions),)
+	return (*sections[:max_sections - 1], StructureSummarySection(title, None, "", actions))
 
 
 def render_structure_summary(response: StructureSummaryResponse, candidates: Iterable[NavigationTarget]) -> str:
@@ -185,7 +193,7 @@ def render_structure_summary(response: StructureSummaryResponse, candidates: Ite
 	by_id = {target.id: target for target in candidates}
 	lines: list[str] = []
 	if response.overview:
-		lines.extend(("Overview:", "", f"* {response.overview}"))
+		lines.extend((_("Overview:"), "", f"* {response.overview}"))
 	for section in response.sections:
 		lines.extend(("", f"{section.title}:"))
 		if section.summary:
@@ -197,9 +205,9 @@ def render_structure_summary(response: StructureSummaryResponse, candidates: Ite
 			if resolved is not None:
 				lines.append(f"* {resolved.name} — {target.reason}")
 	if not lines:
-		lines = ["No useful page structure was detected."]
+		lines = [_("No useful page structure was detected.")]
 	if response.omissions:
-		lines.extend(("", "Notable omissions:", "", f"* {response.omissions}"))
+		lines.extend(("", _("Notable omissions:"), "", f"* {response.omissions}"))
 	return "\n".join(lines)
 
 

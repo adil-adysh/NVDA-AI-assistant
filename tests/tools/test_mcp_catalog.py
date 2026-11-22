@@ -90,6 +90,29 @@ def test_queued_startup_cannot_override_a_later_user_action(monkeypatch, action)
         original_pool.shutdown(wait=True)
 
 
+def test_startup_invalidation_after_catalog_publication_disconnects(monkeypatch):
+    calls = []
+
+    def dispatch(command, *_args):
+        calls.append(command["type"])
+        return {"success": True, "reply": {"ok": True}}
+
+    service = catalog_module.McpCatalogService(registry_module.ToolRegistry(), dispatch)
+
+    def refresh(server_id, **_kwargs):
+        service.invalidate_startup(server_id)
+        return ()
+
+    monkeypatch.setattr(service, "refresh", refresh)
+    try:
+        with pytest.raises(catalog_module.ToolProviderError, match="changed during catalog discovery"):
+            service.connect_stdio("server", "server.exe")
+        assert not service.is_connected("server")
+        assert calls == ["mcp_connect_stdio", "mcp_disconnect"]
+    finally:
+        service.close()
+
+
 def test_refresh_registers_server_identity_and_atomically_replaces_catalog():
     registry = registry_module.ToolRegistry()
     replies = {

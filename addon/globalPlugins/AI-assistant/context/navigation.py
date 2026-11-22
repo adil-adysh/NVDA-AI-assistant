@@ -9,10 +9,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-import math
-import re
-import time
 from typing import Any
+
+from ..core.translation import _
 
 try:
 	from .types import AccessibilityGraph, ExtractionStructure
@@ -58,16 +57,6 @@ class NavigationTarget:
 			"parent_name": self.parent_name,
 			"child_names": list(self.child_names),
 		}
-
-
-_ACTION_TERMS = re.compile(
-	r"\b(click|press|button|action|buy|submit|download|apply|login|sign in|select|change|write|open)\b",
-	re.IGNORECASE,
-)
-_SECTION_TERMS = re.compile(
-	r"\b(go|jump|section|where|about|reviews?|description|details|information|payment|shipping)\b",
-	re.IGNORECASE,
-)
 
 
 def _compact_context(text: str, max_length: int = 240) -> str:
@@ -169,19 +158,19 @@ def build_navigation_candidates(
 
 	for order, (level, name) in enumerate(structure.headings):
 		if level in (1, 2) or order == 0:
-			add("heading", name, order, 100 - min(order, 20), "Important page section")
+			add("heading", name, order, 100 - min(order, 20), _("Important page section"))
 	for order, name in enumerate(structure.landmarks):
 		landmark = name.split(":", 1)[0].strip().lower()
 		if landmark in {"main", "article", "search", "navigation", "form"}:
-			add("landmark", name, order, 78, "Useful page region")
+			add("landmark", name, order, 78, _("Useful page region"))
 	for order, name in enumerate(structure.inputs):
-		add("formField", name, order, 88, "Useful form field")
+		add("formField", name, order, 88, _("Useful form field"))
 	for order, name in enumerate(structure.comboboxes):
-		add("formField", name, order, 76, "Useful form control")
+		add("formField", name, order, 76, _("Useful form control"))
 	for order, name in enumerate(structure.buttons):
-		add("button", name, order, 84, "Useful page action")
+		add("button", name, order, 84, _("Useful page action"))
 	for order, name in enumerate(structure.links):
-		add("link", name, order, 70, "Useful page link")
+		add("link", name, order, 70, _("Useful page link"))
 
 	return tuple(target for _score, target in candidates)
 
@@ -190,12 +179,10 @@ def build_navigation_index(
 	structure: ExtractionStructure | None = None,
 	*,
 	graph: AccessibilityGraph | None = None,
-	embedder: object | None = None,
 ) -> "NavigationIndex":
-	"""Build a searchable index without discarding any navigation candidates."""
+	"""Build an index for ranking primary actions."""
 	return NavigationIndex(
 		build_navigation_candidates(structure, graph=graph),
-		embedder=embedder,
 	)
 
 
@@ -224,15 +211,15 @@ def _build_graph_navigation_candidates(graph: AccessibilityGraph) -> tuple[Navig
 			continue
 		if node.role == "heading":
 			score = 100 if node.heading_level in (1, 2) else 65
-			reason = "Important page section"
+			reason = _("Important page section")
 		elif node.role == "formField":
-			score, reason = 88, "Useful form field"
+			score, reason = 88, _("Useful form field")
 		elif node.role == "button":
-			score, reason = 84, "Useful page action"
+			score, reason = 84, _("Useful page action")
 		elif node.role == "landmark":
-			score, reason = 78, "Useful page region"
+			score, reason = 78, _("Useful page region")
 		else:
-			score, reason = 70, "Useful page link"
+			score, reason = 70, _("Useful page link")
 		role = node.control_type if node.role == "formField" and node.control_type else node.role
 		key = (role, node.name.casefold())
 		occurrence = occurrences.get(key, 0)
@@ -320,66 +307,11 @@ class NavigationFeatures:
 
 
 class NavigationIndex:
-	"""Rank a complete navigation candidate inventory.
+	"""Rank primary actions from a complete navigation candidate inventory."""
 
-	This first ranking layer is deliberately deterministic. Embedding-based
-	semantic scoring can be added behind this interface once target extraction
-	and live resolution are validated.
-	"""
-
-	def __init__(
-		self,
-		candidates: tuple[NavigationTarget, ...] | list[NavigationTarget],
-		embedder: object | None = None,
-	) -> None:
+	def __init__(self, candidates: tuple[NavigationTarget, ...] | list[NavigationTarget]) -> None:
 		self._candidates = tuple(candidates)
-		self._embedder = embedder
-		self._embedding_cache: dict[str, tuple[float, ...]] = {}
 		self._features = self._build_features()
-
-	@property
-	def candidates(self) -> tuple[NavigationTarget, ...]:
-		return self._candidates
-
-	def search(self, query: str, *, max_targets: int = 8) -> tuple[NavigationTarget, ...]:
-		"""Return the best section/action targets for a natural-language query."""
-		if max_targets <= 0 or not query.strip():
-			return ()
-		query_text = " ".join(query.split()).casefold()
-		query_terms = self._terms(query_text)
-		if not query_terms:
-			return ()
-		section_intent = bool(_SECTION_TERMS.search(query_text))
-		action_intent = bool(_ACTION_TERMS.search(query_text))
-		lexical = {
-			target.id: self._query_score(target, query_text, query_terms, section_intent, action_intent)
-			for target in self._candidates
-		}
-		semantic = self._semantic_scores(query_text)
-		if self._embedder is None:
-			eligible = [target for target in self._candidates if lexical[target.id] >= 0]
-		else:
-			eligible = list(self._candidates)
-		# With embeddings enabled, retain the full candidate set. A weak lexical
-		# overlap such as "add" in "download an add-on" must not prevent the
-		# semantic ranker from finding the correct target. Without embeddings,
-		# lexical intent can safely narrow the deterministic fallback.
-		if self._embedder is None:
-			matched = [target for target in eligible if lexical[target.id] >= 0]
-			if section_intent and any(target.kind == "section" for target in matched):
-				eligible = [target for target in matched if target.kind == "section"]
-			elif action_intent and any(target.kind == "action" for target in matched):
-				eligible = [target for target in matched if target.kind == "action"]
-		if not eligible:
-			return ()
-		ranks = [
-			self._rank_ids(eligible, lexical, descending=True, minimum=0),
-			self._rank_ids(eligible, self._structural_scores(), descending=True),
-		]
-		if semantic:
-			ranks.append(self._rank_ids(eligible, semantic, descending=True))
-		fused = self._fuse_ranks(eligible, ranks)
-		return tuple(target for _score, target in fused[:max_targets])
 
 	def primary_actions(self, *, max_targets: int = 8) -> tuple[NavigationTarget, ...]:
 		"""Return useful actions when the user did not provide a target query."""
@@ -427,121 +359,6 @@ class NavigationIndex:
 			)
 		return features
 
-	def _structural_scores(self) -> dict[str, float]:
-		return {
-			target_id: (
-				features.structural_importance
-				+ features.interaction_value
-				+ features.name_quality * 0.25
-				- features.repetition_penalty * 0.25
-			)
-			for target_id, features in self._features.items()
-		}
-
-	def _semantic_scores(self, query: str) -> dict[str, float]:
-		if self._embedder is None:
-			return {}
-		try:
-			query_embedder = getattr(self._embedder, "embed_query", None)
-			if callable(query_embedder):
-				query_vector = tuple(float(value) for value in query_embedder(query, "Find the most useful page navigation target"))
-			else:
-				query_vector = self._embed_texts((query,))[0]
-			target_vectors = self._embed_texts(tuple(self._embedding_text(target) for target in self._candidates))
-			return {
-				target.id: self._cosine(query_vector, vector)
-				for target, vector in zip(self._candidates, target_vectors)
-			}
-		except Exception:
-			return {}
-
-	@staticmethod
-	def _embedding_text(target: NavigationTarget) -> str:
-		return _compact_context(
-			f"role: {target.role}; kind: {target.kind}; name: {target.name}; {target.context_text}",
-			480,
-		)
-
-	def _embed_texts(self, texts: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
-		assert self._embedder is not None
-		model_key = str(getattr(self._embedder, "model_key", "embedder"))
-		missing = [text for text in texts if f"{model_key}:{text}" not in self._embedding_cache]
-		if missing:
-			vectors = self._embedder.embed(missing)
-			for text, vector in zip(missing, vectors):
-				self._embedding_cache[f"{model_key}:{text}"] = tuple(float(value) for value in vector)
-		return tuple(self._embedding_cache[f"{model_key}:{text}"] for text in texts)
-
-	@staticmethod
-	def _rank_ids(
-		candidates: list[NavigationTarget], scores: dict[str, float],
-		*, descending: bool, minimum: float | None = None,
-	) -> dict[str, int]:
-		ordered = [
-			target for target in candidates
-			if minimum is None or scores.get(target.id, -1.0) >= minimum
-		]
-		ordered.sort(key=lambda target: (scores.get(target.id, -1.0), -target.order), reverse=descending)
-		return {target.id: rank for rank, target in enumerate(ordered)}
-
-	@staticmethod
-	def _fuse_ranks(
-		candidates: list[NavigationTarget], ranks: list[dict[str, int]],
-	) -> list[tuple[float, NavigationTarget]]:
-		return sorted(
-			(
-				(sum(1.0 / (60 + rank.get(target.id, len(candidates))) for rank in ranks), target)
-				for target in candidates
-			),
-			key=lambda item: (-item[0], item[1].order),
-		)
-
-	@staticmethod
-	def _cosine(left: tuple[float, ...], right: tuple[float, ...]) -> float:
-		if not left or len(left) != len(right):
-			return -1.0
-		left_norm = math.sqrt(sum(value * value for value in left))
-		right_norm = math.sqrt(sum(value * value for value in right))
-		if left_norm == 0 or right_norm == 0:
-			return -1.0
-		return sum(a * b for a, b in zip(left, right)) / (left_norm * right_norm)
-
-	@staticmethod
-	def _terms(text: str) -> set[str]:
-		return {term for term in re.findall(r"[\w']+", text) if len(term) > 2}
-
-	@classmethod
-	def _query_score(
-		cls,
-		target: NavigationTarget,
-		query: str,
-		query_terms: set[str],
-		section_intent: bool,
-		action_intent: bool,
-	) -> int:
-		name = target.name.casefold()
-		context = target.context_text.casefold()
-		name_terms = cls._terms(name)
-		context_terms = cls._terms(context)
-		name_matches = len(query_terms & name_terms)
-		context_matches = len((query_terms - name_terms) & context_terms)
-		if name_matches == 0 and context_matches == 0 and name not in query and query not in name:
-			return -1
-		score = name_matches * 30 + context_matches * 8
-		if name and name in query:
-			score += 45
-		if query in name:
-			score += 55
-		if section_intent and target.kind == "section":
-			score += 28
-		if action_intent and target.kind == "action":
-			score += 28
-		if target.role in {"heading", "landmark"} and section_intent:
-			score += 10
-		if target.role in {"button", "input", "combobox", "checkbox", "radio"} and action_intent:
-			score += 10
-		return score + target.score // 4
-
 	def _primary_action_score(self, target: NavigationTarget) -> float:
 		features = self._features[target.id]
 		return (
@@ -550,126 +367,3 @@ class NavigationIndex:
 			+ features.name_quality * 0.35
 			- features.repetition_penalty * 0.35
 		)
-
-
-def _tree_interceptor(preferred: object | None = None) -> Any | None:
-	if preferred is not None and callable(getattr(preferred, "_iterNodesByType", None)):
-		return preferred
-	try:
-		import api
-	except ImportError:
-		return None
-	for getter in (api.getFocusObject, api.getNavigatorObject, api.getForegroundObject):
-		try:
-			obj = getter()
-			ti = getattr(obj, "treeInterceptor", None)
-			if ti is not None and callable(getattr(ti, "_iterNodesByType", None)):
-				return ti
-		except Exception:
-			continue
-	return None
-
-
-def _role_candidates(role: str) -> tuple[object, ...]:
-	"""Translate stable descriptor roles to NVDA quick-nav item names."""
-	names = {
-		"heading": ("heading",),
-		"link": ("link",),
-		"button": ("button",),
-		"landmark": ("landmark",),
-		"input": ("edit",),
-		"combobox": ("comboBox",),
-		"checkbox": ("checkBox",),
-		"radio": ("radioButton",),
-		# Legacy structure-only descriptors do not carry a concrete type.
-		"formField": ("formField",),
-	}.get(role, ())
-	return names
-
-
-def _node_label(item: object) -> str:
-	"""Return the accessible name exposed by an NVDA quick-nav node."""
-	for attribute in ("name", "label", "displayText", "value", "description"):
-		try:
-			value = getattr(item, attribute, None)
-		except Exception:
-			continue
-		label = " ".join(str(value or "").split())
-		if label:
-			return label
-	return ""
-
-
-def _restore_browser_focus(ti: object) -> None:
-	"""Reactivate the source browser window after the UI host took focus."""
-	root = getattr(ti, "rootNVDAObject", None)
-	window_handle = getattr(root, "windowHandle", None)
-	if window_handle:
-		try:
-			import ctypes
-			import winUser
-			# The document often exposes a child WebView handle. Windows requires
-			# the top-level owner for reliable foreground activation.
-			top_level_handle = int(ctypes.windll.user32.GetAncestor(int(window_handle), 2))
-			top_level_handle = top_level_handle or int(window_handle)
-			winUser.setForegroundWindow(top_level_handle)
-			winUser.setFocus(top_level_handle)
-			get_foreground = getattr(winUser, "getForegroundWindow", None)
-			if callable(get_foreground):
-				deadline = time.monotonic() + 1.0
-				while time.monotonic() < deadline and get_foreground() != top_level_handle:
-					time.sleep(0.02)
-		except Exception:
-			# The NVDA object fallback below is still useful for embedded documents.
-			pass
-	set_focus = getattr(root, "setFocus", None)
-	if callable(set_focus):
-		set_focus()
-
-
-def resolve_and_move_target(
-	target: dict[str, object], navigation_context: object | None = None
-) -> tuple[bool, str]:
-	"""Resolve a target on the live NVDA document and move to it."""
-	try:
-		import textInfos
-	except ImportError:
-		return False, "NVDA browser navigation is unavailable."
-	ti = _tree_interceptor(navigation_context)
-	if ti is None:
-		return False, "The current window is not an active browser document."
-	role = str(target.get("role") or "")
-	name = " ".join(str(target.get("name") or "").split()).casefold()
-	try:
-		target_occurrence = max(0, int(target.get("occurrence", 0)))
-	except (TypeError, ValueError):
-		target_occurrence = 0
-	match_names = {name}
-	if role == "landmark" and ":" in name:
-		match_names.add(name.split(":", 1)[1].strip())
-	try:
-		# The one-shot result window owns focus when this action is invoked.
-		# Restore the browser window before resolving its text positions.
-		_restore_browser_focus(ti)
-		position = ti.makeTextInfo(textInfos.POSITION_FIRST)
-		role_values = _role_candidates(role)
-		if not role_values:
-			return False, "Unable to locate that page target. The page may have changed."
-		for role_value in role_values:
-			items = ti._iterNodesByType(role_value, direction="next", pos=position)
-			matching_occurrence = 0
-			for item in items:
-				raw_label = _node_label(item)
-				label = raw_label.casefold()
-				if any(candidate == label or (candidate and candidate in label) for candidate in match_names):
-					if matching_occurrence != target_occurrence:
-						matching_occurrence += 1
-						continue
-					move_to = getattr(item, "moveTo", None)
-					if not callable(move_to):
-						return False, "Unable to move to that page target. The page may have changed."
-					move_to()
-					return True, raw_label or str(target.get("name") or "")
-	except Exception:
-		return False, "Unable to locate that page target. The page may have changed."
-	return False, "Unable to locate that page target. The page may have changed."

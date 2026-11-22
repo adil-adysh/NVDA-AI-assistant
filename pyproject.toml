@@ -122,7 +122,6 @@ ignore = [
 "addon/globalPlugins/AI-assistant/ui/**" = ["TID251"]
 "addon/globalPlugins/AI-assistant/image/**" = ["TID251"]
 "addon/globalPlugins/AI-assistant/context/extractors/**" = ["TID251"]
-"addon/globalPlugins/AI-assistant/context/navigation.py" = ["TID251"]
 "addon/globalPlugins/AI-assistant/plugin/**" = ["TID251"]
 "addon/globalPlugins/AI-assistant/utils/clipboard.py" = ["TID251"]
 "addon/globalPlugins/AI-assistant/utils/logger.py" = ["TID251"]

@@ -330,7 +330,7 @@ class StreamingUseCaseTests(unittest.TestCase):
 
 	def test_structure_response_falls_back_to_deterministic_targets(self) -> None:
 		build_targets = navigation_module.build_navigation_targets
-		candidates = build_targets(ExtractionStructure(headings=((1, "Intro"),)))
+		candidates = build_targets(ExtractionStructure(headings=((1, "Intro"),), buttons=("Save",)))
 		parsed = structure_response_module.parse_structure_summary_response(
 			"not valid JSON",
 			candidates,
@@ -339,7 +339,7 @@ class StreamingUseCaseTests(unittest.TestCase):
 		self.assertFalse(parsed.structured)
 		self.assertEqual(
 			[item.target_id for item in parsed.destinations],
-			[candidates[0].id],
+			[target.id for target in candidates],
 		)
 		self.assertNotIn("score", candidates[0].to_dict())
 

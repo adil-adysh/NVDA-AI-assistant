@@ -6,6 +6,7 @@ import unittest
 import pytest
 
 from tests.support import ADDON_ROOT, load_module, register_package
+from tests.support.bootstrap import load_addon_module
 
 
 MODULE_PATH = ADDON_ROOT / "context" / "navigation.py"
@@ -39,21 +40,6 @@ class _FakeTreeInterceptor:
 
 	def makeTextInfo(self, _position: object) -> object:
 		return object()
-
-
-class _FakeEmbedder:
-	model_key = "fake"
-
-	@staticmethod
-	def _vector(text: str) -> tuple[float, float]:
-		text = text.casefold()
-		return (1.0, 0.0) if "download" in text else (0.0, 1.0)
-
-	def embed_query(self, _query: str, _instruction: str) -> tuple[float, float]:
-		return self._vector(_query)
-
-	def embed(self, texts: list[str]) -> tuple[tuple[float, float], ...]:
-		return tuple(self._vector(text) for text in texts)
 
 
 class NavigationTests(unittest.TestCase):
@@ -108,29 +94,21 @@ class NavigationTests(unittest.TestCase):
 
 	@pytest.mark.nvda_integration
 	def test_resolution_uses_duplicate_occurrence(self) -> None:
-		items = [_FakeItem("Add to cart"), _FakeItem("Add to cart")]
+		items = [_FakeItem("Add to cart settings"), _FakeItem("Add to cart"), _FakeItem("Add to cart")]
 		target = next(
 			candidate for candidate in self.navigation.build_navigation_candidates(graph=self._graph())
 			if candidate.role == "button" and candidate.occurrence == 1
 		)
 		# The real textInfos.POSITION_FIRST constant is used. Only live object
 		# movement state remains represented by the fake tree interceptor.
-		succeeded, label = self.navigation.resolve_and_move_target(
+		succeeded, label = load_addon_module("ui.navigation_resolver").resolve_and_move_target(
 			target.to_dict(), _FakeTreeInterceptor(items)
 		)
 		self.assertTrue(succeeded)
 		self.assertEqual(label, "Add to cart")
 		self.assertFalse(items[0].moved)
-		self.assertTrue(items[1].moved)
-
-	def test_index_searches_sections_and_actions(self) -> None:
-		candidates = self.navigation.build_navigation_candidates(graph=self._graph())
-		index = self.navigation.NavigationIndex(candidates)
-		section_result = index.search("go to the product section", max_targets=1)
-		action_result = index.search("find the add to cart button", max_targets=1)
-		self.assertEqual(section_result[0].name, "Product")
-		self.assertEqual(action_result[0].role, "button")
-		self.assertEqual(action_result[0].name, "Add to cart")
+		self.assertFalse(items[1].moved)
+		self.assertTrue(items[2].moved)
 
 	def test_index_ranks_primary_actions_without_query(self) -> None:
 		candidates = self.navigation.build_navigation_candidates(graph=self._graph())
@@ -138,16 +116,24 @@ class NavigationTests(unittest.TestCase):
 		actions = index.primary_actions(max_targets=2)
 		self.assertEqual([target.name for target in actions], ["Add to cart", "Add to cart"])
 
-	def test_index_embedding_can_recover_from_weak_lexical_overlap(self) -> None:
-		NavigationTarget = self.navigation.NavigationTarget
-		candidates = (
-			NavigationTarget("download", "link", "Download", 0, "", 70, kind="action", context_text="link: Download"),
-			NavigationTarget("cart", "button", "Add to cart", 1, "", 84, kind="action", context_text="button: Add to cart"),
-		)
-		index = self.navigation.NavigationIndex(candidates, embedder=_FakeEmbedder())
-		result = index.search("download an add-on", max_targets=1)
-		self.assertEqual(result[0].name, "Download")
+def test_navigation_waits_for_foreground_without_blocking(monkeypatch):
+	resolver = load_addon_module("ui.navigation_resolver")
+	interceptor = _FakeTreeInterceptor([])
+	ready = False
+	scheduled = []
+	results = []
+	monkeypatch.setattr(resolver, "_activate_browser", lambda _ti: lambda: ready)
+	monkeypatch.setattr(resolver, "resolve_and_move_target", lambda _target, _ti: (True, "Account"))
 
+	resolver.navigate_to_target(
+		{"name": "Account"}, interceptor, lambda *result: results.append(result),
+		schedule=lambda delay, callback: scheduled.append((delay, callback)),
+	)
 
-if __name__ == "__main__":
-	unittest.main()
+	assert results == []
+	delay, retry = scheduled.pop()
+	assert delay == 20
+	ready = True
+	retry()
+	assert results == [(True, "Account")]
+	assert scheduled == []

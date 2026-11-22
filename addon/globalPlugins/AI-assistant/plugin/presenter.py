@@ -18,7 +18,7 @@ from ..service.provider_catalog import ProviderCatalogService
 from ..service.provider_readiness import ProviderReadinessService
 from ..tools import ToolRegistry
 from ..config.settings import get_provider_state, get_one_shot_output_mode
-from ..context.navigation import resolve_and_move_target
+from ..ui.navigation_resolver import navigate_to_target
 from ..ui.adapter import ui_adapter
 from ..ui.action_store import ResultActionStore
 from ..ui.intent import (
@@ -634,16 +634,18 @@ class UseCasePresenter:
 		ui_adapter.close_window(reason="navigate_to_target")
 		navigation_context = payload.get("navigation_context")
 
-		def resolve_after_result_window_closes() -> None:
-			_moved, label = resolve_and_move_target(target, navigation_context)
+		def announce_result(_moved: bool, label: str) -> None:
 			nvda_ui.message(label)
 
 		try:
 			import core
-			core.callLater(350, resolve_after_result_window_closes)
 		except ImportError:
-			# Keeps the helper usable in the lightweight test environment.
-			resolve_after_result_window_closes()
+			navigate_to_target(target, navigation_context, announce_result)
+		else:
+			def resolve_after_result_window_closes() -> None:
+				navigate_to_target(target, navigation_context, announce_result, schedule=core.callLater)
+
+			core.callLater(350, resolve_after_result_window_closes)
 
 	def _build_seed_messages_from_payload(self, payload: dict[str, Any]) -> tuple[Message, ...]:
 		"""Build complete conversation seeds (user context + assistant result)."""

@@ -13,7 +13,8 @@ from tests.support import ADDON_ROOT, load_module, register_package
 pytestmark = pytest.mark.nvda_integration
 
 ROOT = ADDON_ROOT / "context"
-PACKAGE = "browser_graph_testpkg"
+register_package("browser_graph_testpkg", ADDON_ROOT)
+PACKAGE = "browser_graph_testpkg.context"
 register_package(PACKAGE, ROOT)
 register_package(f"{PACKAGE}.extractors", ROOT / "extractors")
 
@@ -25,6 +26,7 @@ try:
 except ImportError:
 	BrowserFieldParser = None
 navigation_module = load_module(f"{PACKAGE}.navigation", ROOT / "navigation.py")
+resolver_module = load_module("browser_graph_testpkg.ui.navigation_resolver", ADDON_ROOT / "ui" / "navigation_resolver.py")
 types_module = sys.modules[f"{PACKAGE}.types"]
 
 
@@ -82,13 +84,13 @@ class BrowserFieldGraphTests(unittest.TestCase):
 
 	def test_navigation_reads_nvda_accessible_name_before_legacy_label(self) -> None:
 		self.assertEqual(
-			navigation_module._node_label(types.SimpleNamespace(name="Search Results", label="")),
+			resolver_module._node_label(types.SimpleNamespace(name="Search Results", label="")),
 			"Search Results",
 		)
 
 	def test_navigation_uses_nvda_quick_nav_names(self) -> None:
-		self.assertEqual(navigation_module._role_candidates("landmark"), ("landmark",))
-		self.assertEqual(navigation_module._role_candidates("button"), ("button",))
+		self.assertEqual(resolver_module._role_candidates("landmark"), ("landmark",))
+		self.assertEqual(resolver_module._role_candidates("button"), ("button",))
 
 
 if __name__ == "__main__":

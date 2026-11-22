@@ -38,6 +38,7 @@ class McpCatalogService:
 		self._dispatch = dispatch
 		self._credential_resolver = credential_resolver or (lambda _reference: "")
 		self._connected_servers: set[str] = set()
+		self._connecting_servers: set[str] = set()
 		self._state_lock = threading.RLock()
 		self._closed = False
 		self._event_stop = threading.Event()
@@ -147,34 +148,41 @@ class McpCatalogService:
 
 	def _connect(self, command: dict[str, Any], *, timeout: float, _expected_revision: int | None = None) -> tuple[ToolDefinition, ...]:
 		self._ensure_open()
-		provider_id = self.provider_id(command["server_id"])
+		server_id = command["server_id"]
+		provider_id = self.provider_id(server_id)
 		with self._state_lock:
-			if self._closed or (_expected_revision is not None and self._server_revisions.get(command["server_id"], 0) != _expected_revision):
+			if self._closed or (_expected_revision is not None and self._server_revisions.get(server_id, 0) != _expected_revision):
 				raise ToolProviderError("MCP startup was superseded", safe_message="The external tool connection changed.")
-			revision = self._server_revisions.get(command["server_id"], 0) + 1
-			self._server_revisions[command["server_id"]] = revision
-			self._blocked_servers.add(command["server_id"])
-			self._connected_servers.discard(command["server_id"])
+			if server_id in self._connecting_servers or server_id in self._connected_servers:
+				raise ToolProviderError("MCP connection already active", safe_message="The external tool server is already connecting or connected.")
+			revision = self._server_revisions.get(server_id, 0) + 1
+			self._server_revisions[server_id] = revision
+			self._connecting_servers.add(server_id)
+			self._blocked_servers.add(server_id)
 			self._registry.set_provider_available(provider_id, False)
-		response = self._dispatch(command, timeout, self._event_stop.is_set)
-		self._require_manager_success(response)
 		try:
-			definitions = self.refresh(command["server_id"], timeout=timeout, _revision=revision, _allow_blocked=True)
-		except Exception:
-			self._registry.set_provider_available(self.provider_id(command["server_id"]), False)
+			response = self._dispatch(command, timeout, self._event_stop.is_set)
+			self._require_manager_success(response)
 			try:
-				self._dispatch({"type": "mcp_disconnect", "server_id": command["server_id"]}, min(timeout, 5.0), lambda: False)
+				definitions = self.refresh(server_id, timeout=timeout, _revision=revision, _allow_blocked=True)
+				with self._state_lock:
+					if self._closed or self._server_revisions.get(server_id, 0) != revision:
+						raise ToolProviderError("MCP connection changed during catalog discovery", safe_message="The external tool connection changed. Reconnect before using its tools.")
+					self._blocked_servers.discard(server_id)
+					self._registry.set_provider_available(provider_id, True)
+					self._connected_servers.add(server_id)
 			except Exception:
-				pass
-			raise
-		with self._state_lock:
-			if self._closed or self._server_revisions.get(command["server_id"], 0) != revision:
-				raise ToolProviderError("MCP connection changed during catalog discovery", safe_message="The external tool connection changed. Reconnect before using its tools.")
-			self._blocked_servers.discard(command["server_id"])
-			self._registry.set_provider_available(self.provider_id(command["server_id"]), True)
-			self._connected_servers.add(command["server_id"])
-		self._start_event_poller()
-		return definitions
+				self._registry.unregister_provider(provider_id)
+				try:
+					self._dispatch({"type": "mcp_disconnect", "server_id": server_id}, min(timeout, 5.0), lambda: False)
+				except Exception:
+					pass
+				raise
+			self._start_event_poller()
+			return definitions
+		finally:
+			with self._state_lock:
+				self._connecting_servers.discard(server_id)
 
 	def refresh(
 		self,
