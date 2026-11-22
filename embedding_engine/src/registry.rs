@@ -7,7 +7,9 @@
 use anyhow::{Context, Result};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use hf_hub::HFClient;
 
 use crate::models::granite::GraniteModel;
 use crate::models::harrier::HarrierModel;
@@ -15,7 +17,6 @@ use crate::models::minilm::MiniLMModel;
 
 /// Trait for a fully-initialized model ready to produce embeddings.
 pub trait InitializedModel: Send + Sync {
-    fn model_id(&self) -> &str;
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>;
 }
 
@@ -47,7 +48,9 @@ impl ModelDescriptor {
     }
 }
 
-type ModelFactory = Box<dyn Fn() -> Result<Box<dyn InitializedModel>> + Send + Sync>;
+type ModelFactory = fn(&Path, usize) -> Result<Box<dyn InitializedModel>>;
+
+const MODEL_FILES: [&str; 3] = ["config.json", "tokenizer.json", "model.safetensors"];
 
 /// Registry of known embedding models and their metadata.
 pub struct ModelRegistry {
@@ -92,16 +95,9 @@ impl ModelRegistry {
                 model_size_mb: 91.0,
             },
         );
-        {
-            let cache = cache_dir.clone();
-            factories.insert(
-                mini_lm_id.clone(),
-                Box::new(move || {
-                    MiniLMModel::load(&cache, "all-MiniLM-L6-v2")
-                        .map(|m| Box::new(m) as Box<dyn InitializedModel>)
-                }),
-            );
-        }
+        factories.insert(mini_lm_id, |snapshot, max_length| {
+            MiniLMModel::load(snapshot, max_length).map(|model| Box::new(model) as Box<dyn InitializedModel>)
+        });
 
         // ── granite-embedding-97m-multilingual-r2 ──────────────────
         let granite_id = "granite-embedding-97m-multilingual-r2".to_string();
@@ -123,16 +119,9 @@ impl ModelRegistry {
                 model_size_mb: 186.0,
             },
         );
-        {
-            let cache = cache_dir.clone();
-            factories.insert(
-                granite_id.clone(),
-                Box::new(move || {
-                    GraniteModel::load(&cache, "granite-embedding-97m-multilingual-r2")
-                        .map(|m| Box::new(m) as Box<dyn InitializedModel>)
-                }),
-            );
-        }
+        factories.insert(granite_id, |snapshot, max_length| {
+            GraniteModel::load(snapshot, max_length).map(|model| Box::new(model) as Box<dyn InitializedModel>)
+        });
 
         // ── harrier-oss-v1-270m ─────────────────────────────────────
         let harrier_id = "harrier-oss-v1-270m".to_string();
@@ -156,16 +145,9 @@ impl ModelRegistry {
                 model_size_mb: 545.0,
             },
         );
-        {
-            let cache = cache_dir.clone();
-            factories.insert(
-                harrier_id.clone(),
-                Box::new(move || {
-                    HarrierModel::load(&cache, "harrier-oss-v1-270m")
-                        .map(|m| Box::new(m) as Box<dyn InitializedModel>)
-                }),
-            );
-        }
+        factories.insert(harrier_id, |snapshot, max_length| {
+            HarrierModel::load(snapshot, max_length).map(|model| Box::new(model) as Box<dyn InitializedModel>)
+        });
 
         Self {
             descriptors,
@@ -188,24 +170,19 @@ impl ModelRegistry {
     }
 
     /// Get or initialize a model by its stable ID.
-    pub fn load_initialized(&mut self, model_id: &str) -> Result<&dyn InitializedModel> {
+    pub fn is_loaded(&self, model_id: &str) -> bool {
+        self.loaded.contains_key(model_id)
+    }
+
+    pub fn load_initialized(&mut self, model_id: &str, input_limit: Option<usize>) -> Result<&dyn InitializedModel> {
         if !self.loaded.contains_key(model_id) {
-            let factory = self
-                .factories
-                .remove(model_id)
+            let factory = self.factories.get(model_id)
                 .with_context(|| format!("Unknown model: {model_id}"))?;
-            let initialized = match factory() {
-                Ok(model) => model,
-                Err(error) => {
-                    // A transient network/cache/device failure must not make
-                    // the model permanently unavailable for this registry
-                    // instance.  Restore the constructor so a later retry can
-                    // recover after the cause is fixed.
-                    self.factories.insert(model_id.to_string(), factory);
-                    return Err(error);
-                }
-            };
-            self.loaded.insert(model_id.to_string(), initialized);
+            let snapshot = self.cached_snapshot(model_id)
+                .with_context(|| format!("Embedding model {model_id} has not been downloaded"))?;
+            let model_limit = self.descriptors[model_id].max_tokens;
+            let input_limit = input_limit.unwrap_or(model_limit).min(model_limit);
+            self.loaded.insert(model_id.to_string(), factory(&snapshot, input_limit)?);
         }
         Ok(self.loaded[model_id].as_ref())
     }
@@ -219,19 +196,37 @@ impl ModelRegistry {
         self.descriptors.get(model_id).map(|d| d.repository.as_str())
     }
 
+    fn cached_snapshot(&self, model_id: &str) -> Option<PathBuf> {
+        let repository = self.model_repository(model_id)?;
+        let model_cache = self.cache_dir.join(format!("models--{}", repository.replace('/', "--")));
+        let reference = std::fs::read_to_string(model_cache.join("refs").join("main")).ok()?;
+        let commit = reference.trim();
+        if commit.len() != 40 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        let snapshot = model_cache.join("snapshots").join(commit);
+        MODEL_FILES.iter().all(|filename| {
+            snapshot.join(filename).metadata().is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
+        }).then_some(snapshot)
+    }
+
     pub fn is_cached(&self, model_id: &str) -> bool {
-        let Some(repository) = self.model_repository(model_id) else {
-            return false;
-        };
-        let cache_name = format!("models--{}", repository.replace('/', "--"));
-        let model_cache = self.cache_dir.join(cache_name);
-        model_cache.join("snapshots").read_dir().map(|entries| {
-            entries.flatten().any(|entry| {
-                ["config.json", "tokenizer.json", "model.safetensors"]
-                    .iter()
-                    .all(|filename| entry.path().join(filename).is_file())
-            })
-        }).unwrap_or(false)
+        self.cached_snapshot(model_id).is_some()
+    }
+
+    pub async fn download(&self, model_id: &str) -> Result<()> {
+        if self.is_cached(model_id) {
+            return Ok(());
+        }
+        let (owner, repo) = self.model_repository(model_id)
+            .and_then(|repository| repository.split_once('/'))
+            .with_context(|| format!("Unknown model: {model_id}"))?;
+        let client = HFClient::builder().cache_dir(&self.cache_dir).build()?;
+        client.model(owner, repo).snapshot_download()
+            .allow_patterns(MODEL_FILES.iter().map(|file| (*file).to_owned()).collect())
+            .send().await.context("Failed to download the embedding model snapshot")?;
+        anyhow::ensure!(self.is_cached(model_id), "Incomplete embedding model snapshot");
+        Ok(())
     }
 
     pub fn delete_cached(&self, model_id: &str) -> Result<()> {

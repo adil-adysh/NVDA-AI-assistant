@@ -305,6 +305,18 @@ class BrowserFieldParser:
 			text = self._normalize_candidate_text(page_text)
 			return (SemanticSection("section-page", "Page", text, 0),) if text else ()
 		sections: list[SemanticSection] = []
+		lines = [line.strip() for line in page_text.splitlines() if line.strip()]
+		labels = [self._normalize_candidate_text(line).casefold() for line in lines]
+		offsets: list[int | None] = []
+		cursor = 0
+		for heading in headings:
+			try:
+				offset = labels.index(self._normalize_candidate_text(heading.name).casefold(), cursor)
+			except ValueError:
+				offsets.append(None)
+			else:
+				offsets.append(offset)
+				cursor = offset + 1
 		for index, heading in enumerate(headings):
 			next_order = headings[index + 1].order if index + 1 < len(headings) else float("inf")
 			member_nodes = tuple(
@@ -312,28 +324,18 @@ class BrowserFieldParser:
 			)
 			parts = [f"Section: {heading.name}"]
 			parts.extend(node.name for node in member_nodes if node.name and node.role != "container")
-			next_heading = headings[index + 1].name if index + 1 < len(headings) else None
-			section_text = self._section_page_text(heading.name, next_heading, page_text) or "\n".join(parts)
+			start = offsets[index]
+			if start is not None:
+				end = offsets[index + 1] if index + 1 < len(headings) else len(lines)
+				# A missing boundary makes the remaining lines ambiguous.
+				parts = [parts[0], *lines[start + 1 : end if end is not None else start + 5]]
+			section_text = "\n".join(parts)
 			key = hashlib.sha256(f"{heading.order}:{heading.name}".encode("utf-8")).hexdigest()[:12]
 			sections.append(SemanticSection(
 				id=f"section-{key}", title=heading.name, text=section_text, order=heading.order,
 				heading_node_id=heading.id, node_ids=tuple(node.id for node in member_nodes),
 			))
 		return tuple(sections)
-
-	def _section_page_text(self, title: str, next_title: str | None, page_text: str) -> str:
-		paragraphs = [self._normalize_candidate_text(part) for part in page_text.splitlines()]
-		paragraphs = [part for part in paragraphs if part]
-		for index, paragraph in enumerate(paragraphs):
-			if paragraph.casefold() != title.casefold():
-				continue
-			parts = [f"Section: {title}"]
-			for following in paragraphs[index + 1 : index + 5]:
-				if next_title and following.casefold() == next_title.casefold():
-					break
-				parts.append(following)
-			return "\n".join(parts)
-		return ""
 
 	def _close_frame(
 		self,

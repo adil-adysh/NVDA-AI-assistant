@@ -221,3 +221,46 @@ def test_unknown_tool_failure_is_returned_to_provider_and_turn_remains_consisten
 	assert "Unknown tool: missing_tool" in str(tool_result.text)
 	persisted = repository.load("tools").snapshot()
 	assert [message.role for message in persisted] == ["user", "assistant", "tool", "assistant"]
+
+
+def test_page_chat_retrieval_is_transient_and_uses_only_the_question(monkeypatch, tmp_path):
+	register_package(f"{NAMESPACE}.use_case", ADDON_ROOT / "use_case")
+	chat_use_case = importlib.import_module(f"{NAMESPACE}.use_case.chat")
+	context_types = importlib.import_module(f"{NAMESPACE}.context.types")
+	reduction = importlib.import_module(f"{NAMESPACE}.context.reduction")
+	monkeypatch.setattr(llm_module, "is_streaming_enabled", lambda: False)
+	page_text = "The page contains the release schedule."
+	context = context_types.PromptContext(
+		use_case_id="open_chat_with_page_content",
+		extraction_result=context_types.ExtractionResult("Release", "Browser", page_text, False),
+		text=page_text,
+	)
+
+	class Collector:
+		def collect(self, **kwargs):
+			return context
+
+	class PageContext(reduction.CurrentPageContext):
+		def retrieve(self, query, conversation_id=None, prompt_budget=None):
+			assert query == "When is the release?"
+			return super().retrieve(query, conversation_id, prompt_budget)
+
+	provider = ControlledProvider()
+	provider.release_first.set()
+	llm = ProviderLLMService(provider)
+	result = chat_use_case.OpenChatWithPageContentUseCase().execute(Collector(), llm)
+	assert result.initial_text is None
+	repository = JsonConversationRepository(tmp_path / "conversations.json")
+	coordinator = ChatCoordinator(
+		llm, repository=repository, page_context_provider=PageContext(reduction.ContextReducer()),
+	)
+	conversation_id = coordinator.activate_conversation("page-chat")
+	coordinator.set_page_context(result.prompt_context, conversation_id)
+	coordinator.send_message("When is the release?", expected_conversation_id=conversation_id)
+
+	assert [message.role for message in provider.calls[0]] == ["user", "user"]
+	assert page_text in _text(provider.calls[0][0])
+	assert _text(provider.calls[0][1]) == "When is the release?"
+	assert [_text(message) for message in repository.load(conversation_id).snapshot()] == [
+		"When is the release?", "reply-1",
+	]

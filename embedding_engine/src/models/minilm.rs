@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use candle_core::{Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config};
-use hf_hub::{HFClient, HFClientSync};
+use super::load_tokenizer;
 use tokenizers::Tokenizer;
 
 use crate::pooling::pool_and_normalize;
@@ -18,43 +18,19 @@ use crate::registry::InitializedModel;
 
 /// A loaded MiniLM model ready to produce sentence embeddings.
 ///
-/// Created via [`MiniLMModel::load`] which downloads model artifacts
-/// from HuggingFace Hub on first use and caches them via ``hf_hub``.
+/// Created via [`MiniLMModel::load`] from a complete Hugging Face model snapshot.
 pub struct MiniLMModel {
     model: BertModel,
     tokenizer: Tokenizer,
     device: Device,
-    model_id: String,
 }
 
 impl MiniLMModel {
-    /// Download (if needed) and load the MiniLM model.
-    ///
-    /// * `cache_dir` — currently unused; ``hf_hub`` manages its own cache.
-    /// * `model_id` — HuggingFace model ID (e.g. ``"all-MiniLM-L6-v2"``).
-    pub fn load(_cache_dir: &std::path::Path, model_id: &str) -> Result<Self> {
-        let client = HFClientSync::from_inner(HFClient::builder()
-            .cache_dir(_cache_dir)
-            .build()?)
-            .context("Failed to create HF Hub client")?;
-        let model = client.model("sentence-transformers", model_id);
-
-        // ── Download artifacts ──────────────────────────────────────
-        let config_path = model
-            .download_file()
-            .filename("config.json")
-            .send()
-            .context("Failed to download config.json")?;
-        let tokenizer_path = model
-            .download_file()
-            .filename("tokenizer.json")
-            .send()
-            .context("Failed to download tokenizer.json")?;
-        let model_path = model
-            .download_file()
-            .filename("model.safetensors")
-            .send()
-            .context("Failed to download model.safetensors")?;
+    /// Load MiniLM from a complete model snapshot.
+    pub fn load(snapshot: &std::path::Path, max_length: usize) -> Result<Self> {
+        let config_path = snapshot.join("config.json");
+        let tokenizer_path = snapshot.join("tokenizer.json");
+        let model_path = snapshot.join("model.safetensors");
 
         // ── Parse config ────────────────────────────────────────────
         let config: Config = {
@@ -81,22 +57,17 @@ impl MiniLMModel {
 
         // ── Load tokenizer ──────────────────────────────────────────
         let tokenizer =
-            Tokenizer::from_file(&tokenizer_path).map_err(|e| anyhow::anyhow!("{e}"))?;
+            load_tokenizer(&tokenizer_path, max_length)?;
 
         Ok(Self {
             model,
             tokenizer,
             device,
-            model_id: model_id.to_string(),
         })
     }
 }
 
 impl InitializedModel for MiniLMModel {
-    fn model_id(&self) -> &str {
-        &self.model_id
-    }
-
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         let mut all_embeddings = Vec::with_capacity(texts.len());
 

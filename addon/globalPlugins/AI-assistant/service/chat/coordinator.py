@@ -146,7 +146,7 @@ class ChatCoordinator(BaseCoordinator):  # pylint: disable=abstract-method
 					text,
 					self.get_active_conversation_id(),
 					prompt_budget=self._build_context_budget(
-						reserved_input_tokens=self._estimate_messages_tokens(
+						reserved_input_tokens=4 + self._estimate_messages_tokens(
 							(*prior_messages, user_message)
 						)
 					),

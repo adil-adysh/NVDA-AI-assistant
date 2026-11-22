@@ -76,6 +76,17 @@ class BrowserFieldGraphTests(unittest.TestCase):
 			parser.structured_info_from_graph(graph)[1], ("GitHub releases page",)
 		)
 
+	def test_graph_keeps_evidence_beyond_the_first_four_lines(self) -> None:
+		headings = [
+			types_module.AccessibilityNode("first", "heading", "Setup", 0, heading_level=1),
+			types_module.AccessibilityNode("next", "heading", "Support", 1, heading_level=1),
+		]
+		page = "\n".join(["Setup", *(f"Step {index}" for index in range(6)), "Support", "Contact us"])
+		sections = BrowserFieldParser()._derive_sections(tuple(headings), page)
+		self.assertIn("Step 5", sections[0].text)
+		self.assertNotIn("Contact us", sections[0].text)
+
+
 	def test_navigation_target_limit_is_hard_bound(self) -> None:
 		graph = navigation_module.AccessibilityGraph(
 			nodes=(types_module.AccessibilityNode("node-0", "heading", "Home", 0),)

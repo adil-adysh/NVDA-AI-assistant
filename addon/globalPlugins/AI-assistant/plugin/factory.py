@@ -17,6 +17,7 @@ from ..context.pipeline import ContextPipeline
 from ..context.reduction import ContextReducer, CurrentPageContext
 from ..config.settings import (
 	get_embedding_enabled,
+	get_embedding_page_chat_enabled,
 	get_litert_backend,
 	get_litert_cache,
 	get_litert_cpu_threads,
@@ -94,10 +95,11 @@ def build_plugin_services() -> PluginServices:
 	)
 	# The native model remains lazy.  ContextReducer has a deterministic
 	# fallback when the optional extension is unavailable.
-	context_reducer = ContextReducer(
-		embedder=CandleEmbeddingAdapter() if get_embedding_enabled() else None
+	context_reducer = ContextReducer(embedder=CandleEmbeddingAdapter())
+	page_context_provider = CurrentPageContext(
+		context_reducer,
+		embeddings_enabled=lambda: get_embedding_enabled() and get_embedding_page_chat_enabled(),
 	)
-	page_context_provider = CurrentPageContext(context_reducer)
 	tool_registry = ToolRegistry()
 	register_default_tools(tool_registry)
 	mcp_catalog = McpCatalogService(

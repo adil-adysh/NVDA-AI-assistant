@@ -20,7 +20,7 @@ use candle_nn::{
     Module, VarBuilder,
 };
 use candle_transformers::models::modernbert::Config;
-use hf_hub::{HFClient, HFClientSync};
+use super::load_tokenizer;
 use std::sync::Arc;
 use tokenizers::Tokenizer;
 
@@ -265,8 +265,7 @@ fn get_local_attention_mask(
 
 /// A loaded Granite embedding model.
 ///
-/// Created via [`GraniteModel::load`] which downloads model artifacts
-/// from HuggingFace Hub on first use and caches them via ``hf_hub``.
+/// Created via [`GraniteModel::load`] from a complete Hugging Face model snapshot.
 pub struct GraniteModel {
     word_embeddings: Embedding,
     norm: LayerNorm,
@@ -275,36 +274,14 @@ pub struct GraniteModel {
     local_attention_size: usize,
     tokenizer: Tokenizer,
     device: Device,
-    model_id: String,
 }
 
 impl GraniteModel {
     /// Download (if needed) and load the Granite model.
-    pub fn load(_cache_dir: &std::path::Path, model_id: &str) -> Result<Self> {
-        let client = HFClientSync::from_inner(HFClient::builder()
-            .cache_dir(_cache_dir)
-            .build()?)
-            .context("Failed to create HF Hub client")?;
-
-        // Granite 97M multilingual R2
-        let model = client.model("ibm-granite", "granite-embedding-97m-multilingual-r2");
-
-        // ── Download artifacts ──────────────────────────────────────
-        let config_path = model
-            .download_file()
-            .filename("config.json")
-            .send()
-            .context("Failed to download config.json")?;
-        let tokenizer_path = model
-            .download_file()
-            .filename("tokenizer.json")
-            .send()
-            .context("Failed to download tokenizer.json")?;
-        let model_path = model
-            .download_file()
-            .filename("model.safetensors")
-            .send()
-            .context("Failed to download model.safetensors")?;
+    pub fn load(snapshot: &std::path::Path, max_length: usize) -> Result<Self> {
+        let config_path = snapshot.join("config.json");
+        let tokenizer_path = snapshot.join("tokenizer.json");
+        let model_path = snapshot.join("model.safetensors");
 
         // ── Parse config ────────────────────────────────────────────
         let config: Config = {
@@ -371,7 +348,7 @@ impl GraniteModel {
 
         // ── Load tokenizer ──────────────────────────────────────────
         let tokenizer =
-            Tokenizer::from_file(&tokenizer_path).map_err(|e| anyhow::anyhow!("{e}"))?;
+            load_tokenizer(&tokenizer_path, max_length)?;
 
         Ok(Self {
             word_embeddings,
@@ -381,7 +358,6 @@ impl GraniteModel {
             local_attention_size: config.local_attention,
             tokenizer,
             device,
-            model_id: model_id.to_string(),
         })
     }
 
@@ -407,36 +383,19 @@ impl GraniteModel {
 // ── InitializedModel impl ──────────────────────────────────────────────────
 
 impl InitializedModel for GraniteModel {
-    fn model_id(&self) -> &str {
-        &self.model_id
-    }
-
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         let mut all_embeddings = Vec::with_capacity(texts.len());
 
-        // ── Tokenize with padding to longest sequence ───────────────
-        let encodings: Vec<_> = texts
-            .iter()
-            .map(|t| {
-                self.tokenizer
-                    .encode(t.as_str(), true)
-                    .map_err(|e| anyhow::anyhow!("Tokenization failed: {e}"))
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        let max_len = encodings.iter().map(|e| e.len()).max().unwrap_or(1);
-
-        for encoding in &encodings {
-            let mut ids = encoding.get_ids().to_vec();
-            let mut mask = encoding.get_attention_mask().to_vec();
-
-            // Pad to max_len
-            ids.resize(max_len, 0);
-            mask.resize(max_len, 0);
+        for text in texts {
+            let encoding = self.tokenizer
+                .encode(text.as_str(), true)
+                .map_err(|error| anyhow::anyhow!("Tokenization failed: {error}"))?;
+            let ids = encoding.get_ids();
+            let mask = encoding.get_attention_mask();
 
             let input_ids =
-                Tensor::new(&ids[..], &self.device)?.unsqueeze(0)?; // (1, seq_len)
-            let attention_mask = Tensor::new(&mask[..], &self.device)?
+                Tensor::new(ids, &self.device)?.unsqueeze(0)?; // (1, seq_len)
+            let attention_mask = Tensor::new(mask, &self.device)?
                 .unsqueeze(0)? // (1, seq_len)
                 .to_dtype(DType::F32)?;
 

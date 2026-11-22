@@ -18,7 +18,7 @@
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Module, Tensor, D};
 use candle_nn::{linear_no_bias as linear, Linear, VarBuilder};
-use hf_hub::{HFClient, HFClientSync};
+use super::load_tokenizer;
 use std::sync::Arc;
 use tokenizers::Tokenizer;
 
@@ -350,33 +350,13 @@ pub struct HarrierModel {
     max_position_embeddings: usize,
     tokenizer: Tokenizer,
     device: Device,
-    model_id: String,
 }
 
 impl HarrierModel {
-    pub fn load(_cache_dir: &std::path::Path, model_id: &str) -> Result<Self> {
-        let client = HFClientSync::from_inner(HFClient::builder()
-            .cache_dir(_cache_dir)
-            .build()?)
-            .context("Failed to create HF Hub client")?;
-        let model = client.model("microsoft", "harrier-oss-v1-270m");
-
-        // ── Download artifacts ──────────────────────────────────────
-        let config_path = model
-            .download_file()
-            .filename("config.json")
-            .send()
-            .context("Failed to download config.json")?;
-        let tokenizer_path = model
-            .download_file()
-            .filename("tokenizer.json")
-            .send()
-            .context("Failed to download tokenizer.json")?;
-        let model_path = model
-            .download_file()
-            .filename("model.safetensors")
-            .send()
-            .context("Failed to download model.safetensors")?;
+    pub fn load(snapshot: &std::path::Path, max_length: usize) -> Result<Self> {
+        let config_path = snapshot.join("config.json");
+        let tokenizer_path = snapshot.join("tokenizer.json");
+        let model_path = snapshot.join("model.safetensors");
 
         // ── Parse config ────────────────────────────────────────────
         let config_str =
@@ -461,7 +441,7 @@ impl HarrierModel {
         let norm = RmsNorm::new(hidden_size, norm_eps, vb_m.pp("norm"))?;
 
         let tokenizer =
-            Tokenizer::from_file(&tokenizer_path).map_err(|e| anyhow::anyhow!("{e}"))?;
+            load_tokenizer(&tokenizer_path, max_length)?;
 
         Ok(Self {
             embed_tokens,
@@ -478,7 +458,6 @@ impl HarrierModel {
             max_position_embeddings,
             tokenizer,
             device,
-            model_id: model_id.to_string(),
         })
     }
 
@@ -501,10 +480,6 @@ impl HarrierModel {
 }
 
 impl InitializedModel for HarrierModel {
-    fn model_id(&self) -> &str {
-        &self.model_id
-    }
-
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         let mut all_embeddings = Vec::with_capacity(texts.len());
 

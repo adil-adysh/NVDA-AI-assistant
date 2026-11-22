@@ -242,7 +242,9 @@ explicitly injects the file reporter for the running application.
 
 ### Image and embedding subsystems
 
-image/ captures focused objects/windows/screenshots, checks screen-curtain state, preprocesses/resizes/encodes images, and exposes typed image services. CandleEmbeddingAdapter is a lazy worker port to the PyO3 embedding_engine; the reducer only loads it when embedding is enabled and required.
+image/ captures focused objects/windows/screenshots, checks screen-curtain state, preprocesses/resizes/encodes images, and exposes typed image services. Page chat pins the selected local model for each retrieval through `CandleEmbeddingAdapter`, a lazy worker port to the PyO3 `embedding_engine`. It budgets selected passages and page structure before passing them as transient chat context. Page summaries use deterministic coverage. Page chat uses lexical retrieval when embeddings are disabled, the selected model has not been downloaded, or inference is unavailable.
+
+The embedding manager explicitly downloads and validates a single Hugging Face snapshot. Inference in the private worker uses local files only, with a model-specific token limit capped at 512 for interactive retrieval. Catalog status describes complete files for the cached `main` revision. Preparation reports download and validation stages, observes cancellation during downloads, and keeps the validated engine available for inference. Cancellation during native model initialization or one forward pass takes effect when that call returns.
 
 ## 3. UI boundary and rendering
 

@@ -49,7 +49,7 @@ def test_opening_settings_reuses_live_dialog_and_reopens_after_destroy_with_reta
 	second = module.open_settings_dialog(frame)
 	assert second is not first
 	assert second.IsShown()
-	assert tasks[0].cancel.called
+	assert tasks == []  # Opening Settings does not need the embedding worker.
 	assert first.tabs == []
 	second.onCancel(wx.CommandEvent())
 	pump_events()

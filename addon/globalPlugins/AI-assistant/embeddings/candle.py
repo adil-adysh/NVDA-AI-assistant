@@ -13,31 +13,34 @@ class CandleEmbeddingAdapter:
 	component.
 	"""
 
-	def __init__(self, model_id: str | None = None, worker_client=None) -> None:
-		self._model_id = model_id or "harrier-oss-v1-270m"
+	def __init__(self, model_id: str | None = None, worker_client=None, *, cache_epoch: int = 0) -> None:
+		self._model_id = model_id
 		self._worker_client = worker_client
+		self._cache_epoch = cache_epoch
 
-	def _cache_dir(self) -> str:
-		from .manager import embedding_cache_dir
-		return str(embedding_cache_dir())
+	def _selected_model(self) -> str:
+		from ..config.defaults import DEFAULT_EMBEDDING_MODEL
+		from ..config.settings import get_embedding_model
 
-	def _sync_selected_model(self) -> None:
-		"""Apply a settings change on the next request without restarting NVDA."""
-		try:
-			from ..config.settings import get_embedding_model
-			selected = get_embedding_model()
-		except Exception:
-			return
-		if selected and selected != self._model_id:
-			self._model_id = selected
+		return get_embedding_model() or DEFAULT_EMBEDDING_MODEL
+
+	def for_retrieval(self) -> CandleEmbeddingAdapter:
+		"""Pin the model and cache identity for the entire retrieval."""
+		if self._model_id is not None:
+			return self
+		from .manager import embedding_cache_epoch
+
+		model_id = self._selected_model()
+		return CandleEmbeddingAdapter(model_id, self._worker_client, cache_epoch=embedding_cache_epoch(model_id))
 
 	@property
 	def model_key(self) -> str:
-		self._sync_selected_model()
-		return f"candle:{self._model_id}"
+		retrieval = self.for_retrieval()
+		return f"candle:{retrieval._model_id}:{retrieval._cache_epoch}"
 
 	def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
-		self._sync_selected_model()
+		if self._model_id is None:
+			return self.for_retrieval().embed(texts)
 		if not texts:
 			return ()
 		from ..core.translation import _
@@ -49,9 +52,9 @@ class CandleEmbeddingAdapter:
 			raise RuntimeError(_("The local AI worker is unavailable."))
 		vectors = []
 		for offset in range(0, len(texts), 256):
-			batch = list(texts[offset:offset + 256])
+			batch = [text[:4096] for text in texts[offset:offset + 256]]
 			response = client.run_job("embedding", {"operation": "embed", "model_id": self._model_id,
-				"texts": batch}, timeout=600.0)
+				"texts": batch}, timeout=15.0)
 			if not response.get("success"):
 				raise RuntimeError(response.get("error_message") or _("Embedding operation failed."))
 			result = response.get("vectors", [])
@@ -60,14 +63,14 @@ class CandleEmbeddingAdapter:
 			vectors.extend(result)
 		return tuple(tuple(float(value) for value in vector) for vector in vectors)
 
-	def embed_query(self, query: str, instruction: str) -> Sequence[float]:
-		"""Embed an instructed query while leaving document text untouched.
+	def format_query(self, query: str, instruction: str) -> str:
+		"""Apply the selected model's query instruction without changing documents."""
+		if self._model_id is None:
+			return self.for_retrieval().format_query(query, instruction)
+		if self._model_id == "harrier-oss-v1-270m":
+			return f"Instruct: {instruction}\nQuery: {query}"
+		return query
 
-		Harrier's model card explicitly requires a one-sentence instruction on
-		queries and explicitly forbids adding it to documents.  Other embedding
-		models use the raw query until they publish an equivalent contract.
-		"""
-		self._sync_selected_model()
-		if "harrier" in self._model_id.lower():
-			query = f"Instruct: {instruction}\nQuery: {query}"
-		return self.embed((query,))[0]
+	def embed_query(self, query: str, instruction: str) -> Sequence[float]:
+		retrieval = self.for_retrieval()
+		return retrieval.embed((retrieval.format_query(query, instruction),))[0]

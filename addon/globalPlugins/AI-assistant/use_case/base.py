@@ -84,37 +84,17 @@ class UseCase(ABC):
 		)
 		if context_reducer is None or self.spec.context_policy == "none":
 			return context
-		# Feature switches are read at request time so settings changes apply
-		# without restarting NVDA.  The reducer itself remains provider-neutral.
-		try:
-			from ..config.settings import (
-				get_embedding_enabled,
-				get_embedding_page_chat_enabled,
-				get_embedding_page_summary_enabled,
-			)
-			if not get_embedding_enabled() and (prompt_builder is None or prompt_budget is None):
-				return context
-			if (
-				self.spec.context_policy == "page_summary"
-				and not get_embedding_page_summary_enabled()
-				and (prompt_builder is None or prompt_budget is None)
-			):
-				return context
-			if (
-				self.spec.context_policy == "query_retrieval"
-				and not get_embedding_page_chat_enabled()
-				and (prompt_builder is None or prompt_budget is None)
-			):
-				return context
-		except Exception:
-			# Configuration reads must never make context collection fail.
-			pass
+		allow_query_retrieval = False
+		if self.spec.context_policy == "query_retrieval":
+			from ..config.settings import get_embedding_enabled, get_embedding_page_chat_enabled
+
+			allow_query_retrieval = get_embedding_enabled() and get_embedding_page_chat_enabled()
 		from ..context.reduction import ContextReductionPolicy
 
 		policy = ContextReductionPolicy(
 			mode=self.spec.context_policy,
 			max_tokens=self.spec.context_token_budget,
-			allow_query_retrieval=self.spec.context_policy == "query_retrieval",
+			allow_query_retrieval=allow_query_retrieval,
 		)
 		return context_reducer.reduce(  # type: ignore[attr-defined]
 			context,

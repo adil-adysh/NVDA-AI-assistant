@@ -69,6 +69,8 @@ fn value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyObject {
 struct EmbeddingEngine {
     registry: ModelRegistry,
     loaded_model_id: Option<String>,
+    max_input_tokens: Option<usize>,
+    offline: bool,
 }
 
 #[pymethods]
@@ -81,14 +83,19 @@ impl EmbeddingEngine {
     /// Args:
     ///     model_id: HuggingFace model identifier, e.g. ``"all-MiniLM-L6-v2"``.
     #[new]
-    #[pyo3(signature = (model_id, cache_dir=None))]
-    fn new(model_id: String, cache_dir: Option<String>) -> PyResult<Self> {
+    #[pyo3(signature = (model_id, cache_dir=None, *, max_input_tokens=None, offline=false))]
+    fn new(model_id: String, cache_dir: Option<String>, max_input_tokens: Option<usize>, offline: bool) -> PyResult<Self> {
+        if max_input_tokens == Some(0) {
+            return Err(pyo3::exceptions::PyValueError::new_err("max_input_tokens must be positive"));
+        }
         let registry = cache_dir
             .map(|path| ModelRegistry::with_cache_dir(PathBuf::from(path)))
             .unwrap_or_default();
         Ok(Self {
             registry,
             loaded_model_id: Some(model_id),
+            max_input_tokens,
+            offline,
         })
     }
 
@@ -123,10 +130,41 @@ impl EmbeddingEngine {
         Ok(self.registry.is_cached(model_id))
     }
 
-    /// Download and validate the selected model.
+    /// Download one consistent snapshot, checking the worker cancellation token.
+    #[pyo3(signature = (check_cancelled=None))]
+    fn download(&self, py: Python<'_>, check_cancelled: Option<Py<PyAny>>) -> PyResult<()> {
+        let model_id = self.loaded_model_id.as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("No model selected"))?;
+        py.allow_threads(|| {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2).enable_all().build().map_err(to_py_err)?;
+            runtime.block_on(async {
+                let download = self.registry.download(model_id);
+                tokio::pin!(download);
+                let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
+                loop {
+                    tokio::select! {
+                        result = &mut download => return result.map_err(to_py_err),
+                        _ = interval.tick() => {
+                            if let Some(callback) = &check_cancelled {
+                                Python::with_gil(|py| callback.call0(py).map(|_| ()))?;
+                            }
+                        }
+                    }
+                }
+            })
+        })
+    }
+
+    /// Download and validate the selected model with a readiness inference.
     fn prepare(&mut self, py: Python<'_>) -> PyResult<()> {
-        self.embed(py, "embedding model readiness check")
-            .map(|_| ())
+        self.download(py, None)?;
+        self.validate(py)
+    }
+
+    /// Validate a cached model and keep it loaded for inference.
+    fn validate(&mut self, py: Python<'_>) -> PyResult<()> {
+        self.embed(py, "embedding model readiness check").map(|_| ())
     }
 
     /// Return the explicit cache directory used by this engine.
@@ -181,12 +219,22 @@ impl EmbeddingEngine {
             .ok_or_else(|| PyRuntimeError::new_err("No model selected"))?
             .clone();
 
+        if !self.offline && !self.registry.is_loaded(&model_id) && !self.registry.is_cached(&model_id) {
+            self.download(py, None)?;
+        }
+        let dimensions = self.dimensions()?;
         py.allow_threads(|| {
-            let model = self
-                .registry
-                .load_initialized(&model_id)
+            let model = self.registry.load_initialized(&model_id, self.max_input_tokens)
                 .map_err(to_py_err)?;
-            model.embed(&texts).map_err(to_py_err)
+            let vectors = model.embed(&texts).map_err(to_py_err)?;
+            if vectors.len() != texts.len() || vectors.iter().any(|vector| {
+                vector.len() != dimensions
+                    || vector.iter().any(|value| !value.is_finite())
+                    || vector.iter().all(|value| *value == 0.0)
+            }) {
+                return Err(PyRuntimeError::new_err("The model returned an invalid embedding"));
+            }
+            Ok(vectors)
         })
     }
 

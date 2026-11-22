@@ -19,12 +19,12 @@ from wx.lib import scrolledpanel
 from ..config import defaults
 from ..config.settings import (
 	build_provider_config, get_enabled_providers, get_embedding_enabled, get_embedding_model,
-	get_embedding_page_chat_enabled, get_embedding_page_summary_enabled, get_generate_max_tokens,
+	get_embedding_page_chat_enabled, get_generate_max_tokens,
 	get_generate_temperature, get_generate_top_p, get_image_format, get_image_max_side, get_image_quality,
 	get_language, get_num_ctx, get_progress_enabled,
 	get_provider, get_request_metrics_log_path, get_request_metrics_logging_enabled, get_streaming_enabled,
-	get_streaming_tone_enabled, get_timeout_seconds, set_embedding_enabled, set_embedding_model,
-	set_embedding_page_chat_enabled, set_embedding_page_summary_enabled, set_generate_max_tokens,
+	get_streaming_tone_enabled, get_timeout_seconds, set_embedding_enabled,
+	set_embedding_page_chat_enabled, set_generate_max_tokens,
 	set_generate_temperature, set_generate_top_p, set_image_format, set_image_max_side, set_image_quality,
 	set_language, set_model_name, set_num_ctx,
 	set_progress_enabled, set_provider, set_request_metrics_log_path, set_request_metrics_logging_enabled,
@@ -34,7 +34,6 @@ from ..config.settings import (
 	get_max_tool_calls, set_max_tool_calls,
 )
 from ..config.enabled_models import ModelVisibilityStore
-from ..embeddings.manager import embedding_model_service
 from ..providers.registry import (
 	PROVIDER_IDS, ProviderLifecycleState, build_model_manager, get_provider_info,
 	provider_display_name, provider_state_label,
@@ -58,9 +57,7 @@ class _SettingsValues:
 	top_p: float
 	max_tokens: int
 	embedding_enabled: bool
-	embedding_summary: bool
 	embedding_page_chat: bool
-	embedding_model: str
 	streaming: bool
 	progress: bool
 	streaming_tone: bool
@@ -329,39 +326,24 @@ class AIAssistantModelsContextPanel(_SettingsTab):
 		self.top_p = self.add_labeled_text(helper, _("Top-p:"), get_generate_top_p())
 		self.max_tokens = self.add_labeled_text(helper, _("Max tokens:"), get_generate_max_tokens())
 		helper = self.add_group(_("Context and memory"))
-		helper.addItem(wx.StaticText(self, label=_("Local embedding models select relevant content before it is sent to the AI.")))
-		self.embedding_enabled = helper.addItem(wx.CheckBox(self, label=_("Enable local context reduction")))
+		helper.addItem(wx.StaticText(self, label=_("Local embedding models select relevant passages for page chat.")))
+		self.embedding_enabled = helper.addItem(wx.CheckBox(self, label=_("Enable local embeddings")))
 		self.embedding_enabled.SetValue(get_embedding_enabled())
-		self.embedding_summary = helper.addItem(wx.CheckBox(self, label=_("Use embeddings for page summaries")))
-		self.embedding_summary.SetValue(get_embedding_page_summary_enabled())
 		self.embedding_page_chat = helper.addItem(wx.CheckBox(self, label=_("Use embeddings for page chat")))
 		self.embedding_page_chat.SetValue(get_embedding_page_chat_enabled())
-		helper.addItem(wx.StaticText(self, label=_("Active embedding model:")))
-		self.embedding_model = helper.addItem(wx.ComboBox(self, choices=[get_embedding_model() or defaults.DEFAULT_EMBEDDING_MODEL], style=wx.CB_READONLY))
-		self.embedding_model.SetValue(get_embedding_model())
+		self._active_embedding = helper.addItem(wx.StaticText(self))
+		self._update_active_embedding_label()
 		manage = helper.addItem(wx.Button(self, label=_("Manage Embedding Models...")))
 		manage.Bind(wx.EVT_BUTTON, self._on_manage_embeddings)
-		self._embedding_catalog_task = background_tasks.submit(
-			lambda _cancel: embedding_model_service.list_models(),
-			on_success=self._on_embedding_models_loaded,
-			is_alive=lambda: bool(self) and not self.IsBeingDeleted(),
-		)
 
-	def _on_embedding_models_loaded(self, models) -> None:
-		selected = self.embedding_model.GetValue()
-		choices = list(dict.fromkeys([selected, *(model.id for model in models)]))
-		self.embedding_model.SetItems(choices)
-		self.embedding_model.SetValue(selected)
-
-	def dispose(self) -> None:
-		self._embedding_catalog_task.cancel()
-		self._embedding_catalog_task = None
-		super().dispose()
+	def _update_active_embedding_label(self) -> None:
+		model_id = get_embedding_model() or defaults.DEFAULT_EMBEDDING_MODEL
+		self._active_embedding.SetLabel(_("Active embedding model: {model}").format(model=model_id))
 
 	def _on_manage_embeddings(self, _event: wx.CommandEvent) -> None:
 		from .embedding_model_dialog import open_embedding_model_dialog
 		open_embedding_model_dialog(self.dialog)
-		self.embedding_model.SetValue(get_embedding_model())
+		self._update_active_embedding_label()
 
 	def collect(self, values: dict[str, object]) -> None:
 		values.update(
@@ -369,9 +351,8 @@ class AIAssistantModelsContextPanel(_SettingsTab):
 			temperature=self.parse_float(self.temperature, _("Temperature must be a number of at least 0."), 0.0),
 			top_p=self.parse_float(self.top_p, _("Top-p must be a number between 0 and 1."), 0.0, 1.0),
 			max_tokens=self.parse_int(self.max_tokens, _("Max tokens must be an integer of at least 1."), 1),
-			embedding_enabled=self.embedding_enabled.GetValue(), embedding_summary=self.embedding_summary.GetValue(),
+			embedding_enabled=self.embedding_enabled.GetValue(),
 			embedding_page_chat=self.embedding_page_chat.GetValue(),
-			embedding_model=self.embedding_model.GetValue().strip() or defaults.DEFAULT_EMBEDDING_MODEL,
 		)
 
 
@@ -566,9 +547,7 @@ class AIAssistantSettingsDialog(SettingsDialog):
 		set_provider(values.provider)
 		set_model_name(values.model_name)
 		set_embedding_enabled(values.embedding_enabled)
-		set_embedding_page_summary_enabled(values.embedding_summary)
 		set_embedding_page_chat_enabled(values.embedding_page_chat)
-		set_embedding_model(values.embedding_model)
 		set_num_ctx(values.num_ctx)
 		set_generate_temperature(values.temperature)
 		set_generate_top_p(values.top_p)

@@ -430,7 +430,8 @@ class WorkerServer:
 				self._emit_event(execute_conversation_job(spec, token).to_dict())
 			elif spec.job_type == "embedding":
 				from .executors.embedding import execute_embedding_job
-				self._emit_event(execute_embedding_job(spec, token).to_dict())
+				result = execute_embedding_job(spec, token, lambda progress: self._emit_event(progress.to_dict()))
+				self._emit_event(result.to_dict())
 			elif spec.job_type == "echo":
 				self._execute_echo(spec, token)
 			elif spec.job_type == "trivial_compute":

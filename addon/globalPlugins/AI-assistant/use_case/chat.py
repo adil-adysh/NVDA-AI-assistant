@@ -7,7 +7,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from ..context.formatting import format_page_context
 from ..context.pipeline import ContextPipeline
 from ..context.types import ExtractionIntent, ForegroundImageRequest, PageTextRequest, PromptContext
 from ..service.llm import LLMService
@@ -63,7 +62,7 @@ class OpenChatWithPageContentUseCase(UseCase):
 	def spec(self) -> UseCaseSpec:
 		return UseCaseSpec(
 			id="open_chat_with_page_content",
-			description="Open chat with the current page content preloaded.",
+			description="Open chat about the current page.",
 			extraction_intent=ExtractionIntent(requests=(
 				PageTextRequest(),
 			)),
@@ -88,8 +87,6 @@ class OpenChatWithPageContentUseCase(UseCase):
 			prompt_context = self.collect_prompt_context(
 				context_pipeline,
 				emit=emit,
-				context_reducer=kwargs.get("_context_reducer"),
-				query=kwargs.get("query") if isinstance(kwargs.get("query"), str) else None,
 			)
 		# Opening the chat must never fail because context collection did
 		# (e.g. the focused window is not a document with extractable text).
@@ -101,25 +98,11 @@ class OpenChatWithPageContentUseCase(UseCase):
 		if emit is not None:
 			emit("building_prompt", "Building chat prompt...")
 
-		page_content = kwargs.get("page_content")
-		if prompt_context is not None:
-			extraction_result = prompt_context.extraction_result
-			if extraction_result is not None:
-				page_content = format_page_context(
-					extraction_result.title,
-					extraction_result.app_title,
-					extraction_result.text,
-				)
-				if page_content:
-					page_content = f"{page_content}\n\nQuestion: "
-			elif page_content is None:
-				page_content = prompt_context.text or ""
-
 		provider = getattr(prompt_context, "provider", None) or "unknown"
 		model = getattr(prompt_context, "model", None) or "unknown"
 		return UseCaseResult(
 			success=True,
-			initial_text=page_content,
+			initial_text=kwargs.get("page_content") if isinstance(kwargs.get("page_content"), str) else None,
 			message="Chat window ready",
 			prompt_context=prompt_context,
 			metadata={
