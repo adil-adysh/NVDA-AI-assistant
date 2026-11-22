@@ -115,7 +115,9 @@ it into `addon/doc/en/readme.md` and generates HTML; those copies are build outp
 
 `uv run pytest tests/build/test_worker_bundle_smoke.py` copies the bundle and
 worker/core source into an isolated temporary directory, clears external Python
-paths, and exercises a real handshake, native status, and download job. Build
+paths, and exercises a real handshake, native status, and correlated startup
+fence jobs. Health remains available while startup is fenced, and stale fence
+tokens are rejected. Build
 the bundle first; this test skips when its executable is absent.
 
 For release validation, set `NVDA_AI_REQUIRE_PACKAGED_TESTS=1` before running

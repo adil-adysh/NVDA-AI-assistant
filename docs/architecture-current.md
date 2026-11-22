@@ -207,6 +207,39 @@ service/chat/ owns interactive sessions:
 
 observability/ records opt-in request measurements and background task events in a versioned, bounded JSONL log at the configured path. Provider calls are measured at the shared `ProviderLLMService` boundary; the file reporter is wired by `plugin/factory.py` and emits only allowlisted metadata.
 
+### Operation ownership
+
+`core/command_session.py` owns the pure command-layer state machine and stable
+choice identities. Sessions transition between idle, commands, loading choices
+and choosing. Activation, dismissal and shutdown invalidate delivery generations;
+an old asynchronous catalog result cannot enter a dismissed or newer session.
+`plugin/layer_mode.py` is the NVDA adapter: it installs gesture bindings, dispatches
+commands through the session, announces choice pages and restores default bindings.
+The application resolves provider/model choices off-thread and delivers them only
+to the matching session/provider. Digit choices are paginated rather than reusing
+labels for inaccessible models.
+
+`service/llama_operations.py` owns endpoint-level admission and durable lifecycle
+operations, including preset removal. Application work is serialized independently
+of the worker command channel. Removal reserves admission, cancels conflicting
+work and drains it before stopping the owned router and committing catalog changes.
+The worker/native supervisor remains authoritative for process ownership and
+launch fencing; the Python coordinator does not replace that boundary. Views attach
+to operations and may detach without cancelling the operation.
+
+`core/operation_outcome.py` defines succeeded, failed and cancelled terminal outcomes.
+Cancellation wins over an exception or a normal return when observed at completion;
+later view dismissal does not rewrite the operation outcome. `ui/task_runner.py`
+applies that outcome to both callbacks and diagnostics and exposes separate cancel
+and detach operations. Its optional `core/diagnostics.py` port is injected by the
+composition root. `observability/task_diagnostics.py` implements the bounded
+asynchronous file adapter, so the task runner neither reads logging configuration
+nor performs diagnostic file IO.
+Request diagnostics follow the same dependency direction: the pure measurement
+record lives in `core/request_metrics.py`; `ProviderLLMService` consumes the
+`RequestDiagnostics` port and defaults to a null adapter. The composition root
+explicitly injects the file reporter for the running application.
+
 ### Image and embedding subsystems
 
 image/ captures focused objects/windows/screenshots, checks screen-curtain state, preprocesses/resizes/encodes images, and exposes typed image services. CandleEmbeddingAdapter is a lazy worker port to the PyO3 embedding_engine; the reducer only loads it when embedding is enabled and required.
