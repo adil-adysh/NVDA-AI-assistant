@@ -29,7 +29,7 @@ from collections.abc import Callable
 
 import logging
 
-from ..providers.interfaces import ProviderModelInfo
+from ..providers.interfaces import LLMProviderError, ProviderModelInfo
 from ..providers.capabilities import ModelCapabilities
 
 log = logging.getLogger(__name__)
@@ -306,6 +306,9 @@ class ModelCatalogCache:
             error: Exception | None = None
             try:
                 models = self._perform_fetch(provider_id)
+            except LLMProviderError as exc:
+                log.debug("ModelCatalogCache: discovery unavailable for '%s': %s", provider_id, exc)
+                error = exc
             except Exception as exc:
                 log.exception("ModelCatalogCache: unexpected fetch failure for '%s'", provider_id)
                 error = exc
