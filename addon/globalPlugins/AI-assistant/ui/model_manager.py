@@ -136,8 +136,9 @@ class ModelManagerDialog(wx.Dialog):
 			style=(wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.LC_HRULES | wx.LC_VRULES),
 		)
 		self._list.SetName(_("Model catalog"))
-		self._list.AppendColumn(_("Active"), width=75)
+		# NVDA reads the first column without its header during row navigation.
 		self._list.AppendColumn(_("Model"), width=280)
+		self._list.AppendColumn(_("Active"), width=75)
 		# TRANSLATORS: Column header for the download status.
 		self._list.AppendColumn(_("Status"), width=180)
 		# TRANSLATORS: Column header for the model file size.
@@ -441,14 +442,11 @@ class ModelManagerDialog(wx.Dialog):
 		models: list[ManagedModel],
 	) -> None:
 		for m in models:
-			idx = self._list.InsertItem(self._list.GetItemCount(), "")
+			idx = self._list.InsertItem(self._list.GetItemCount(), m.display_name)
 
-			# Column 0: active marker
+			# Column 1: active marker
 			is_active = _model_matches_active(m, self._active_id_clean)
-			self._list.SetItem(idx, 0, _("Active") if is_active else "")
-
-			# Column 1: display name
-			self._list.SetItem(idx, 1, m.display_name)
+			self._list.SetItem(idx, 1, _("Active") if is_active else "")
 
 			# Column 2: status
 			self._list.SetItem(idx, 2, _status_label(m.state))

@@ -96,13 +96,13 @@ def test_model_manager_omits_redundant_enabled_column_and_selects_active_model(m
 	assert dialog._availability_filter.GetName() == "Filter by model status"
 	assert dialog._enabled_filter.GetStringSelection() == "All"
 	assert dialog._availability_filter.GetStringSelection() == "All"
-	assert [dialog._list.GetColumn(i).GetText() for i in range(4)] == ["Active", "Model", "Status", "Size"]
+	assert [dialog._list.GetColumn(i).GetText() for i in range(4)] == ["Model", "Active", "Status", "Size"]
 	assert dialog._get_selected_model().id == "active-model"
 	assert dialog._list.GetFocusedItem() >= 0
-	active_row = next(i for i in range(dialog._list.GetItemCount()) if dialog._list.GetItemText(i, 1) == "Active model")
-	disabled_row = next(i for i in range(dialog._list.GetItemCount()) if dialog._list.GetItemText(i, 1) == "Disabled model")
-	assert dialog._list.GetItemText(active_row, 0) == "Active"
-	assert dialog._list.GetItemText(disabled_row, 0) == ""
+	active_row = next(i for i in range(dialog._list.GetItemCount()) if dialog._list.GetItemText(i, 0) == "Active model")
+	disabled_row = next(i for i in range(dialog._list.GetItemCount()) if dialog._list.GetItemText(i, 0) == "Disabled model")
+	assert dialog._list.GetItemText(active_row, 1) == "Active"
+	assert dialog._list.GetItemText(disabled_row, 1) == ""
 	assert dialog._enable_btn.GetLabel() == "Enable"
 	assert dialog._disable_btn.GetLabel() == "Disable"
 	assert _visible_model_ids(dialog) == {"active-model", "disabled-model", "missing-model", "loading-model", "failed-model"}
