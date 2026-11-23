@@ -480,17 +480,17 @@ class LiteRTServerSupervisor:
 		"""True when an older add-on-managed LiteRT runtime can be upgraded."""
 		if self.is_installed:
 			return False
-		return self._has_previous_runtime()
+		return self._has_previous_runtime(installed_only=True)
 
 	@property
 	def cleanup_pending(self) -> bool:
 		"""True when an installed replacement still has a recognized old package."""
 		return self.is_installed and self._has_previous_runtime()
 
-	def _has_previous_runtime(self) -> bool:
+	def _has_previous_runtime(self, *, installed_only: bool = False) -> bool:
 		from ...core.runtime_upgrade import has_previous_litert_runtime
 
-		return has_previous_litert_runtime(self._server_dir().parent, self._version)
+		return has_previous_litert_runtime(self._server_dir().parent, self._version, installed_only=installed_only)
 
 	@property
 	def is_running(self) -> bool:

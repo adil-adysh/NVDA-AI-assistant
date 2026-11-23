@@ -59,6 +59,13 @@ def test_previous_managed_runtime_is_detected(tmp_path):
 	assert not module.has_previous_litert_runtime(tmp_path, "0.19.1")
 
 
+def test_incomplete_old_package_is_cleanup_only(tmp_path):
+	old = package(tmp_path, "0.18.0")
+	(old / "python.exe").unlink()
+	assert module.has_previous_litert_runtime(tmp_path, "0.19.1")
+	assert not module.has_previous_litert_runtime(tmp_path, "0.19.1", installed_only=True)
+
+
 def test_locked_cleanup_is_deferred(tmp_path, monkeypatch):
 	new = package(tmp_path, "0.18.0")
 	old = package(tmp_path, "0.15.0")

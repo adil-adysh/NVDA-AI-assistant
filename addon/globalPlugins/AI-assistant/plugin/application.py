@@ -162,21 +162,13 @@ class AIAssistantApplication:
 			provider = get_provider()
 			from ..providers.runtime.server import get_litert_supervisor
 
-			supervisor = get_litert_supervisor()
-			upgrade_available = bool(getattr(supervisor, "upgrade_available", False))
-			cleanup_pending = bool(getattr(supervisor, "cleanup_pending", False))
-			if upgrade_available:
-				from ..ui.litert_upgrade_notice import show_litert_upgrade_notice
+			if "litert-lm" in get_enabled_providers():
+				supervisor = get_litert_supervisor()
+				cleanup_pending = supervisor.cleanup_pending
+				if cleanup_pending or supervisor.upgrade_available:
+					from ..ui.litert_upgrade_notice import show_litert_upgrade_notice
 
-				log.info("Older managed LiteRT-LM runtime detected; queuing release-scoped upgrade dialog")
-				nvda_ui.queue(show_litert_upgrade_notice, cleanup_pending=False)
-			elif cleanup_pending:
-				from ..ui.litert_upgrade_notice import show_litert_upgrade_notice
-
-				log.info("LiteRT-LM upgrade cleanup is pending; queuing cleanup dialog")
-				nvda_ui.queue(show_litert_upgrade_notice, cleanup_pending=True)
-			else:
-				log.debug("No LiteRT-LM upgrade or cleanup notice is due at startup")
+					nvda_ui.queue(show_litert_upgrade_notice, cleanup_pending=cleanup_pending)
 			startup_mode = get_local_startup_mode(provider)
 			if startup_mode != "server":
 				return
@@ -187,8 +179,6 @@ class AIAssistantApplication:
 				return
 			litert_installed = True
 			if provider == "litert-lm" and startup_mode == "server":
-				from ..providers.runtime.server import get_litert_supervisor
-
 				litert_installed = get_litert_supervisor().is_installed
 
 			thread = schedule_active_local_provider_start(

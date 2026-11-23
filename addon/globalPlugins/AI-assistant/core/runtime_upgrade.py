@@ -61,12 +61,15 @@ def _previous_packages(root: Path, version: str) -> Iterator[tuple[str, Path, bo
 			continue
 
 
-def has_previous_litert_runtime(root: Path, current_version: str) -> bool:
-	"""Return whether an older package or deferred retirement is present."""
+def has_previous_litert_runtime(root: Path, current_version: str, *, installed_only: bool = False) -> bool:
+	"""Detect older installations and optionally include cleanup remnants."""
 	try:
-		return next(_previous_packages(root.resolve(), current_version), None) is not None
+		for version, path, _ in _previous_packages(root.resolve(), current_version):
+			if not installed_only or (path.name == version and (path / "python.exe").is_file()):
+				return True
 	except (OSError, ValueError):
-		return False
+		pass
+	return False
 
 
 class InvalidLiteRTPackage(ValueError):

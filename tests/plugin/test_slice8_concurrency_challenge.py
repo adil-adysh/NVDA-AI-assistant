@@ -250,6 +250,31 @@ def test_application_removed_worker_policy_does_not_prepare_or_start(monkeypatch
 	assert len(threads) == 0
 
 
+@pytest.mark.parametrize(("enabled", "upgrade", "cleanup", "expected"), [
+	(False, True, False, []),
+	(False, False, True, []),
+	(True, False, False, []),
+	(True, True, False, [False]),
+	(True, False, True, [True]),
+])
+def test_startup_notices_require_enabled_litert(monkeypatch, enabled, upgrade, cleanup, expected):
+	queued = []
+	module_name = f"{CHALLENGE_NAMESPACE}.ui.litert_upgrade_notice"
+	notice = types.ModuleType(module_name)
+	notice.show_litert_upgrade_notice = lambda **kwargs: None
+	monkeypatch.setitem(sys.modules, module_name, notice)
+	monkeypatch.setattr(app_mod, "get_enabled_providers", lambda: ["litert-lm"] if enabled else ["gemini"])
+	monkeypatch.setattr(app_mod, "get_provider", lambda: "gemini")
+	monkeypatch.setattr(app_mod, "get_local_startup_mode", lambda _provider: "worker")
+	monkeypatch.setattr(app_mod.nvda_ui, "queue", lambda callback, *, cleanup_pending: queued.append(cleanup_pending))
+	server_module = sys.modules[f"{CHALLENGE_NAMESPACE}.providers.runtime.server"]
+	monkeypatch.setattr(server_module, "get_litert_supervisor", lambda: types.SimpleNamespace(
+		upgrade_available=upgrade, cleanup_pending=cleanup,
+	))
+	object.__new__(app_mod.AIAssistantApplication)._auto_start_active_local_provider()
+	assert queued == expected
+
+
 def test_selecting_local_provider_preserves_lazy_server_startup(monkeypatch):
 	threads = []
 	monkeypatch.setattr(app_mod.threading, "Thread", lambda **kwargs: threads.append(kwargs) or types.SimpleNamespace(start=lambda: None))

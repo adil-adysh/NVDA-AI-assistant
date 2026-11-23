@@ -11,6 +11,7 @@ import gui
 import wx
 
 from ..config.settings import (
+	get_enabled_providers,
 	get_litert_upgrade_notice_suppressed_version,
 	set_litert_upgrade_notice_suppressed_version,
 )
@@ -114,6 +115,8 @@ class LiteRTUpgradeNotice(wx.Dialog):
 def show_litert_upgrade_notice(*, cleanup_pending: bool = False) -> None:
 	"""Show a modeless release-scoped notice; startup remains interactive."""
 	global _active_notice  # pylint: disable=global-statement
+	if "litert-lm" not in get_enabled_providers():
+		return
 	version = _current_addon_version()
 	if version and get_litert_upgrade_notice_suppressed_version() == version:
 		return
