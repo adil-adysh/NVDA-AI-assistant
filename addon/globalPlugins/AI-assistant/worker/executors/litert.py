@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import threading
 from typing import Any
 import urllib.error
@@ -187,50 +188,8 @@ class LiteRTWorkerExecutor:
 		host: str | None = None,
 		port: int | None = None,
 	) -> dict[str, Any]:
-		"""Atomically ensure the LiteRT server is running and healthy."""
-		if host is not None:
-			self.host = str(host)
-		if port is not None:
-			self.port = int(port)
-
-		sup = self._get_supervisor()
-
-		py_path = Path(python_exe) if python_exe else default_python_exe(version)
-		lt_dir = Path(litert_dir) if litert_dir else default_litert_dir()
-
-		# Write config.json
-		with self._config_lock:
-			lt_dir.mkdir(parents=True, exist_ok=True)
-			cfg_path = lt_dir / "config.json"
-			if config:
-				cfg_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
-			elif cfg_path.is_file():
-				try:
-					cfg_path.unlink()
-				except OSError:
-					pass
-
-		identity_payload = {
-			"config": config or {},
-			"host": self.host,
-			"port": self.port,
-			"python": str(py_path).lower(),
-			"version": version,
-		}
-		startup_identity = json.dumps(identity_payload, sort_keys=True)
-
-		cmd_args = ["-m", "litert_lm_cli.main", "serve", "--host", self.host, "--port", str(self.port)]
-		env = {**os.environ, "LITERT_LM_DIR": str(lt_dir)}
-
-		check_job_cancelled()
-		status = sup.ensure_ready(
-			str(py_path),
-			cmd_args,
-			env,
-			startup_identity,
-			timeout_seconds=timeout_seconds,
-		)
-		return serialize_runtime_status(status)
+		"""Ensure the managed server uses the current startup configuration."""
+		return self._launch("ensure_ready", config, timeout_seconds, python_exe, litert_dir, version, host, port)
 
 	def restart(
 		self,
@@ -243,48 +202,70 @@ class LiteRTWorkerExecutor:
 		port: int | None = None,
 	) -> dict[str, Any]:
 		"""Restart the LiteRT server with updated configuration."""
+		return self._launch("restart", config, timeout_seconds, python_exe, litert_dir, version, host, port)
+
+	def _launch(
+		self,
+		operation: str,
+		config: dict[str, Any] | None,
+		timeout_seconds: float,
+		python_exe: Path | str | None,
+		litert_dir: Path | str | None,
+		version: str,
+		host: str | None,
+		port: int | None,
+	) -> dict[str, Any]:
 		if host is not None:
 			self.host = str(host)
 		if port is not None:
 			self.port = int(port)
 
-		sup = self._get_supervisor()
-
+		supervisor = self._get_supervisor()
 		py_path = Path(python_exe) if python_exe else default_python_exe(version)
 		lt_dir = Path(litert_dir) if litert_dir else default_litert_dir()
+		config = config or {}
+		check_job_cancelled()
+		self._write_server_config(lt_dir, config)
 
-		with self._config_lock:
-			lt_dir.mkdir(parents=True, exist_ok=True)
-			cfg_path = lt_dir / "config.json"
-			if config:
-				cfg_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
-			elif cfg_path.is_file():
-				try:
-					cfg_path.unlink()
-				except OSError:
-					pass
-
-		identity_payload = {
-			"config": config or {},
+		startup_identity = json.dumps({
+			"config": config,
 			"host": self.host,
 			"port": self.port,
 			"python": str(py_path).lower(),
 			"version": version,
-		}
-		startup_identity = json.dumps(identity_payload, sort_keys=True)
-
+		}, sort_keys=True)
 		cmd_args = ["-m", "litert_lm_cli.main", "serve", "--host", self.host, "--port", str(self.port)]
 		env = {**os.environ, "LITERT_LM_DIR": str(lt_dir)}
 
 		check_job_cancelled()
-		status = sup.restart(
-			str(py_path),
-			cmd_args,
-			env,
-			startup_identity,
-			timeout_seconds=timeout_seconds,
-		)
+		launch = supervisor.restart if operation == "restart" else supervisor.ensure_ready
+		status = launch(str(py_path), cmd_args, env, startup_identity, timeout_seconds=timeout_seconds)
 		return serialize_runtime_status(status)
+
+	def _write_server_config(self, directory: Path, config: dict[str, Any]) -> None:
+		path = directory / "config.json"
+		with self._config_lock:
+			directory.mkdir(parents=True, exist_ok=True)
+			if not config:
+				path.unlink(missing_ok=True)
+				return
+			payload = json.dumps(config, indent=2, sort_keys=True)
+			try:
+				if path.read_text(encoding="utf-8") == payload:
+					return
+			except (FileNotFoundError, UnicodeError):
+				pass
+
+			stream = tempfile.NamedTemporaryFile(
+				mode="w", encoding="utf-8", dir=directory, prefix=".config-", suffix=".tmp", delete=False,
+			)
+			temporary = Path(stream.name)
+			try:
+				with stream:
+					stream.write(payload)
+				temporary.replace(path)
+			finally:
+				temporary.unlink(missing_ok=True)
 
 	def finalize_upgrade(self, version: str, *, on_deferred=None) -> list[str]:
 		if version != DEFAULT_LITERT_VERSION:

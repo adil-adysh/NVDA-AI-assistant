@@ -322,6 +322,7 @@ class AIAssistantModelsContextPanel(_SettingsTab):
 		helper = self.add_group(_("Model Defaults"))
 		helper.addItem(wx.StaticText(self, label=_("Global generation parameters used by models without per-model overrides.")))
 		self.num_ctx = self.add_labeled_text(helper, _("Context window size:"), get_num_ctx() or defaults.DEFAULT_NUM_CTX)
+		helper.addItem(wx.StaticText(self, label=_("Managed LiteRT-LM uses the saved context window on the next AI request.")))
 		self.temperature = self.add_labeled_text(helper, _("Temperature:"), get_generate_temperature())
 		self.top_p = self.add_labeled_text(helper, _("Top-p:"), get_generate_top_p())
 		self.max_tokens = self.add_labeled_text(helper, _("Max tokens:"), get_generate_max_tokens())

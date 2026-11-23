@@ -132,6 +132,10 @@ class ModelConfigureDialog(wx.Dialog):
 			),
 		)
 		s_helper.addItem(override_hint)
+		if self._provider_id == "litert-lm":
+			s_helper.addItem(wx.StaticText(
+				self, label=_("Managed LiteRT-LM uses the saved context window on the next AI request."),
+			))
 
 		for spec in (*MODEL_CONFIG_FIELDS, *getattr(self, "_extra_fields", ())):
 			# Use NVDA's LabeledControlHelper so the label and text

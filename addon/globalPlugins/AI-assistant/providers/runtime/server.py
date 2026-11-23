@@ -1160,9 +1160,8 @@ class LiteRTServerSupervisor:
 
 		``config.json`` is a derived startup artifact: it is regenerated
 		from the add-on settings whenever the server (re)starts.  The
-		running server is kept consistent with settings by restarting when
-		server-relevant settings change (see the config-change event in
-		plugin/background.py).
+		next readiness check picks up settings changes and restarts an
+		add-on-owned server when its startup configuration differs.
 		"""
 		config = dict(config) if config is not None else self._server_config_snapshot()
 		config_path = self._litert_dir() / "config.json"

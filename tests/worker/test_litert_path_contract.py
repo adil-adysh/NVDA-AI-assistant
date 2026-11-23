@@ -1,3 +1,5 @@
+import json
+import os
 from pathlib import Path
 
 import pytest
@@ -70,6 +72,53 @@ def test_native_ready_server_does_not_announce_start(tmp_path, monkeypatch):
 	progress = []
 	assert supervisor.ensure_ready(on_progress=progress.append).is_ready
 	assert progress == []
+
+
+def test_context_change_reaches_worker_on_next_readiness_check(tmp_path, monkeypatch):
+	monkeypatch.setenv("APPDATA", str(tmp_path))
+	context = 4096
+	launch_inputs = []
+	config_path = executor.default_litert_dir() / "config.json"
+
+	class Native:
+		def ensure_ready(self, executable, args, env, identity, **kwargs):
+			launch_inputs.append((json.loads(identity), json.loads(config_path.read_text(encoding="utf-8"))))
+			return {"state": "ready_owned", "is_ready": True}
+
+	worker_executor = executor.LiteRTWorkerExecutor(supervisor=Native())
+	server = worker.WorkerServer.__new__(worker.WorkerServer)
+	server.get_litert_executor = lambda: worker_executor
+	responses = []
+
+	class CommandPipe:
+		is_connected = True
+		write_frame = staticmethod(responses.append)
+
+	class Client:
+		def send_command(self, command, **kwargs):
+			server._handle_command(command)
+			return responses[-1]
+
+	server._cmd_server = CommandPipe()
+	supervisor = adapter.LiteRTServerSupervisor(
+		config_provider=lambda: adapter.build_server_config(context, {}),
+	)
+	monkeypatch.setattr(supervisor, "_get_native", lambda: None)
+	monkeypatch.setattr(supervisor, "_get_worker_client", lambda **kwargs: Client())
+	assert supervisor.ensure_ready().is_ready
+	# Simulate an unchanged second readiness check without relying on timing.
+	os.utime(config_path, ns=(1_000_000_000, 1_000_000_000))
+	original_mtime = config_path.stat().st_mtime_ns
+	assert supervisor.ensure_ready().is_ready
+	assert config_path.stat().st_mtime_ns == original_mtime
+
+	context = 8192
+	assert launch_inputs[-1][1]["default"]["max_num_tokens"] == 4096
+	assert supervisor.ensure_ready().is_ready
+	first, unchanged, updated = launch_inputs
+	assert first == unchanged
+	assert updated[0] != first[0]
+	assert updated[0]["config"] == updated[1] == {"default": {"max_num_tokens": 8192}}
 
 
 def test_server_progress_translates_template_before_formatting(tmp_path, monkeypatch):

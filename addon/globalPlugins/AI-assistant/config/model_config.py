@@ -293,8 +293,7 @@ def set_model_sampling(
 	stored.update(values)
 	store.set(provider_id, model_id, stored)
 	if str(provider_id or "").strip().lower() == "litert-lm":
-		# A pinned num_ctx changes the server's per-model max_num_tokens,
-		# so the LiteRT server must restart to apply it.
+		# The next readiness check applies a changed per-model max_num_tokens.
 		from .state import _notify_litert_server_config_changed
 
 		_notify_litert_server_config_changed()

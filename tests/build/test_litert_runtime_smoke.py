@@ -1,4 +1,5 @@
 """Real runtime registry imports; tiny fixtures do not test model inference."""
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -50,7 +51,7 @@ with patch.object(module.huggingface_download, "download_from_huggingface", retu
 	assert (tmp_path / "registry/models/hf-test/model.litertlm").read_bytes() == source.read_bytes()
 
 
-def test_packaged_worker_starts_and_stops_real_litert_server(tmp_path, runtime_python, monkeypatch):
+def test_packaged_worker_restarts_real_litert_server_for_context_change(tmp_path, runtime_python, monkeypatch):
 	import socket
 	import uuid
 	import urllib.request
@@ -73,10 +74,22 @@ def test_packaged_worker_starts_and_stops_real_litert_server(tmp_path, runtime_p
 	try:
 		assert owner.start(), owner.stderr_buffer.get_text()
 		client = owner.get_worker_client()
-		ready = client.send_command({"type": "litert_ensure_ready", "python_exe": str(runtime_python),
+		command = {"type": "litert_ensure_ready", "python_exe": str(runtime_python),
 			"litert_dir": str(tmp_path / "registry"), "host": "127.0.0.1", "port": port,
-			"version": executor.DEFAULT_LITERT_VERSION, "timeout_seconds": 15}, timeout=20)
+			"version": executor.DEFAULT_LITERT_VERSION, "timeout_seconds": 15,
+			"config": {"default": {"max_num_tokens": 4096}}}
+		ready = client.send_command(command, timeout=20)
 		assert ready.get("success") and ready.get("status", {}).get("is_ready"), ready
+		first_pid = ready["status"]["pid"]
+		assert first_pid
+		unchanged = client.send_command(command, timeout=20)
+		assert unchanged.get("success") and unchanged["status"]["pid"] == first_pid, unchanged
+
+		command["config"] = {"default": {"max_num_tokens": 8192}}
+		reloaded = client.send_command(command, timeout=20)
+		assert reloaded.get("success") and reloaded["status"]["is_ready"], reloaded
+		assert reloaded["status"]["pid"] and reloaded["status"]["pid"] != first_pid
+		assert json.loads((tmp_path / "registry/config.json").read_text(encoding="utf-8")) == command["config"]
 		with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=3) as response:
 			assert response.status == 200
 		stopped = client.send_command({"type": "litert_stop", "timeout_seconds": 3}, timeout=5)
