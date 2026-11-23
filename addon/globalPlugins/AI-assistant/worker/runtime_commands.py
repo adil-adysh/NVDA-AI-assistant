@@ -8,9 +8,11 @@ import time
 try:
 	from ..core.litert_contract import DEFAULT_LITERT_VERSION
 	from ..core.readiness_progress import run_with_readiness_progress
+	from ..core.runtime_upgrade import InvalidLiteRTPackage
 except ImportError:
 	from core.litert_contract import DEFAULT_LITERT_VERSION
 	from core.readiness_progress import run_with_readiness_progress
+	from core.runtime_upgrade import InvalidLiteRTPackage
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +80,7 @@ def execute_runtime_command(server, frame, write, *, cancellation_requested: Cal
 				"command": cmd_type, "success": True, "pending": pending})
 		except Exception as exc:
 			write({"type": "error", "command": cmd_type,
+				"error_code": "LITERT_PACKAGE_INVALID" if isinstance(exc, InvalidLiteRTPackage) else "LITERT_UPGRADE_FAILED",
 				"success": False, "error_message": str(exc)})
 
 	elif cmd_type == "litert_stop":

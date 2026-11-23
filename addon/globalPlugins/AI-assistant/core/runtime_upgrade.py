@@ -3,96 +3,137 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
-PREVIOUS_LITERT_VERSIONS = ("0.15.0", "0.18.0")
+_RETIRED_PREFIX = ".litert-lm-retired-"
+_RELEASE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+_BACKUP_DIRECTORY = re.compile(r"\.([0-9]+\.[0-9]+\.[0-9]+)\.backup-[0-9a-f]{32}")
+
+
+def _package_directory(path: Path, root: Path) -> bool:
+	return (
+		path.is_dir() and not path.is_symlink() and not path.is_junction()
+		and path.resolve().parent == root
+	)
+
+
+def _read_manifest(path: Path, version: str) -> dict:
+	manifest_path = path / "manifest.json"
+	if manifest_path.is_symlink():
+		raise ValueError("Runtime manifest must not be a filesystem link")
+	manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+	if not isinstance(manifest, dict) or (
+		manifest.get("runtime"), manifest.get("version"), manifest.get("platform")
+	) != ("litert-lm", version, "windows-x64"):
+		raise ValueError("Runtime manifest identity mismatch")
+	return manifest
+
+
+def _previous_packages(root: Path, version: str) -> Iterator[tuple[str, Path, bool]]:
+	current = tuple(map(int, version.split(".")))
+	try:
+		entries = sorted(root.iterdir())
+	except FileNotFoundError:
+		return
+	for candidate in entries:
+		name = candidate.name.removeprefix(_RETIRED_PREFIX)
+		retired = name != candidate.name
+		backup = _BACKUP_DIRECTORY.fullmatch(name)
+		obsolete = backup[1] if backup else name
+		if not _RELEASE_VERSION.fullmatch(obsolete):
+			continue
+		release = tuple(map(int, obsolete.split(".")))
+		if release > current or (release == current and not backup):
+			continue
+		try:
+			if not _package_directory(candidate, root):
+				continue
+			# These reserved names survive partial deletion, including removal of the manifest.
+			if not retired and not backup:
+				_read_manifest(candidate, obsolete)
+			yield obsolete, candidate, retired
+		except (OSError, ValueError):
+			continue
 
 
 def has_previous_litert_runtime(root: Path, current_version: str) -> bool:
-	"""Return whether a recognized older managed LiteRT package is present."""
-	root = Path(root)
+	"""Return whether an older package or deferred retirement is present."""
 	try:
-		resolved_root = root.resolve()
-	except OSError:
+		return next(_previous_packages(root.resolve(), current_version), None) is not None
+	except (OSError, ValueError):
 		return False
-	for version in PREVIOUS_LITERT_VERSIONS:
-		if version == current_version:
-			continue
-		candidate = root / version
-		try:
-			if not candidate.is_dir() or candidate.is_symlink() or candidate.is_junction():
-				continue
-			if candidate.resolve().parent != resolved_root:
-				continue
-			manifest = json.loads((candidate / "manifest.json").read_text(encoding="utf-8"))
-			if not isinstance(manifest, dict):
-				continue
-			if (
-				manifest.get("runtime"), manifest.get("version"), manifest.get("platform")
-			) == ("litert-lm", version, "windows-x64") and (candidate / "python.exe").is_file():
-				return True
-		except (OSError, ValueError, json.JSONDecodeError):
-			continue
-	return False
 
 
-def finalize_litert_upgrade(target: Path, version: str, *, busy: bool = False, check_cancelled=lambda: None) -> list[str]:
-	"""Verify the replacement before retiring known obsolete versions.
+class InvalidLiteRTPackage(ValueError):
+	"""A replacement package failed its integrity checks."""
 
-	Locked/in-use packages are retained and retried on the next installation.
-	Only recognized package directories beneath the same runtime root are eligible.
-	The model registry is outside this root and is never touched.
-	"""
-	target = Path(target)
-	if target.is_symlink() or target.is_junction():
-		raise ValueError("Runtime package must not be a filesystem link")
-	root = target.parent.resolve()
-	if target.resolve().parent != root or target.name != version:
-		raise ValueError("Invalid runtime package directory")
-	manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
-	if (manifest.get("runtime"), manifest.get("version"), manifest.get("platform")) != (
-		"litert-lm", version, "windows-x64"
-	):
-		raise ValueError("Runtime manifest identity mismatch")
-	files = manifest.get("files")
+
+def litert_package_checksums(path: Path, version: str) -> dict[str, str]:
+	files = _read_manifest(path, version).get("files")
 	if not isinstance(files, dict) or "python.exe" not in files:
 		raise ValueError("Runtime manifest has no executable checksum")
-	for name, expected in files.items():
+	if any(not isinstance(checksum, str) for checksum in files.values()):
+		raise ValueError("Runtime manifest contains an invalid checksum")
+	return files
+
+
+def verify_litert_package(target: Path, version: str, check_cancelled: Callable[[], None]) -> None:
+	root = target.parent.resolve()
+	if target.name != version or not _package_directory(target, root):
+		raise ValueError("Invalid runtime package directory")
+	target = target.resolve()
+	try:
+		for name, expected in litert_package_checksums(target, version).items():
+			check_cancelled()
+			file = (target / name).resolve()
+			if not file.is_relative_to(target):
+				raise ValueError("Runtime manifest path escapes package")
+			with file.open("rb") as stream:
+				digest = hashlib.sha256()
+				while chunk := stream.read(1024 * 1024):
+					check_cancelled()
+					digest.update(chunk)
+			if digest.hexdigest() != expected.lower():
+				raise ValueError("Runtime package checksum mismatch: " + name)
+	except (ValueError, FileNotFoundError, IsADirectoryError) as exc:
+		raise InvalidLiteRTPackage(str(exc)) from exc
+
+
+def finalize_litert_upgrade(
+	target: Path,
+	version: str,
+	*,
+	busy: bool = False,
+	prepare_cleanup: Callable[[tuple[Path, ...]], bool] | None = None,
+	check_cancelled: Callable[[], None] = lambda: None,
+) -> list[str]:
+	"""Verify the replacement and retire only recognized packages.
+
+	Move packages out of their install paths before deleting them so a partial
+	deletion can be retried even after the original manifest is gone.
+	"""
+	verify_litert_package(target, version, check_cancelled)
+	root = target.parent.resolve()
+
+	packages = list(_previous_packages(root, version))
+	check_cancelled()
+	if packages and prepare_cleanup is not None:
+		busy = busy or not prepare_cleanup(tuple(path for _, path, retired in packages if not retired))
+	pending = set()
+	for obsolete, path, retired in packages:
 		check_cancelled()
-		file = target / name
-		if not file.resolve().is_relative_to(target.resolve()):
-			raise ValueError("Runtime manifest path escapes package")
-		with file.open("rb") as stream:
-			digest = hashlib.sha256()
-			while chunk := stream.read(1024 * 1024):
-				check_cancelled()
-				digest.update(chunk)
-			actual = digest.hexdigest()
-		if actual != expected:
-			raise ValueError("Runtime package checksum mismatch: " + name)
-	pending = []
-	# Explicit migration avoids deleting arbitrary/custom runtime installations.
-	for obsolete in PREVIOUS_LITERT_VERSIONS:
-		if obsolete == version:
-			continue
-		candidate = root / obsolete
-		if not candidate.exists():
-			continue
-		if candidate.is_symlink() or candidate.is_junction() or candidate.resolve().parent != root:
+		if busy:
+			pending.add(obsolete)
 			continue
 		try:
-			old = json.loads((candidate / "manifest.json").read_text(encoding="utf-8"))
-			if not isinstance(old, dict):
-				pending.append(obsolete)
-				continue
-			if old.get("runtime") != "litert-lm" or old.get("version") != obsolete:
-				continue
-			if busy:
-				pending.append(obsolete)
-				continue
-			check_cancelled()
-			shutil.rmtree(candidate)
-		except (OSError, ValueError):
-			pending.append(obsolete)
-	return pending
+			if not retired:
+				destination = root / (_RETIRED_PREFIX + path.name)
+				path.rename(destination)
+				path = destination
+			shutil.rmtree(path)
+		except OSError:
+			pending.add(obsolete)
+	return sorted(pending)

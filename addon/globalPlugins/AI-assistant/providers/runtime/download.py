@@ -29,6 +29,7 @@ import logging
 import re
 
 from ..interfaces import DownloadCancelledError, ProgressCallback
+from ...core.runtime_upgrade import litert_package_checksums
 from .config import RuntimeConfig
 from .paths import get_runtime_path
 
@@ -72,11 +73,11 @@ class RuntimeDownloadService:
 		"""Check if the runtime is already present and valid."""
 		runtime_path = get_runtime_path(runtime, version)
 		manifest_path = runtime_path / "manifest.json"
-		if not manifest_path.exists():
+		if not manifest_path.is_file() or (runtime == "litert-lm" and not (runtime_path / "python.exe").is_file()):
 			return False
 		try:
 			manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-			return manifest.get("version") == version
+			return isinstance(manifest, dict) and manifest.get("version") == version
 		except (json.JSONDecodeError, OSError):
 			return False
 
@@ -89,6 +90,8 @@ class RuntimeDownloadService:
 		on_progress: ProgressCallback | None = None,
 		on_bytes_progress: Callable[[int, int], None] | None = None,
 		cancel_event: threading.Event | None = None,
+		*,
+		recheck_cache: bool = False,
 	) -> Path:
 		"""Download, verify, and extract a runtime bundle.
 
@@ -114,7 +117,7 @@ class RuntimeDownloadService:
 		config = RuntimeConfig(runtime=runtime, version=version, platform=platform)
 		runtime_path = get_runtime_path(runtime, version)
 
-		if self.is_downloaded(runtime, version):
+		if not recheck_cache and self.is_downloaded(runtime, version):
 			log.info("Runtime %s %s already present at %s", runtime, version, runtime_path)
 			return runtime_path
 
@@ -297,7 +300,8 @@ class RuntimeDownloadService:
 
 			if on_progress:
 				on_progress(f"Verifying {runtime} {version}...")
-			self._verify_file_hashes(extracted_root, manifest.files)
+			files = litert_package_checksums(extracted_root, version) if runtime == "litert-lm" else manifest.files
+			self._verify_file_hashes(extracted_root, files)
 
 			self._atomic_move(extracted_root, runtime_path)
 

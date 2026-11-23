@@ -65,6 +65,7 @@ def unpack_zip(
 	dest_dir: Path | str,
 	*,
 	expected_files_sha256: dict[str, str] | None = None,
+	manifest_checksums: Callable[[Path], dict[str, str]] | None = None,
 	cancel_token: CancellationToken | None = None,
 	on_progress: Callable[[str, float], None] | None = None,
 ) -> Path:
@@ -74,6 +75,7 @@ def unpack_zip(
 		zip_path: Path to the zip archive.
 		dest_dir: Target directory where bundle should be installed.
 		expected_files_sha256: Optional mapping of relative_path -> sha256 hex.
+		manifest_checksums: Optional package-specific manifest validator.
 		cancel_token: Optional cooperative cancellation token.
 		on_progress: Optional callback (status_message, progress_pct).
 
@@ -110,7 +112,12 @@ def unpack_zip(
 
 		# If manifest.json exists, verify file hashes
 		manifest_path = extracted_root / "manifest.json"
-		if manifest_path.exists() and expected_files_sha256 is None:
+		if manifest_checksums is not None:
+			try:
+				expected_files_sha256 = manifest_checksums(extracted_root)
+			except (ValueError, OSError) as exc:
+				raise UnpackError(f"Invalid manifest.json: {exc}") from exc
+		elif manifest_path.exists() and expected_files_sha256 is None:
 			try:
 				manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
 				if not isinstance(manifest_data, dict):

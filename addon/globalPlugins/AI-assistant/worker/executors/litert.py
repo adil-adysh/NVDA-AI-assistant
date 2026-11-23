@@ -289,9 +289,28 @@ class LiteRTWorkerExecutor:
 	def finalize_upgrade(self, version: str) -> list[str]:
 		if version != DEFAULT_LITERT_VERSION:
 			raise ValueError("Unsupported runtime upgrade version")
+		return finalize_litert_upgrade(
+			default_runtime_dir(version), version,
+			prepare_cleanup=self._prepare_upgrade_cleanup, check_cancelled=check_job_cancelled,
+		)
+
+	def _prepare_upgrade_cleanup(self, previous: tuple[Path, ...]) -> bool:
 		status = self.get_status()
-		return finalize_litert_upgrade(default_runtime_dir(version), version,
-			busy=bool(status.get("is_running") or status.get("is_adopted")), check_cancelled=check_job_cancelled)
+		if status.get("is_adopted"):
+			return False
+		if not status.get("is_running"):
+			return status.get("state") not in {"starting", "restarting", "stopping"}
+
+		identity = json.loads(status.get("startup_identity") or "{}")
+		executable = identity.get("python")
+		if not executable:
+			return False
+		path = Path(executable).resolve()
+		if not any(path.is_relative_to(package) for package in previous):
+			return True
+		check_job_cancelled()
+		stopped = self.stop(timeout_seconds=15.0)
+		return not (stopped.get("is_running") or stopped.get("is_adopted"))
 
 	def stop(self, timeout_seconds: float = 10.0) -> dict[str, Any]:
 		"""Stop the server process gracefully, then forcefully if needed."""

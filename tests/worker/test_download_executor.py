@@ -240,19 +240,19 @@ def test_model_download_job_e2e(local_http_server: str, tmp_path: Path):
 
 def test_runtime_download_job_e2e(tmp_path: Path):
 	zip_file = tmp_path / "server_bundle.zip"
-	dest_runtime = tmp_path / "runtimes" / "litert-1.0.0"
+	dest_runtime = tmp_path / "runtimes" / "1.0.0"
 
 	file_content = b"runtime binary payload"
 	manifest = {
 		"runtime": "litert-lm",
 		"version": "1.0.0",
 		"platform": "windows-x64",
-		"files": {"litert-lm.exe": hashlib.sha256(file_content).hexdigest()},
+		"files": {"python.exe": hashlib.sha256(file_content).hexdigest()},
 	}
 
 	with zipfile.ZipFile(zip_file, "w") as zf:
 		zf.writestr("manifest.json", json.dumps(manifest))
-		zf.writestr("litert-lm.exe", file_content)
+		zf.writestr("python.exe", file_content)
 
 	# Use file:// URL scheme
 	file_url = zip_file.as_uri()
@@ -278,7 +278,27 @@ def test_runtime_download_job_e2e(tmp_path: Path):
 
 	assert res.status == JobStatus.COMPLETED
 	assert (dest_runtime / "manifest.json").exists()
-	assert (dest_runtime / "litert-lm.exe").read_bytes() == file_content
+	executable = dest_runtime / "python.exe"
+	assert executable.read_bytes() == file_content
+
+	executable.write_bytes(b"corrupt")
+	repaired = execute_runtime_download_job(spec, token, emit_progress=events.append)
+	assert repaired.status == JobStatus.COMPLETED
+	assert executable.read_bytes() == file_content
+
+	executable.unlink()
+	repaired = execute_runtime_download_job(spec, token, emit_progress=events.append)
+	assert repaired.status == JobStatus.COMPLETED
+	assert executable.read_bytes() == file_content
+
+	executable.write_bytes(b"still on disk")
+	with zipfile.ZipFile(zip_file, "w") as zf:
+		zf.writestr("manifest.json", json.dumps({**manifest, "version": "2.0.0"}))
+		zf.writestr("python.exe", file_content)
+	rejected = execute_runtime_download_job(spec, token, emit_progress=events.append)
+	assert rejected.status == JobStatus.FAILED
+	assert rejected.error_code == "RUNTIME_INSTALL_FAILED"
+	assert executable.read_bytes() == b"still on disk"
 
 
 def test_worker_download_client_with_mock_job_client(tmp_path: Path):

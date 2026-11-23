@@ -457,6 +457,12 @@ def _run_provider_install(
 			on_bytes_progress=bytes_progress,
 			cancel_event=dlg.cancel_event,
 		)
+		if info.id == "litert-lm":
+			from ..providers.runtime.server import get_litert_supervisor
+
+			if get_litert_supervisor().cleanup_pending:
+				dlg.signal_complete(True, _("LiteRT-LM is installed. Cleanup of previous packages is still pending."))
+				return
 		# TRANSLATORS: Success message after installing, upgrading, or cleaning up a provider runtime; {name} is the provider name.
 		completion_message = (
 			_("{name} runtime cleanup completed.") if retry_cleanup

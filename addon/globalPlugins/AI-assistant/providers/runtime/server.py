@@ -327,6 +327,10 @@ class LiteRTServerError(LLMProviderError):
 	"""Raised when the LiteRT-LM server cannot be started or is unhealthy."""
 
 
+class _InvalidInstalledRuntime(LiteRTServerError):
+	"""The cached managed package needs to be downloaded again."""
+
+
 class LiteRTServerSupervisor:
 	"""Manages the lifecycle of a ``litert-lm serve`` process.
 
@@ -469,7 +473,7 @@ class LiteRTServerSupervisor:
 	@property
 	def is_installed(self) -> bool:
 		"""True when the self-contained runtime has been downloaded and extracted."""
-		return self._server_python().exists()
+		return self._server_python().is_file()
 
 	@property
 	def upgrade_available(self) -> bool:
@@ -545,10 +549,15 @@ class LiteRTServerSupervisor:
 		if cancel_event is not None and cancel_event.is_set():
 			raise DownloadCancelledError("Runtime installation cancelled")
 
-		if python_exe.exists():
+		repair = False
+		if python_exe.is_file():
 			log.debug("LiteRT runtime already present at %s", server_dir)
-			self._finalize_upgrade(server_dir, on_progress)
-			return server_dir
+			try:
+				self._finalize_upgrade(on_progress)
+			except _InvalidInstalledRuntime:
+				repair = True
+			else:
+				return server_dir
 
 		self._report(on_progress, _("Downloading LiteRT-LM runtime..."))
 
@@ -560,6 +569,7 @@ class LiteRTServerSupervisor:
 				on_progress=on_progress,
 				on_bytes_progress=on_bytes_progress,
 				cancel_event=cancel_event,
+				**({"recheck_cache": True} if repair else {}),
 			)
 		except DownloadCancelledError:
 			raise
@@ -568,45 +578,36 @@ class LiteRTServerSupervisor:
 		except Exception as exc:
 			raise LiteRTServerError(f"Failed to download LiteRT-LM runtime {self._version}: {exc}") from exc
 
-		if not python_exe.exists():
+		if not python_exe.is_file():
 			raise LiteRTServerError(f"Runtime extracted but python.exe not found at {python_exe}")
 
 		if cancel_event is not None and cancel_event.is_set():
 			raise DownloadCancelledError("Runtime installation cancelled")
-		self._finalize_upgrade(server_dir, on_progress)
+		self._finalize_upgrade(on_progress)
 		log.info("LiteRT runtime installed at %s", server_dir)
 		return server_dir
 
-	def _finalize_upgrade(self, server_dir: Path, on_progress=None) -> None:
-		self._report(on_progress, _("Verifying LiteRT-LM runtime..."))
+	def _finalize_upgrade(self, on_progress=None) -> None:
+		self._report(on_progress, _("Verifying LiteRT-LM runtime and removing previous packages..."))
 		try:
 			client = self._get_worker_client(start=True)
 			if client is None:
 				raise RuntimeError(_("The local AI worker is unavailable."))
-			if client is not None:
-				if self._has_previous_runtime():
-					self._report(on_progress, _("Stopping the previous LiteRT-LM server before upgrading..."))
-					stopped = client.send_command({
-						"type": "litert_stop", "command": "litert_stop", "timeout_seconds": 15.0,
-					}, timeout=20.0)
-					if not stopped.get("success"):
-						raise RuntimeError(stopped.get("error_message", "Unable to stop the previous LiteRT-LM server"))
-					status = stopped.get("status", {})
-					if status.get("is_running") and not status.get("is_adopted"):
-						raise RuntimeError(_("The previous LiteRT-LM server is still running; the old runtime was preserved."))
-				response = client.send_command({
-					"type": "litert_finalize_upgrade", "command": "litert_finalize_upgrade",
-					"version": self._version,
-				}, timeout=120.0)
-				if not response.get("success"):
-					raise RuntimeError(response.get("error_message", "Runtime upgrade failed"))
-				pending = response.get("pending", [])
-			if pending:
-				self._report(on_progress, _("The previous runtime is in use. Cleanup will be retried on the next installation."))
-		except RequestCancelled:
+			response = client.send_command({
+				"type": "litert_finalize_upgrade", "command": "litert_finalize_upgrade",
+				"version": self._version,
+			}, timeout=120.0)
+			if not response.get("success"):
+				message = response.get("error_message") or _("Runtime upgrade failed.")
+				if response.get("error_code") == "LITERT_PACKAGE_INVALID":
+					raise _InvalidInstalledRuntime(_("Invalid LiteRT-LM package: {error}").format(error=message))
+				raise RuntimeError(message)
+			if response.get("pending"):
+				self._report(on_progress, _("Cleanup of previous LiteRT-LM packages is still pending."))
+		except (RequestCancelled, _InvalidInstalledRuntime):
 			raise
 		except Exception as exc:
-			raise LiteRTServerError(_("Unable to verify runtime upgrade: {error}").format(error=exc)) from exc
+			raise LiteRTServerError(_("Unable to finalize runtime upgrade: {error}").format(error=exc)) from exc
 
 	@runtime_launch("litert-lm")
 	def ensure_ready(

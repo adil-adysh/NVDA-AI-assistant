@@ -412,6 +412,8 @@ class WorkerServer:
 					pool = self._execution_lanes["mcp"]
 				else:
 					pool = self._execution_lanes.get(command.split("_", 1)[0], self._executor)
+			elif spec.job_type == "runtime_download" and spec.payload.get("runtime") == "litert-lm":
+				pool = self._execution_lanes["litert"]
 			else:
 				pool = self._execution_lanes.get(spec.job_type, self._executor)
 			pool.submit(self._dispatch_job, spec, token)

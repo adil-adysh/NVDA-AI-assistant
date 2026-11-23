@@ -8,6 +8,7 @@ Zero NVDA dependencies — pure standard library.
 
 from __future__ import annotations
 
+from functools import partial
 import logging
 from pathlib import Path
 import tempfile
@@ -15,19 +16,23 @@ import time
 from typing import TYPE_CHECKING
 
 try:
+	from ...core.job.cancellation import JobCancelledError
 	from ...core.job.dto import (
 		JobProgress,
 		JobResult,
 		JobSpec,
 		JobStatus,
 	)
+	from ...core.runtime_upgrade import InvalidLiteRTPackage, litert_package_checksums, verify_litert_package
 except (ImportError, ValueError):
+	from core.job.cancellation import JobCancelledError
 	from core.job.dto import (  # type: ignore[no-redef]
 		JobProgress,
 		JobResult,
 		JobSpec,
 		JobStatus,
 	)
+	from core.runtime_upgrade import InvalidLiteRTPackage, litert_package_checksums, verify_litert_package
 
 from .download import (
 	DownloadError,
@@ -233,19 +238,22 @@ def execute_runtime_download_job(
 
 	dest_dir = Path(dest_dir_str)
 	manifest_path = dest_dir / "manifest.json"
-	if manifest_path.exists():
-		return JobResult(
-			job_id=spec.job_id,
-			status=JobStatus.COMPLETED,
-			result_data={"path": str(dest_dir), "cached": True},
-			duration_ms=0,
-			generation=spec.generation,
-		)
 
 	t0 = time.perf_counter()
 	tmp_zip: Path | None = None
 
 	try:
+		cached = manifest_path.is_file()
+		if cached and runtime == "litert-lm":
+			try:
+				verify_litert_package(dest_dir, version, token.check_cancelled)
+			except InvalidLiteRTPackage:
+				cached = False
+		if cached:
+			return JobResult(
+				job_id=spec.job_id, status=JobStatus.COMPLETED,
+				result_data={"path": str(dest_dir), "cached": True}, generation=spec.generation,
+			)
 		with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp_f:
 			tmp_zip = Path(tmp_f.name)
 
@@ -293,6 +301,7 @@ def execute_runtime_download_job(
 		unpack_zip(
 			tmp_zip,
 			dest_dir,
+			manifest_checksums=partial(litert_package_checksums, version=version) if runtime == "litert-lm" else None,
 			cancel_token=token,
 			on_progress=_on_unpack_progress,
 		)
@@ -306,7 +315,7 @@ def execute_runtime_download_job(
 			generation=spec.generation,
 		)
 
-	except OperationCancelledError:
+	except (OperationCancelledError, JobCancelledError):
 		logger.info("Runtime download cancelled for %s %s", runtime, version)
 		duration_ms = int((time.perf_counter() - t0) * 1000)
 		return JobResult(
