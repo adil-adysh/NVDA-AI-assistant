@@ -124,6 +124,28 @@ def _retry_read_only_unlink(operation, filename, error):
 	path.unlink()
 
 
+def _remove_retired_package(path: Path, check_cancelled: Callable[[], None]) -> None:
+	first_failure = None
+
+	def continue_cleanup(operation, filename, error):
+		nonlocal first_failure
+		check_cancelled()
+		try:
+			_retry_read_only_unlink(operation, filename, error)
+		except FileNotFoundError:
+			# The entry was already removed.
+			pass
+		except OSError as exc:
+			if first_failure is None:
+				first_failure = exc
+
+	# A locked file can prevent removal of its parent directories. Continue
+	# deleting other entries, then report the original failure for the retry.
+	shutil.rmtree(path, onexc=continue_cleanup)
+	if first_failure is not None:
+		raise first_failure
+
+
 def finalize_litert_upgrade(
 	target: Path,
 	version: str,
@@ -158,7 +180,7 @@ def finalize_litert_upgrade(
 				destination = root / (_RETIRED_PREFIX + path.name)
 				path.rename(destination)
 				path = destination
-			shutil.rmtree(path, onexc=_retry_read_only_unlink)
+			_remove_retired_package(path, check_cancelled)
 		except OSError as exc:
 			pending.add(obsolete)
 			if on_deferred is not None:

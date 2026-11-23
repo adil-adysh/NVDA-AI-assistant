@@ -461,7 +461,11 @@ def _run_provider_install(
 			from ..providers.runtime.server import get_litert_supervisor
 
 			if get_litert_supervisor().cleanup_pending:
-				dlg.signal_complete(True, _("LiteRT-LM is installed. Cleanup of previous packages is still pending."))
+				dlg.signal_complete(not retry_cleanup, _(
+					"LiteRT-LM is installed. Windows could not remove all files from the previous runtime. "
+					"If the files are in use, close the program using them or restart Windows, then retry cleanup. "
+					"See the NVDA log for details."
+				))
 				return
 		# TRANSLATORS: Success message after installing, upgrading, or cleaning up a provider runtime; {name} is the provider name.
 		completion_message = (

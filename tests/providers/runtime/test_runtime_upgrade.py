@@ -1,7 +1,10 @@
 import hashlib
 import json
 import os
+import shutil
 import stat
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -104,6 +107,33 @@ def test_cleanup_removes_read_only_runtime_files(tmp_path):
 
 	assert module.finalize_litert_upgrade(new, "0.19.1") == []
 	assert not module.has_previous_litert_runtime(tmp_path, "0.19.1")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows locks loaded extension modules")
+def test_cleanup_continues_past_loaded_extension(tmp_path):
+	from _ctypes import FreeLibrary
+	from ctypes import WinDLL
+
+	new = package(tmp_path, "0.19.1")
+	retired = tmp_path / ".litert-lm-retired-0.15.0"
+	retired.mkdir()
+	extension = retired / "site-packages" / "_message.pyd"
+	extension.parent.mkdir()
+	shutil.copyfile(Path(sys.base_prefix) / "DLLs" / "_bz2.pyd", extension)
+	unlocked = retired / "z-unlocked.dat"
+	dll = WinDLL(str(extension))
+	try:
+		with pytest.raises(PermissionError):
+			extension.unlink()
+		unlocked.write_bytes(b"old data")
+		assert module.finalize_litert_upgrade(new, "0.19.1") == ["0.15.0"]
+		assert extension.exists()
+		assert not unlocked.exists()
+	finally:
+		FreeLibrary(dll._handle)
+
+	assert module.finalize_litert_upgrade(new, "0.19.1") == []
+	assert not retired.exists()
 
 
 def test_unrecognized_platform_is_preserved(tmp_path):
