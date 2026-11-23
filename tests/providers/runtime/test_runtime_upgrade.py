@@ -1,5 +1,7 @@
 import hashlib
 import json
+import os
+import stat
 
 import pytest
 
@@ -60,10 +62,12 @@ def test_previous_managed_runtime_is_detected(tmp_path):
 def test_locked_cleanup_is_deferred(tmp_path, monkeypatch):
 	new = package(tmp_path, "0.18.0")
 	old = package(tmp_path, "0.15.0")
-	def locked(path):
+	def locked(path, **kwargs):
 		raise PermissionError("busy")
 	monkeypatch.setattr(module.shutil, "rmtree", locked)
-	assert module.finalize_litert_upgrade(new, "0.18.0") == ["0.15.0"]
+	diagnostics = []
+	assert module.finalize_litert_upgrade(new, "0.18.0", on_deferred=diagnostics.append) == ["0.15.0"]
+	assert diagnostics == [".litert-lm-retired-0.15.0: busy"]
 	assert old.with_name(".litert-lm-retired-0.15.0").exists()
 	assert module.has_previous_litert_runtime(tmp_path, "0.18.0")
 
@@ -72,7 +76,7 @@ def test_partial_removal_can_be_retried(tmp_path, monkeypatch):
 	new = package(tmp_path, "0.19.1")
 	old = package(tmp_path, "0.18.0")
 
-	def interrupted(path):
+	def interrupted(path, **kwargs):
 		(path / "manifest.json").unlink()
 		raise PermissionError("busy")
 
@@ -82,6 +86,16 @@ def test_partial_removal_can_be_retried(tmp_path, monkeypatch):
 	assert module.has_previous_litert_runtime(tmp_path, "0.19.1")
 	assert module.finalize_litert_upgrade(new, "0.19.1") == []
 	assert not old.exists()
+	assert not module.has_previous_litert_runtime(tmp_path, "0.19.1")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows refuses to unlink read-only files")
+def test_cleanup_removes_read_only_runtime_files(tmp_path):
+	new = package(tmp_path, "0.19.1")
+	old = package(tmp_path, "0.18.0")
+	(old / "python.exe").chmod(stat.S_IREAD)
+
+	assert module.finalize_litert_upgrade(new, "0.19.1") == []
 	assert not module.has_previous_litert_runtime(tmp_path, "0.19.1")
 
 

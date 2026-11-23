@@ -286,12 +286,13 @@ class LiteRTWorkerExecutor:
 		)
 		return serialize_runtime_status(status)
 
-	def finalize_upgrade(self, version: str) -> list[str]:
+	def finalize_upgrade(self, version: str, *, on_deferred=None) -> list[str]:
 		if version != DEFAULT_LITERT_VERSION:
 			raise ValueError("Unsupported runtime upgrade version")
 		return finalize_litert_upgrade(
 			default_runtime_dir(version), version,
 			prepare_cleanup=self._prepare_upgrade_cleanup, check_cancelled=check_job_cancelled,
+			on_deferred=on_deferred,
 		)
 
 	def _prepare_upgrade_cleanup(self, previous: tuple[Path, ...]) -> bool:

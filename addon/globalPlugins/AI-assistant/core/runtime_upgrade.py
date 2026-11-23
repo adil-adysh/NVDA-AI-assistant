@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
+import stat
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -102,6 +104,23 @@ def verify_litert_package(target: Path, version: str, check_cancelled: Callable[
 		raise InvalidLiteRTPackage(str(exc)) from exc
 
 
+def _retry_read_only_unlink(operation, filename, error):
+	if os.name != "nt" or operation is not os.unlink or not isinstance(error, PermissionError):
+		raise error
+	path = Path(filename)
+	info = path.stat(follow_symlinks=False)
+	attributes = info.st_file_attributes
+	if (
+		not stat.S_ISREG(info.st_mode)
+		or info.st_nlink != 1
+		or attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
+		or not attributes & stat.FILE_ATTRIBUTE_READONLY
+	):
+		raise error
+	path.chmod(stat.S_IWRITE)
+	path.unlink()
+
+
 def finalize_litert_upgrade(
 	target: Path,
 	version: str,
@@ -109,6 +128,7 @@ def finalize_litert_upgrade(
 	busy: bool = False,
 	prepare_cleanup: Callable[[tuple[Path, ...]], bool] | None = None,
 	check_cancelled: Callable[[], None] = lambda: None,
+	on_deferred: Callable[[str], None] | None = None,
 ) -> list[str]:
 	"""Verify the replacement and retire only recognized packages.
 
@@ -127,13 +147,17 @@ def finalize_litert_upgrade(
 		check_cancelled()
 		if busy:
 			pending.add(obsolete)
+			if on_deferred is not None:
+				on_deferred(f"{path.name}: runtime is active or its ownership could not be confirmed")
 			continue
 		try:
 			if not retired:
 				destination = root / (_RETIRED_PREFIX + path.name)
 				path.rename(destination)
 				path = destination
-			shutil.rmtree(path)
-		except OSError:
+			shutil.rmtree(path, onexc=_retry_read_only_unlink)
+		except OSError as exc:
 			pending.add(obsolete)
+			if on_deferred is not None:
+				on_deferred(f"{path.name}: {exc}")
 	return sorted(pending)

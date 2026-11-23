@@ -603,6 +603,8 @@ class LiteRTServerSupervisor:
 					raise _InvalidInstalledRuntime(_("Invalid LiteRT-LM package: {error}").format(error=message))
 				raise RuntimeError(message)
 			if response.get("pending"):
+				log.warning("LiteRT-LM cleanup deferred for %s. %s",
+					response["pending"], response.get("cleanup_diagnostics", []))
 				self._report(on_progress, _("Cleanup of previous LiteRT-LM packages is still pending."))
 		except (RequestCancelled, _InvalidInstalledRuntime):
 			raise

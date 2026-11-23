@@ -75,9 +75,12 @@ def execute_runtime_command(server, frame, write, *, cancellation_requested: Cal
 
 	elif cmd_type == "litert_finalize_upgrade":
 		try:
-			pending = server.get_litert_executor().finalize_upgrade(str(frame.get("version", DEFAULT_LITERT_VERSION)))
+			diagnostics = []
+			pending = server.get_litert_executor().finalize_upgrade(
+				str(frame.get("version", DEFAULT_LITERT_VERSION)), on_deferred=diagnostics.append,
+			)
 			write({"type": "litert_upgrade_response",
-				"command": cmd_type, "success": True, "pending": pending})
+				"command": cmd_type, "success": True, "pending": pending, "cleanup_diagnostics": diagnostics})
 		except Exception as exc:
 			write({"type": "error", "command": cmd_type,
 				"error_code": "LITERT_PACKAGE_INVALID" if isinstance(exc, InvalidLiteRTPackage) else "LITERT_UPGRADE_FAILED",
