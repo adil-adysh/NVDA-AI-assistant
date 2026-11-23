@@ -117,9 +117,8 @@ fn start_command_pipe_listener() {
 					}
 
 					logger::debug(&format!(
-						"IPC raw request len={} preview={}",
-						trimmed.len(),
-						logger::preview(trimmed, 160)
+						"IPC raw request len={}",
+						trimmed.len()
 					));
 					let mut writer_guard = writer.lock().unwrap();
 					if let Err(err) = app::handle_raw_message(trimmed, &mut *writer_guard) {
@@ -223,9 +222,8 @@ fn connect_pipe(pipe_handle: HANDLE) -> bool {
 fn write_json_value<W: Write>(value: &serde_json::Value, writer: &mut W) -> std::io::Result<()> {
 	let text = serde_json::to_string(value)?;
 	logger::debug(&format!(
-		"IPC write_response len={} preview={}",
-		text.len(),
-		logger::preview(&text, 160)
+		"IPC write_response len={}",
+		text.len()
 	));
 	write_text(&text, writer)
 }

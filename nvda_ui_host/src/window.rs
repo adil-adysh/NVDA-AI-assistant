@@ -290,11 +290,11 @@ pub(crate) fn post_host_command(
             request_webview_focus,
         });
         logger::info(&format!(
-            "Queued host command, queue size={} activation_policy={:?} request_webview_focus={} command={}...",
+            "Queued host command, queue size={} activation_policy={:?} request_webview_focus={} bytes={}",
             queue.len(),
             activation_policy,
             request_webview_focus,
-            command.chars().take(80).collect::<String>()
+            command.len()
         ));
 
         let hwnd = HWND(*hwnd_value as _);
@@ -385,10 +385,10 @@ fn drain_host_commands() {
     logger::info(&format!("Flushing {} queued host commands to WebView", messages.len()));
     for queued_command in messages {
         logger::debug(&format!(
-            "Posting queued command to WebView activation_policy={:?} request_webview_focus={} command={}",
+            "Posting queued command to WebView activation_policy={:?} request_webview_focus={} bytes={}",
             queued_command.activation_policy,
             queued_command.request_webview_focus,
-            queued_command.message.chars().take(120).collect::<String>()
+            queued_command.message.len()
         ));
         if let Err(error) = crate::webview::post_host_command(
             queued_command.message.as_str(),

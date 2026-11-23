@@ -21,10 +21,12 @@ class HostPipeTransport:
 		pipe_name: str,
 		event_pipe_name: str | None = None,
 		event_callback: Callable[[HostEvent], None] | None = None,
+		host_alive: Callable[[], bool] | None = None,
 	) -> None:
 		self._pipe_name = pipe_name
 		self._event_pipe_name = event_pipe_name
 		self._event_callback = event_callback
+		self._host_alive = host_alive
 		self._stop_event = threading.Event()
 		self._event_listener_started = False
 		self._event_listener_lock = threading.Lock()
@@ -106,13 +108,16 @@ class HostPipeTransport:
 
 		logger.debug("HostPipeTransport event listener starting for pipe %s", self._event_pipe_name)
 		while not self._stop_event.is_set():
+			if self._host_alive is not None and not self._host_alive():
+				self._stop_event.wait(0.5)
+				continue
 			try:
 				handle = self._connect(self._event_pipe_name, win32file, win32pipe)
 			except Exception as error:
 				if self._stop_event.is_set():
 					break
 				logger.debug("HostPipeTransport event listener waiting for pipe %s: %s", self._event_pipe_name, error)
-				time.sleep(0.5)
+				self._stop_event.wait(0.5)
 				continue
 
 			try:
@@ -158,16 +163,18 @@ class HostPipeTransport:
 		buffer_key = id(handle)
 		buffer = self._read_buffers.pop(buffer_key, b"")
 		while deadline is None or time.monotonic() < deadline:
+			if self._stop_event.is_set():
+				raise InterruptedError("UI host transport closed")
 			if b"\n" in buffer:
 				line, remaining = buffer.split(b"\n", 1)
 				if remaining:
 					self._read_buffers[buffer_key] = remaining
 				return line
-			available = self._peek_available_bytes(handle, win32pipe_module)
-			if available == 0:
-				time.sleep(0.01)
-				continue
 			try:
+				available = self._peek_available_bytes(handle, win32pipe_module)
+				if available == 0:
+					self._stop_event.wait(0.01)
+					continue
 				read_size = min(READ_CHUNK_BYTES, available) if available else READ_CHUNK_BYTES
 				_, chunk = win32file_module.ReadFile(handle, read_size)
 			except Exception as error:
@@ -190,12 +197,8 @@ class HostPipeTransport:
 	def _peek_available_bytes(self, handle: Any, win32pipe_module: Any | None) -> int | None:
 		if win32pipe_module is None or not hasattr(win32pipe_module, "PeekNamedPipe"):
 			return None
-		try:
-			_, bytes_available, _ = win32pipe_module.PeekNamedPipe(handle, 0)
-			return int(bytes_available)
-		except Exception as error:
-			logger.debug("HostPipeTransport could not inspect pipe availability: %s", error)
-			return None
+		_, bytes_available, _ = win32pipe_module.PeekNamedPipe(handle, 0)
+		return int(bytes_available)
 
 	def _extract_request_id(self, message: bytes) -> str | None:
 		try:
@@ -218,13 +221,14 @@ class HostPipeTransport:
 		deadline = time.monotonic() + timeout_seconds
 		last_error: Exception | None = None
 		while time.monotonic() < deadline:
+			if self._stop_event.is_set():
+				raise InterruptedError("UI host transport closed")
 			try:
 				win32pipe_module.WaitNamedPipe(pipe_name, 250)
 				return
 			except Exception as error:
 				last_error = error
-				logger.debug("HostPipeTransport wait failed for %s: %s", pipe_name, error)
-				time.sleep(0.1)
+				self._stop_event.wait(0.1)
 		raise TimeoutError(f"Timed out waiting for pipe {pipe_name}: {last_error}")
 
 	def _is_pipe_closed_error(self, error: Exception) -> bool:

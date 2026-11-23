@@ -42,18 +42,24 @@ def _drain_host_output(process: subprocess.Popen) -> None:
 	if process.stdout is None:
 		return
 
-	for raw_line in process.stdout:
-		line = raw_line.rstrip("\r\n")
-		if line:
-			logger.info("UI host stdout: %s", line)
+	with process.stdout:
+		for raw_line in process.stdout:
+			line = raw_line.rstrip("\r\n")
+			if line:
+				logger.info("UI host pid=%s: %s", process.pid, line)
+	try:
+		code = process.wait(timeout=0.25)
+	except subprocess.TimeoutExpired:
+		logger.warning("UI host output closed while pid=%s was still running", process.pid)
+	else:
+		logger.debug("UI host pid=%s exited with code %#x", process.pid, code & 0xFFFFFFFF)
 
 
-def _wait_for_host_pipe_ready(timeout_seconds: float = 5.0) -> None:
+def _wait_for_host_pipe_ready(process: subprocess.Popen, timeout_seconds: float = 5.0) -> None:
 	try:
 		import win32pipe
 	except ImportError:
-		logger.debug("pywin32 unavailable; skipping host pipe readiness wait")
-		return
+		raise HostUnavailableError("UI host named-pipe support is unavailable", stage="startup") from None
 
 	logger.debug(
 		"Waiting for UI host pipe readiness: %s (timeout=%ss)", _HOST_COMMAND_PIPE_NAME, timeout_seconds
@@ -62,19 +68,19 @@ def _wait_for_host_pipe_ready(timeout_seconds: float = 5.0) -> None:
 	last_error: Exception | None = None
 	while time.monotonic() < deadline:
 		with _process_lock:
-			process = _host_process
-		if process is not None and process.poll() is not None:
-			raise HostUnavailableError(f"UI host exited during startup with code {process.returncode}")
+			if _shutdown or _host_process is not process:
+				raise HostUnavailableError("UI host startup was cancelled", stage="shutdown")
+		if (code := process.poll()) is not None:
+			raise HostUnavailableError(f"UI host pid={process.pid} exited during startup with code {code:#x}", stage="startup")
 		try:
 			win32pipe.WaitNamedPipe(_HOST_COMMAND_PIPE_NAME, 250)
 			logger.info("UI host pipe is ready: %s", _HOST_COMMAND_PIPE_NAME)
 			return
 		except Exception as error:
 			last_error = error
-			logger.debug("UI host pipe not ready yet: %s", error)
 			time.sleep(0.1)
 
-	raise HostUnavailableError(f"UI host pipe did not become ready: {last_error}")
+	raise HostUnavailableError(f"UI host pid={process.pid} command pipe did not become ready: {last_error}", stage="startup")
 
 
 def start_host_if_needed() -> None:
@@ -83,7 +89,7 @@ def start_host_if_needed() -> None:
 	process: subprocess.Popen | None = None
 	with _process_lock:
 		if _shutdown:
-			raise HostUnavailableError("UI host shutdown has fenced startup")
+			raise HostUnavailableError("UI host shutdown has fenced startup", stage="shutdown")
 		if _host_process is not None and _host_process.poll() is None:
 			logger.debug("Reusing existing UI host process pid=%s", _host_process.pid)
 			return
@@ -91,7 +97,7 @@ def start_host_if_needed() -> None:
 		host_exe = get_host_executable_path()
 		logger.debug("Looking for UI host executable at %s", host_exe)
 		if not host_exe.exists():
-			raise HostUnavailableError(f"UI host executable not found: {host_exe}")
+			raise HostUnavailableError(f"UI host executable not found: {host_exe}", stage="missing")
 
 		startupinfo = subprocess.STARTUPINFO()
 		startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -123,22 +129,22 @@ def start_host_if_needed() -> None:
 				)
 				_host_logger_thread.start()
 		except Exception as error:
-			raise HostUnavailableError(f"Unable to start UI host: {error}") from error
+			if process is not None and _host_process is process:
+				_stop_owned_host_locked()
+			raise HostUnavailableError(f"Unable to start UI host: {error}", stage="startup") from error
 
 	if process is None:
-		raise HostUnavailableError("UI host process failed to start")
+		raise HostUnavailableError("UI host process failed to start", stage="startup")
 
 	try:
-		_wait_for_host_pipe_ready()
+		_wait_for_host_pipe_ready(process)
+		with _process_lock:
+			if _shutdown or _host_process is not process:
+				raise HostUnavailableError("UI host startup was cancelled", stage="shutdown")
 	except Exception:
 		with _process_lock:
 			if _host_process is process:
-				try:
-					if process.poll() is None:
-						process.terminate()
-				except Exception:
-					pass
-				_host_process = None
+				_stop_owned_host_locked()
 		raise
 
 
@@ -149,22 +155,32 @@ def is_host_process_alive() -> bool:
 
 
 def stop_host() -> None:
-	global _host_process  # pylint: disable=global-statement
 	global _shutdown
 	with _process_lock:
 		_shutdown = True
-		if _host_process is None:
-			return
+		_stop_owned_host_locked()
 
+
+def discard_failed_host() -> None:
+	"""Retire the owned host after transport failure and allow a later launch."""
+	with _process_lock:
+		_stop_owned_host_locked()
+
+
+def _stop_owned_host_locked() -> None:
+	global _host_process
+	process = _host_process
+	if process is None:
+		return
+	try:
+		if process.poll() is None:
+			process.terminate()
+			process.wait(timeout=1.0)
+	except Exception:
 		try:
-			if _host_process.poll() is None:
-				_host_process.terminate()
-				_host_process.wait(timeout=1.0)
+			process.kill()
+			process.wait(timeout=1.0)
 		except Exception:
-			try:
-				_host_process.kill()
-				_host_process.wait(timeout=1.0)
-			except Exception:
-				pass
-		finally:
-			_host_process = None
+			logger.warning("Could not terminate the owned UI host", exc_info=True)
+	finally:
+		_host_process = None

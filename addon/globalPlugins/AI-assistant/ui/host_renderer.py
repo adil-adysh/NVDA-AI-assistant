@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Callable
 from uuid import uuid4
 
 from .host_interface import HostTransport, UIHostRenderer
 from .host_lifecycle import HostLifecycleService, HostLifecycleState
-from .host_process import is_host_process_alive, start_host_if_needed
+from .host_process import discard_failed_host, is_host_process_alive, start_host_if_needed
 from .host_protocol import (
 	EVENT_CHAT_SUBMITTED,
 	EVENT_CLOSE_HOST,
@@ -47,6 +48,7 @@ class HostRenderer(UIHostRenderer):
 			self.COMMAND_PIPE_NAME,
 			event_pipe_name=self.EVENT_PIPE_NAME,
 			event_callback=self._on_host_event,
+			host_alive=is_host_process_alive,
 		)
 		self._lifecycle = lifecycle or HostLifecycleService()
 		self._event_dispatcher: Callable[[Callable[[HostEvent], None], HostEvent], None] = (
@@ -343,20 +345,28 @@ class HostRenderer(UIHostRenderer):
 		command = HostCommand(name=command_name, payload=payload)
 		message = command.to_bytes()
 		logger.debug(
-			"HostRenderer sending command name=%s message_id=%s payload=%s", command.name, command.id, payload
+			"HostRenderer sending command name=%s message_id=%s bytes=%d", command.name, command.id, len(message)
 		)
 		if start_host:
 			self._ensure_host_running()
 		try:
 			response_bytes = self._transport.send(message)
+		except Exception as error:
+			self._handle_transport_failure(command.name, command.id, "transport", error)
+			raise HostUnavailableError(str(error), stage="transport") from error
+		try:
 			self._process_response(response_bytes, expected_request_id=command.id)
 			metadata = payload.get("metadata") or {}
 			self._lifecycle.mark_command_succeeded(
 				command_name,
 				activates=metadata.get("attention_policy") in {"activate_and_focus", "foreground_if_background"},
 			)
-		except HostUnavailableError:
+		except HostUnavailableError as error:
 			self._lifecycle.mark_failed()
+			if error.stage in {"response", "webview"}:
+				self._handle_transport_failure(command.name, command.id, error.stage, error)
+			else:
+				logger.warning("UI host rejected command=%s request=%s", command.name, command.id)
 			raise
 		except Exception as error:
 			self._lifecycle.mark_failed()
@@ -488,11 +498,20 @@ class HostRenderer(UIHostRenderer):
 			logger.exception("HostRenderer host_closed handler failed")
 
 	def _probe_host(self) -> None:
-		command = HostCommand(name="health_check", payload={})
-		logger.debug("HostRenderer probing host with health_check message_id=%s", command.id)
-		response_bytes = self._transport.send(command.to_bytes())
-		self._process_response(response_bytes, expected_request_id=command.id)
-		logger.debug("HostRenderer host health_check succeeded message_id=%s", command.id)
+		deadline = time.monotonic() + 10.0
+		while True:
+			command = HostCommand(name="health_check", payload={})
+			logger.debug("UI host health check request=%s", command.id)
+			response = self._process_response(self._transport.send(command.to_bytes()), expected_request_id=command.id)
+			if response.message in (None, "webview_ready"):
+				return
+			if response.message == "webview_failed":
+				raise HostUnavailableError("WebView initialization failed", stage="webview_startup")
+			if response.message != "webview_starting":
+				raise HostUnavailableError("UI host returned an unknown readiness state", stage="health")
+			if time.monotonic() >= deadline:
+				raise TimeoutError("UI host command pipe responded but WebView did not become ready")
+			time.sleep(0.1)
 
 	def _ensure_host_running(self) -> None:
 		self._lifecycle.ensure_started(start_host_if_needed, alive_check=is_host_process_alive)
@@ -503,42 +522,31 @@ class HostRenderer(UIHostRenderer):
 			try:
 				self._probe_host()
 			except Exception as error:
-				logger.error("HostRenderer host health check failed: %s", error, exc_info=True)
-				self._lifecycle.mark_failed()
-				raise HostUnavailableError(str(error)) from error
+				stage = "webview_startup" if isinstance(error, HostUnavailableError) and error.stage == "webview_startup" else "health"
+				self._handle_transport_failure("health_check", None, stage, error)
+				raise HostUnavailableError(str(error), stage=stage) from error
 			self._lifecycle.mark_ready()
 
-	def _process_response(self, response_bytes: bytes, expected_request_id: str | None = None) -> None:
-		response_text = (
-			response_bytes.decode("utf-8", errors="replace")
-			.replace("\r", "")
-			.replace("\n", "")
-			.strip("\x00 ")
-		)
-		if not response_text:
-			logger.debug("HostRenderer received empty response payload")
-			return
+	def _handle_transport_failure(
+		self, command: str, request_id: str | None, stage: str, error: Exception,
+	) -> None:
+		self._lifecycle.mark_failed()
+		logger.warning("UI host failed stage=%s command=%s request=%s: %s", stage, command, request_id, error)
+		discard_failed_host()
 
+	def _process_response(self, response_bytes: bytes, expected_request_id: str | None = None) -> HostResponse:
+		if not response_bytes.strip():
+			raise HostUnavailableError("UI host returned an empty reply", stage="response")
 		try:
-			logger.debug("HostRenderer response raw bytes: %r", response_bytes)
-			logger.debug("HostRenderer response text: %s", response_text)
-			response = HostResponse.from_json(response_text, expected_request_id=expected_request_id)
-			if response.status == "nack":
-				raise HostUnavailableError(response.message or "Host returned nack")
-			logger.debug(
-				"HostRenderer received ACK response: %s stage=%s", response.request_id, response.stage
-			)
-		except HostUnavailableError:
-			self._lifecycle.mark_failed()
-			raise
+			response = HostResponse.from_json(response_bytes.decode("utf-8"), expected_request_id=expected_request_id)
 		except ValueError as error:
-			self._lifecycle.mark_failed()
-			logger.warning("HostRenderer invalid response payload: %s; %s", response_text, error)
-			raise HostUnavailableError(str(error)) from error
-		except Exception as error:
-			self._lifecycle.mark_failed()
-			logger.warning("HostRenderer response handling failed: %s", error)
-			raise HostUnavailableError(str(error)) from error
+			raise HostUnavailableError(f"Invalid UI host reply ({len(response_bytes)} bytes): {error}", stage="response") from error
+		if response.status == "nack":
+			if response.message == "webview_failed":
+				raise HostUnavailableError("WebView reported a failure", stage="webview")
+			raise HostUnavailableError("UI host rejected the request", stage="rejected")
+		logger.debug("UI host acknowledged request=%s stage=%s", response.request_id, response.stage)
+		return response
 
 	def _write_pipe_fallback(self, message: bytes) -> None:
 		try:

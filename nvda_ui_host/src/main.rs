@@ -11,7 +11,7 @@ use windows::{
     Win32::System::Com::*,
 };
 
-fn main() {
+fn main() -> std::process::ExitCode {
     logger::init();
 
     std::panic::set_hook(Box::new(|info| {
@@ -23,11 +23,11 @@ fn main() {
 
     if let Err(e) = real_main() {
         logger::error(&format!("ERROR: {:?}", e));
-    } else {
-        logger::info("real_main completed successfully");
+        return std::process::ExitCode::FAILURE;
     }
 
     logger::info("Exiting...");
+    std::process::ExitCode::SUCCESS
 }
 
 fn real_main() -> Result<()> {

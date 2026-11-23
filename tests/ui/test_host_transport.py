@@ -46,6 +46,12 @@ class HostPipeTransportTests(unittest.TestCase):
 		with self.assertRaises(TimeoutError):
 			transport._read_line(None, object(), FakePipe(), timeout_seconds=0.01)
 
+	def test_closed_transport_interrupts_an_event_read(self) -> None:
+		transport = HostPipeTransport(r"\\.\pipe\cmd")
+		transport.close()
+		with self.assertRaises(InterruptedError):
+			transport._read_line(None, object(), None, timeout_seconds=None)
+
 	def test_coalesced_event_frames_are_not_discarded(self) -> None:
 		class FakeFile:
 			def ReadFile(self, _handle, _size):

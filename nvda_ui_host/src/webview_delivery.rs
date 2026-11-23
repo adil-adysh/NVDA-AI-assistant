@@ -61,10 +61,10 @@ fn send_pending_command(controller: &ICoreWebView2Controller, command: HostComma
         crate::window::try_activate_window,
     ) {
         logger::info(&format!(
-            "Deferring host command until window is visible activation_policy={:?} request_webview_focus={} preview={}",
+            "Deferring host command until window is visible activation_policy={:?} request_webview_focus={} bytes={}",
             command.activation_policy,
             command.request_webview_focus,
-            logger::preview(&command.message, 160)
+            command.message.len()
         ));
         return Ok(DeliveryOutcome::DeferredVisibility);
     }
@@ -80,9 +80,8 @@ fn send_webview_message(webview: &ICoreWebView2, message: &str) -> Result<()> {
     wide.push(0);
     let ptr = PCWSTR(wide.as_ptr());
     logger::debug(&format!(
-        "Rust: send_webview_message payload len={} preview={}",
-        message.len(),
-        logger::preview(message, 160)
+        "Rust: send_webview_message payload len={}",
+        message.len()
     ));
     let result = unsafe { webview.PostWebMessageAsString(ptr) };
     logger::debug(&format!("Rust: WebView send result: {:?}", result));
@@ -136,9 +135,8 @@ fn flush_pending_messages() {
                 let queued_commands = host_dispatch::take_pending_commands();
                 for command in queued_commands {
                     logger::debug(&format!(
-                        "Flushing queued message len={} preview={}",
-                        command.message.len(),
-                        logger::preview(&command.message, 160)
+                        "Flushing queued message len={}",
+                        command.message.len()
                     ));
                     if let Err(err) = override_fn(&command.message) {
                         logger::error(&format!("Failed to flush queued host message: {:?}", err));

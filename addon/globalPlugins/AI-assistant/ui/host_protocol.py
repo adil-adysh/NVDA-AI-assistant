@@ -110,6 +110,10 @@ class HostCommandPayload(TypedDict, total=False):
 class HostUnavailableError(Exception):
 	"""Raised when the UI host is unavailable or cannot be reached."""
 
+	def __init__(self, message: str = "", *, stage: str = "") -> None:
+		super().__init__(message)
+		self.stage = stage
+
 
 @dataclass(frozen=True, slots=True)
 class HostCommand:

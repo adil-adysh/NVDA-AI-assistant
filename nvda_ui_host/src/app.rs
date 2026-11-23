@@ -101,7 +101,7 @@ fn test_command(payload: protocol::UiCommand) -> ParsedCommand {
 }
 
 pub fn handle_raw_message(raw: &str, writer: &mut impl Write) -> Result<()> {
-    logger::debug(&format!("app recv raw len={} {}", raw.len(), logger::preview(raw, 160)));
+    logger::debug(&format!("app recv raw len={}", raw.len()));
     match protocol::parse_inbound_command(raw) {
         Ok(command) => handle_command(command, writer),
         Err(error) => {
@@ -116,8 +116,17 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
     let msg_id = &command.message_id;
 
     if matches!(command.payload, protocol::UiCommand::HealthCheck) {
-        logger::debug(&format!("app health_check {}", msg_id));
-        return write_json_value(&protocol::build_ack(&command, AckStage::Accepted, None), writer);
+        let state = crate::host_dispatch::current_webview_state();
+        let detail = match state {
+            crate::host_dispatch::WebViewState::Ready => "webview_ready",
+            crate::host_dispatch::WebViewState::Failed => "webview_failed",
+            _ => "webview_starting",
+        };
+        logger::debug(&format!("app health_check {} state={state:?}", msg_id));
+        return write_json_value(
+            &protocol::build_ack(&command, AckStage::Accepted, Some(detail.to_string())),
+            writer,
+        );
     }
 
     if matches!(command.payload, protocol::UiCommand::CloseWindow(_)) {
@@ -133,9 +142,18 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
         return write_json_value(&protocol::build_ack(&command, AckStage::Enqueued, None), writer);
     }
 
+    if crate::host_dispatch::current_webview_state() == crate::host_dispatch::WebViewState::Failed {
+        let error = ProtocolError::new(
+            protocol::ProtocolErrorKind::UiDispatchFailed,
+            Some(msg_id.clone()),
+            "webview_failed",
+        );
+        return write_json_value(&protocol::build_error(Some(msg_id.clone()), &error), writer);
+    }
+
     let webview_message = serde_json::to_string(&protocol::to_webview_envelope(&command))
         .map_err(|error| windows::core::Error::new(windows::core::HRESULT(0), error.to_string()))?;
-    logger::debug(&format!("app webview msg len={} {}", webview_message.len(), logger::preview(&webview_message, 160)));
+    logger::debug(&format!("app webview msg len={}", webview_message.len()));
 
     let policy = activation_policy(&command);
     let focus_request = requests_webview_focus(&command);
@@ -156,7 +174,7 @@ pub fn handle_command(command: ParsedCommand, writer: &mut impl Write) -> Result
 fn write_json_value(value: &serde_json::Value, writer: &mut impl Write) -> Result<()> {
     let serialized = serde_json::to_string(value)
         .map_err(|error| windows::core::Error::new(windows::core::HRESULT(0), error.to_string()))?;
-    logger::debug(&format!("app send resp len={} {}", serialized.len(), logger::preview(&serialized, 160)));
+    logger::debug(&format!("app send resp len={}", serialized.len()));
     serde_json::to_writer(&mut *writer, value)
         .map_err(|error| windows::core::Error::new(windows::core::HRESULT(0), error.to_string()))?;
     writer

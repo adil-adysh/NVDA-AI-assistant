@@ -19,7 +19,7 @@ import { completeChatTurn } from './chat-feedback';
 export function setChatHistory(commandId: string, payload: ChatSetHistoryPayload): void {
 	updateChatEnvelope(payload as Record<string, unknown>);
 	const msgCount = Array.isArray(payload.messages) ? payload.messages.length : 0;
-	console.log(`[chat-history] setChatHistory: ${msgCount} messages, sample: ${msgCount > 0 ? JSON.stringify(payload.messages[0]).slice(0,120) : 'empty'}`);
+	console.log(`[chat-history] setChatHistory: ${msgCount} messages`);
 	appState.chat.transcript.setHistory(payload.messages);
 	console.log(`[chat-history] transcript count after setHistory: ${appState.chat.transcript.count}`);
 	setViewMode('chat', resolvePresentationFocusTarget(payload as Record<string, unknown>));

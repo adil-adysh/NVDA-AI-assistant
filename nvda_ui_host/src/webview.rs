@@ -19,7 +19,7 @@ use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use webview2_com::{
     AddScriptToExecuteOnDocumentCreatedCompletedHandler,
     CreateCoreWebView2ControllerCompletedHandler, CreateCoreWebView2EnvironmentCompletedHandler,
-    NavigationCompletedEventHandler, WebMessageReceivedEventHandler,
+    NavigationCompletedEventHandler, ProcessFailedEventHandler, WebMessageReceivedEventHandler,
     AcceleratorKeyPressedEventHandler, ExecuteScriptCompletedHandler,
 };
 
@@ -98,13 +98,12 @@ pub(crate) fn post_host_command(message: &str, activation_policy: ActivationPoli
         host_dispatch::is_webview_ready(),
         queue_len_before
     ));
-    logger::info(&format!("WebView host command received: controller_ready={} webview_ready={} activation_policy={:?} request_webview_focus={} length={} message_preview={}", current_controller().is_some(), host_dispatch::is_webview_ready(), activation_policy, request_webview_focus, message.len(), message.chars().take(120).collect::<String>()));
+    logger::info(&format!("WebView host command received: controller_ready={} webview_ready={} activation_policy={:?} request_webview_focus={} length={}", current_controller().is_some(), host_dispatch::is_webview_ready(), activation_policy, request_webview_focus, message.len()));
     logger::debug(&format!(
-        "WebView post_host_command called, message length={} controller_ready={} webview_ready={} preview={}",
+        "WebView post_host_command called, message length={} controller_ready={} webview_ready={}",
         message.len(),
         current_controller().is_some(),
-        host_dispatch::is_webview_ready(),
-        logger::preview(message, 160)
+        host_dispatch::is_webview_ready()
     ));
 
     let pending_command = HostCommand {
@@ -425,24 +424,22 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
             None,
             &CreateCoreWebView2EnvironmentCompletedHandler::create(Box::new(move |_hr: Result<()>, env: Option<ICoreWebView2Environment>| {
                 logger::debug(&format!("Environment creation callback complete: hr={:?}", _hr));
-                logger::info("Environment created");
-                host_dispatch::set_webview_state(WebViewState::EnvironmentReady);
-
-                let Some(env) = env else {
-                    logger::error("WebView2 environment callback returned None");
+                let Some(env) = env.filter(|_| _hr.is_ok()) else {
+                    logger::error(&format!("WebView2 environment initialization failed: {_hr:?}"));
+                    host_dispatch::set_webview_state(WebViewState::Failed);
                     return Ok(());
                 };
+                host_dispatch::set_webview_state(WebViewState::EnvironmentReady);
 
                 WEBVIEW_ENVIRONMENT = Some(env.clone());
 
-                env.CreateCoreWebView2Controller(
+                let controller_start = env.CreateCoreWebView2Controller(
                     hwnd,
                     &CreateCoreWebView2ControllerCompletedHandler::create(Box::new(move |_hr: Result<()>, controller: Option<ICoreWebView2Controller>| {
                         logger::debug(&format!("Controller creation callback complete: hr={:?}", _hr));
-                        logger::info("Controller created");
-
-                        let Some(controller) = controller else {
-                        logger::error("WebView2 environment callback returned None");
+                        let Some(controller) = controller.filter(|_| _hr.is_ok()) else {
+                            logger::error(&format!("WebView2 controller initialization failed: {_hr:?}"));
+                            host_dispatch::set_webview_state(WebViewState::Failed);
                             return Ok(());
                         };
 
@@ -463,11 +460,32 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
                             Ok(webview) => webview,
                             Err(e) => {
                                 logger::error(&format!("CoreWebView2 retrieval failed: {:?}", e));
+                                host_dispatch::set_webview_state(WebViewState::Failed);
                                 return Ok(());
                             }
                         };
 
                         WEBVIEW_CORE = Some(webview.clone());
+
+                        let mut process_failed_token = 0i64;
+                        let process_failed = ProcessFailedEventHandler::create(Box::new(
+                            |_: Option<ICoreWebView2>, args: Option<ICoreWebView2ProcessFailedEventArgs>| {
+                                let Some(args) = args else { return Ok(()); };
+                                let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+                                args.ProcessFailedKind(&mut kind)?;
+                                logger::warn(&format!("WebView2 process failure kind={}", kind.0));
+                                if matches!(kind, COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED
+                                    | COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED)
+                                {
+                                    host_dispatch::set_webview_ready(false);
+                                    host_dispatch::set_webview_state(WebViewState::Failed);
+                                }
+                                Ok(())
+                            },
+                        ));
+                        if let Err(error) = webview.add_ProcessFailed(&process_failed, &mut process_failed_token) {
+                            logger::warn(&format!("Unable to monitor WebView2 process failures: {error:?}"));
+                        }
 
                         let mut accelerator_token = 0i64;
                         if let Err(error) = controller.add_AcceleratorKeyPressed(
@@ -570,8 +588,10 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
                                         return Ok(());
                                     }
 
-                                    let message = message.to_string().unwrap_or_default();
-                                    logger::debug(&format!("JS -> host: {}", message));
+                                    let decoded = message.to_string();
+                                    windows::Win32::System::Com::CoTaskMemFree(Some(message.0.cast()));
+                                    let message = decoded.unwrap_or_default();
+                                    logger::debug(&format!("JS -> host bytes={}", message.len()));
                                     if let Err(err) = handle_js_event(&message, hwnd) {
                                         logger::error(&format!("Failed to handle JS event: {:?}", err));
                                     }
@@ -581,6 +601,8 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
                             &mut token,
                         ) {
                             logger::error(&format!("add_WebMessageReceived failed: {:?}", e));
+                            host_dispatch::set_webview_state(WebViewState::Failed);
+                            return Ok(());
                         }
 
                         let mut nav_token = 0i64;
@@ -605,6 +627,7 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
                         let ptr = PCWSTR(html_wide.as_ptr());
                         if let Err(e) = webview.NavigateToString(ptr) {
                             logger::error(&format!("WebView NavigateToString failed: {:?}", e));
+                            host_dispatch::set_webview_state(WebViewState::Failed);
                         } else {
                             host_dispatch::set_webview_state(WebViewState::NavigationStarted);
                             logger::info("Navigation started");
@@ -612,15 +635,14 @@ pub fn init_webview(hwnd: HWND) -> Result<()> {
 
                         Ok(())
                     })),
-                )
-                .ok()
-                .unwrap();
-
+                );
+                if let Err(error) = controller_start {
+                    logger::error(&format!("WebView2 controller creation could not start: {error:?}"));
+                    host_dispatch::set_webview_state(WebViewState::Failed);
+                }
                 Ok(())
             }))
-        )
-        .ok()
-        .unwrap();
+        )?;
     }
 
     Ok(())

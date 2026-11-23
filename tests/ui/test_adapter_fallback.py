@@ -204,6 +204,27 @@ def test_host_failure_marks_lifecycle_and_dispatches_native_fallback() -> None:
 	assert native_fallbacks[-1][0] is not None
 
 
+def test_primary_host_failure_announces_the_reason(monkeypatch) -> None:
+	adapter = adapter_module.UIAdapter.__new__(adapter_module.UIAdapter)
+	adapter._host_lifecycle = _Lifecycle()
+	adapter._host_lifecycle.prepare_primary_action = lambda: None
+	adapter._command_queue = queue.Queue()
+	adapter._running = True
+	messages = []
+	monkeypatch.setattr(nvda_ui, "message", messages.append)
+	error = _HostUnavailableError("internal pipe detail")
+	error.stage = "transport"
+
+	def fail() -> None:
+		raise error
+
+	adapter._dispatch_primary_host_command(fail, adapter._notify_host_unavailable)
+	adapter._command_queue.put(adapter_module._STOP_WORKER)
+	adapter._worker_loop()
+
+	assert messages == ["The connection to the AI Assistant window was lost. Try opening it again."]
+
+
 def test_close_wakes_and_joins_worker_thread() -> None:
 	adapter = adapter_module.UIAdapter()
 	assert adapter._worker_thread.is_alive()

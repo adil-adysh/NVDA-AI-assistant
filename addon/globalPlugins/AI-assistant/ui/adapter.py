@@ -105,9 +105,8 @@ class UIAdapter:
 					log.debug("UIAdapter worker invoking command")
 					command()
 					log.debug("UIAdapter worker command executed successfully")
-				except HostUnavailableError:
-					log.warning("WORKER ERROR: HostUnavailableError")
-					log.warning("UIAdapter host command failed because host is unavailable")
+				except HostUnavailableError as error:
+					log.warning("UI host action unavailable stage=%s: %s", getattr(error, "stage", ""), error)
 					self._mark_host_unavailable()
 					nvda_ui.queue(fallback)
 				except Exception as error:
@@ -155,26 +154,41 @@ class UIAdapter:
 		self._command_queue.put((command, fallback))
 
 	def _dispatch_primary_host_command(
-		self, command: Callable[[], None], fallback: Callable[[], None]
+		self, command: Callable[[], None], fallback: Callable[[str], None]
 	) -> None:
 		if self._host_lifecycle.state == HostLifecycleState.FAILED:
 			log.info("UIAdapter retrying WebView host for a primary UI action")
 		self._host_lifecycle.prepare_primary_action()
 
-		def command_with_session_sync() -> None:
-			command()
-			self._flush_pending_session_state()
+		stage = ""
 
-		self._dispatch_host_command(command_with_session_sync, fallback)
+		def command_with_session_sync() -> None:
+			nonlocal stage
+			try:
+				command()
+				self._flush_pending_session_state()
+			except HostUnavailableError as error:
+				stage = getattr(error, "stage", "")
+				raise
+
+		self._dispatch_host_command(command_with_session_sync, lambda: fallback(stage))
 
 	def _mark_host_unavailable(self) -> None:
 		self._host_lifecycle.mark_failed()
 
-	def _notify_host_unavailable(self) -> None:
-		message = self._get_localized_strings().get(
-			"host_unavailable_message", "AI WebView host is unavailable."
-		)
-		nvda_ui.message(message)
+	def _notify_host_unavailable(self, stage: str = "") -> None:
+		messages = {
+			"missing": _("The AI Assistant window component is missing. Reinstall the add-on and try again."),
+			"startup": _("The AI Assistant window could not start. Try opening it again. See the NVDA log for details."),
+			"health": _("The AI Assistant window did not respond during startup. Try opening it again."),
+			"webview_startup": _("The AI Assistant window could not initialize WebView2. See the NVDA log for details."),
+			"transport": _("The connection to the AI Assistant window was lost. Try opening it again."),
+			"response": _("The AI Assistant window sent an invalid reply. Try opening it again."),
+			"webview": _("The AI Assistant window stopped rendering. Try opening it again. See the NVDA log for details."),
+			"rejected": _("The AI Assistant window could not open this view. See the NVDA log for details."),
+		}
+		if stage != "shutdown":
+			nvda_ui.message(messages.get(stage, _("The AI Assistant window is unavailable. See the NVDA log for details.")))
 
 	def render_display(self, view_model: DisplayResultViewModel) -> None:
 		metadata = view_model.transport_metadata()

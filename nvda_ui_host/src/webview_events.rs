@@ -39,6 +39,9 @@ fn handle_js_event(message: &str, _hwnd: HWND) -> Result<()> {
     let event = parse_webview_event(&payload);
     match event {
         Some(WebViewEvent::WebUiReady) => {
+            if host_dispatch::current_webview_state() == WebViewState::Failed {
+                return Ok(());
+            }
             logger::info("WebView UI reported ready");
             host_dispatch::set_webview_ready(true);
             if host_dispatch::current_webview_state() == WebViewState::ControllerReady {

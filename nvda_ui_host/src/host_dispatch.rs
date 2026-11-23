@@ -25,6 +25,7 @@ pub(crate) enum WebViewState {
     NavigationStarted,
     WebUiReady,
     Ready,
+    Failed,
 }
 
 static PENDING_MESSAGES: OnceLock<Mutex<Vec<HostCommand>>> = OnceLock::new();
@@ -119,11 +120,10 @@ pub(crate) fn flush_pending_commands<E>(
     let mut deferred_commands: Vec<HostCommand> = Vec::new();
     for command in queued_commands {
         logger::debug(&format!(
-            "Flushing queued message len={} activation_policy={:?} request_webview_focus={} preview={}",
+            "Flushing queued message len={} activation_policy={:?} request_webview_focus={}",
             command.message.len(),
             command.activation_policy,
-            command.request_webview_focus,
-            logger::preview(&command.message, 160)
+            command.request_webview_focus
         ));
         match deliver(command.clone()) {
             Ok(DeliveryOutcome::Delivered) => {}

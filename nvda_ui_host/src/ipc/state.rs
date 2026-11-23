@@ -38,9 +38,8 @@ fn push_pending(state: &mut UiEventState, message: String) {
 
 pub(crate) fn queue_ui_event(message: String) {
 	logger::debug(&format!(
-		"IPC queue_ui_event called with payload len={} preview={}",
-		message.len(),
-		logger::preview(&message, 160)
+		"IPC queue_ui_event called with payload len={}",
+		message.len()
 	));
 	let mut state = ui_event_state().lock().unwrap();
 	if let Some(tx) = state.sender.as_ref() {
